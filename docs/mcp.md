@@ -75,6 +75,46 @@ swift run --package-path tools/screenpunk-mcp screenpunk-mcp
 protocol tests. Production clients should use the official SDK transport
 (default).
 
+## Pair and deploy from an agent
+
+`screenpunk-mcp` speaks to devices over the same TLS 1.3 LAN link as the Mac
+workbench (`ControllerLANClient`), and shares the workbench's controller
+identity from the login keychain, so a device sees one owner whichever client
+paired it. If macOS asks whether `screenpunk-mcp` may use the
+`xyz.screenpunk.tls.controller` key, allow it. Paired devices are stored in
+`devices.json` under the controller home. Devices fetch their own HTTP and
+WebSocket data; the Mac is not a runtime proxy.
+
+1. `discover_services` lists `_screenpunk._tcp` advertisements. If Bonjour is
+   blocked, pass `host` and `port` from the device's unpaired screen.
+2. `request_pairing` opens the pinned channel, runs SAS pairing, checks the
+   code against its own transcript, and returns the six-digit matching code.
+   Show it to the user. The device shows its own code.
+3. Only if both codes match, the user taps **Confirm** on the device. Then call
+   `confirm_pairing`. Until the device owner has confirmed there, it returns
+   `permission_required`; the agent cannot approve on the device's behalf. Codes
+   expire after two minutes. One owner per device: a device that already
+   belongs to another Mac returns `not_paired` (`second_owner`) until it is
+   unlinked on the device.
+4. Author with `update_dashboard`, then `preview_dashboard`. Ask the user in
+   chat whether the previewed revision should go to the device.
+5. `deploy_dashboard` with `deviceId`, `dashboardId`, the exact `revision` the
+   user saw, and `approved: true`. Revisions this controller never previewed
+   return `permission_required`. This is agent-mediated chat approval, not a
+   cryptographic guarantee. Pass a `deploymentId` to retry idempotently.
+
+The device hash-checks every file and its target orientation and size before
+activating. A failed or interrupted transfer returns an error result with
+`phase: "failed"` and `currentDashboardKept: true`; the device keeps its
+current dashboard. `get_deployment` correlates by `deploymentId`.
+`rollback_dashboard` redeploys a revision from the device's history through
+the same path. `forget_device` removes the device from this Mac only and does
+not erase it.
+
+Without a paired device the delivery tools still answer honestly:
+`list_devices` is empty, `deploy_dashboard` returns `not_paired`, and a
+controller without the LAN transport returns `device_offline`.
+
 ## Unlink recovery
 
 Hold two fingers on the device screen for ten seconds, then tap Unlink.
@@ -99,3 +139,9 @@ With the workbench closed, start a real MCP client, `update_dashboard`,
 `validate_dashboard`, then `preview_dashboard`. Confirm an inline PNG whose
 metadata revision matches the created revision. Make a second revision and
 preview again. Do not treat a missing image as success.
+
+Then, with the iPhone on **Ready to pair**: `discover_services`,
+`request_pairing`, compare the codes, tap **Confirm** on the phone,
+`confirm_pairing`, `deploy_dashboard` with `approved: true`. The phone must
+show the deployed package. Unplug the network mid-transfer once and confirm
+the phone keeps its previous dashboard.

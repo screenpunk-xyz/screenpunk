@@ -45,7 +45,7 @@ public struct DeviceRuntimeRootView: View {
     private var lanBody: some View {
         Group {
             if let revision = host.runtime.activeRevision {
-                deployedDashboard(revision: revision) {
+                deployedDashboard(revision: revision, package: host.activePackage) {
                     host.unlink()
                 }
             } else if let code = host.pairingCode {
@@ -69,7 +69,7 @@ public struct DeviceRuntimeRootView: View {
     private var localBody: some View {
         Group {
             if let revision = fallback.activeRevision {
-                deployedDashboard(revision: revision) {
+                deployedDashboard(revision: revision, package: nil) {
                     fallback.unlink()
                 }
             } else if let code = fallback.pairingCode {
@@ -100,15 +100,26 @@ public struct DeviceRuntimeRootView: View {
         }
     }
 
+    /// Renders the package delivered over the LAN for `revision`. `.id(revision)`
+    /// rebuilds the web view when a new revision activates.
     @ViewBuilder
-    private func deployedDashboard(revision: String, onUnlink: @escaping () -> Void) -> some View {
-        if revision == StoredRevision.offlineFixture.revision,
-           let store = try? PackageAssetStore.bundledOfflineFixture()
+    private func deployedDashboard(
+        revision: String,
+        package: PackageAssetStore?,
+        onUnlink: @escaping () -> Void
+    ) -> some View {
+        if let package {
+            DashboardRuntimeView(store: package, onUnlink: onUnlink)
+                .ignoresSafeArea()
+                .id(revision)
+        } else if revision == StoredRevision.offlineFixture.revision,
+                  let store = try? PackageAssetStore.bundledOfflineFixture()
         {
             DashboardRuntimeView(store: store, onUnlink: onUnlink)
                 .ignoresSafeArea()
+                .id(revision)
         } else {
-            UnpairedHostView()
+            UnpairedHostView(detail: "Deployed revision \(revision.prefix(8)) has no package on this device. Deploy again from the Mac.")
         }
     }
 }

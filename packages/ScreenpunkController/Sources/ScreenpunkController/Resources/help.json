@@ -13,6 +13,10 @@
   },
   "pairing": {
     "title": "Pairing",
-    "body": "A device allows one owner. Pairing launches trusted native confirmation and never self-approves through MCP. New or expanded connections return permission_required until approved in native settings."
+    "body": "A device allows one owner. Pairing runs over the TLS 1.3 LAN link with a six-digit SAS matching code and never self-approves through MCP.\n\n1. discover_services lists _screenpunk._tcp advertisements; pass host and port from the device's unpaired screen if Bonjour is blocked.\n2. request_pairing returns the matching code. Show it to the user; the device shows its own code.\n3. Only if both codes match, the user taps Confirm on the device. Then call confirm_pairing. Until the device owner confirms there, confirm_pairing returns permission_required.\n\nCodes expire after two minutes. A device owned by another Mac returns not_paired (second_owner) until it is unlinked on the device. forget_device removes the device from this Mac only and does not erase the device. New or expanded connections return permission_required until approved in native settings."
+  },
+  "deploy": {
+    "title": "Deploy",
+    "body": "deploy_dashboard ships the exact revision the user reviewed: preview_dashboard it first, ask the user in chat, then call deploy_dashboard with that revision and approved=true. Revisions this controller never previewed return permission_required. This is agent-mediated chat approval, not a cryptographic guarantee.\n\nTransfer runs over the paired TLS 1.3 LAN link. The device checks every file hash and the target orientation and size before activating. A failed or interrupted transfer returns phase failed and the device keeps its current dashboard. deploy_dashboard is idempotent on deploymentId; reuse the same id to retry. rollback_dashboard redeploys a revision from the device's history through the same path. Devices fetch their own HTTP and WebSocket data; the Mac is not a runtime proxy."
   }
 }

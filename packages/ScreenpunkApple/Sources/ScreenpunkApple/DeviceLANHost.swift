@@ -9,6 +9,7 @@ public final class DeviceLANHost: ObservableObject {
     @Published public var pairingCode: String?
     @Published public var port: UInt16 = 0
     @Published public var errorMessage: String?
+    @Published public var activePackage: PackageAssetStore?
     public let server: DeviceLANServer?
 
     public init(runtime: DeviceRuntime) {
@@ -58,6 +59,7 @@ public final class DeviceLANHost: ObservableObject {
             runtime = server.runtime
             pairingCode = server.pairingCode ?? server.runtime.pairingCode
             port = server.port
+            activePackage = server.activePackage
         }
     }
 }

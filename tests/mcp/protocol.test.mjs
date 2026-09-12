@@ -50,6 +50,54 @@ test("catalog keeps preview live, hidden helper, and stable errors", () => {
   }
 });
 
+test("catalog pairs and deploys through the LAN link without self-approval", () => {
+  const byName = Object.fromEntries(catalog.tools.map((tool) => [tool.name, tool]));
+  for (const required of [
+    "discover_services",
+    "list_devices",
+    "get_device",
+    "request_pairing",
+    "confirm_pairing",
+    "forget_device",
+    "deploy_dashboard",
+    "rollback_dashboard",
+    "get_deployment"
+  ]) {
+    assert.ok(byName[required], required);
+  }
+  assert.match(byName.request_pairing.description, /matching code/i);
+  assert.match(byName.request_pairing.description, /never self-approves/i);
+  assert.match(byName.confirm_pairing.description, /permission_required/);
+  assert.match(byName.confirm_pairing.description, /on the device/i);
+  assert.match(byName.list_devices.description, /one owner per device/i);
+  assert.match(byName.forget_device.description, /does not erase/i);
+  assert.equal(byName.forget_device.destructiveHint, true);
+  assert.match(byName.deploy_dashboard.description, /previewed revision/i);
+  assert.match(byName.deploy_dashboard.description, /approved=true/);
+  assert.match(byName.deploy_dashboard.description, /keeps the device's current dashboard/i);
+  assert.match(byName.deploy_dashboard.description, /idempotent on deploymentId/i);
+  assert.equal(byName.deploy_dashboard.destructiveHint, true);
+  assert.equal(byName.rollback_dashboard.destructiveHint, true);
+  assert.match(byName.discover_services.description, /not unrestricted subnet scanning/i);
+  for (const code of ["device_offline", "not_paired", "permission_required"]) {
+    assert.equal(catalog.errors.includes(code), true, code);
+  }
+  assert.match(help.pairing.body, /one owner/i);
+  assert.match(help.pairing.body, /confirm_pairing/);
+  assert.match(help.pairing.body, /never self-approves/i);
+  assert.match(help.pairing.body, /does not erase/i);
+  assert.match(help.deploy.body, /previewed|preview_dashboard/);
+  assert.match(help.deploy.body, /keeps its current dashboard/i);
+  assert.match(help.deploy.body, /not a runtime proxy/i);
+  assert.match(mcpDocs, /request_pairing/);
+  assert.match(mcpDocs, /confirm_pairing/);
+  assert.match(mcpDocs, /deploy_dashboard/);
+  assert.match(mcpDocs, /approved/);
+  assert.match(mcpDocs, /one owner/i);
+  assert.match(mcpDocs, /not a runtime proxy/i);
+  assert.match(mcpDocs, /keeps its\s+current dashboard/i);
+});
+
 test("help and docs include the two-finger ten-second Unlink gesture", () => {
   const unlink = help.unlink.body;
   assert.match(unlink, /two fingers/i);

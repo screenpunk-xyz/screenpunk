@@ -28,15 +28,90 @@ public struct MCPToolRouter: Sendable {
 
     private func dispatch(name: String, arguments: JSONValue) throws -> MCPToolResult {
         switch name {
-        case "list_devices", "discover_services":
-            return json(["devices": [], "services": [], "error": "not_paired"])
+        case "list_devices":
+            let devices = service.devices.listDevices().map(deviceObject)
+            let pending = service.devices.pendingPairings().map { entry -> [String: Any] in
+                [
+                    "deviceId": entry.deviceId,
+                    "name": entry.deviceName,
+                    "host": entry.host,
+                    "port": entry.port,
+                    "status": "pending",
+                    "expiresAt": iso(entry.expiresAt)
+                ]
+            }
+            var object: [String: Any] = [
+                "devices": devices,
+                "pendingPairings": pending,
+                "transportAvailable": service.devices.transportAvailable
+            ]
+            if devices.isEmpty {
+                object["detail"] = "No paired devices. Call discover_services, then request_pairing."
+            }
+            return json(object)
+        case "discover_services":
+            if let host = arguments["host"]?.string, host.isEmpty == false {
+                guard let port = arguments["port"]?.int, port > 0, port <= 65535 else {
+                    throw ControllerError.validationFailed(detail: "port must be 1-65535 when host is given")
+                }
+                _ = service.devices.addManual(host: host, port: port)
+            }
+            let paired = Set(service.devices.listDevices().map(\.id))
+            let services = service.devices.discover().map { ad -> [String: Any] in
+                [
+                    "deviceId": ad.deviceId,
+                    "host": ad.host,
+                    "port": ad.port,
+                    "source": ad.source.rawValue,
+                    "protocolMajor": ad.protocolMajor,
+                    "paired": paired.contains(ad.deviceId)
+                ]
+            }
+            return json([
+                "services": services,
+                "serviceType": DiscoveryService.type,
+                "detail": "Known advertised or manually entered services only. Screenpunk never scans the network. Advertisements are untrusted until pairing."
+            ])
         case "get_device":
-            throw ControllerError.notPaired()
+            let record = try service.devices.device(
+                try requireString(arguments, "deviceId"),
+                probe: arguments["probe"]?.bool ?? true
+            )
+            return json(deviceObject(record))
         case "request_pairing":
+            let result = try service.devices.requestPairing(
+                deviceId: arguments["deviceId"]?.string,
+                host: arguments["host"]?.string,
+                port: arguments["port"]?.int
+            )
             return json([
                 "status": "pending",
                 "selfApproved": false,
-                "detail": "Pairing requires matching-code confirmation on both screens."
+                "deviceId": result.deviceId,
+                "name": result.deviceName,
+                "host": result.host,
+                "port": result.port,
+                "code": result.code,
+                "devicePinHex": result.devicePinHex,
+                "expiresAt": iso(result.expiresAt),
+                "rePairing": result.rePairing,
+                "detail": "Show this code to the user. The device shows its own code. Only if both match, the user taps Confirm on the device; then call confirm_pairing. Codes expire after \(Int(PairingLimits.expirySeconds)) seconds."
+            ])
+        case "confirm_pairing":
+            let record = try service.devices.confirmPairing(deviceId: try requireString(arguments, "deviceId"))
+            var object = deviceObject(record)
+            object["status"] = "paired"
+            object["selfApproved"] = false
+            object["detail"] = "The device confirmed natively and is now owned by this Mac."
+            return json(object)
+        case "forget_device":
+            let id = try requireString(arguments, "deviceId")
+            let removed = try service.devices.forget(deviceId: id)
+            return json([
+                "deviceId": id,
+                "forgotten": removed,
+                "deviceErased": false,
+                "detail": WorkbenchCopy.forgetUnreachable
             ])
         case "propose_connection":
             return json([
@@ -91,19 +166,38 @@ public struct MCPToolRouter: Sendable {
                 dy: arguments["dy"]?.int.map(Double.init)
             )
             return try preview(arguments: arguments, interaction: interaction)
-        case "deploy_dashboard", "rollback_dashboard":
-            throw ControllerError.notPaired("deployment requires a paired device")
+        case "deploy_dashboard":
+            let outcome = try service.deployDashboard(
+                deviceId: try requireString(arguments, "deviceId"),
+                dashboardId: try requireString(arguments, "dashboardId"),
+                revision: try requireString(arguments, "revision"),
+                deploymentId: arguments["deploymentId"]?.string,
+                approved: arguments["approved"]?.bool ?? false
+            )
+            return deploymentResult(outcome)
+        case "rollback_dashboard":
+            let outcome = try service.rollbackDashboard(
+                deviceId: try requireString(arguments, "deviceId"),
+                dashboardId: arguments["dashboardId"]?.string,
+                revision: try requireString(arguments, "revision"),
+                deploymentId: arguments["deploymentId"]?.string,
+                approved: arguments["approved"]?.bool ?? false
+            )
+            return deploymentResult(outcome)
         case "list_versions":
             let id = try requireString(arguments, "dashboardId")
             let summaries = try service.listDashboards()
             guard let summary = summaries.first(where: { $0.dashboardId == id }) else {
                 throw ControllerError.validationFailed(detail: "dashboard not found")
             }
+            let devices = service.devices.listDevices()
             let revisions = try service.store.listRevisions(dashboardId: id).map { revision -> [String: Any] in
                 let record = try service.getDashboard(dashboardId: id, revision: revision)
                 return [
                     "revision": record.manifest.revision,
-                    "digest": record.manifest.digest ?? ""
+                    "digest": record.manifest.digest ?? "",
+                    "reviewed": service.hasReviewed(revision: record.manifest.revision),
+                    "activeOn": devices.filter { $0.device.activeRevision == record.manifest.revision }.map(\.id)
                 ]
             }
             return json([
@@ -112,12 +206,21 @@ public struct MCPToolRouter: Sendable {
                 "revisions": revisions
             ])
         case "get_deployment":
-            throw ControllerError.notPaired("no deployments")
+            let found = try service.deploymentStatus(deploymentId: try requireString(arguments, "deploymentId"))
+            var object = deploymentObject(found.deployment)
+            object["activeRevision"] = found.device.device.activeRevision ?? NSNull()
+            object["queuedSilently"] = false
+            return json(object)
         case "get_logs":
+            let devices = service.devices.listDevices()
             return json([
                 "lines": [
                     "controller ready",
-                    service.helperStarted ? "preview helper available" : "preview helper not found"
+                    service.helperStarted ? "preview helper available" : "preview helper not found",
+                    service.devices.transportAvailable ? "LAN transport TLS 1.3 available" : "LAN transport unavailable",
+                    "paired devices: \(devices.count)",
+                    "pending pairings: \(service.devices.pendingPairings().count)",
+                    "deployments recorded: \(devices.reduce(0) { $0 + $1.device.deployments.count })"
                 ],
                 "bounded": true,
                 "redacted": true
@@ -173,6 +276,82 @@ public struct MCPToolRouter: Sendable {
             ],
             isError: false
         )
+    }
+
+    private func deviceObject(_ record: PairedDeviceRecord) -> [String: Any] {
+        var object: [String: Any] = [
+            "deviceId": record.id,
+            "name": record.device.profile.name,
+            "host": record.host,
+            "port": record.port,
+            "reachable": record.device.reachable,
+            "status": "paired",
+            "owner": "this-mac",
+            "devicePinHex": record.devicePinHex,
+            "viewport": [
+                "width": record.device.profile.width,
+                "height": record.device.profile.height,
+                "orientation": record.device.profile.orientation.rawValue
+            ],
+            "activeRevision": record.device.activeRevision ?? NSNull(),
+            "history": record.device.history.map { revision in
+                [
+                    "revision": revision.revision,
+                    "dashboardId": revision.dashboardId,
+                    "name": revision.name,
+                    "digest": revision.digest
+                ]
+            },
+            "deployments": record.device.deployments.map(deploymentObject),
+            "pairedAt": iso(record.pairedAt),
+            "capabilities": ["tls": "1.3", "transfer": "lan", "runtimeProxy": false]
+        ]
+        if let seen = record.lastSeenAt {
+            object["lastSeenAt"] = iso(seen)
+        }
+        return object
+    }
+
+    private func deploymentObject(_ record: DeploymentRecord) -> [String: Any] {
+        var object: [String: Any] = [
+            "deploymentId": record.deploymentId,
+            "deviceId": record.deviceId,
+            "dashboardId": record.dashboardId,
+            "revision": record.revision,
+            "phase": record.phase.rawValue
+        ]
+        if let error = record.error {
+            object["error"] = error
+        }
+        return object
+    }
+
+    /// A failed transfer is reported as an error result that still carries the
+    /// deployment record. The device keeps its current dashboard.
+    private func deploymentResult(_ outcome: DeploymentRecord) -> MCPToolResult {
+        var object = deploymentObject(outcome)
+        let active = service.devices.listDevices().first { $0.id == outcome.deviceId }?.device.activeRevision
+        object["activeRevision"] = active ?? NSNull()
+        object["currentDashboardKept"] = outcome.phase != .active
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
+        let text = String(data: data, encoding: .utf8) ?? "{}"
+        guard outcome.phase == .failed else {
+            return .text(text)
+        }
+        let code: ControllerErrorCode
+        switch outcome.error ?? "" {
+        case TransferFailure.notPaired.rawValue:
+            code = .notPaired
+        case TransferFailure.interrupted.rawValue, TransferFailure.deviceOffline.rawValue:
+            code = .deviceOffline
+        default:
+            code = .validationFailed
+        }
+        return MCPToolResult(content: [.text(text)], isError: true, errorCode: code.rawValue)
+    }
+
+    private func iso(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 
     private func dashboardObject(_ record: DashboardRevisionRecord) -> [String: Any] {

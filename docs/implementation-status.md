@@ -1,17 +1,24 @@
 # Implementation status
 
-Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
+Last updated: 2026-09-12 by worker `bc-8cefc708-ec93-5316-aaa7-e09f4bd9ba49`.
 
 | Field | Value |
 | --- | --- |
-| Milestone | 3 — TLS 1.3 two-process LAN transfer |
-| Task | Authenticated TLS 1.3 pairing and deploy between Mac and iOS processes |
+| Milestone | 3 — MCP pairing and deploy over the TLS 1.3 LAN link |
+| Task | `request_pairing` / `confirm_pairing` / `deploy_dashboard` / `rollback_dashboard` / `get_deployment` / `list_devices` / `get_device` / `forget_device` work from `screenpunk-mcp` against `DeviceLANServer`; `not_paired` is now a real answer, not the only one |
+| Owner | Implementation worker on `asher/codex/milestone-mcp-pairing-deploy` |
+| PR | https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-mcp-pairing-deploy |
+| Tested revision | local `./scripts/ci/linux.sh`; Controller tests (22) run on Linux through a scratch CryptoKit/Darwin shim; Apple jobs verify `LANTransferTests` and the executable build |
+| Evidence | `PairingDeployTests` drive the MCP router against an in-memory device mirroring `DeviceLANServer`: SAS code shown equals device code, confirm before device tap → `permission_required`, one owner, persisted `devices.json`, deploy needs previewed + `approved`, idempotent `deploymentId`, target mismatch and corrupt hash keep the active revision, rollback, offline/unknown errors, forget is Mac-only. `LANTransferTests` now asserts the device keeps the delivered package and Unlink erases it. |
+| Blockers | Physical two-device pairing still pending operator hardware. This environment cannot run Xcode; Apple compile is CI-verified. Device pairing/package state is in-memory on the phone (restart returns to unpaired), as in #17. |
+| Next action | Required CI; merge when green. Operator smoke in a real MCP client per `docs/mcp.md`. |
+
+## Milestone 3 — TLS 1.3 two-process LAN transfer (merged as #17)
+
+| Field | Value |
+| --- | --- |
 | Owner | Implementation worker on `asher/codex/milestone-3-lan-tls` |
-| PR | https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-3-lan-tls (ManagePullRequest rejected `asher/codex/`; GitHub MCP 403) |
-| Tested revision | local `./scripts/ci/linux.sh` 31+3 (no Xcode on this runner) |
 | Evidence | Core LAN framing/pin tests + Apple `LANTransferTests` (TLS pair, deploy, idempotent replay, hash reject, second-owner pin, no plaintext handshake) |
-| Blockers | Physical two-device pairing still pending operator hardware. This environment cannot run `swift test` / Xcode. |
-| Next action | Required CI; merge when green. MCP helper / extra examples / release workflows stay with other workers. |
 
 ## Operator / brand (settled)
 
@@ -24,16 +31,37 @@ weaken checks.
 
 ## Based on
 
-`origin/main` @ `48b0fc5` (Workbench #10).
+`origin/main` @ `a4c7642` (MCP preview helper #12, on top of TLS LAN #17).
 
 ## Job names (stable)
 
-`contracts-and-sdk` · `apple-build-and-unit` · `apple-ui-and-preview` ·
-`security-and-hygiene` · `required-checks`
+`contracts-and-sdk` · `core-linux` · `apple-build-and-unit` ·
+`apple-ui-and-preview` · `security-and-hygiene` · `required-checks`
 
 Not weakened.
 
-## This branch
+## This branch (MCP pairing and deploy)
+
+- `ScreenpunkController` gains `DeviceLink`/`DeviceLinkFactory` (the LAN
+  transport contract), `DeviceDirectory` (`devices.json`, one owner per
+  device), and `DeviceCoordinator` (pair.begin with controller-side SAS check,
+  pair.confirm that only succeeds after the device owner tapped Confirm,
+  deploy idempotent on `deploymentId`, reachability probe, Mac-only forget).
+- `ControllerService` tracks revisions previewed in this process;
+  `deploy_dashboard` requires that exact `revision` plus `approved=true`
+  (agent-mediated chat approval). `rollback_dashboard` redeploys from device
+  history through the same path.
+- `screenpunk-mcp` links `ScreenpunkApple`, wraps `ControllerLANClient` as the
+  `DeviceLink`, starts the `_screenpunk._tcp` browser into the controller's
+  discovery hub, and loads the shared `xyz.screenpunk.tls.controller`
+  keychain identity so the workbench and MCP present one owner.
+- `DeviceLANServer` keeps the hash-checked package after activation and the
+  iOS root view renders it; failed transfers and Unlink never touch or always
+  clear it respectively.
+- Catalog adds `confirm_pairing` and `forget_device`; input schemas are shared
+  by both transports (`MCPToolSchemas`). Help topics `pairing` and `deploy`.
+
+## Milestone 3 LAN branch (merged)
 
 - Control messages are `protocolVersion` + `requestId` + method + typed payload,
   length-prefixed, capped at 2 MiB.
@@ -52,4 +80,6 @@ Not weakened.
 
 ## Out of scope here
 
-MCP helper, extra dashboard examples, and release-workflow files.
+Release-workflow files, operator docs owned by other work (`docs/help/*`,
+`docs/setup.md`, `docs/unlink-and-recovery.md`), Brand, Mac workbench UI
+changes, and device-side persistence of pairing across app restarts.
