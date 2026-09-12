@@ -41,10 +41,6 @@ public enum JSONValue: Sendable, Equatable {
         object?[key]
     }
 
-    public static func object(_ dict: [String: JSONValue]) -> JSONValue {
-        .object(dict)
-    }
-
     public static func parse(_ data: Data) throws -> JSONValue {
         let json = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
         return try from(json)
