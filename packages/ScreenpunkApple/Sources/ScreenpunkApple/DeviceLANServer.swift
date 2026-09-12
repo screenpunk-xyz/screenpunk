@@ -15,6 +15,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var pairingCode: String?
     public var onChange: (() -> Void)?
     private var deviceConfirmed = false
+    private var pinnedController: [UInt8]?
     public let identity: TLSIdentityMaterial
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.device")
@@ -90,6 +91,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         if let owner = runtime.pairing.session?.candidateOwner {
             try runtime.confirmPairing(code: code, presentedOwner: owner, clock: clock)
         }
+        pinnedController = runtime.pairing.owner?.publicKey
         onChange?()
     }
 
@@ -98,6 +100,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         runtime.unlink()
         pairingCode = nil
         deviceConfirmed = false
+        pinnedController = nil
         lock.unlock()
         onChange?()
     }
@@ -117,7 +120,7 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     private func ownerPin() -> [UInt8]? {
         lock.lock()
-        let pin = runtime.pairing.owner?.publicKey
+        let pin = pinnedController ?? runtime.pairing.owner?.publicKey
         lock.unlock()
         return pin
     }
@@ -215,6 +218,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 }
                 let controller = PairingIdentity(role: .controller, publicKey: controllerPin)
                 try runtime.confirmPairing(code: body.code, presentedOwner: controller, clock: clock)
+                pinnedController = runtime.pairing.owner?.publicKey
                 pairingCode = nil
                 onChange?()
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))

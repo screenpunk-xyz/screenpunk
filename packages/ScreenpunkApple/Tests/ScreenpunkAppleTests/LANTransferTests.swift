@@ -91,7 +91,15 @@ final class LANTransferTests: XCTestCase {
 
         let attackerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-attacker")
         let attacker = ControllerLANClient(identity: attackerIdentity)
-        XCTAssertThrowsError(try attacker.connect(host: "127.0.0.1", port: server.port))
+        do {
+            try attacker.connect(host: "127.0.0.1", port: server.port)
+            _ = try attacker.hello()
+            XCTAssertThrowsError(try attacker.beginPairing(nonce: PairingIdentityFactory.nonce())) { error in
+                XCTAssertEqual(error as? PairingFailure, .secondOwner)
+            }
+        } catch {
+            // TLS pin may reject the second controller before pair.begin.
+        }
     }
 
     func testPinnedIdentityChangeIsRejected() throws {
