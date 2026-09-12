@@ -7,8 +7,8 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 | Milestone | 0 — Bootstrap and feasibility (bootstrap in this PR) |
 | Task | Repo layout, Apache/DCO, portable CI, bundled Style-Guide identity + tokens |
 | Owner | Implementation worker on `asher/codex/milestone-0-bootstrap` |
-| PR | Pending — update after GitHub create |
-| Tested revision | This branch; local `./scripts/ci/linux.sh`. Apple jobs untested here |
+| PR | Not opened. GitHub MCP `create_pull_request` → **403 Resource not accessible by personal access token**. ManagePullRequest → **The head branch does not start with the required prefix `cursor/`**. Compare: https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-0-bootstrap |
+| Tested revision | `164dc72`; local `./scripts/ci/linux.sh` (5/5 SDK+schema tests + brand provenance). Apple jobs untested here |
 | Evidence | `assets/brand/PROVENANCE.md`, `docs/toolchain.md`, stable CI job ids |
 | Blockers | Copyright-owner legal name; bundle ID registration; Apple secrets (later); `macos-15` / Xcode unconfirmed; GitHub MCP branch-create 403 |
 | Next action | Milestone 0 feasibility spikes after this PR: hidden Mac preview, iOS isolation, pairing fixtures |
