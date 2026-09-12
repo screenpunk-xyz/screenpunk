@@ -56,8 +56,11 @@ public enum PlatformRequirements: Sendable {
     public static let ios27RequiredToRun = false
     public static let preferredControls = "ios27-style-guide"
     public static let controlFallback = "older-os-safe"
-    public static let proposedIOSBundleID = "xyz.screenpunk.ios"
-    public static let proposedMacBundleID = "xyz.screenpunk.macos"
+    public static let copyrightOwner = "Screenpunk, Inc."
+    public static let bundleIDPrefix = "xyz.screenpunk"
+    public static let iosBundleID = "xyz.screenpunk.ios"
+    public static let macBundleID = "xyz.screenpunk.macos"
+    public static let previewHostBundleID = "xyz.screenpunk.preview-host"
 }
 
 public enum PackageLimits: Sendable {

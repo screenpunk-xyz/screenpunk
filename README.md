@@ -37,5 +37,5 @@ assets/brand/ docs/ .github/workflows/
 
 ## License
 
-Apache 2.0 for software. Brand artwork is separate — see
+Apache 2.0 for software. Copyright 2026 Screenpunk, Inc. Brand artwork is separate — see
 [docs/brand-policy.md](docs/brand-policy.md).

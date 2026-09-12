@@ -39,8 +39,14 @@ jobs:
       - name: License, brand, and docs
         run: |
           test -f LICENSE && grep -q "Apache License" LICENSE
+          grep -q "Copyright 2026 Screenpunk, Inc." LICENSE
           test -f NOTICE
+          grep -q "Copyright 2026 Screenpunk, Inc." NOTICE
           grep -q "not licensed under" NOTICE
+          grep -q "xyz.screenpunk.ios" apps/ios/project.yml
+          grep -q "xyz.screenpunk.macos" apps/macos/project.yml
+          grep -q "Copyright 2026 Screenpunk, Inc." apps/ios/project.yml
+          grep -q "Copyright 2026 Screenpunk, Inc." apps/macos/project.yml
           test -f docs/implementation-status.md
           test -f docs/apple-review-position.md
           ./scripts/verify-brand.mjs

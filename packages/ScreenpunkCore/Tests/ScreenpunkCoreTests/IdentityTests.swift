@@ -23,5 +23,10 @@ final class IdentityTests: XCTestCase {
         XCTAssertFalse(PlatformRequirements.ios27RequiredToRun)
         XCTAssertEqual(PlatformRequirements.preferredControls, "ios27-style-guide")
         XCTAssertEqual(PackageLimits.schemaMajor, 1)
+        XCTAssertEqual(PlatformRequirements.copyrightOwner, "Screenpunk, Inc.")
+        XCTAssertEqual(PlatformRequirements.bundleIDPrefix, "xyz.screenpunk")
+        XCTAssertEqual(PlatformRequirements.iosBundleID, "xyz.screenpunk.ios")
+        XCTAssertEqual(PlatformRequirements.macBundleID, "xyz.screenpunk.macos")
+        XCTAssertEqual(PlatformRequirements.previewHostBundleID, "xyz.screenpunk.preview-host")
     }
 }

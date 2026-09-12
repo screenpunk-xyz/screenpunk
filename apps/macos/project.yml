@@ -39,4 +39,4 @@ targets:
       base:
         PRODUCT_NAME: Screenpunk
         INFOPLIST_KEY_CFBundleDisplayName: Screenpunk
-        INFOPLIST_KEY_NSHumanReadableCopyright: Copyright 2026 the Screenpunk contributors
+        INFOPLIST_KEY_NSHumanReadableCopyright: Copyright 2026 Screenpunk, Inc.

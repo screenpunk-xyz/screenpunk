@@ -12,7 +12,8 @@ executed Apple evidence.
 | Swift (packages) | 5.9+ tools, Swift 6 language mode where hosts allow | ScreenpunkCore is Linux-testable |
 | iOS deployment | 16.0 | Universal iPhone/iPad |
 | macOS deployment | 26.0 | Apple silicon only |
-| Proposed bundle IDs | `xyz.screenpunk.ios`, `xyz.screenpunk.macos` | Not claimed as registered |
+| Copyright owner | Screenpunk, Inc. | NOTICE, LICENSE appendix, XcodeGen `NSHumanReadableCopyright` |
+| Bundle IDs | `xyz.screenpunk.*` | Operator-chosen: `xyz.screenpunk.ios`, `xyz.screenpunk.macos`, `xyz.screenpunk.preview-host`. Apple Developer portal registration is a later signing step |
 | GitHub Linux | `ubuntu-24.04` | `contracts-and-sdk`, `security-and-hygiene`, `required-checks` |
 | GitHub macOS | `macos-15` | Candidate image; availability and Xcode version unverified until CI runs |
 

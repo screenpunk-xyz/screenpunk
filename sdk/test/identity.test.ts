@@ -3,13 +3,18 @@ import { test } from "node:test";
 import {
   APPROVED_PORCELAIN,
   APPROVED_SOOT,
+  BUNDLE_ID_PREFIX,
+  COPYRIGHT_OWNER,
   DANGER_DARK,
   DANGER_LIGHT,
   DEFAULT_LOCKUP,
+  IOS_BUNDLE_ID,
   IOS_27_REQUIRED_TO_RUN,
   IOS_MINIMUM,
   LOGOMARK_REVISION,
+  MAC_BUNDLE_ID,
   MACOS_MINIMUM,
+  PREVIEW_HOST_BUNDLE_ID,
   OFFLINE_USES_SYSTEM_RED,
   SCHEMA_MAJOR,
   STYLE_GUIDE_URL,
@@ -33,4 +38,9 @@ test("danger offline and platform fallbacks", () => {
   assert.equal(OFFLINE_USES_SYSTEM_RED, false);
   assert.equal(DANGER_LIGHT, "#A52C42");
   assert.equal(DANGER_DARK, "#FF8BA0");
+  assert.equal(COPYRIGHT_OWNER, "Screenpunk, Inc.");
+  assert.equal(BUNDLE_ID_PREFIX, "xyz.screenpunk");
+  assert.equal(IOS_BUNDLE_ID, "xyz.screenpunk.ios");
+  assert.equal(MAC_BUNDLE_ID, "xyz.screenpunk.macos");
+  assert.equal(PREVIEW_HOST_BUNDLE_ID, "xyz.screenpunk.preview-host");
 });

@@ -34,7 +34,12 @@ export {
   OFFLINE_USES_SYSTEM_RED,
   DANGER_LIGHT,
   DANGER_DARK,
-  LIGHT_CANVAS
+  LIGHT_CANVAS,
+  COPYRIGHT_OWNER,
+  BUNDLE_ID_PREFIX,
+  IOS_BUNDLE_ID,
+  MAC_BUNDLE_ID,
+  PREVIEW_HOST_BUNDLE_ID
 } from "./identity.js";
 
 export type Orientation = "portrait" | "landscape";
