@@ -15,6 +15,7 @@ DerivedData/
 .ci-derived/
 .tools/
 tests/feasibility/preview/last-snapshot.png
+tests/feasibility/preview/last-package-snapshot.png
 tests/feasibility/preview/last-attempt.txt
 .env
 .env.*

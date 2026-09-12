@@ -10,12 +10,18 @@ let package = Package(
         .executable(name: "screenpunk-mcp", targets: ["screenpunk-mcp"])
     ],
     dependencies: [
-        .package(path: "../../packages/ScreenpunkCore")
+        .package(path: "../../packages/ScreenpunkCore"),
+        .package(path: "../../packages/ScreenpunkController"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.10.2")
     ],
     targets: [
         .executableTarget(
             name: "screenpunk-mcp",
-            dependencies: ["ScreenpunkCore"]
+            dependencies: [
+                "ScreenpunkCore",
+                "ScreenpunkController",
+                .product(name: "MCP", package: "swift-sdk")
+            ]
         )
     ]
 )

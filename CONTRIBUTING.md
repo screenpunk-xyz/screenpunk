@@ -26,7 +26,7 @@ Use the `asher/codex/` prefix unless repository instructions change.
 From a clean checkout:
 
 ```sh
-./scripts/ci/linux.sh
+./scripts/ci/linux.sh          # includes tests/mcp catalog and unlink help
 ```
 
 Apple generation (macOS). `./scripts/generate-xcode.sh` installs pinned

@@ -1,0 +1,18 @@
+{
+  "onboarding": {
+    "title": "Screenpunk MCP",
+    "body": "Screenpunk starts its local controller and hidden preview helper automatically when this MCP server launches. The Mac workbench does not need to be visibly open.\n\nPreview is live by default. Actions in a live preview can control approved devices. Screenshot capture itself does not click controls.\n\nDeployment of a previewed revision is agent-mediated chat approval, not a cryptographic guarantee.\n\nUnlink recovery: hold two fingers on the device screen for ten seconds, then tap Unlink. Dashboard, credentials, and pairing are erased. Forgetting an unreachable device on the Mac does not erase it."
+  },
+  "unlink": {
+    "title": "Unlink a device",
+    "body": "Hold two fingers on the device screen for ten seconds, then tap Unlink. Dashboard, credentials, and pairing are erased.\n\nForgetting an unreachable device on the Mac does not erase it. This Mac has forgotten the device. To remove its dashboard and pairing, hold two fingers on its screen for 10 seconds, then tap Unlink.\n\nA reachable unlink from the Mac asks the phone to erase and reports acknowledgment. Forget is not remote erasure or upstream-token revocation."
+  },
+  "preview": {
+    "title": "Live preview",
+    "body": "preview_dashboard returns PNG image content rendered by Screenpunk's hidden helper, plus revision digest, target dimensions, rendering platform, connection health, and diagnostics. It never returns only a local path.\n\nPreview is live by default. Live preview — actions control your devices. Capture does not click controls. Failed renders return render_timeout or SNAPSHOT_UNAVAILABLE without a placeholder image.\n\nA dark dashboard can be legitimate. Failed rendering is detected through readiness, not by rejecting dark pixels."
+  },
+  "pairing": {
+    "title": "Pairing",
+    "body": "A device allows one owner. Pairing launches trusted native confirmation and never self-approves through MCP. New or expanded connections return permission_required until approved in native settings."
+  }
+}

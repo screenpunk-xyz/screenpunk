@@ -31,3 +31,104 @@ final class ControllerStoreTests: XCTestCase {
         XCTAssertEqual(ControllerPlaceholder.socketName, "screenpunk-controller.sock")
     }
 }
+
+final class DashboardPackageStoreTests: XCTestCase {
+    func testCreatesTwoImmutableRevisionsAndDetectsStaleBase() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sp-ctrl-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DashboardPackageStore(root: root)
+
+        let first = try store.putDashboard(
+            dashboardId: nil,
+            name: "Alpha",
+            baseRevision: nil,
+            target: fixtureTarget(),
+            connections: [],
+            files: [htmlFile("ONE")]
+        )
+        XCTAssertEqual(first.manifest.name, "Alpha")
+        XCTAssertFalse(first.manifest.revision.isEmpty)
+        XCTAssertNotNil(first.manifest.digest)
+
+        let second = try store.putDashboard(
+            dashboardId: first.manifest.dashboardId,
+            name: "Alpha",
+            baseRevision: first.manifest.revision,
+            target: fixtureTarget(),
+            connections: [],
+            files: [htmlFile("TWO")]
+        )
+        XCTAssertNotEqual(second.manifest.revision, first.manifest.revision)
+        XCTAssertEqual(try store.listRevisions(dashboardId: first.manifest.dashboardId).count, 2)
+
+        XCTAssertThrowsError(
+            try store.putDashboard(
+                dashboardId: first.manifest.dashboardId,
+                name: "Alpha",
+                baseRevision: first.manifest.revision,
+                target: fixtureTarget(),
+                connections: [],
+                files: [htmlFile("STALE")]
+            )
+        ) { error in
+            XCTAssertEqual((error as? ControllerError)?.code, .revisionConflict)
+        }
+    }
+
+    func testRejectsTraversalAndMissingFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sp-ctrl-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DashboardPackageStore(root: root)
+        XCTAssertThrowsError(
+            try store.putDashboard(
+                dashboardId: nil,
+                name: "Bad",
+                baseRevision: nil,
+                target: fixtureTarget(),
+                connections: [],
+                files: [DashboardFileInput(path: "../secret", text: "x", base64: nil)]
+            )
+        )
+        XCTAssertThrowsError(
+            try store.putDashboard(
+                dashboardId: nil,
+                name: "Empty",
+                baseRevision: nil,
+                target: fixtureTarget(),
+                connections: [],
+                files: []
+            )
+        )
+    }
+}
+
+func fixtureTarget() -> ManifestTarget {
+    ManifestTarget(
+        profileId: "fixture-phone",
+        width: 390,
+        height: 844,
+        scale: 3,
+        orientation: "portrait"
+    )
+}
+
+func htmlFile(_ marker: String) -> DashboardFileInput {
+    DashboardFileInput(
+        path: "index.html",
+        text: "<!doctype html><html><body><p>\(marker)</p></body></html>",
+        base64: nil
+    )
+}
+
+func testPNG() -> Data {
+    Data([
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+        0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54,
+        0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01,
+        0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+        0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82
+    ])
+}

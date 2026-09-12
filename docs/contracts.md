@@ -22,3 +22,6 @@ Generic HTTP fixture: `tools/fixture-server/server.mjs`.
 
 Browser dashboard client: `sdk/src/client.ts` → IIFE `screenpunk.js`.
 Host replies via `globalThis.__screenpunkDispatch`. See `sdk/README.md`.
+
+MCP authoring/preview/help: [docs/mcp.md](mcp.md). Preview returns PNG
+image content from the hidden helper; it is live by default.

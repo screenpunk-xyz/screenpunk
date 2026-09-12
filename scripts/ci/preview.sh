@@ -80,6 +80,26 @@ if [[ -f "$out" ]]; then
   if [[ "$magic" == 89504e470d0a1a0a* ]]; then
     echo "SNAPSHOT_OK path=${out}"
     echo "real PNG produced by WKWebView takeSnapshot; dimensions/contents still need review"
+    package_out="$ROOT/tests/feasibility/preview/last-package-snapshot.png"
+    rm -f "$package_out"
+    set +e
+    SCREENPUNK_SNAPSHOT=1 \
+    SCREENPUNK_PACKAGE_DIR="$ROOT/examples/offline-fixture" \
+    SCREENPUNK_SNAPSHOT_OUT="$package_out" \
+    SCREENPUNK_READY_TIMEOUT=20 \
+    "$app/Contents/MacOS/ScreenpunkPreviewHost" >>"$attempt.stdout" 2>>"$attempt"
+    set -e
+    if [[ -f "$package_out" ]]; then
+      package_magic="$(xxd -p -l 8 "$package_out" 2>/dev/null || true)"
+      if [[ "$package_magic" == 89504e470d0a1a0a* ]]; then
+        echo "PACKAGE_SNAPSHOT_OK path=${package_out}"
+      else
+        echo "PACKAGE_SNAPSHOT_UNAVAILABLE reason=not_png"
+        rm -f "$package_out"
+      fi
+    else
+      echo "PACKAGE_SNAPSHOT_UNAVAILABLE — recorded; not substituting a placeholder"
+    fi
     exit 0
   fi
   echo "SNAPSHOT_UNAVAILABLE reason=not_png"
