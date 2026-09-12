@@ -8,7 +8,7 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 | Task | Persist Screenpunk, Inc. + `xyz.screenpunk.*`; keep Apple CI / remaining M0 |
 | Owner | Implementation worker on `asher/codex/milestone-0-bootstrap` |
 | PR | https://github.com/screenpunk-xyz/screenpunk/pull/1 |
-| Tested revision | Local Linux tests after this copyright/bundle-ID change. Prior `d7bc61d` GitHub run still in progress for `apple-*` |
+| Tested revision | `5460ff3` local `./scripts/ci/linux.sh` 22/22. GitHub `apple-*` on this SHA not claimed green yet |
 | Evidence | NOTICE/LICENSE/XcodeGen copyright; isolation + pairing fixtures. No WKWebView PNG from this Linux host |
 | Blockers | Apple secrets / App Store Connect records (later). Copyright owner and bundle ID *choice* are settled |
 | Next action | Push this decision, keep required checks intact, record real `apple-*` outcomes. Do not fake PNG evidence |
