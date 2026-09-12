@@ -1,6 +1,5 @@
 import SwiftUI
 import ScreenpunkApple
-import ScreenpunkCore
 
 @main
 struct ScreenpunkApp: App {
@@ -13,12 +12,8 @@ struct ScreenpunkApp: App {
 
 private struct AppleHostRoot: View {
     var body: some View {
-        if let view = try? DashboardRuntimeView.offlineFixture() {
-            view
-                .ignoresSafeArea()
-                .accessibilityLabel(
-                    "Screenpunk \(PlatformRequirements.iosMinimum) \(WebIsolation.customScheme)"
-                )
+        if let view = try? AppleHostRootView.offlineFixture() {
+            view.ignoresSafeArea()
         } else {
             Text("Offline fixture missing")
                 .padding()

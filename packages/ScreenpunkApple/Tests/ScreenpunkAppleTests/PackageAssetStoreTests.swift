@@ -29,4 +29,15 @@ final class PackageAssetStoreTests: XCTestCase {
         XCTAssertEqual(NativeChromeHost.lightDangerHex, "#A52C42")
         XCTAssertEqual(AppleHostPlaceholder.customScheme, "screenpunk")
     }
+
+    func testUnlinkClearsPackageAndReturnsUnpaired() throws {
+        var session = try HostSession.offlineFixture()
+        XCTAssertEqual(session.phase, .dashboard)
+        XCTAssertNotNil(session.store)
+        session.unlink()
+        XCTAssertEqual(session.phase, .unpaired)
+        XCTAssertNil(session.store)
+        XCTAssertEqual(UnpairedHostCopy.headline, "Ready to pair")
+        XCTAssertEqual(BrandIdentity.defaultLockup, "stacked")
+    }
 }

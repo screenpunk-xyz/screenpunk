@@ -67,8 +67,7 @@ public struct PackageAssetStore: Sendable {
         return asset
     }
 
-    /// Host-local path check. Do not call `PackagePath.normalize` (NSRegularExpression
-    /// crash is being fixed on the contracts branch).
+    /// Host-local path check. PackagePath.normalize stays in Core; this host does not call it.
     static func hostRelativePath(_ path: String) throws -> String {
         let posix = path.replacingOccurrences(of: "\\", with: "/")
         if posix.hasPrefix("/")
