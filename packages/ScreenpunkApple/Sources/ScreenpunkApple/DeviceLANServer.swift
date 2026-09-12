@@ -13,6 +13,9 @@ public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var runtime: DeviceRuntime
     public private(set) var port: UInt16 = 0
     public private(set) var pairingCode: String?
+    /// Package bytes of `runtime.activeRevision`. Replaced only after a
+    /// transfer activates; a failed transfer leaves the current package in place.
+    public private(set) var activePackage: PackageAssetStore?
     public var onChange: (() -> Void)?
     private var deviceConfirmed = false
     private var pinnedController: [UInt8]?
@@ -98,6 +101,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     public func unlink() {
         lock.lock()
         runtime.unlink()
+        activePackage = nil
         pairingCode = nil
         deviceConfirmed = false
         pinnedController = nil
@@ -224,8 +228,12 @@ public final class DeviceLANServer: @unchecked Sendable {
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
             case .deploy:
                 let body = try LANCodec.decodePayload(LANDeployBody.self, json: request.payloadJSON)
-                try validateFiles(body.files)
+                let staged = try stageFiles(body.files)
                 let outcome = try runtime.receiveDeployment(body.deployment, revision: body.revision)
+                if outcome.phase == .active {
+                    activePackage = PackageAssetStore(assets: staged)
+                    onChange?()
+                }
                 return ok(request, payload: outcome)
             case .queryActive:
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
@@ -267,7 +275,10 @@ public final class DeviceLANServer: @unchecked Sendable {
         #endif
     }
 
-    private func validateFiles(_ files: [LANFileBlob]) throws {
+    /// Hash-checks every blob before anything can activate. Nothing here
+    /// touches `activePackage`; a rejected transfer keeps the current dashboard.
+    private func stageFiles(_ files: [LANFileBlob]) throws -> [String: PackageAsset] {
+        var staged: [String: PackageAsset] = [:]
         for file in files {
             guard let data = Data(base64Encoded: file.dataBase64) else {
                 throw TransferFailure.validationFailed
@@ -276,8 +287,16 @@ public final class DeviceLANServer: @unchecked Sendable {
             if digest != file.sha256.lowercased() {
                 throw TransferFailure.validationFailed
             }
-            _ = try PackagePath.normalize(file.path)
+            let normalized = try PackagePath.normalize(file.path)
+            guard let path = try? PackageAssetStore.hostRelativePath(normalized) else {
+                throw TransferFailure.validationFailed
+            }
+            if staged[path] != nil {
+                throw TransferFailure.validationFailed
+            }
+            staged[path] = PackageAsset(path: path, data: data, mime: PackageAssetStore.mime(for: path))
         }
+        return staged
     }
 
     private func ok<T: Encodable>(_ request: LANEnvelope, payload: T) -> LANEnvelope {

@@ -56,6 +56,9 @@ final class LANTransferTests: XCTestCase {
         XCTAssertEqual(outcome.phase, .active)
         XCTAssertEqual(try client.queryActive(), StoredRevision.offlineFixture.revision)
         XCTAssertEqual(server.runtime.activeRevision, StoredRevision.offlineFixture.revision)
+        let delivered = try XCTUnwrap(server.activePackage, "device keeps the delivered package for rendering")
+        XCTAssertEqual(delivered.assets["index.html"]?.mime, "text/html")
+        XCTAssertNoThrow(try delivered.asset(forSchemeURL: "screenpunk://package/index.html"))
 
         let replay = try client.deploy(
             LANDeployBody(
@@ -88,6 +91,30 @@ final class LANTransferTests: XCTestCase {
             )
         )
         XCTAssertEqual(server.runtime.activeRevision, StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(server.activePackage?.assets.count, delivered.assets.count, "failed transfer keeps the current package")
+
+        var landscape = StoredRevision.offlineFixture
+        landscape.revision = "33333333-3333-4333-8333-333333333333"
+        landscape.orientation = .landscape
+        landscape.width = 844
+        landscape.height = 390
+        let mismatch = try client.deploy(
+            LANDeployBody(
+                deployment: DeploymentRecord(
+                    deploymentId: "lan-deploy-wide",
+                    revision: landscape.revision,
+                    dashboardId: landscape.dashboardId,
+                    deviceId: "lan-phone",
+                    phase: .queued
+                ),
+                revision: landscape,
+                files: files
+            )
+        )
+        XCTAssertEqual(mismatch.phase, .failed)
+        XCTAssertEqual(mismatch.error, TransferFailure.targetMismatch.rawValue)
+        XCTAssertEqual(server.runtime.activeRevision, StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(server.activePackage?.assets.count, delivered.assets.count)
 
         let attackerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-attacker")
         let attacker = ControllerLANClient(identity: attackerIdentity)
@@ -100,6 +127,11 @@ final class LANTransferTests: XCTestCase {
         } catch {
             // TLS pin may reject the second controller before pair.begin.
         }
+
+        server.unlink()
+        XCTAssertFalse(server.runtime.isPaired)
+        XCTAssertNil(server.runtime.activeRevision)
+        XCTAssertNil(server.activePackage, "Unlink erases the delivered package")
     }
 
     func testPinnedIdentityChangeIsRejected() throws {
