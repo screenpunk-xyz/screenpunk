@@ -95,6 +95,66 @@ final class PackageValidatorTests: XCTestCase {
         XCTAssertEqual(try PackagePath.normalize("foo..bar"), "foo..bar")
     }
 
+    /// The committed schema fixtures are the parity contract with sdk/test/schema.test.ts and package.test.ts.
+    func testCommittedFixturesAgreeWithTypeScript() throws {
+        let decoder = JSONDecoder()
+        let minimal = try decoder.decode(DashboardManifest.self, from: RepoFixtures.data("schemas/fixtures/valid/minimal.json"))
+        XCTAssertNoThrow(try PackageValidator.validate(minimal))
+
+        let offline = try decoder.decode(
+            DashboardManifest.self,
+            from: RepoFixtures.data("examples/offline-fixture/manifest.json")
+        )
+        XCTAssertNoThrow(try PackageValidator.validate(offline))
+        XCTAssertEqual(offline.files.count, 3)
+        XCTAssertEqual(offline.digest?.count, 64)
+        XCTAssertTrue(offline.connections.isEmpty, "offline example declares no connections, so no Offline ring")
+
+        let expectations: [(String, PackageIssue)] = [
+            ("unsupported-major.json", .unsupportedVersion),
+            ("missing-entrypoint.json", .missingEntrypoint),
+            ("duplicate-path.json", .duplicatePath),
+            ("path-traversal.json", .pathTraversal)
+        ]
+        for (name, issue) in expectations {
+            let manifest = try decoder.decode(
+                DashboardManifest.self,
+                from: RepoFixtures.data("schemas/fixtures/invalid/\(name)")
+            )
+            XCTAssertThrowsError(try PackageValidator.validate(manifest), name) { error in
+                XCTAssertEqual((error as? PackageValidationError)?.issues.contains(issue), true, "\(name) → \(issue)")
+            }
+        }
+    }
+
+    func testRejectsInventoryLimitsAndCredentialShapedNames() {
+        let tooMany = (0...PackageLimits.maxFiles).map {
+            ManifestFile(path: "f\($0).js", bytes: 1, sha256: String(repeating: "a", count: 64))
+        } + [ManifestFile(path: "index.html", bytes: 1, sha256: String(repeating: "a", count: 64))]
+        XCTAssertThrowsError(try PackageValidator.validate(manifest(files: tooMany))) { error in
+            XCTAssertEqual((error as? PackageValidationError)?.issues.contains(.sizeLimit), true)
+        }
+        let tooLarge = [
+            ManifestFile(path: "index.html", bytes: PackageLimits.expandedBytes + 1, sha256: String(repeating: "a", count: 64))
+        ]
+        XCTAssertThrowsError(try PackageValidator.validate(manifest(files: tooLarge))) { error in
+            XCTAssertEqual((error as? PackageValidationError)?.issues.contains(.sizeLimit), true)
+        }
+        var leaky = manifest()
+        leaky.name = "Weather api_key demo"
+        XCTAssertThrowsError(try PackageValidator.validate(leaky)) { error in
+            XCTAssertEqual((error as? PackageValidationError)?.issues.contains(.credentialLeak), true)
+        }
+        var wrongSDK = manifest()
+        wrongSDK.sdkVersion = "2"
+        XCTAssertThrowsError(try PackageValidator.validate(wrongSDK)) { error in
+            XCTAssertEqual((error as? PackageValidationError)?.issues.contains(.validationFailed), true)
+        }
+        var sideways = manifest()
+        sideways.target.orientation = "upside-down"
+        XCTAssertThrowsError(try PackageValidator.validate(sideways))
+    }
+
     func testStoreBoundsAndNativeChrome() throws {
         var store = DashboardStore(dashboardId: "dash")
         try store.set(key: "k", json: "1")
