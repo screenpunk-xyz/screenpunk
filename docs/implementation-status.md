@@ -4,14 +4,21 @@ Last updated: 2026-09-12 by worker `bc-8cefc708-ec93-5316-aaa7-e09f4bd9ba49`.
 
 | Field | Value |
 | --- | --- |
-| Milestone | 3 — MCP pairing and deploy over the TLS 1.3 LAN link |
-| Task | `request_pairing` / `confirm_pairing` / `deploy_dashboard` / `rollback_dashboard` / `get_deployment` / `list_devices` / `get_device` / `forget_device` work from `screenpunk-mcp` against `DeviceLANServer`; `not_paired` is now a real answer, not the only one |
+| Milestone | 3 — device persistence and TLS-bound SAS (follow-up to #21) |
+| Task | Phone keeps owner, active revision, and package bytes across relaunch (`DeviceStateStore`); SAS transcript and owner checks bind to the certificate pin observed in each TLS handshake on both sides, never to a claimed pin |
+| Owner | Implementation worker on `asher/codex/pairing-persist-sas-pin` |
+| PR | https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/pairing-persist-sas-pin |
+| Tested revision | local `./scripts/ci/core-linux.sh` 66/66 (5 new `DeviceStateStoreTests`); Controller 23/23 through the scratch Linux shim; Apple `LANTransferTests` (relaunch, rogue hello, claimed controller pin) verified by CI |
+| Evidence | `DeviceStateStoreTests`: atomic state replace, staged→swapped package, rejected staging keeps current package, restore keeps one owner and deployment idempotency, erase. `LANTransferTests`: handshake pin read from TLS metadata equals the identity pin; SAS code equals the transcript of both TLS pins; owner persists after confirm, revision and package after deploy; relaunched server is paired and rendering, owner reconnects, stranger fails, Unlink erases and a cold start is unpaired; a rogue device claiming another pin in `hello` is `identityChanged`; a controller claiming another pin in `pair.begin` is `identityChanged` and `query.active` is owner-only. |
+| Blockers | Physical two-device pairing still pending operator hardware. This environment cannot run Xcode; Apple compile is CI-verified. |
+| Next action | Required CI; merge when green. |
+
+## Milestone 3 — MCP pairing and deploy (merged as #21)
+
+| Field | Value |
+| --- | --- |
 | Owner | Implementation worker on `asher/codex/milestone-mcp-pairing-deploy` |
-| PR | https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-mcp-pairing-deploy |
-| Tested revision | local `./scripts/ci/linux.sh`; Controller tests (22) run on Linux through a scratch CryptoKit/Darwin shim; Apple jobs verify `LANTransferTests` and the executable build |
-| Evidence | `PairingDeployTests` drive the MCP router against an in-memory device mirroring `DeviceLANServer`: SAS code shown equals device code, confirm before device tap → `permission_required`, one owner, persisted `devices.json`, deploy needs previewed + `approved`, idempotent `deploymentId`, target mismatch and corrupt hash keep the active revision, rollback, offline/unknown errors, forget is Mac-only. `LANTransferTests` now asserts the device keeps the delivered package and Unlink erases it. |
-| Blockers | Physical two-device pairing still pending operator hardware. This environment cannot run Xcode; Apple compile is CI-verified. Device pairing/package state is in-memory on the phone (restart returns to unpaired), as in #17. |
-| Next action | Required CI; merge when green. Operator smoke in a real MCP client per `docs/mcp.md`. |
+| Evidence | `PairingDeployTests` drive the MCP router against an in-memory device mirroring `DeviceLANServer`: SAS code shown equals device code, confirm before device tap → `permission_required`, one owner, persisted `devices.json`, deploy needs previewed + `approved`, idempotent `deploymentId`, target mismatch and corrupt hash keep the active revision, rollback, offline/unknown errors, forget is Mac-only. `LANTransferTests` asserts the device keeps the delivered package and Unlink erases it. |
 
 ## Milestone 3 — TLS 1.3 two-process LAN transfer (merged as #17)
 
@@ -31,7 +38,7 @@ weaken checks.
 
 ## Based on
 
-`origin/main` @ `a4c7642` (MCP preview helper #12, on top of TLS LAN #17).
+`origin/main` @ `aef8898` (MCP pairing and deploy #21).
 
 ## Job names (stable)
 
@@ -40,7 +47,27 @@ weaken checks.
 
 Not weakened.
 
-## This branch (MCP pairing and deploy)
+## This branch (device persistence and TLS-bound SAS)
+
+- `ScreenpunkCore/DeviceStateStore`: `DevicePersistedState` (owner pin,
+  active revision, `StoredRevision`, last deployment) replaced with
+  `rename(2)`; package bytes staged to `package.staging-*` and swapped in as
+  `package/` only after activation, previous package restored if the swap
+  fails; `erase()` removes everything. `DeviceRuntime.restore` rebuilds the
+  runtime; sessions never persist.
+- `DeviceLANServer` restores from the store at init, persists on confirm and
+  after every deploy outcome, stages to disk before `receiveDeployment`, and
+  erases on Unlink. `DeviceLANHost` defaults to the per-user device home
+  (`SCREENPUNK_DEVICE_HOME` override).
+- `LANChannel.observedPeerPin` reads the leaf certificate from the
+  connection's TLS metadata. `ControllerLANClient` fails closed when `hello`
+  claims a pin other than the handshake pin and pins the observed value.
+  `DeviceLANServer` computes the SAS transcript from the handshake pin, rejects
+  `pair.begin`/`pair.confirm` payloads that claim another pin, and gates
+  `deploy` and `query.active` on the owner pin. `DeviceCoordinator` uses the
+  link's observed pin for its own SAS check.
+
+## Milestone 3 MCP branch (merged)
 
 - `ScreenpunkController` gains `DeviceLink`/`DeviceLinkFactory` (the LAN
   transport contract), `DeviceDirectory` (`devices.json`, one owner per
@@ -81,5 +108,5 @@ Not weakened.
 ## Out of scope here
 
 Release-workflow files, operator docs owned by other work (`docs/help/*`,
-`docs/setup.md`, `docs/unlink-and-recovery.md`), Brand, Mac workbench UI
-changes, and device-side persistence of pairing across app restarts.
+`docs/setup.md`, `docs/unlink-and-recovery.md`), Brand, and Mac workbench UI
+changes.

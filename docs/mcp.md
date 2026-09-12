@@ -89,7 +89,10 @@ WebSocket data; the Mac is not a runtime proxy.
    blocked, pass `host` and `port` from the device's unpaired screen.
 2. `request_pairing` opens the pinned channel, runs SAS pairing, checks the
    code against its own transcript, and returns the six-digit matching code.
-   Show it to the user. The device shows its own code.
+   Show it to the user. The device shows its own code. Both sides compute the
+   transcript from the certificate pins observed in the TLS handshake; a peer
+   that claims a different identity in a message is rejected before any code
+   is shown.
 3. Only if both codes match, the user taps **Confirm** on the device. Then call
    `confirm_pairing`. Until the device owner has confirmed there, it returns
    `permission_required`; the agent cannot approve on the device's behalf. Codes
@@ -106,7 +109,9 @@ WebSocket data; the Mac is not a runtime proxy.
 The device hash-checks every file and its target orientation and size before
 activating. A failed or interrupted transfer returns an error result with
 `phase: "failed"` and `currentDashboardKept: true`; the device keeps its
-current dashboard. `get_deployment` correlates by `deploymentId`.
+current dashboard. The device stores its owner, active revision, and package
+bytes on disk, so it comes back paired and rendering after a relaunch; only
+the two-finger Unlink erases them. `get_deployment` correlates by `deploymentId`.
 `rollback_dashboard` redeploys a revision from the device's history through
 the same path. `forget_device` removes the device from this Mac only and does
 not erase it.
