@@ -173,7 +173,11 @@ public enum SystemNameResolver {
     public static func addresses(for host: String) throws -> [String] {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
+        #if canImport(Glibc)
+        hints.ai_socktype = Int32(SOCK_STREAM.rawValue)
+        #else
         hints.ai_socktype = SOCK_STREAM
+        #endif
         var info: UnsafeMutablePointer<addrinfo>?
         let status = host.withCString { hostname in
             getaddrinfo(hostname, nil, &hints, &info)

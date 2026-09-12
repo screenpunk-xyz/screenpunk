@@ -27,5 +27,147 @@
       "code": "756361",
       "expect": "codes-differ-from-honest"
     }
+  ],
+  "identities": {
+    "honest": { "role": "controller", "publicKey": "0202020202020202020202020202020202020202020202020202020202020202" },
+    "attacker": { "role": "controller", "publicKey": "9999999999999999999999999999999999999999999999999999999999999999" },
+    "rotated": { "role": "controller", "publicKey": "0404040404040404040404040404040404040404040404040404040404040404" },
+    "device-role": { "role": "device", "publicKey": "0202020202020202020202020202020202020202020202020202020202020202" },
+    "short-key": { "role": "controller", "publicKey": "0202" }
+  },
+  "scenarioNote": "Every step runs against one DevicePairingState in order. `begin` uses the transcript and code of `case`; `candidate` defaults to a controller identity with that case's key. `atSeconds` is the injected clock offset from scenario start. `code` is a literal or `case:<id>`. Both the Swift and TypeScript state machines must produce the same outcome per step and the same final owner.",
+  "scenarios": [
+    {
+      "id": "happy-path",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 5, "expect": "ok" }
+      ],
+      "finalOwner": "honest"
+    },
+    {
+      "id": "expiry-boundary-inclusive",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 120, "expect": "ok" }
+      ],
+      "finalOwner": "honest"
+    },
+    {
+      "id": "expired-after-window",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 121, "expect": "expired" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 121, "expect": "expired" }
+      ],
+      "finalOwner": null
+    },
+    {
+      "id": "confirm-without-session",
+      "steps": [
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 0, "expect": "expired" }
+      ],
+      "finalOwner": null
+    },
+    {
+      "id": "wrong-code-then-correct",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "000000", "presented": "honest", "atSeconds": 1, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 2, "expect": "ok" }
+      ],
+      "finalOwner": "honest"
+    },
+    {
+      "id": "rate-limit-locks-session",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "000000", "presented": "honest", "atSeconds": 1, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "111111", "presented": "honest", "atSeconds": 2, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "222222", "presented": "honest", "atSeconds": 3, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "333333", "presented": "honest", "atSeconds": 4, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "444444", "presented": "honest", "atSeconds": 5, "expect": "rateLimited" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 6, "expect": "rateLimited" },
+        { "op": "confirm", "code": "case:honest", "presented": "attacker", "atSeconds": 7, "expect": "rateLimited" }
+      ],
+      "finalOwner": null
+    },
+    {
+      "id": "mitm-transcript-code-rejected",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:mitm-substituted-controller", "presented": "honest", "atSeconds": 3, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "case:key-change", "presented": "honest", "atSeconds": 4, "expect": "codeMismatch" }
+      ],
+      "finalOwner": null
+    },
+    {
+      "id": "identity-changed-mid-session",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "attacker", "atSeconds": 3, "expect": "identityChanged" },
+        { "op": "confirm", "code": "case:honest", "presented": "rotated", "atSeconds": 4, "expect": "identityChanged" }
+      ],
+      "finalOwner": null
+    },
+    {
+      "id": "second-owner-rejected-after-pairing",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 5, "expect": "ok" },
+        { "op": "begin", "case": "mitm-substituted-controller", "atSeconds": 600, "expect": "secondOwner" },
+        { "op": "begin", "case": "key-change", "atSeconds": 601, "expect": "secondOwner" }
+      ],
+      "finalOwner": "honest"
+    },
+    {
+      "id": "same-owner-can-pair-again",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 5, "expect": "ok" },
+        { "op": "begin", "case": "honest", "atSeconds": 3600, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 3605, "expect": "ok" }
+      ],
+      "finalOwner": "honest"
+    },
+    {
+      "id": "rate-limit-keeps-existing-owner",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 5, "expect": "ok" },
+        { "op": "begin", "case": "honest", "atSeconds": 100, "expect": "ok" },
+        { "op": "confirm", "code": "000000", "presented": "honest", "atSeconds": 101, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "000000", "presented": "honest", "atSeconds": 102, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "000000", "presented": "honest", "atSeconds": 103, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "000000", "presented": "honest", "atSeconds": 104, "expect": "codeMismatch" },
+        { "op": "confirm", "code": "000000", "presented": "honest", "atSeconds": 105, "expect": "rateLimited" }
+      ],
+      "finalOwner": "honest"
+    },
+    {
+      "id": "invalid-identity-device-role",
+      "steps": [
+        { "op": "begin", "case": "honest", "candidate": "device-role", "atSeconds": 0, "expect": "invalidIdentity" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 1, "expect": "expired" }
+      ],
+      "finalOwner": null
+    },
+    {
+      "id": "invalid-identity-short-key",
+      "steps": [
+        { "op": "begin", "case": "honest", "candidate": "short-key", "atSeconds": 0, "expect": "invalidIdentity" }
+      ],
+      "finalOwner": null
+    },
+    {
+      "id": "expired-session-then-fresh-session",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 200, "expect": "expired" },
+        { "op": "begin", "case": "honest", "atSeconds": 200, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 201, "expect": "ok" }
+      ],
+      "finalOwner": "honest"
+    }
   ]
 }

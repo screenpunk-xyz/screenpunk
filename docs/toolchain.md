@@ -14,7 +14,8 @@ executed Apple evidence.
 | macOS deployment | 26.0 | Apple silicon only |
 | Copyright owner | Screenpunk, Inc. | NOTICE, LICENSE appendix, XcodeGen `NSHumanReadableCopyright` |
 | Bundle IDs | `xyz.screenpunk.*` | Operator-chosen: `xyz.screenpunk.ios`, `xyz.screenpunk.macos`, `xyz.screenpunk.preview-host`. Apple Developer portal registration is a later signing step |
-| GitHub Linux | `ubuntu-24.04` | `contracts-and-sdk`, `security-and-hygiene`, `required-checks` |
+| GitHub Linux | `ubuntu-24.04` | `contracts-and-sdk`, `core-linux`, `security-and-hygiene`, `required-checks` |
+| Swift on Linux | 6.1.3 (`swift:6.1.3-noble@sha256:ed778a717c778240aa72f50e6c58e002d993fd445bc2516b484ba99c480dc25b`) | `core-linux` runs `./scripts/ci/core-linux.sh` (ScreenpunkCore `swift test`) in the official image. CryptoKit-only tests compile out here and run in `apple-build-and-unit`. Not Apple UI evidence |
 | GitHub macOS | `macos-15` | Candidate image; availability and Xcode version unverified until CI runs |
 
 ## Actions (SHA-pinned)

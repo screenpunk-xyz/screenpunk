@@ -94,6 +94,216 @@
       "url": "screenpunk://package/index.html",
       "isMainFrame": false,
       "expect": "denyBridgeSpoof"
+    },
+    {
+      "id": "bridge-spoof-main-frame",
+      "kind": "bridgeSpoof",
+      "url": "screenpunk://package/index.html",
+      "isMainFrame": true,
+      "expect": "denyBridgeSpoof"
+    },
+    {
+      "id": "local-stylesheet",
+      "kind": "stylesheet",
+      "url": "screenpunk://package/styles/theme.css",
+      "isMainFrame": true,
+      "expect": "allowLocalAsset"
+    },
+    {
+      "id": "local-image",
+      "kind": "image",
+      "url": "screenpunk://package/img/logo.png",
+      "isMainFrame": true,
+      "expect": "allowLocalAsset"
+    },
+    {
+      "id": "local-entry-navigation",
+      "kind": "navigation",
+      "url": "screenpunk://package/index.html",
+      "isMainFrame": true,
+      "expect": "allowLocalAsset"
+    },
+    {
+      "id": "local-dotdot-inside-name",
+      "kind": "script",
+      "url": "screenpunk://package/vendor/foo..bar.js",
+      "isMainFrame": true,
+      "expect": "allowLocalAsset"
+    },
+    {
+      "id": "remote-image",
+      "kind": "image",
+      "url": "https://cdn.example/pixel.png",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "fetch-uppercase-scheme",
+      "kind": "fetch",
+      "url": "HTTPS://evil.example/api",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "xhr-plain-ws-scheme",
+      "kind": "xhr",
+      "url": "ws://192.168.1.10:8123/api/websocket",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "websocket-home-assistant-direct",
+      "kind": "websocket",
+      "url": "ws://homeassistant.local:8123/api/websocket",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "fetch-loopback-ipv6",
+      "kind": "fetch",
+      "url": "http://[::1]:8123/api/states",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "fetch-cloud-metadata",
+      "kind": "fetch",
+      "url": "http://169.254.169.254/latest/meta-data/",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "fetch-other-custom-host",
+      "kind": "fetch",
+      "url": "screenpunk://controller/secrets",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "script-blob-url",
+      "kind": "script",
+      "url": "blob:screenpunk://package/7b6d2a1e",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "script-local-with-query",
+      "kind": "script",
+      "url": "screenpunk://package/app.js?cachebust=1",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "script-local-percent-encoded",
+      "kind": "script",
+      "url": "screenpunk://package/my%20app.js",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "navigation-javascript-url",
+      "kind": "navigation",
+      "url": "javascript:alert(1)",
+      "isMainFrame": true,
+      "expect": "denyNavigation"
+    },
+    {
+      "id": "navigation-data-url",
+      "kind": "navigation",
+      "url": "data:text/html,<script>parent.postMessage(1)</script>",
+      "isMainFrame": true,
+      "expect": "denyNavigation"
+    },
+    {
+      "id": "navigation-about-blank",
+      "kind": "navigation",
+      "url": "about:blank",
+      "isMainFrame": true,
+      "expect": "denyNavigation"
+    },
+    {
+      "id": "navigation-other-custom-host",
+      "kind": "navigation",
+      "url": "screenpunk://controller/admin",
+      "isMainFrame": true,
+      "expect": "denyNavigation"
+    },
+    {
+      "id": "navigation-package-root-empty-path",
+      "kind": "navigation",
+      "url": "screenpunk://package/",
+      "isMainFrame": true,
+      "expect": "denyNavigation"
+    },
+    {
+      "id": "navigation-plain-http",
+      "kind": "navigation",
+      "url": "http://phish.example/login",
+      "isMainFrame": true,
+      "expect": "denyNavigation"
+    },
+    {
+      "id": "iframe-remote",
+      "kind": "iframe",
+      "url": "https://evil.example/frame",
+      "isMainFrame": true,
+      "expect": "denyFrame"
+    },
+    {
+      "id": "form-local-target",
+      "kind": "form",
+      "url": "screenpunk://package/submit",
+      "isMainFrame": true,
+      "expect": "denyFrame"
+    },
+    {
+      "id": "traversal-mid-path",
+      "kind": "script",
+      "url": "screenpunk://package/a/../b.js",
+      "isMainFrame": true,
+      "expect": "denyTraversal"
+    },
+    {
+      "id": "traversal-trailing",
+      "kind": "fetch",
+      "url": "screenpunk://package/a/..",
+      "isMainFrame": true,
+      "expect": "denyTraversal"
+    },
+    {
+      "id": "traversal-backslash",
+      "kind": "script",
+      "url": "screenpunk://package/\\..\\secret",
+      "isMainFrame": true,
+      "expect": "denyTraversal"
+    },
+    {
+      "id": "traversal-encoded-uppercase",
+      "kind": "image",
+      "url": "screenpunk://package/%2E%2E/secret.png",
+      "isMainFrame": true,
+      "expect": "denyTraversal"
+    },
+    {
+      "id": "traversal-remote-url",
+      "kind": "fetch",
+      "url": "https://evil.example/../etc/passwd",
+      "isMainFrame": true,
+      "expect": "denyTraversal"
+    },
+    {
+      "id": "file-uppercase-scheme",
+      "kind": "fetch",
+      "url": "FILE:///etc/hosts",
+      "isMainFrame": true,
+      "expect": "denyFilePath"
+    },
+    {
+      "id": "file-kind-local-url",
+      "kind": "filePath",
+      "url": "screenpunk://package/index.html",
+      "isMainFrame": true,
+      "expect": "denyFilePath"
     }
   ]
 }
