@@ -89,6 +89,14 @@ export function createFixtureServer() {
 
 function attachWebSocket(socket) {
   let buffer = Buffer.alloc(0);
+  let closing = false;
+  const close = (code) => {
+    if (closing) return;
+    closing = true;
+    socket.write(encodeClose(code));
+    socket.end();
+  };
+  socket.on("error", () => {});
   socket.write(
     encodeText(
       JSON.stringify({
@@ -99,6 +107,7 @@ function attachWebSocket(socket) {
     )
   );
   socket.on("data", (chunk) => {
+    if (closing) return;
     buffer = Buffer.concat([buffer, chunk]);
     try {
       while (buffer.length > 0) {
@@ -106,8 +115,7 @@ function attachWebSocket(socket) {
         if (!parsed) break;
         buffer = parsed.rest;
         if (parsed.opcode === 0x8) {
-          socket.write(encodeClose(1000));
-          socket.end();
+          close(1000);
           return;
         }
         if (parsed.opcode === 0x9) {
@@ -116,8 +124,7 @@ function attachWebSocket(socket) {
         }
         if (parsed.opcode === 0x1) {
           if (parsed.payload.length > WS_MAX_BYTES) {
-            socket.write(encodeClose(1009));
-            socket.end();
+            close(1009);
             return;
           }
           socket.write(
@@ -132,8 +139,7 @@ function attachWebSocket(socket) {
         }
       }
     } catch {
-      socket.write(encodeClose(1002));
-      socket.end();
+      close(1002);
     }
   });
 }
