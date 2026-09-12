@@ -8,6 +8,7 @@ test -f LICENSE
 grep -q "Apache License" LICENSE
 test -f NOTICE
 ./scripts/verify-brand.mjs
+./scripts/verify-offline-fixture-resource.sh
 
 cd "$ROOT/sdk"
 if [[ ! -d node_modules ]]; then

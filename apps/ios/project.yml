@@ -33,6 +33,7 @@ targets:
     dependencies:
       - package: ScreenpunkCore
       - package: ScreenpunkApple
+      - sdk: WebKit.framework
     settings:
       base:
         PRODUCT_NAME: Screenpunk

@@ -16,7 +16,10 @@ let package = Package(
     targets: [
         .target(
             name: "ScreenpunkApple",
-            dependencies: ["ScreenpunkCore"]
+            dependencies: ["ScreenpunkCore"],
+            resources: [
+                .copy("Resources/offline-fixture")
+            ]
         ),
         .testTarget(
             name: "ScreenpunkAppleTests",

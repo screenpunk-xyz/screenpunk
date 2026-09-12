@@ -4,45 +4,53 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 
 | Field | Value |
 | --- | --- |
-| Milestone | 1 — Contracts and standalone runtime (contract PR) |
-| Task | Pin schema/SDK/Swift models, package validator, store/bridge bounds, offline example, HTTP fixture |
-| Owner | Implementation worker on `asher/codex/milestone-1-contracts` |
-| PR | Not opened. ManagePullRequest still requires `cursor/`; GitHub MCP `create_pull_request` 403. Compare: https://github.com/screenpunk-xyz/screenpunk/compare/asher/codex/milestone-0-bootstrap...asher/codex/milestone-1-contracts . M0 stays https://github.com/screenpunk-xyz/screenpunk/pull/1 |
-| Tested revision | `24080a2` local `./scripts/ci/linux.sh` 31/31. Do not wait on M0 head rerun |
-| Evidence | `docs/contracts.md`, `examples/offline-fixture/`, `tools/fixture-server/` |
-| Blockers | None new. Apple secrets / App Store Connect still later |
-| Next action | After this contract PR: parallel Apple host, connection adapters, richer SDK/fixtures |
+| Milestone | 1 — Apple host (custom scheme, overlay/gesture, offline fixture) |
+| Task | Load `examples/offline-fixture` on iOS 16 + Mac via `screenpunk://` |
+| Owner | Implementation worker on `asher/codex/milestone-1-apple-host` |
+| PR | https://github.com/screenpunk-xyz/screenpunk/pull/3 (base `main`) |
+| Tested revision | local `./scripts/ci/linux.sh` after rebase onto `origin/main` |
+| Evidence | `packages/ScreenpunkApple` host + bundled fixture copy (hash-locked to examples/) |
+| Blockers | Mac Unlink still 10s press + VoiceOver pending operator choice. Not editing `PackageValidator.swift` |
+| Next action | Required CI on this rebase; coordinator merges #3 when green |
 
-## Operator decisions (settled)
+## Operator / brand (settled)
 
-- Copyright owner: **Screenpunk, Inc.**
-- Bundle IDs: **`xyz.screenpunk.*`**
-- Brand: Codex guide tokens/palette/layout; stacked lockup; danger tokens; iOS 27 controls with older-OS-safe fallbacks; https://screenpunk-style-guide.gsuter.chatgpt.site
+Copyright **Screenpunk, Inc.** Bundle IDs `xyz.screenpunk.*`. Codex guide
+tokens/palette/layout; stacked lockup; danger tokens for Offline/Unlink;
+iOS 27 controls with older-OS-safe fallbacks (this host uses iOS 16 SwiftUI);
+https://screenpunk-style-guide.gsuter.chatgpt.site
+
+Merge after required CI is green; do not wait for a second review; do not
+weaken checks.
 
 ## Based on
 
-`asher/codex/milestone-0-bootstrap` @ `aca07e7`. First green `apple-*` was `d7bc61d`
-(https://github.com/screenpunk-xyz/screenpunk/actions/runs/34716346419).
+`origin/main` @ `a832355` (adapters #8 on top of contracts #2). Includes the
+PackagePath string-check fix so Apple `swift test` no longer hits the
+old `NSRegularExpression` crash.
 
 ## Job names (stable)
 
 `contracts-and-sdk` · `apple-build-and-unit` · `apple-ui-and-preview` ·
 `security-and-hygiene` · `required-checks`
 
-Not weakened.
+Not weakened. `apple-build-and-unit` still runs `swift test` for
+ScreenpunkCore and ScreenpunkApple.
 
-## This contract PR
+## This branch
 
-- Pinned manifest/grant/bridge JSON Schema Draft 2020-12
-- Swift + TypeScript models and bounded package validator
-- Directory package loader with SHA-256 + digest
-- State/cache 5 MiB budget; writes are never cached as reads
-- Bridge messages: correlation IDs, auth-header override deny, HTTP 15s / 2 MiB, WS 256 KiB
-- Native Offline/Unlink scaffolding remains host-owned
-- Deterministic offline example (no connections) and local HTTP fixture server
+- `PackageAssetStore` serves only `screenpunk://package/…` files from the bundled
+  offline fixture (copy of `examples/offline-fixture`). Path checks stay in the
+  host; they do not call `PackagePath.normalize`.
+- `PackageSchemeHandler` returns CSP + local bytes; navigation/new-window egress denied
+- Content-process death reloads the last package
+- Native `OfflineRingOverlay` (guide danger / onAction; no tap intercept). Hidden
+  when the fixture has zero connections
+- Native `UnlinkPanelView` (one Unlink button). iOS two-finger 10s hold;
+  VoiceOver custom action on both platforms
+- Unlink clears the in-memory package and returns to `UnpairedHostView`
+- iOS and Mac apps host `AppleHostRootView.offlineFixture()`
 
-## Parallelizable after merge
+## Out of scope here
 
-1. Apple host — custom-scheme asset serving, gesture/overlay views, iOS 16 + Mac load of the offline example
-2. Connection adapters — native HTTP/WS using the grant schema and fixture server
-3. SDK browser bundle + additional examples that consume the same contracts
+Connection adapters and browser SDK bundle — other workers.
