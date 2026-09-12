@@ -27,7 +27,7 @@ if ! command -v swift >/dev/null 2>&1; then
 fi
 
 (cd packages/ScreenpunkCore && swift test)
-(cd packages/ScreenpunkApple && swift build)
+(cd packages/ScreenpunkApple && swift test)
 (cd packages/ScreenpunkController && swift build)
 (cd tools/screenpunk-mcp && swift build)
 

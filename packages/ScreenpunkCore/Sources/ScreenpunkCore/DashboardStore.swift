@@ -38,6 +38,17 @@ public struct DashboardStore: Sendable {
         }
     }
 
+    public func cachedRead(cacheKey: String) -> CacheRecord? {
+        cache[cacheKey]
+    }
+
+    public mutating func markStale(cacheKey: String) -> CacheRecord? {
+        guard var record = cache[cacheKey], record.write == false else { return nil }
+        record.stale = true
+        cache[cacheKey] = record
+        return record
+    }
+
     public mutating func rememberRead(cacheKey: String, json: String, fetchedAt: Date) throws {
         if cache[cacheKey]?.write == true {
             throw PackageValidationError(issues: [.validationFailed])

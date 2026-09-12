@@ -15,4 +15,7 @@ if [[ ! -d node_modules ]]; then
 fi
 npm test
 
+cd "$ROOT"
+node --test tests/adapters/*.test.mjs
+
 echo "linux contracts-and-sdk ok"

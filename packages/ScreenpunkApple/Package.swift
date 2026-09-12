@@ -17,6 +17,10 @@ let package = Package(
         .target(
             name: "ScreenpunkApple",
             dependencies: ["ScreenpunkCore"]
+        ),
+        .testTarget(
+            name: "ScreenpunkAppleTests",
+            dependencies: ["ScreenpunkApple"]
         )
     ]
 )
