@@ -63,6 +63,23 @@ export {
 } from "./bridge.js";
 export type { BridgeErrorCode, BridgeMessage, RenderState } from "./bridge.js";
 export type { DashboardManifest } from "./package.js";
+export {
+  BRIDGE_MESSAGE_BYTES,
+  BRIDGE_TIMEOUT_MS,
+  BridgeClientError,
+  CLIENT_AUTH_OVERRIDE_KEYS,
+  createDashboardClient,
+  createWebKitTransport,
+  installScreenpunk
+} from "./client.js";
+export type {
+  BridgeTransport,
+  ClientOptions,
+  ConnectionResult,
+  DashboardClient,
+  StatusListener,
+  SubscribeListener
+} from "./client.js";
 
 export type Orientation = "portrait" | "landscape";
 

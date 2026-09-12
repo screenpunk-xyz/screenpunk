@@ -64,7 +64,7 @@ export function assertBridgeMessage(raw: unknown): BridgeMessage {
   if (typeof raw !== "object" || raw === null) {
     throw new Error("validation_failed");
   }
-  const encoded = Buffer.byteLength(JSON.stringify(raw));
+  const encoded = new TextEncoder().encode(JSON.stringify(raw)).byteLength;
   if (encoded > MAX_BRIDGE_MESSAGE_BYTES) throw new Error("size_limit");
   const msg = raw as BridgeMessage;
   if (msg.protocolVersion !== 1) throw new Error("unsupported_version");

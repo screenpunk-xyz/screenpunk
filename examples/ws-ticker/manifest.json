@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "dashboardId": "55555555-5555-4555-8555-555555555555",
+  "name": "WS ticker",
+  "revision": "55555555-5555-4555-9555-555555555556",
+  "entrypoint": "index.html",
+  "sdkVersion": "1",
+  "target": {
+    "profileId": "fixture-phone",
+    "width": 390,
+    "height": 844,
+    "scale": 3,
+    "orientation": "portrait",
+    "safeArea": {
+      "top": 47,
+      "right": 0,
+      "bottom": 34,
+      "left": 0
+    }
+  },
+  "connections": [
+    {
+      "alias": "ticker",
+      "required": true,
+      "operations": [
+        {
+          "name": "ticks",
+          "kind": "ws"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "app.js",
+      "bytes": 1302,
+      "sha256": "f3579f16a82d20ad035733f466e5817497a58e30cd01c459b01e84ca5ccc9ab1"
+    },
+    {
+      "path": "index.html",
+      "bytes": 916,
+      "sha256": "a49a64506b62029f9583a53acd7e192c49646b72dfb33ac237b15d029af3afa0"
+    },
+    {
+      "path": "mark-dark.svg",
+      "bytes": 25241,
+      "sha256": "99fce7581430ec8328d52c0a512170bc712e9804d2807da9fc23f55b6cbfc910"
+    },
+    {
+      "path": "mark-light.svg",
+      "bytes": 9675,
+      "sha256": "06c2cdc1df1c20444de9586d230d16441d9b1b68fac076bb8f5adf5902712c20"
+    },
+    {
+      "path": "screenpunk.js",
+      "bytes": 10149,
+      "sha256": "ecbcaab2a8db3247c1ee0ae74dec64699733dd83e55b6cdcaac4ee7a5c18f498"
+    },
+    {
+      "path": "styles.css",
+      "bytes": 1404,
+      "sha256": "d710aac0ec18902864670ebd565cd291c339b63a24f29c05769bbd1f378540aa"
+    },
+    {
+      "path": "wordmark-dark.png",
+      "bytes": 3570,
+      "sha256": "70a3a1193d97b4e2469f9b3f073484faaabc0688b33e463e7d9c30895d6d30d8"
+    },
+    {
+      "path": "wordmark-light.png",
+      "bytes": 3561,
+      "sha256": "fb227404d572c944ff17554e4822f9693bcf9bb0dd76aaf6072969cf677f04cf"
+    }
+  ],
+  "digest": "d97ab9158819fd66a289d0b99ddb4b44f8ca470b9b4c1a35be1b8be3f6e8da92"
+}

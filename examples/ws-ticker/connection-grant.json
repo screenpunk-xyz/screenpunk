@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "55555555-5555-4555-8555-555555555557",
+  "alias": "ticker",
+  "origin": "http://127.0.0.1:4173",
+  "transport": "ws",
+  "authRef": "keychain:fixture-ticker",
+  "lan": true,
+  "allowInsecureHTTP": true,
+  "operations": [
+    {
+      "name": "ticks",
+      "kind": "ws",
+      "method": "GET",
+      "path": "/v1/ticks",
+      "idempotent": true,
+      "write": false
+    }
+  ]
+}

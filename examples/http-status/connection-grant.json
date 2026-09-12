@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "44444444-4444-4444-8444-444444444446",
+  "alias": "status",
+  "origin": "http://127.0.0.1:4173",
+  "transport": "http",
+  "authRef": "keychain:fixture-status",
+  "lan": true,
+  "allowInsecureHTTP": true,
+  "operations": [
+    {
+      "name": "getStatus",
+      "kind": "http",
+      "method": "GET",
+      "path": "/v1/status",
+      "idempotent": true,
+      "write": false,
+      "maxAgeSeconds": 45
+    }
+  ]
+}

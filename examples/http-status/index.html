@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>HTTP status</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-fixture="SCREENPUNK_HTTP_STATUS_EXAMPLE_V1">
+  <main>
+    <header class="lockup" data-lockup="stacked">
+      <img class="mark light-only" src="mark-light.svg" alt="">
+      <img class="mark dark-only" src="mark-dark.svg" alt="">
+      <img class="wordmark light-only" src="wordmark-light.png" alt="Screenpunk">
+      <img class="wordmark dark-only" src="wordmark-dark.png" alt="">
+    </header>
+    <p class="kicker">HTTP status</p>
+    <p id="temperature" class="value">—</p>
+    <p id="status" class="ok" role="status">Waiting</p>
+    <p id="stale" class="stale" hidden>Showing last reading</p>
+    <p id="native-status" class="note" hidden></p>
+  </main>
+  <script src="screenpunk.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

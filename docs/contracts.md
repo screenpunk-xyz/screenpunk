@@ -19,3 +19,6 @@ Native chrome (Offline ring, two-finger Unlink) is host-owned. JavaScript
 cannot draw or dismiss it.
 
 Generic HTTP fixture: `tools/fixture-server/server.mjs`.
+
+Browser dashboard client: `sdk/src/client.ts` → IIFE `screenpunk.js`.
+Host replies via `globalThis.__screenpunkDispatch`. See `sdk/README.md`.
