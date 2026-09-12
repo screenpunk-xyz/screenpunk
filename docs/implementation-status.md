@@ -4,13 +4,13 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 
 | Field | Value |
 | --- | --- |
-| Milestone | 2/3 — Apple workbench (discover, pair, preview, deploy) |
-| Task | LAN discovery, one-owner pairing, orientation, live preview, deploy, history/rollback |
-| Owner | Implementation worker on `asher/codex/milestone-2-workbench` |
-| PR | https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-2-workbench (ManagePullRequest rejected `asher/codex/`; GitHub MCP 403) |
-| Tested revision | `70390bd` local `./scripts/ci/linux.sh` 31+3 |
-| Evidence | Core workbench/transfer tests + Controller atomic snapshot + Apple chrome tests |
-| Blockers | Authenticated TLS 1.3 LAN transfer between two processes is not in this slice; Mac uses an in-process loopback device. Physical pairing still pending. |
+| Milestone | 3 — TLS 1.3 two-process LAN transfer |
+| Task | Authenticated TLS 1.3 pairing and deploy between Mac and iOS processes |
+| Owner | Implementation worker on `asher/codex/milestone-3-lan-tls` |
+| PR | https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-3-lan-tls (ManagePullRequest rejected `asher/codex/`; GitHub MCP 403) |
+| Tested revision | local `./scripts/ci/linux.sh` 31+3 (no Xcode on this runner) |
+| Evidence | Core LAN framing/pin tests + Apple `LANTransferTests` (TLS pair, deploy, idempotent replay, hash reject, second-owner pin, no plaintext handshake) |
+| Blockers | Physical two-device pairing still pending operator hardware. This environment cannot run `swift test` / Xcode. |
 | Next action | Required CI; merge when green. MCP helper / extra examples / release workflows stay with other workers. |
 
 ## Operator / brand (settled)
@@ -24,30 +24,31 @@ weaken checks.
 
 ## Based on
 
-`origin/main` @ `2a84fdb` (Apple host #3 + adapters #8 + grant syntax #9).
+`origin/main` @ `48b0fc5` (Workbench #10).
 
 ## Job names (stable)
 
 `contracts-and-sdk` · `apple-build-and-unit` · `apple-ui-and-preview` ·
 `security-and-hygiene` · `required-checks`
 
-Not weakened. `apple-build-and-unit` now runs `swift test` for
-ScreenpunkController as well as Core and Apple.
+Not weakened.
 
 ## This branch
 
-- `_screenpunk._tcp` discovery records (advertised / manual / loopback). TXT
-  carries protocol major + opaque device id only.
-- One-owner pairing via existing SAS transcript; second Mac rejected.
-- Mac workbench sidebar: devices, Add Device, orientation, live preview banner,
-  Deploy, history/rollback, Forget unreachable.
-- iOS starts unpaired, shows pairing code when a session exists, then the
-  deployed dashboard. Unlink clears pairing and packages.
-- Deploy is idempotent on `deploymentId`. Failed/interrupted transfer keeps
-  the current revision. Rollback is a new deployment of an older revision.
-- Orientation is stored on the device profile; mismatched revisions are
-  rejected (no silent stretch).
-- Controller snapshot writes atomically under Application Support.
+- Control messages are `protocolVersion` + `requestId` + method + typed payload,
+  length-prefixed, capped at 2 MiB.
+- Device listens with Network.framework TLS 1.3 only (no plaintext fallback).
+  Persistent P-256 identities live in the keychain; the peer pin is SHA-256 of
+  the uncompressed public point and is bound after SAS confirmation.
+- One-owner pairing stays on the existing HMAC-SHA256 SAS. A second controller
+  is rejected at TLS pin after the owner is set.
+- Mac workbench still has an in-process loopback device. Advertised/manual
+  devices use `ControllerLANClient` over TLS. `_screenpunk._tcp` browse feeds
+  the same discovery hub; TXT is still `v` + opaque `id` only.
+- Deploy is idempotent on `deploymentId`. File blobs are hash-checked before
+  activation. Failed/corrupt transfer keeps `activeRevision`. Rollback is a new
+  deploy. `query.active` reads the device revision.
+- iOS unpaired surface shows the listening TLS port for manual Mac entry.
 
 ## Out of scope here
 

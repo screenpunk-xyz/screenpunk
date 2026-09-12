@@ -1,13 +1,19 @@
 import SwiftUI
 import ScreenpunkCore
 
-/// iOS device: advertise, pair with one owner, then show the deployed dashboard.
+/// iOS device: advertise over TLS 1.3, pair with one owner, then show the deployed dashboard.
 public struct DeviceRuntimeRootView: View {
-    @State private var runtime: DeviceRuntime
+    @State private var fallback: DeviceRuntime
     @State private var confirmError: String?
+#if canImport(Network) && canImport(Security)
+    @StateObject private var host: DeviceLANHost
+#endif
 
     public init(runtime: DeviceRuntime) {
-        _runtime = State(initialValue: runtime)
+        _fallback = State(initialValue: runtime)
+#if canImport(Network) && canImport(Security)
+        _host = StateObject(wrappedValue: DeviceLANHost(runtime: runtime))
+#endif
     }
 
     public static func unpairedLoopback() -> DeviceRuntimeRootView {
@@ -26,14 +32,52 @@ public struct DeviceRuntimeRootView: View {
 
     public var body: some View {
         Group {
-            if let revision = runtime.activeRevision {
-                deployedDashboard(revision: revision)
-            } else if let code = runtime.pairingCode {
+#if canImport(Network) && canImport(Security)
+            lanBody
+                .onAppear { host.start() }
+#else
+            localBody
+#endif
+        }
+    }
+
+#if canImport(Network) && canImport(Security)
+    private var lanBody: some View {
+        Group {
+            if let revision = host.runtime.activeRevision {
+                deployedDashboard(revision: revision) {
+                    host.unlink()
+                }
+            } else if let code = host.pairingCode {
+                PairingCodeView(code: code) { host.confirm() }
+                    .padding(24)
+            } else {
+                UnpairedHostView(detail: host.port == 0 ? nil : "TLS 1.3 · port \(host.port)")
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let confirmError = host.errorMessage {
+                Text(confirmError)
+                    .font(.footnote)
+                    .padding()
+            }
+        }
+    }
+
+#endif
+
+    private var localBody: some View {
+        Group {
+            if let revision = fallback.activeRevision {
+                deployedDashboard(revision: revision) {
+                    fallback.unlink()
+                }
+            } else if let code = fallback.pairingCode {
                 PairingCodeView(code: code) {
                     do {
-                        try runtime.confirmPairing(
+                        try fallback.confirmPairing(
                             code: code,
-                            presentedOwner: runtime.pairing.session?.candidateOwner
+                            presentedOwner: fallback.pairing.session?.candidateOwner
                                 ?? PairingIdentityFactory.make(role: .controller),
                             clock: FixedClock(Date())
                         )
@@ -57,14 +101,12 @@ public struct DeviceRuntimeRootView: View {
     }
 
     @ViewBuilder
-    private func deployedDashboard(revision: String) -> some View {
+    private func deployedDashboard(revision: String, onUnlink: @escaping () -> Void) -> some View {
         if revision == StoredRevision.offlineFixture.revision,
            let store = try? PackageAssetStore.bundledOfflineFixture()
         {
-            DashboardRuntimeView(store: store) {
-                runtime.unlink()
-            }
-            .ignoresSafeArea()
+            DashboardRuntimeView(store: store, onUnlink: onUnlink)
+                .ignoresSafeArea()
         } else {
             UnpairedHostView()
         }

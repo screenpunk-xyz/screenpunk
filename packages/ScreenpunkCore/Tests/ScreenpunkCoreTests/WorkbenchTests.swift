@@ -185,4 +185,27 @@ final class WorkbenchTests: XCTestCase {
         XCTAssertEqual(phone.activeRevision, StoredRevision.offlineFixture.revision)
         XCTAssertTrue(phone.isPaired)
     }
+
+    func testRemoteDeploymentOutcomeUpdatesHistory() {
+        var workbench = makeWorkbench()
+        workbench.recordPairedDevice(
+            profile: DeviceProfile(deviceId: "phone-1", name: "iPhone"),
+            pairingCode: nil
+        )
+        workbench.markPaired(deviceId: "phone-1")
+        let outcome = DeploymentRecord(
+            deploymentId: "remote-1",
+            revision: StoredRevision.offlineFixture.revision,
+            dashboardId: StoredRevision.offlineFixture.dashboardId,
+            deviceId: "phone-1",
+            phase: .active
+        )
+        workbench.applyRemoteDeployment(
+            outcome,
+            revision: StoredRevision.offlineFixture,
+            deviceId: "phone-1"
+        )
+        XCTAssertEqual(workbench.selectedDevice?.activeRevision, StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(workbench.selectedDevice?.history.count, 1)
+    }
 }
