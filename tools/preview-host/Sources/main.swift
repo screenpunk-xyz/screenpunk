@@ -1,14 +1,11 @@
 import AppKit
 import Foundation
 import ScreenpunkCore
-import WebKit
 
 /// Hidden AppKit/WKWebView helper. Produces a real PNG or SNAPSHOT_UNAVAILABLE.
-/// Never writes a placeholder image.
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
-    private var window: NSWindow?
-    private var webView: WKWebView?
-    private var timedOut = false
+/// Never writes a placeholder image. Does not activate a workbench window.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var session: SnapshotSession?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -23,107 +20,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             NSApp.terminate(nil)
             return
         }
-        startSnapshot()
-    }
 
-    private func startSnapshot() {
-        let rect = NSRect(x: 0, y: 0, width: 390, height: 844)
-        let window = NSWindow(
-            contentRect: rect,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
+        let output = env["SCREENPUNK_SNAPSHOT_OUT"] ?? "/tmp/screenpunk-preview.png"
+        let timeout = TimeInterval(env["SCREENPUNK_READY_TIMEOUT"] ?? "20") ?? 20
+        let width = Int(env["SCREENPUNK_VIEWPORT_WIDTH"] ?? "390") ?? 390
+        let height = Int(env["SCREENPUNK_VIEWPORT_HEIGHT"] ?? "844") ?? 844
+        let mode: SnapshotMode
+        if let package = env["SCREENPUNK_PACKAGE_DIR"], package.isEmpty == false {
+            mode = .package(URL(fileURLWithPath: package, isDirectory: true))
+        } else {
+            mode = .fixture
+        }
+
+        let session = SnapshotSession(
+            mode: mode,
+            output: output,
+            timeout: timeout,
+            width: width,
+            height: height
         )
-        window.isReleasedWhenClosed = false
-        window.alphaValue = 0
-        window.collectionBehavior = [.ignoresCycle, .stationary]
-        window.orderBack(nil)
-
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-        let webView = WKWebView(frame: rect, configuration: config)
-        webView.navigationDelegate = self
-        window.contentView = webView
-        self.window = window
-        self.webView = webView
-
-        let html = """
-        <!doctype html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <title>SCREENPUNK_PREVIEW_FIXTURE_V1</title>
-          <style>
-            html, body { margin: 0; background: #F4EFE5; color: #15191C;
-              font: 18px/1.4 system-ui, sans-serif; }
-            main { padding: 48px 24px; }
-          </style>
-        </head>
-        <body data-fixture="SCREENPUNK_PREVIEW_FIXTURE_V1">
-          <main>
-            <p>SCREENPUNK_PREVIEW_FIXTURE_V1</p>
-            <p>Hidden WKWebView snapshot fixture. Not first-party product UI.</p>
-          </main>
-        </body>
-        </html>
-        """
-        webView.loadHTMLString(html, baseURL: nil)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
-            guard let self, !self.timedOut else { return }
-            self.fail("timeout")
-        }
-    }
-
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        fail("navigation \(error.localizedDescription)")
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        didFailProvisionalNavigation navigation: WKNavigation!,
-        withError error: Error
-    ) {
-        fail("provisional \(error.localizedDescription)")
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let config = WKSnapshotConfiguration()
-        config.rect = CGRect(x: 0, y: 0, width: 390, height: 844)
-        webView.takeSnapshot(with: config) { [weak self] image, error in
-            guard let self else { return }
-            if let error {
-                self.fail("snapshot \(error.localizedDescription)")
-                return
-            }
-            guard
-                let image,
-                let tiff = image.tiffRepresentation,
-                let rep = NSBitmapImageRep(data: tiff),
-                let png = rep.representation(using: .png, properties: [:]),
-                png.count >= 8,
-                png.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-            else {
-                self.fail("no_image")
-                return
-            }
-            let path = ProcessInfo.processInfo.environment["SCREENPUNK_SNAPSHOT_OUT"]
-                ?? "/tmp/screenpunk-preview.png"
-            do {
-                try png.write(to: URL(fileURLWithPath: path))
-                FileHandle.standardError.write(Data("SNAPSHOT_OK path=\(path)\n".utf8))
-                NSApp.terminate(nil)
-            } catch {
-                self.fail("write \(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func fail(_ reason: String) {
-        if timedOut { return }
-        timedOut = true
-        FileHandle.standardError.write(Data("SNAPSHOT_UNAVAILABLE reason=\(reason)\n".utf8))
-        NSApp.terminate(nil)
+        session.onComplete = { NSApp.terminate(nil) }
+        self.session = session
+        session.start()
     }
 }
 

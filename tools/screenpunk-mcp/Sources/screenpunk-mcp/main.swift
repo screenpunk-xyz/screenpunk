@@ -1,16 +1,25 @@
 import Foundation
+import ScreenpunkController
 import ScreenpunkCore
 
-/// Stdio MCP entry. Milestone 0 ships the target only; the Swift MCP SDK
-/// is pinned after a compatibility build in the feasibility spike.
 @main
 enum ScreenpunkMCP {
-    static func main() {
-        FileHandle.standardError.write(
-            Data("screenpunk-mcp bootstrap \(PackageLimits.schemaMajor)\n".utf8)
-        )
-        FileHandle.standardError.write(
-            Data("hidden preview helper is not implemented yet\n".utf8)
-        )
+    static func main() async {
+        do {
+            let service = try ControllerService.bootstrap()
+            FileHandle.standardError.write(
+                Data("screenpunk-mcp bootstrap \(PackageLimits.schemaMajor) helper=\(service.helperStarted)\n".utf8)
+            )
+            if ProcessInfo.processInfo.environment["SCREENPUNK_MCP_TRANSPORT"] == "jsonrpc" {
+                JSONRPCFallback.run(service: service)
+                return
+            }
+            try await OfficialMCPServer.run(service: service)
+        } catch {
+            FileHandle.standardError.write(
+                Data("screenpunk-mcp failed \(error.localizedDescription)\n".utf8)
+            )
+            exit(1)
+        }
     }
 }

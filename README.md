@@ -42,10 +42,13 @@ sdk/ schemas/ examples/ tests/ scripts/
 assets/brand/ docs/ .github/workflows/
 ```
 
+MCP setup for Codex, Claude Desktop, and Cursor: [docs/mcp.md](docs/mcp.md).
+The helper starts automatically; preview is live by default.
+
 ## Commands
 
 ```sh
-./scripts/ci/linux.sh          # schema, SDK, package validator, HTTP/WS fixture adapters
+./scripts/ci/linux.sh          # schema, SDK, package validator, HTTP/WS fixture adapters, MCP catalog
 ./scripts/generate-xcode.sh    # install pinned XcodeGen 2.46.0; regenerate projects
 ./scripts/ci/apple.sh          # macOS: Core/Apple/Controller tests + iOS 16 compile
 ./scripts/ci/preview.sh        # macOS: hidden WKWebView probe (no fake PNG)

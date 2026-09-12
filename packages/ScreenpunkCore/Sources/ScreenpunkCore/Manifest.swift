@@ -43,18 +43,36 @@ public struct ManifestOperation: Codable, Sendable, Equatable {
     public var name: String
     public var kind: String
     public var maxAgeSeconds: Int?
+
+    public init(name: String, kind: String, maxAgeSeconds: Int? = nil) {
+        self.name = name
+        self.kind = kind
+        self.maxAgeSeconds = maxAgeSeconds
+    }
 }
 
 public struct ManifestConnection: Codable, Sendable, Equatable {
     public var alias: String
     public var required: Bool
     public var operations: [ManifestOperation]?
+
+    public init(alias: String, required: Bool, operations: [ManifestOperation]? = nil) {
+        self.alias = alias
+        self.required = required
+        self.operations = operations
+    }
 }
 
 public struct ManifestFile: Codable, Sendable, Equatable {
     public var path: String
     public var bytes: Int
     public var sha256: String
+
+    public init(path: String, bytes: Int, sha256: String) {
+        self.path = path
+        self.bytes = bytes
+        self.sha256 = sha256
+    }
 }
 
 public struct DashboardManifest: Codable, Sendable, Equatable {
@@ -68,4 +86,28 @@ public struct DashboardManifest: Codable, Sendable, Equatable {
     public var target: ManifestTarget
     public var connections: [ManifestConnection]
     public var files: [ManifestFile]
+
+    public init(
+        schemaVersion: Int,
+        dashboardId: String,
+        name: String,
+        revision: String,
+        entrypoint: String,
+        sdkVersion: String,
+        digest: String? = nil,
+        target: ManifestTarget,
+        connections: [ManifestConnection],
+        files: [ManifestFile]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.dashboardId = dashboardId
+        self.name = name
+        self.revision = revision
+        self.entrypoint = entrypoint
+        self.sdkVersion = sdkVersion
+        self.digest = digest
+        self.target = target
+        self.connections = connections
+        self.files = files
+    }
 }

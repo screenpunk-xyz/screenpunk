@@ -1,0 +1,185 @@
+{
+  "server": {
+    "name": "screenpunk",
+    "version": "1.0.0",
+    "protocol": "2025-03-26"
+  },
+  "previewLiveDefault": true,
+  "helperStartsAutomatically": true,
+  "workbenchMustBeVisible": false,
+  "neverPathOnlyPreview": true,
+  "neverPlaceholderImage": true,
+  "errors": [
+    "not_paired",
+    "permission_required",
+    "revision_conflict",
+    "unsupported_version",
+    "device_offline",
+    "render_timeout",
+    "validation_failed",
+    "snapshot_unavailable"
+  ],
+  "tools": [
+    {
+      "name": "list_devices",
+      "group": "discovery",
+      "description": "List paired devices with redacted capabilities, viewport, and reachability.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "get_device",
+      "group": "discovery",
+      "description": "Get one paired device. Unpaired or unknown IDs return not_paired.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "discover_services",
+      "group": "discovery",
+      "description": "List known advertised services. Not unrestricted subnet scanning.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "request_pairing",
+      "group": "pairing",
+      "description": "Launch trusted native pairing confirmation. Never self-approves.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "propose_connection",
+      "group": "pairing",
+      "description": "Propose a new or expanded connection. Returns pending or permission_required. Never self-approves.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "list_dashboards",
+      "group": "authoring",
+      "description": "List local dashboards and their draft/head revisions.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "get_dashboard",
+      "group": "authoring",
+      "description": "Get a dashboard revision, manifest, and file inventory. No credentials.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "update_dashboard",
+      "group": "authoring",
+      "description": "Create or update a dashboard. Optimistic baseRevision required after the first revision. Writes a new immutable revision.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "validate_dashboard",
+      "group": "authoring",
+      "description": "Validate a dashboard revision against schema major 1 and package limits.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "list_connections",
+      "group": "connections",
+      "description": "List approved connection aliases. No secrets.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "describe_connection",
+      "group": "connections",
+      "description": "Describe an approved connection schema and permitted operations. No secrets.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "inspect_connection",
+      "group": "connections",
+      "description": "Read permitted live data or entities for an approved connection. Reads only. No secrets.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "preview_dashboard",
+      "group": "preview",
+      "description": "Render an exact dashboard revision on the hidden Screenpunk helper and return PNG image content plus metadata. Live preview — actions control your devices. Preview is live by default. The workbench does not need to be open. Never returns only a local path. Failed captures are errors, not placeholder images.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "interact_preview",
+      "group": "preview",
+      "description": "Send a bounded tap, input, or scroll to the live preview. Live actions are explicitly described. Capture itself does not click controls.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "deploy_dashboard",
+      "group": "delivery",
+      "description": "Deploy a selected revision after explicit user approval of the previewed revision. Agent-mediated approval, not a cryptographic guarantee. Requires a paired device.",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
+    },
+    {
+      "name": "list_versions",
+      "group": "delivery",
+      "description": "List immutable revisions for a dashboard.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "rollback_dashboard",
+      "group": "delivery",
+      "description": "Redeploy an older revision through the normal deployment path. Requires a paired device.",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
+    },
+    {
+      "name": "get_deployment",
+      "group": "diagnostics",
+      "description": "Get correlated deployment status. No silent queued deploy in the alpha.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "get_logs",
+      "group": "diagnostics",
+      "description": "Return redacted, bounded controller and preview diagnostics. No secrets.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "get_help",
+      "group": "diagnostics",
+      "description": "Troubleshooting help. Topic unlink explains the two-finger ten-second Unlink recovery gesture.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    }
+  ]
+}

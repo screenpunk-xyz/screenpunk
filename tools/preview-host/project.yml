@@ -20,6 +20,8 @@ settings:
 packages:
   ScreenpunkCore:
     path: ../../packages/ScreenpunkCore
+  ScreenpunkApple:
+    path: ../../packages/ScreenpunkApple
 targets:
   ScreenpunkPreviewHost:
     type: application
@@ -28,6 +30,7 @@ targets:
       - path: Sources
     dependencies:
       - package: ScreenpunkCore
+      - package: ScreenpunkApple
       - sdk: WebKit.framework
       - sdk: AppKit.framework
     settings:

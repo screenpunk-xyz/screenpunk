@@ -15,7 +15,11 @@ let package = Package(
     targets: [
         .target(
             name: "ScreenpunkController",
-            dependencies: ["ScreenpunkCore"]
+            dependencies: ["ScreenpunkCore"],
+            resources: [
+                .copy("Resources/help.json"),
+                .copy("Resources/mcp-catalog.json")
+            ]
         ),
         .testTarget(
             name: "ScreenpunkControllerTests",
