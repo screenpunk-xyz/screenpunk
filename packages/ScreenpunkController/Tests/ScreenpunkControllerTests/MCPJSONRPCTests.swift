@@ -47,10 +47,13 @@ final class MCPJSONRPCTests: XCTestCase {
         {"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"preview_dashboard","arguments":{"dashboardId":"\(created.manifest.dashboardId)"}}}
         """
         let line = try rpc.handle(line: payload) ?? ""
-        XCTAssertTrue(line.contains("\"type\":\"image\"") || line.contains("\"type\" : \"image\""))
-        XCTAssertTrue(line.contains("image/png"))
+        let content = try JSONValue.parse(Data(line.utf8))["result"]?["content"]?.array ?? []
+        XCTAssertEqual(content.first?["type"]?.string, "image")
+        XCTAssertEqual(content.first?["mimeType"]?.string, "image/png")
+        XCTAssertEqual(Data(base64Encoded: content.first?["data"]?.string ?? "")?.starts(with: PNGMagic.bytes), true)
+        XCTAssertEqual(content.first?["metadata"]?["revision"]?.string, created.manifest.revision)
         XCTAssertFalse(line.contains(created.packageDirectory.path))
-        XCTAssertTrue(line.contains(created.manifest.revision))
+        XCTAssertTrue(content.dropFirst().first?["text"]?.string?.contains(created.manifest.revision) == true)
     }
 }
 
