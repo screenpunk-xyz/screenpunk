@@ -51,6 +51,10 @@ jobs:
           test -f docs/apple-review-position.md
           ./scripts/verify-brand.mjs
           test -f schemas/dashboard-manifest.schema.json
+          grep -q "https://screenpunk.xyz/schemas/dashboard-manifest/v1.json" schemas/dashboard-manifest.schema.json
+          test -f schemas/connection-grant.schema.json
+          test -f docs/contracts.md
+          test -f examples/offline-fixture/manifest.json
           test -f tests/feasibility/isolation/attacks.json
           test -f tests/feasibility/pairing/vectors.json
           grep -q "connect-src 'none'" tests/feasibility/isolation/attacks.json

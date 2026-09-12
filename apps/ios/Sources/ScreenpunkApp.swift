@@ -14,6 +14,7 @@ struct ScreenpunkApp: App {
                     "Screenpunk \(PlatformRequirements.iosMinimum) \(WebIsolation.customScheme)"
                 )
                 .accessibilityValue(WebIsolation.nativeNetworkingOnly ? "native-network" : "open")
+                .accessibilityHint(NativeChromeHost.unlinkActionTitle)
         }
     }
 }

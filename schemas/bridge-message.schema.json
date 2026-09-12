@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://screenpunk.xyz/schemas/bridge-message/v1.json",
+  "title": "Screenpunk native bridge message",
+  "description": "Page-to-host JSON. No secrets. Main-frame only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "id", "kind"],
+  "properties": {
+    "protocolVersion": { "type": "integer", "const": 1 },
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "kind": { "enum": ["request", "response", "event", "error"] },
+    "method": {
+      "enum": [
+        "connections.request",
+        "connections.subscribe",
+        "connections.unsubscribe",
+        "state.get",
+        "state.set",
+        "state.remove",
+        "runtime.ready",
+        "runtime.onStatus"
+      ]
+    },
+    "alias": { "type": "string", "maxLength": 64 },
+    "operation": { "type": "string", "maxLength": 64 },
+    "parameters": { "type": "object" },
+    "key": { "type": "string", "maxLength": 256 },
+    "value": true,
+    "ok": { "type": "boolean" },
+    "stale": { "type": "boolean" },
+    "code": {
+      "enum": [
+        "validation_failed",
+        "permission_required",
+        "unsupported_version",
+        "device_offline",
+        "render_timeout",
+        "not_paired",
+        "revision_conflict",
+        "size_limit",
+        "denied_egress"
+      ]
+    },
+    "message": { "type": "string", "maxLength": 256 }
+  }
+}

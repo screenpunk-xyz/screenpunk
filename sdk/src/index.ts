@@ -42,6 +42,28 @@ export {
   PREVIEW_HOST_BUNDLE_ID
 } from "./identity.js";
 
+export {
+  BACKOFF_CAP_SECONDS,
+  EXPANDED_BYTES,
+  HTTP_RESPONSE_BYTES,
+  HTTP_TIMEOUT_SECONDS,
+  MAX_FILES,
+  READY_TIMEOUT_SECONDS,
+  STATE_CACHE_BYTES,
+  UNLINK_HOLD_SECONDS,
+  WEBSOCKET_MESSAGE_BYTES
+} from "./limits.js";
+
+export { DashboardStore } from "./store.js";
+export {
+  AUTH_OVERRIDE_KEYS,
+  RenderReadiness,
+  assertBridgeMessage,
+  shouldRetry
+} from "./bridge.js";
+export type { BridgeErrorCode, BridgeMessage, RenderState } from "./bridge.js";
+export type { DashboardManifest } from "./package.js";
+
 export type Orientation = "portrait" | "landscape";
 
 export interface ConnectionRequest {
