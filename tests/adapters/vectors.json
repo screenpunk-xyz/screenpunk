@@ -8,7 +8,9 @@
       "id": "fixture-loopback-http",
       "operation": "getStatus",
       "parameters": {},
-      "resolvedAddresses": ["127.0.0.1"],
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
       "expect": "allow",
       "grant": {
         "schemaVersion": 1,
@@ -36,7 +38,9 @@
       "id": "public-grant-private-ip",
       "operation": "getStatus",
       "parameters": {},
-      "resolvedAddresses": ["10.0.0.8"],
+      "resolvedAddresses": [
+        "10.0.0.8"
+      ],
       "expect": "denied_egress",
       "grant": {
         "schemaVersion": 1,
@@ -63,7 +67,9 @@
       "id": "metadata-blocked",
       "operation": "getStatus",
       "parameters": {},
-      "resolvedAddresses": ["169.254.169.254"],
+      "resolvedAddresses": [
+        "169.254.169.254"
+      ],
       "expect": "denied_egress",
       "grant": {
         "schemaVersion": 1,
@@ -90,7 +96,9 @@
       "id": "insecure-http-denied",
       "operation": "getStatus",
       "parameters": {},
-      "resolvedAddresses": ["203.0.113.10"],
+      "resolvedAddresses": [
+        "203.0.113.10"
+      ],
       "expect": "denied_egress",
       "grant": {
         "schemaVersion": 1,
@@ -116,8 +124,12 @@
     {
       "id": "auth-header-override",
       "operation": "getStatus",
-      "parameters": { "Authorization": "Bearer stolen" },
-      "resolvedAddresses": ["127.0.0.1"],
+      "parameters": {
+        "Authorization": "Bearer stolen"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
       "expect": "permission_required",
       "grant": {
         "schemaVersion": 1,
@@ -143,8 +155,12 @@
     {
       "id": "path-expansion",
       "operation": "getStatus",
-      "parameters": { "path": "/admin" },
-      "resolvedAddresses": ["127.0.0.1"],
+      "parameters": {
+        "path": "/admin"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
       "expect": "denied_egress",
       "grant": {
         "schemaVersion": 1,
@@ -171,7 +187,9 @@
       "id": "unknown-operation",
       "operation": "dropTables",
       "parameters": {},
-      "resolvedAddresses": ["127.0.0.1"],
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
       "expect": "permission_required",
       "grant": {
         "schemaVersion": 1,
@@ -193,6 +211,2013 @@
           }
         ]
       }
+    },
+    {
+      "id": "public-grant-public-ip-allowed",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "203.0.113.10"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "ws-over-https-becomes-wss",
+      "operation": "listen",
+      "parameters": {},
+      "resolvedAddresses": [
+        "203.0.113.5"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "44444444-4444-4444-8444-444444444444",
+        "alias": "events",
+        "origin": "https://weather.example",
+        "transport": "ws",
+        "authRef": "keychain:events",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "listen",
+            "kind": "ws",
+            "method": "GET",
+            "path": "/api/websocket",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "lan-https-private-ip-allowed",
+      "operation": "getStates",
+      "parameters": {},
+      "resolvedAddresses": [
+        "192.168.1.10"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "66666666-6666-4666-8666-666666666666",
+        "alias": "homeassistant",
+        "origin": "https://192.168.1.10:8123",
+        "transport": "http",
+        "authRef": "keychain:homeassistant",
+        "lan": true,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStates",
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/states",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "lan-ipv6-ula-allowed",
+      "operation": "getStates",
+      "parameters": {},
+      "resolvedAddresses": [
+        "fd12:3456:789a::1"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "66666666-6666-4666-8666-666666666666",
+        "alias": "homeassistant",
+        "origin": "https://homeassistant.local:8123",
+        "transport": "http",
+        "authRef": "keychain:homeassistant",
+        "lan": true,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStates",
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/states",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "post-write-parameters-go-to-body",
+      "operation": "putValue",
+      "parameters": {
+        "n": "1"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "88888888-8888-4888-8888-888888888888",
+        "alias": "writer",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-write",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "putValue",
+            "kind": "http",
+            "method": "POST",
+            "path": "/v1/write",
+            "idempotent": false,
+            "write": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "delete-with-query-parameters",
+      "operation": "remove",
+      "parameters": {
+        "id": "42"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "remove",
+            "kind": "http",
+            "method": "DELETE",
+            "path": "/v1/items",
+            "idempotent": true,
+            "write": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "path-with-fixed-query-allowed",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status?units=metric",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-public-to-loopback",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-public-to-loopback-ipv6",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "::1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-public-to-link-local",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "169.254.10.10"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-public-to-ipv6-link-local",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "fe80::1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-public-to-carrier-nat",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "100.64.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-public-to-ipv6-ula",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "fd00::1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-public-to-ec2-metadata-ipv6",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "fd00:ec2::254"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-mapped-ipv4-metadata",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "::ffff:169.254.169.254"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-mixed-answers-worst-class-wins",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "203.0.113.10",
+        "169.254.169.254"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-multicast",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "224.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-unspecified",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "0.0.0.0"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "rebinding-broadcast",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "255.255.255.255"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "alibaba-metadata-literal",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "100.100.100.200"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "metadata-hostname-origin",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "169.254.169.254"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://metadata.google.internal",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "lan-http-requires-insecure-flag",
+      "operation": "getStates",
+      "parameters": {},
+      "resolvedAddresses": [
+        "192.168.1.10"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "66666666-6666-4666-8666-666666666666",
+        "alias": "homeassistant",
+        "origin": "http://192.168.1.10:8123",
+        "transport": "http",
+        "authRef": "keychain:homeassistant",
+        "lan": true,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStates",
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/states",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "lan-http-with-insecure-flag-allowed",
+      "operation": "getStates",
+      "parameters": {},
+      "resolvedAddresses": [
+        "192.168.1.10"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "66666666-6666-4666-8666-666666666666",
+        "alias": "homeassistant",
+        "origin": "http://192.168.1.10:8123",
+        "transport": "http",
+        "authRef": "keychain:homeassistant",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStates",
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/states",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "lan-grant-link-local-origin",
+      "operation": "getStates",
+      "parameters": {},
+      "resolvedAddresses": [
+        "169.254.1.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "66666666-6666-4666-8666-666666666666",
+        "alias": "homeassistant",
+        "origin": "http://169.254.1.1",
+        "transport": "http",
+        "authRef": "keychain:homeassistant",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStates",
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/states",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "loopback-hostname-not-literal",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://localhost:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "loopback-literal-without-insecure-flag",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "loopback-literal-without-lan-flag",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": false,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "loopback-resolves-elsewhere-still-loopback-origin",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "203.0.113.10"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": false,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "destination-host-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "host": "evil.example"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "destination-url-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "url": "https://evil.example/x"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "destination-path-parameter-case-insensitive",
+      "operation": "getStatus",
+      "parameters": {
+        "Path": "/admin"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "destination-headers-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "headers": "{}"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "destination-port-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "port": "22"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "override-token-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "token": "placeholder"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "permission_required",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "override-x-api-key-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "X-Api-Key": "placeholder"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "permission_required",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "override-access-token-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "access_token": "placeholder"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "permission_required",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "override-secret-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "secret": "placeholder"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "permission_required",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "override-password-parameter",
+      "operation": "getStatus",
+      "parameters": {
+        "PASSWORD": "placeholder"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "permission_required",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "oversized-parameters",
+      "operation": "getStatus",
+      "parameters": {
+        "blob": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "size_limit",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "parameters-at-limit-allowed",
+      "operation": "getStatus",
+      "parameters": {
+        "blob": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-operation-other-alias-shape",
+      "operation": "getStates",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "permission_required",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "ws-operation-in-http-grant",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "ws",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "http-operation-in-ws-grant",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "ws",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-operation-names",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/other",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "authref-with-whitespace",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain: fixture status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "authref-bearer-prefix-rejected",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "Bearer placeholder",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "secret-shaped-query-in-path",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status?token=placeholder",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "secret-shaped-origin",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://sk-placeholder.example",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "schema-version-2",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 2,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "origin-with-path",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "https://api.example/v1",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "origin-with-userinfo",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "https://alice@api.example",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "origin-ws-scheme",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "wss://ha.example",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "origin-ipv6-literal-bracketed",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://[::1]:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "empty-operations",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": []
+      }
+    },
+    {
+      "id": "too-many-operations",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "op0",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op0",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op1",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op1",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op2",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op2",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op3",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op3",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op4",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op4",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op5",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op5",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op6",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op6",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op7",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op7",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op8",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op8",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op9",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op9",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op10",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op10",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op11",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op11",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op12",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op12",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op13",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op13",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op14",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op14",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op15",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op15",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op16",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op16",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op17",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op17",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op18",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op18",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op19",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op19",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op20",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op20",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op21",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op21",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op22",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op22",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op23",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op23",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op24",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op24",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op25",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op25",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op26",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op26",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op27",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op27",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op28",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op28",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op29",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op29",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op30",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op30",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op31",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op31",
+            "idempotent": true,
+            "write": false
+          },
+          {
+            "name": "op32",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/op32",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "operation-name-too-long",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "ggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "alias-starts-with-digit",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "1status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "path-without-leading-slash",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "path-with-space",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": [
+        "127.0.0.1"
+      ],
+      "expect": "validation_failed",
+      "schemaValid": false,
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/st atus",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
     }
-  ]
+  ],
+  "note": "Grant/destination decisions shared by ScreenpunkCore (ConnectionPolicyTests.testVectors) and the SDK schema check (sdk/test/adapter-grants.test.ts). Credential-shaped strings appear only in cases that must be rejected. `schemaValid: false` marks documents the JSON schema itself rejects."
 }

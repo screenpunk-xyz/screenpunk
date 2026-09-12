@@ -8,7 +8,13 @@ final class ConnectionPolicyTests: XCTestCase {
         XCTAssertEqual(root?["macIsRuntimeProxy"] as? Bool, false)
         XCTAssertEqual(root?["followsRedirects"] as? Bool, false)
         let cases = root?["cases"] as? [[String: Any]] ?? []
-        XCTAssertFalse(cases.isEmpty)
+        XCTAssertGreaterThanOrEqual(cases.count, 60)
+        let ids = cases.compactMap { $0["id"] as? String }
+        XCTAssertEqual(Set(ids).count, ids.count, "vector ids must be unique")
+        let expectations = Set(cases.compactMap { $0["expect"] as? String })
+        for required in ["allow", "validation_failed", "permission_required", "denied_egress", "size_limit"] {
+            XCTAssertTrue(expectations.contains(required), "vectors must exercise \(required)")
+        }
         let decoder = JSONDecoder()
         for item in cases {
             let id = item["id"] as? String ?? "?"
