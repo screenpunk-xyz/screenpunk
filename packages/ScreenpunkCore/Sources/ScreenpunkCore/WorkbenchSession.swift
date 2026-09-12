@@ -182,6 +182,37 @@ public struct WorkbenchSession: Sendable, Equatable {
         )
     }
 
+    public mutating func applyRemoteDeployment(
+        _ outcome: DeploymentRecord,
+        revision: StoredRevision,
+        deviceId: String
+    ) {
+        guard let index = devices.firstIndex(where: { $0.profile.deviceId == deviceId }) else { return }
+        if devices[index].deployments.contains(where: { $0.deploymentId == outcome.deploymentId }) == false {
+            devices[index].deployments.append(outcome)
+        }
+        if outcome.phase == .active {
+            devices[index].activeRevision = revision.revision
+            devices[index].draftRevision = nil
+            if devices[index].history.contains(where: { $0.revision == revision.revision }) == false {
+                devices[index].history.append(revision)
+            }
+        }
+    }
+
+    public mutating func recordPairedDevice(profile: DeviceProfile, pairingCode: String?) {
+        var device = PairedDevice(profile: profile, owner: controllerIdentity, pairingCode: pairingCode)
+        devices.removeAll { $0.profile.deviceId == profile.deviceId }
+        devices.append(device)
+        selectedDeviceId = profile.deviceId
+    }
+
+    public mutating func markPaired(deviceId: String) {
+        guard let index = devices.firstIndex(where: { $0.profile.deviceId == deviceId }) else { return }
+        devices[index].pairingCode = nil
+        devices[index].reachable = true
+    }
+
     public mutating func forgetUnreachable(deviceId: String) {
         guard let index = devices.firstIndex(where: { $0.profile.deviceId == deviceId }) else { return }
         devices.remove(at: index)

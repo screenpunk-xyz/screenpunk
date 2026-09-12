@@ -4,8 +4,11 @@ import ScreenpunkCore
 /// Host-owned unpaired surface. Pairing codes appear in `PairingCodeView`.
 public struct UnpairedHostView: View {
     @Environment(\.colorScheme) private var colorScheme
+    public var detail: String?
 
-    public init() {}
+    public init(detail: String? = nil) {
+        self.detail = detail
+    }
 
     public var body: some View {
         let canvas = GuideColor.hex(colorScheme == .dark ? SemanticTokens.Dark.canvas : SemanticTokens.Light.canvas)
@@ -23,6 +26,12 @@ public struct UnpairedHostView: View {
                 .foregroundStyle(secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+            if let detail {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(secondary)
+                    .accessibilityLabel(detail)
+            }
             Text(UnlinkGestureSpec.explanation)
                 .font(.footnote)
                 .foregroundStyle(secondary)

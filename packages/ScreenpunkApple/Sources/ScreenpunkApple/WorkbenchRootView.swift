@@ -10,6 +10,12 @@ public final class WorkbenchModel: ObservableObject {
     @Published public var status: String?
     public let hub: LoopbackDiscovery
     private let clock = FixedClock(Date())
+#if canImport(Network) && canImport(Security)
+    private var lanClients: [String: ControllerLANClient] = [:]
+    private var controllerTLS: TLSIdentityMaterial?
+    private var lanCodes: [String: String] = [:]
+    private var browser: LANAdvertisementBrowser?
+#endif
 
     public init(hub: LoopbackDiscovery = LoopbackDiscovery.shared) {
         self.hub = hub
@@ -35,6 +41,11 @@ public final class WorkbenchModel: ObservableObject {
         var phone = DeviceRuntime(identity: identity, profile: profile, advertisement: ad)
         phone.advertise(on: hub)
         self.phone = phone
+#if canImport(Network) && canImport(Security)
+        let browser = LANAdvertisementBrowser(hub: hub)
+        browser.start()
+        self.browser = browser
+#endif
         self.session.refreshDiscovery(hub)
     }
 
@@ -49,22 +60,42 @@ public final class WorkbenchModel: ObservableObject {
     }
 
     public func startPairing(advertised: AdvertisedDevice) {
-        do {
-            try session.beginPairing(
-                advertised: advertised,
-                phone: &phone,
-                expectedCode: "833492",
-                clock: clock,
-                nonce: [UInt8](repeating: 0x03, count: 16)
-            )
-            status = nil
-        } catch {
-            status = String(describing: error)
+        if advertised.source == .loopback {
+            do {
+                try session.beginPairing(
+                    advertised: advertised,
+                    phone: &phone,
+                    expectedCode: "833492",
+                    clock: clock,
+                    nonce: [UInt8](repeating: 0x03, count: 16)
+                )
+                status = nil
+            } catch {
+                status = String(describing: error)
+            }
+            return
         }
+#if canImport(Network) && canImport(Security)
+        startLANPairing(advertised: advertised)
+#else
+        status = TransferFailure.deviceOffline.rawValue
+#endif
     }
 
     public func confirmPairing() {
         guard let id = session.selectedDeviceId else { return }
+#if canImport(Network) && canImport(Security)
+        if let client = lanClients[id], let code = lanCodes[id] {
+            do {
+                try client.confirmPairing(code: code)
+                session.markPaired(deviceId: id)
+                status = nil
+            } catch {
+                status = String(describing: error)
+            }
+            return
+        }
+#endif
         do {
             try session.confirmPairing(
                 deviceId: id,
@@ -85,6 +116,12 @@ public final class WorkbenchModel: ObservableObject {
 
     public func deploy() {
         guard let id = session.selectedDeviceId, let draft = session.selectedDraft else { return }
+#if canImport(Network) && canImport(Security)
+        if let client = lanClients[id] {
+            deployOverLAN(client: client, deviceId: id, revision: draft, deploymentId: UUID().uuidString)
+            return
+        }
+#endif
         do {
             let record = try session.deploy(
                 deploymentId: UUID().uuidString,
@@ -100,6 +137,12 @@ public final class WorkbenchModel: ObservableObject {
 
     public func rollback(_ revision: StoredRevision) {
         guard let id = session.selectedDeviceId else { return }
+#if canImport(Network) && canImport(Security)
+        if let client = lanClients[id] {
+            deployOverLAN(client: client, deviceId: id, revision: revision, deploymentId: UUID().uuidString)
+            return
+        }
+#endif
         do {
             let record = try session.rollback(
                 to: revision,
@@ -115,9 +158,74 @@ public final class WorkbenchModel: ObservableObject {
 
     public func forgetSelected() {
         guard let id = session.selectedDeviceId else { return }
+#if canImport(Network) && canImport(Security)
+        lanClients[id]?.cancel()
+        lanClients.removeValue(forKey: id)
+        lanCodes.removeValue(forKey: id)
+#endif
         session.forgetUnreachable(deviceId: id)
         status = session.lastForgetMessage
     }
+
+#if canImport(Network) && canImport(Security)
+    private func controllerIdentity() throws -> TLSIdentityMaterial {
+        if let controllerTLS { return controllerTLS }
+        let made = try TLSIdentity.loadOrCreate(role: .controller)
+        controllerTLS = made
+        session.controllerIdentity = made.pairingIdentity
+        return made
+    }
+
+    private func startLANPairing(advertised: AdvertisedDevice) {
+        do {
+            guard let port = UInt16(exactly: advertised.port), port > 0 else {
+                throw TransferFailure.deviceOffline
+            }
+            let identity = try controllerIdentity()
+            let client = ControllerLANClient(identity: identity)
+            try client.connect(host: advertised.host, port: port)
+            let hello = try client.hello()
+            let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+            lanClients[advertised.deviceId] = client
+            lanCodes[advertised.deviceId] = begin.code
+            let name = hello.deviceId.isEmpty ? advertised.host : hello.deviceId
+            session.recordPairedDevice(
+                profile: DeviceProfile(deviceId: advertised.deviceId, name: name),
+                pairingCode: begin.code
+            )
+            status = nil
+        } catch {
+            status = String(describing: error)
+        }
+    }
+
+    private func deployOverLAN(
+        client: ControllerLANClient,
+        deviceId: String,
+        revision: StoredRevision,
+        deploymentId: String
+    ) {
+        do {
+            let queued = DeploymentRecord(
+                deploymentId: deploymentId,
+                revision: revision.revision,
+                dashboardId: revision.dashboardId,
+                deviceId: deviceId,
+                phase: .queued
+            )
+            let body = LANDeployBody(
+                deployment: queued,
+                revision: revision,
+                files: try LANPackageFiles.offlineFixture()
+            )
+            let outcome = try client.deploy(body)
+            session.applyRemoteDeployment(outcome, revision: revision, deviceId: deviceId)
+            status = outcome.phase.rawValue
+        } catch {
+            status = String(describing: error)
+        }
+    }
+#endif
 }
 
 public struct WorkbenchRootView: View {
