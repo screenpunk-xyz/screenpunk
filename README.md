@@ -11,10 +11,9 @@ assets in `screenpunk-xyz/Brand` (Codex Brand & App Guide at
 
 ## Status
 
-See [docs/implementation-status.md](docs/implementation-status.md). Milestone 0
-continues on `asher/codex/milestone-0-bootstrap` (PR #1). Isolation and pairing
-fixtures are in-tree; hidden Mac snapshot evidence requires a real macOS
-toolchain and is not faked.
+See [docs/implementation-status.md](docs/implementation-status.md). Milestone 1
+contracts live on `asher/codex/milestone-1-contracts`. Milestone 0 remains
+https://github.com/screenpunk-xyz/screenpunk/pull/1.
 
 ## Layout
 
@@ -29,7 +28,7 @@ assets/brand/ docs/ .github/workflows/
 ## Commands
 
 ```sh
-./scripts/ci/linux.sh          # schema, SDK, brand, isolation/pairing fixtures
+./scripts/ci/linux.sh          # schema, SDK, package validator, fixture server
 ./scripts/generate-xcode.sh    # install pinned XcodeGen 2.46.0; regenerate projects
 ./scripts/ci/apple.sh          # macOS: Core tests + iOS 16 compile
 ./scripts/ci/preview.sh        # macOS: hidden WKWebView probe (no fake PNG)
