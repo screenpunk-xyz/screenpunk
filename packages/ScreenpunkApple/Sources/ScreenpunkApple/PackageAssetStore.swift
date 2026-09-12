@@ -13,7 +13,7 @@ public enum PackageAssetError: Error, Equatable {
     case denied
 }
 
-public struct PackageAssetStore: Sendable {
+public struct PackageAssetStore: Sendable, Equatable {
     public var assets: [String: PackageAsset]
 
     public init(assets: [String: PackageAsset] = [:]) {
@@ -62,7 +62,7 @@ public struct PackageAssetStore: Sendable {
     public func asset(forSchemeURL url: String) throws -> PackageAsset {
         guard IsolationEvaluator.isLocalPackageURL(url) else { throw PackageAssetError.denied }
         let prefix = "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/"
-        let path = try hostRelativePath(String(url.dropFirst(prefix.count)))
+        let path = try Self.hostRelativePath(String(url.dropFirst(prefix.count)))
         guard let asset = assets[path] else { throw PackageAssetError.missingFile }
         return asset
     }
