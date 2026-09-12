@@ -3,21 +3,44 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { createHmac } from "node:crypto";
 import {
   PAIRING_EXPIRY_SECONDS,
   PAIRING_MAX_FAILURES,
   PAIRING_SAS_INFO,
   PairingError,
   beginPairing,
+  bytesToHex,
+  canonicalTranscript,
   confirmPairing,
   emptyPairingState,
   hexToBytes,
   matchingCode,
   repeatingKey,
+  type DevicePairingState,
+  type PairingFailure,
+  type PairingIdentity,
   type PairingTranscript
 } from "../src/pairing.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+
+interface ScenarioStep {
+  op: "begin" | "confirm";
+  case?: string;
+  candidate?: string;
+  code?: string;
+  presented?: string;
+  atSeconds: number;
+  expect: "ok" | PairingFailure;
+}
+
+interface Scenario {
+  id: string;
+  steps: ScenarioStep[];
+  finalOwner: string | null;
+}
+
 const vectors = JSON.parse(
   readFileSync(join(root, "tests/feasibility/pairing/vectors.json"), "utf8")
 ) as {
@@ -33,6 +56,8 @@ const vectors = JSON.parse(
     code: string;
     expect?: string;
   }>;
+  identities: Record<string, { role: "device" | "controller"; publicKey: string }>;
+  scenarios: Scenario[];
 };
 
 function transcriptFor(controllerHex: string): PairingTranscript {
@@ -57,10 +82,92 @@ test("honest pairing codes match; MITM and key-change codes differ", () => {
   const honest = vectors.cases.find((c) => c.id === "honest");
   assert.ok(honest);
   for (const c of vectors.cases) {
-    const code = matchingCode(transcriptFor(c.controllerPublicKey));
+    const transcript = transcriptFor(c.controllerPublicKey);
+    const code = matchingCode(transcript);
     assert.equal(code, c.code, c.id);
+    const mac = createHmac("sha256", PAIRING_SAS_INFO).update(canonicalTranscript(transcript)).digest("hex");
+    assert.equal(mac, c.macHex, `${c.id} full MAC`);
     if (c.expect === "codes-differ-from-honest") {
       assert.notEqual(code, honest.code, c.id);
+    }
+  }
+});
+
+function identityNamed(name: string): PairingIdentity {
+  const entry = vectors.identities[name];
+  assert.ok(entry, `unknown identity ${name}`);
+  return { role: entry.role, publicKey: hexToBytes(entry.publicKey) };
+}
+
+function caseNamed(id: string) {
+  const entry = vectors.cases.find((c) => c.id === id);
+  assert.ok(entry, `unknown case ${id}`);
+  return entry;
+}
+
+function resolveCode(spec: string): string {
+  return spec.startsWith("case:") ? caseNamed(spec.slice("case:".length)).code : spec;
+}
+
+function runStep(state: DevicePairingState, step: ScenarioStep, t0: number): DevicePairingState | PairingFailure {
+  const nowMs = t0 + step.atSeconds * 1000;
+  try {
+    if (step.op === "begin") {
+      const c = caseNamed(step.case ?? "");
+      const candidate = step.candidate
+        ? identityNamed(step.candidate)
+        : { role: "controller" as const, publicKey: hexToBytes(c.controllerPublicKey) };
+      return beginPairing(state, transcriptFor(c.controllerPublicKey), candidate, nowMs);
+    }
+    return confirmPairing(state, resolveCode(step.code ?? ""), identityNamed(step.presented ?? ""), nowMs);
+  } catch (err) {
+    if (err instanceof PairingError) return err.failure;
+    throw err;
+  }
+}
+
+test("pairing scenarios are shared with Swift and cover every failure class", () => {
+  assert.ok(vectors.scenarios.length >= 10);
+  const seen = new Set<PairingFailure | "ok">();
+  for (const scenario of vectors.scenarios) {
+    let state = emptyPairingState();
+    const t0 = 1_700_000_000_000;
+    scenario.steps.forEach((step, index) => {
+      const label = `${scenario.id} step ${index + 1} (${step.op})`;
+      const outcome = runStep(state, step, t0);
+      seen.add(step.expect);
+      if (typeof outcome === "string") {
+        assert.equal(outcome, step.expect, label);
+      } else {
+        assert.equal("ok", step.expect, label);
+        state = outcome;
+      }
+    });
+    const owner = state.owner ? bytesToHex(state.owner.publicKey) : null;
+    const expected = scenario.finalOwner ? vectors.identities[scenario.finalOwner]?.publicKey ?? null : null;
+    assert.equal(owner, expected, `${scenario.id} final owner`);
+  }
+  for (const failure of [
+    "ok",
+    "expired",
+    "rateLimited",
+    "codeMismatch",
+    "identityChanged",
+    "secondOwner",
+    "invalidIdentity"
+  ] as const) {
+    assert.ok(seen.has(failure), `scenarios must exercise ${failure}`);
+  }
+});
+
+test("published scenario ids are unique and code the expected pairing strings only", () => {
+  const ids = vectors.scenarios.map((s) => s.id);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const scenario of vectors.scenarios) {
+    for (const step of scenario.steps) {
+      if (step.code && !step.code.startsWith("case:")) {
+        assert.match(step.code, /^[0-9]{6}$/, `${scenario.id} literal codes are six digits`);
+      }
     }
   }
 });
