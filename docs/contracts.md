@@ -25,3 +25,8 @@ Host replies via `globalThis.__screenpunkDispatch`. See `sdk/README.md`.
 
 MCP authoring/preview/help: [docs/mcp.md](mcp.md). Preview returns PNG
 image content from the hidden helper; it is live by default.
+
+MCP pairing/deploy: same TLS 1.3 LAN messages as the workbench
+(`LANProtocol.swift`); one owner per device; SAS code compared by the user
+and confirmed on the device; deploy ships the previewed revision the user
+approved in chat; a failed transfer keeps the device's current dashboard.
