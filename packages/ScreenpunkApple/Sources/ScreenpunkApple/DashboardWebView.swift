@@ -73,7 +73,9 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
+#if os(iOS)
         webView.isOpaque = true
+#endif
         installUnlinkRecognizer(on: webView)
         installContentRules(on: webView)
         if let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/index.html") {
