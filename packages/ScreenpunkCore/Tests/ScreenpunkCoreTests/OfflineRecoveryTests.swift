@@ -157,23 +157,76 @@ final class OfflineRecoveryTests: XCTestCase {
         }
     }
 
-    func testAuthExpiryStatusIsSurfacedWithoutLeakingTheSecret() async throws {
+    func testAuthExpiryServesRetainedDataStaleAndSurfacesStatusWithoutLeakingTheSecret() async throws {
         let clock = TestClock(t0)
         let store = MemoryCredentialStore()
         let http = ScriptedHTTPTransport()
-        http.enqueue(.success(HTTPTransportResponse(status: 401, body: Data(#"{"error":"unauthorized"}"#.utf8))))
+        let denied = Data(#"{"error":"unauthorized"}"#.utf8)
+        http.enqueue(.success(HTTPTransportResponse(status: 200, body: fresh)))
+        http.enqueue(.success(HTTPTransportResponse(status: 401, body: denied)))
+        http.enqueue(.success(HTTPTransportResponse(status: 200, body: later)))
         let runtime = makeRuntime(http: http, clock: clock, store: store)
         var grant = try statusGrant()
         grant.authRef = "keychain:fixture-status"
         try store.put(Data("expired-fixture-token".utf8), for: grant.authRef)
         try await runtime.install(grant: grant, binding: ConnectionAuthBinding(authRef: grant.authRef, placement: .bearer))
 
-        let result = try await runtime.request(alias: "status", operation: "getStatus", parameters: [:])
-        XCTAssertEqual(result.statusCode, 401)
-        XCTAssertTrue(result.diagnostic.contains("status=401"))
-        XCTAssertFalse(result.diagnostic.contains("expired-fixture-token"))
+        _ = try await runtime.request(alias: "status", operation: "getStatus", parameters: [:])
+        clock.now = t0.addingTimeInterval(60)
+        let expired = try await runtime.request(alias: "status", operation: "getStatus", parameters: [:])
+        XCTAssertEqual(expired.statusCode, 401, "the upstream status is surfaced")
+        XCTAssertTrue(expired.stale, "auth expiry is a failed refresh, not fresh data")
+        XCTAssertEqual(expired.body, fresh, "the 401 body never replaces the last good payload")
+        XCTAssertNotEqual(expired.body, denied)
+        XCTAssertEqual(expired.fetchedAt, t0)
+        XCTAssertTrue(expired.diagnostic.contains("status=401"))
+        XCTAssertFalse(expired.diagnostic.contains("expired-fixture-token"))
         XCTAssertEqual(http.requests.first?.headers["Authorization"], "Bearer expired-fixture-token")
         XCTAssertFalse(http.requests.first?.url.absoluteString.contains("expired-fixture-token") ?? true)
+        XCTAssertTrue(ConnectionHealth.overlayVisible(requiredFailedOrStale: true, connectionCount: 1))
+        let cached = await runtime.lastRead(alias: "status", operation: "getStatus", parameters: [:])
+        XCTAssertEqual(cached?.valueJSON, String(decoding: fresh, as: UTF8.self))
+        XCTAssertEqual(cached?.stale, true)
+
+        clock.now = t0.addingTimeInterval(120)
+        let recovered = try await runtime.request(alias: "status", operation: "getStatus", parameters: [:])
+        XCTAssertEqual(recovered.statusCode, 200)
+        XCTAssertFalse(recovered.stale)
+        XCTAssertEqual(recovered.body, later)
+    }
+
+    func testUpstreamErrorStatusesAreFailuresAndNeverCachedAsReads() async throws {
+        for status in [400, 401, 403, 404, 429, 500, 502, 503] {
+            let clock = TestClock(t0)
+            let http = ScriptedHTTPTransport()
+            let errorBody = Data("{\"error\":\(status)}".utf8)
+            http.enqueue(.success(HTTPTransportResponse(status: status, body: errorBody)))
+            let runtime = makeRuntime(http: http, clock: clock)
+            let grant = try statusGrant()
+            try await runtime.install(grant: grant, binding: ConnectionAuthBinding(authRef: grant.authRef, placement: .none))
+
+            do {
+                _ = try await runtime.request(alias: "status", operation: "getStatus", parameters: [:])
+                XCTFail("\(status) with nothing cached must surface as a failure")
+            } catch {
+                XCTAssertEqual(error as? ConnectionFailure, .deviceOffline, "status \(status)")
+            }
+            let nothing = await runtime.lastRead(alias: "status", operation: "getStatus", parameters: [:])
+            XCTAssertNil(nothing, "a \(status) body is never remembered as a read")
+
+            http.enqueue(.success(HTTPTransportResponse(status: 200, body: fresh)))
+            http.enqueue(.success(HTTPTransportResponse(status: status, body: errorBody)))
+            _ = try await runtime.request(alias: "status", operation: "getStatus", parameters: [:])
+            clock.now = t0.addingTimeInterval(60)
+            let failed = try await runtime.request(alias: "status", operation: "getStatus", parameters: [:])
+            XCTAssertTrue(failed.stale, "status \(status) serves retained data stale")
+            XCTAssertEqual(failed.statusCode, status)
+            XCTAssertEqual(failed.body, fresh)
+            XCTAssertEqual(failed.fetchedAt, t0)
+            let retained = await runtime.lastRead(alias: "status", operation: "getStatus", parameters: [:])
+            XCTAssertEqual(retained?.valueJSON, String(decoding: fresh, as: UTF8.self), "status \(status)")
+            XCTAssertEqual(retained?.stale, true)
+        }
     }
 
     func testStalenessFollowsInjectedClockAndOperationMaxAge() {

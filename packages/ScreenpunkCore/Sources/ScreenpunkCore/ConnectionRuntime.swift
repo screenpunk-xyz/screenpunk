@@ -12,6 +12,9 @@ public actor ConnectionRuntime {
     private let resolver: any DestinationResolver
     private var dashboardStore: DashboardStore
     private var subscriptions: [String: SubscriptionRecord] = [:]
+    /// Bumped by `clearCredentials`. Work that was in flight across an unlink
+    /// must not write to the store or register sockets when it resumes.
+    private var epoch = 0
     private let clock: any PairingClock
     private let httpBounds: HTTPAdapterBounds
 
@@ -48,13 +51,20 @@ public actor ConnectionRuntime {
         parameters: [String: String]
     ) async throws -> ConnectionHTTPResult {
         let prepared = try prepareHTTP(alias: alias, operation: operation, parameters: parameters)
+        let startedIn = epoch
         do {
             let response = try await http.send(prepared.request)
+            guard startedIn == epoch else {
+                throw ConnectionFailure.permissionRequired
+            }
             if (300...399).contains(response.status) {
                 throw ConnectionFailure.deniedEgress
             }
             if response.body.count > prepared.request.maxBytes {
                 throw ConnectionFailure.sizeLimit
+            }
+            guard (200...299).contains(response.status) else {
+                throw UpstreamStatusFailure(status: response.status)
             }
             let json = String(decoding: response.body, as: UTF8.self)
             if prepared.write == false {
@@ -78,16 +88,22 @@ public actor ConnectionRuntime {
                 )
             )
         } catch {
+            guard startedIn == epoch else {
+                throw ConnectionFailure.permissionRequired
+            }
+            // Only an upstream 4xx/5xx carries a status into the stale result; a
+            // transport failure, refused redirect, or oversized body reports 0.
+            let upstreamStatus = (error as? UpstreamStatusFailure)?.status ?? 0
             if prepared.write == false, let cached = dashboardStore.cachedRead(cacheKey: prepared.cacheKey) {
                 _ = dashboardStore.markStale(cacheKey: prepared.cacheKey)
                 return ConnectionHTTPResult(
-                    statusCode: 0,
+                    statusCode: upstreamStatus,
                     body: Data(cached.valueJSON.utf8),
                     stale: true,
                     fetchedAt: cached.fetchedAt,
                     diagnostic: ConnectionRedaction.diagnostic(
                         operation: operation,
-                        status: 0,
+                        status: upstreamStatus,
                         origin: prepared.origin,
                         lan: prepared.lan,
                         at: clock.now
@@ -107,11 +123,15 @@ public actor ConnectionRuntime {
         parameters: [String: String]
     ) async throws -> SubscriptionID {
         let prepared = try prepareWebSocket(alias: alias, operation: operation, parameters: parameters)
-        if let existing = subscriptions[prepared.cacheKey] {
+        let startedIn = epoch
+        if let existing = subscriptions.removeValue(forKey: prepared.cacheKey) {
             await existing.session.close()
-            subscriptions.removeValue(forKey: prepared.cacheKey)
         }
         let session = try await webSocket.connect(prepared.request)
+        guard startedIn == epoch else {
+            await session.close()
+            throw ConnectionFailure.permissionRequired
+        }
         let id = SubscriptionID(UUID().uuidString)
         subscriptions[prepared.cacheKey] = SubscriptionRecord(
             id: id,
@@ -129,6 +149,10 @@ public actor ConnectionRuntime {
             throw ConnectionFailure.permissionRequired
         }
         let data = try await record.session.receive()
+        guard subscriptions[record.key]?.id == id else {
+            // Unsubscribed, replaced, or unlinked while the read was pending.
+            throw ConnectionFailure.permissionRequired
+        }
         if data.count > ConnectionBounds.websocketMessageBytes {
             throw ConnectionFailure.sizeLimit
         }
@@ -156,10 +180,26 @@ public actor ConnectionRuntime {
         )
     }
 
-    public func clearCredentials() throws {
-        try store.deleteAll()
+    /// Unlink: no further request can be built, every open socket is closed,
+    /// cached reads and saved state are gone, and stored secrets are deleted.
+    /// In-memory state is dropped before the first suspension point so work that
+    /// resumes mid-unlink observes the cleared runtime.
+    public func clearCredentials() async throws {
+        epoch += 1
         grants.removeAll()
         bindings.removeAll()
+        let open = subscriptions.values.map(\.session)
+        subscriptions.removeAll()
+        dashboardStore.clear()
+        let deletion = Result { try store.deleteAll() }
+        for session in open {
+            await session.close()
+        }
+        try deletion.get()
+    }
+
+    private struct UpstreamStatusFailure: Error {
+        var status: Int
     }
 
     private struct PreparedHTTP {
