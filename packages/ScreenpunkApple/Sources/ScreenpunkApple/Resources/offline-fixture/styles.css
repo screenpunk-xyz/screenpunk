@@ -1,0 +1,7 @@
+html, body {
+  margin: 0;
+  background: #F4EFE5;
+  color: #15191C;
+  font: 18px/1.4 system-ui, sans-serif;
+}
+main { padding: 48px 24px; }

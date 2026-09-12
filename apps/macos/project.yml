@@ -35,6 +35,7 @@ targets:
       - package: ScreenpunkCore
       - package: ScreenpunkApple
       - package: ScreenpunkController
+      - sdk: WebKit.framework
     settings:
       base:
         PRODUCT_NAME: Screenpunk

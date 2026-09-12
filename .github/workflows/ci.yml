@@ -55,6 +55,7 @@ jobs:
           test -f schemas/connection-grant.schema.json
           test -f docs/contracts.md
           test -f examples/offline-fixture/manifest.json
+          ./scripts/verify-offline-fixture-resource.sh
           test -f tests/feasibility/isolation/attacks.json
           test -f tests/feasibility/pairing/vectors.json
           grep -q "connect-src 'none'" tests/feasibility/isolation/attacks.json

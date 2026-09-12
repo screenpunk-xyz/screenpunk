@@ -4,7 +4,7 @@ import ScreenpunkCore
 import WebKit
 #endif
 
-/// Native host isolation scaffolding. No designed first-party UI.
+/// Native host isolation. Custom scheme serves package-local assets only.
 public enum WebIsolation: Sendable {
     public static var customScheme: String { IsolationPolicy.customScheme }
     public static var contentSecurityPolicy: String { IsolationPolicy.contentSecurityPolicy }
@@ -21,17 +21,35 @@ public enum WebIsolation: Sendable {
 }
 
 #if canImport(WebKit)
-/// Custom-scheme load of package-local assets. HTTP(S) is not handled here.
 public final class PackageSchemeHandler: NSObject, WKURLSchemeHandler {
+    public let store: PackageAssetStore
+
+    public init(store: PackageAssetStore) {
+        self.store = store
+    }
+
     public func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-        guard let url = urlSchemeTask.request.url?.absoluteString,
-              IsolationEvaluator.isLocalPackageURL(url)
-        else {
-            urlSchemeTask.didFailWithError(URLError(.appTransportSecurityRequiresSecureConnection))
-            return
+        let url = urlSchemeTask.request.url
+        let absolute = url?.absoluteString ?? ""
+        do {
+            let asset = try store.asset(forSchemeURL: absolute)
+            guard let url else { throw PackageAssetError.denied }
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: [
+                    "Content-Type": asset.mime,
+                    "Content-Security-Policy": IsolationPolicy.contentSecurityPolicy,
+                    "Cache-Control": "no-store"
+                ]
+            )!
+            urlSchemeTask.didReceive(response)
+            urlSchemeTask.didReceive(asset.data)
+            urlSchemeTask.didFinish()
+        } catch {
+            urlSchemeTask.didFailWithError(URLError(.cannotOpenFile))
         }
-        let denied = URLError(.dataNotAllowed)
-        urlSchemeTask.didFailWithError(denied)
     }
 
     public func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}

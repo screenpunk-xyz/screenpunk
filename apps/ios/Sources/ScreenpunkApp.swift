@@ -2,19 +2,26 @@ import SwiftUI
 import ScreenpunkApple
 import ScreenpunkCore
 
-/// Compile stub. Isolation policy is wired; no first-party designed UI.
 @main
 struct ScreenpunkApp: App {
     var body: some Scene {
         WindowGroup {
-            Text("Screenpunk")
-                .font(.body)
-                .padding()
+            AppleHostRoot()
+        }
+    }
+}
+
+private struct AppleHostRoot: View {
+    var body: some View {
+        if let view = try? DashboardRuntimeView.offlineFixture() {
+            view
+                .ignoresSafeArea()
                 .accessibilityLabel(
                     "Screenpunk \(PlatformRequirements.iosMinimum) \(WebIsolation.customScheme)"
                 )
-                .accessibilityValue(WebIsolation.nativeNetworkingOnly ? "native-network" : "open")
-                .accessibilityHint(NativeChromeHost.unlinkActionTitle)
+        } else {
+            Text("Offline fixture missing")
+                .padding()
         }
     }
 }
