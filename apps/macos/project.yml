@@ -1,0 +1,42 @@
+name: ScreenpunkMac
+options:
+  bundleIdPrefix: xyz.screenpunk
+  deploymentTarget:
+    macOS: "26.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: xyz.screenpunk.macos
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_VERSION: "5.9"
+    CODE_SIGNING_ALLOWED: "NO"
+    GENERATE_INFOPLIST_FILE: YES
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
+    SUPPORTED_PLATFORMS: macosx
+    INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+    INFOPLIST_KEY_NSLocalNetworkUsageDescription: Screenpunk discovers paired devices on your local network.
+    INFOPLIST_KEY_NSBonjourServices: "_screenpunk._tcp"
+packages:
+  ScreenpunkCore:
+    path: ../../packages/ScreenpunkCore
+  ScreenpunkApple:
+    path: ../../packages/ScreenpunkApple
+  ScreenpunkController:
+    path: ../../packages/ScreenpunkController
+targets:
+  ScreenpunkMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: ScreenpunkCore
+      - package: ScreenpunkApple
+      - package: ScreenpunkController
+    settings:
+      base:
+        PRODUCT_NAME: Screenpunk
+        INFOPLIST_KEY_CFBundleDisplayName: Screenpunk
+        INFOPLIST_KEY_NSHumanReadableCopyright: Copyright 2026 Screenpunk, Inc.

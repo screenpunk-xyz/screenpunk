@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contracts-and-sdk:
+    name: contracts-and-sdk
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdk/package-lock.json
+      - name: Linux contracts
+        run: ./scripts/ci/linux.sh
+
+  security-and-hygiene:
+    name: security-and-hygiene
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdk/package-lock.json
+      - name: License, brand, and docs
+        run: |
+          test -f LICENSE && grep -q "Apache License" LICENSE
+          grep -q "Copyright 2026 Screenpunk, Inc." LICENSE
+          test -f NOTICE
+          grep -q "Copyright 2026 Screenpunk, Inc." NOTICE
+          grep -q "not licensed under" NOTICE
+          grep -q "xyz.screenpunk.ios" apps/ios/project.yml
+          grep -q "xyz.screenpunk.macos" apps/macos/project.yml
+          grep -q "Copyright 2026 Screenpunk, Inc." apps/ios/project.yml
+          grep -q "Copyright 2026 Screenpunk, Inc." apps/macos/project.yml
+          test -f docs/implementation-status.md
+          test -f docs/apple-review-position.md
+          ./scripts/verify-brand.mjs
+          test -f schemas/dashboard-manifest.schema.json
+          test -f tests/feasibility/isolation/attacks.json
+          test -f tests/feasibility/pairing/vectors.json
+          grep -q "connect-src 'none'" tests/feasibility/isolation/attacks.json
+          grep -q "screenpunk-pairing-sas-v1" tests/feasibility/pairing/vectors.json
+          if grep -q "sk-" tests/feasibility/pairing/vectors.json; then
+            echo "pairing fixtures must not contain credential-like tokens"
+            exit 1
+          fi
+
+  apple-build-and-unit:
+    name: apple-build-and-unit
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Apple bootstrap build
+        run: ./scripts/ci/apple.sh
+
+  apple-ui-and-preview:
+    name: apple-ui-and-preview
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Hidden preview probe
+        run: ./scripts/ci/preview.sh
+      - name: Upload real WKWebView PNG only
+        if: hashFiles('tests/feasibility/preview/last-snapshot.png') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: preview-wkwebview-snapshot
+          path: tests/feasibility/preview/last-snapshot.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  required-checks:
+    name: required-checks
+    if: always()
+    needs:
+      - contracts-and-sdk
+      - security-and-hygiene
+      - apple-build-and-unit
+      - apple-ui-and-preview
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Aggregate required jobs
+        run: |
+          echo "contracts-and-sdk=${{ needs.contracts-and-sdk.result }}"
+          echo "security-and-hygiene=${{ needs.security-and-hygiene.result }}"
+          echo "apple-build-and-unit=${{ needs.apple-build-and-unit.result }}"
+          echo "apple-ui-and-preview=${{ needs.apple-ui-and-preview.result }}"
+          for result in \
+            "${{ needs.contracts-and-sdk.result }}" \
+            "${{ needs.security-and-hygiene.result }}" \
+            "${{ needs.apple-build-and-unit.result }}" \
+            "${{ needs.apple-ui-and-preview.result }}"
+          do
+            if [[ "$result" != "success" ]]; then
+              echo "required-checks failed: a required job was $result"
+              exit 1
+            fi
+          done
+          echo "required-checks passed"
