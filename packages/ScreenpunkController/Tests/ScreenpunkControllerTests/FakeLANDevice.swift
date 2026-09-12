@@ -12,6 +12,8 @@ final class FakeLANDevice: @unchecked Sendable {
     let port: UInt16 = 7843
     var online = true
     var lieAboutCode = false
+    /// Claim this pin in `hello` instead of the handshake identity.
+    var claimedHelloPin: [UInt8]?
     private(set) var pairingCode: String?
     private(set) var deviceConfirmed = false
     private(set) var pinnedController: [UInt8]?
@@ -57,7 +59,8 @@ final class FakeLANDevice: @unchecked Sendable {
         return owner == nil || owner == controllerPin
     }
 
-    func handle(_ request: LANEnvelope) -> LANEnvelope {
+    /// `peerPin` is the controller pin observed in the (simulated) TLS handshake.
+    func handle(_ request: LANEnvelope, peerPin: [UInt8]) -> LANEnvelope {
         lock.lock()
         defer { lock.unlock() }
         do {
@@ -66,17 +69,20 @@ final class FakeLANDevice: @unchecked Sendable {
             }
             switch LANMethod(rawValue: request.method) {
             case .hello:
-                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(identityPin)))
+                let shown = claimedHelloPin ?? identityPin
+                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown)))
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
-                guard let controllerPin = PeerPin.bytes(body.controllerPinHex),
-                      let nonce = PeerPin.parseHex(body.sessionNonceHex),
+                guard PeerPin.matches(expected: peerPin, presentedHex: body.controllerPinHex) else {
+                    throw PairingFailure.identityChanged
+                }
+                guard let nonce = PeerPin.parseHex(body.sessionNonceHex),
                       nonce.count == PairingLimits.sessionNonceByteCount
                 else {
                     throw TransferFailure.validationFailed
                 }
-                let controller = PairingIdentity(role: .controller, publicKey: controllerPin)
-                let transcript = PairingTranscript(devicePublicKey: identityPin, controllerPublicKey: controllerPin, sessionNonce: nonce)
+                let controller = PairingIdentity(role: .controller, publicKey: peerPin)
+                let transcript = PairingTranscript(devicePublicKey: identityPin, controllerPublicKey: peerPin, sessionNonce: nonce)
                 let code = expectedCode(for: transcript)
                 try runtime.beginPairing(transcript: transcript, expectedCode: code, candidateOwner: controller, clock: clock)
                 pairingCode = code
@@ -86,15 +92,18 @@ final class FakeLANDevice: @unchecked Sendable {
             case .pairConfirm:
                 guard deviceConfirmed else { throw TransferFailure.interrupted }
                 let body = try LANCodec.decodePayload(LANPairConfirm.self, json: request.payloadJSON)
-                guard let controllerPin = PeerPin.bytes(body.controllerPinHex) else {
-                    throw TransferFailure.validationFailed
+                guard PeerPin.matches(expected: peerPin, presentedHex: body.controllerPinHex) else {
+                    throw PairingFailure.identityChanged
                 }
-                let controller = PairingIdentity(role: .controller, publicKey: controllerPin)
+                let controller = PairingIdentity(role: .controller, publicKey: peerPin)
                 try runtime.confirmPairing(code: body.code, presentedOwner: controller, clock: clock)
                 pinnedController = runtime.pairing.owner?.publicKey
                 pairingCode = nil
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
             case .deploy:
+                guard let owner = runtime.pairing.owner?.publicKey, owner == peerPin else {
+                    throw TransferFailure.notPaired
+                }
                 deployAttempts += 1
                 let body = try LANCodec.decodePayload(LANDeployBody.self, json: request.payloadJSON)
                 var staged: [String: Data] = [:]
@@ -109,6 +118,9 @@ final class FakeLANDevice: @unchecked Sendable {
                 }
                 return ok(request, payload: outcome)
             case .queryActive:
+                guard let owner = runtime.pairing.owner?.publicKey, owner == peerPin else {
+                    throw TransferFailure.notPaired
+                }
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
             case .none:
                 throw TransferFailure.validationFailed
@@ -141,6 +153,8 @@ final class FakeLANLink: DeviceLink {
     let device: FakeLANDevice
     let controllerPin: [UInt8]
     private(set) var devicePin: [UInt8]?
+    /// Pin of the certificate the device presented in the simulated handshake.
+    private(set) var observedDevicePin: [UInt8]?
     private var connected = false
 
     init(device: FakeLANDevice, controllerPin: [UInt8]) {
@@ -154,19 +168,20 @@ final class FakeLANLink: DeviceLink {
         guard device.acceptTLS(controllerPin: controllerPin) else { throw TransferFailure.notPaired }
         if let pinnedDevice, pinnedDevice != device.identityPin { throw TransferFailure.notPaired }
         if let pinnedDevice { devicePin = pinnedDevice }
+        observedDevicePin = device.identityPin
         connected = true
     }
 
     func hello() throws -> LANHello {
         let reply = try request(.hello, LANHello(role: .controller, deviceId: "controller", pinHex: PeerPin.hex(controllerPin)))
         let hello = try LANCodec.decodePayload(LANHello.self, json: reply.payloadJSON)
+        guard let observed = observedDevicePin else { throw TransferFailure.validationFailed }
+        let presented = PairingIdentity(role: .device, publicKey: PeerPin.bytes(hello.pinHex) ?? [])
+        try PinnedPeer.rejectIfChanged(pinned: PairingIdentity(role: .device, publicKey: observed), presented: presented)
         if let pinned = devicePin {
-            try PinnedPeer.rejectIfChanged(
-                pinned: PairingIdentity(role: .device, publicKey: pinned),
-                presented: PairingIdentity(role: .device, publicKey: PeerPin.bytes(hello.pinHex) ?? [])
-            )
+            try PinnedPeer.rejectIfChanged(pinned: PairingIdentity(role: .device, publicKey: pinned), presented: presented)
         }
-        devicePin = PeerPin.bytes(hello.pinHex)
+        devicePin = observed
         return hello
     }
 
@@ -191,6 +206,7 @@ final class FakeLANLink: DeviceLink {
 
     func cancel() {
         connected = false
+        observedDevicePin = nil
     }
 
     private func request<T: Encodable>(_ method: LANMethod, _ payload: T) throws -> LANEnvelope {
@@ -198,7 +214,7 @@ final class FakeLANLink: DeviceLink {
         let envelope = LANEnvelope(requestId: UUID().uuidString, method: method.rawValue, payloadJSON: try LANCodec.encodePayload(payload))
         let framed = try LANCodec.frame(try LANCodec.encode(envelope))
         let length = try LANCodec.messageLength(fromHeader: Data(framed.prefix(4)))
-        let reply = device.handle(try LANCodec.decode(Data(framed.suffix(length))))
+        let reply = device.handle(try LANCodec.decode(Data(framed.suffix(length))), peerPin: controllerPin)
         guard reply.requestId == envelope.requestId else { throw TransferFailure.validationFailed }
         if reply.ok != true {
             if let failure = PairingFailure(rawValue: reply.error ?? "") { throw failure }

@@ -9,9 +9,12 @@ import Security
 
 #if canImport(Network) && canImport(Security)
 /// Controller-side TLS 1.3 client. Deploy and pairing use the pinned channel.
+/// `devicePin` is the pin observed in the TLS handshake; `hello` must agree with it.
 public final class ControllerLANClient: @unchecked Sendable {
     public let identity: TLSIdentityMaterial
     public private(set) var devicePin: [UInt8]?
+    /// Leaf-certificate pin of the peer on the current connection.
+    public private(set) var observedDevicePin: [UInt8]?
     public private(set) var lastHello: LANHello?
     private var link: LANLink?
     private var connection: NWConnection?
@@ -44,6 +47,12 @@ public final class ControllerLANClient: @unchecked Sendable {
             using: parameters
         )
         try waitReady(connection)
+        let observed = LANChannel.observedPeerPin(connection)
+        if let expected = pinnedDevice ?? devicePin, observed != expected {
+            connection.cancel()
+            throw PairingFailure.identityChanged
+        }
+        observedDevicePin = observed
         self.connection = connection
         self.link = LANLink(connection: connection, queue: queue)
     }
@@ -55,14 +64,22 @@ public final class ControllerLANClient: @unchecked Sendable {
             pinHex: PeerPin.hex(identity.pin)
         ))
         let hello = try LANCodec.decodePayload(LANHello.self, json: reply.payloadJSON)
+        guard let observed = observedDevicePin else {
+            throw TransferFailure.validationFailed
+        }
+        // The identity the device claims must be the one that completed the handshake.
+        let presented = PairingIdentity(role: .device, publicKey: PeerPin.bytes(hello.pinHex) ?? [])
+        try PinnedPeer.rejectIfChanged(
+            pinned: PairingIdentity(role: .device, publicKey: observed),
+            presented: presented
+        )
         if let pinned = devicePin {
-            let presented = PairingIdentity(role: .device, publicKey: PeerPin.bytes(hello.pinHex) ?? [])
             try PinnedPeer.rejectIfChanged(
                 pinned: PairingIdentity(role: .device, publicKey: pinned),
                 presented: presented
             )
         }
-        devicePin = PeerPin.bytes(hello.pinHex)
+        devicePin = observed
         lastHello = hello
         return hello
     }
@@ -103,6 +120,7 @@ public final class ControllerLANClient: @unchecked Sendable {
         connection?.cancel()
         connection = nil
         link = nil
+        observedDevicePin = nil
     }
 
     private func waitReady(_ connection: NWConnection) throws {

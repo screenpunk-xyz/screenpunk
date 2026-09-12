@@ -30,3 +30,9 @@ MCP pairing/deploy: same TLS 1.3 LAN messages as the workbench
 (`LANProtocol.swift`); one owner per device; SAS code compared by the user
 and confirmed on the device; deploy ships the previewed revision the user
 approved in chat; a failed transfer keeps the device's current dashboard.
+
+The SAS transcript binds to the certificate pins each side observed in the
+TLS handshake, not to pins claimed in `hello` or `pair.begin`; a mismatch is
+`identityChanged`. Deploy and `query.active` are owner-only. The device
+persists owner, active revision, and package bytes (`DeviceStateStore`);
+Unlink erases them.

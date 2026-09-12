@@ -9,6 +9,11 @@ import Security
 
 #if canImport(Network) && canImport(Security)
 /// Device-side TLS 1.3 listener. Pairing and deploy run over the authenticated channel.
+///
+/// The SAS transcript and the owner check bind to the controller pin observed in
+/// each connection's TLS handshake, never to the pin a message claims. Owner,
+/// active revision, and package bytes persist through `DeviceStateStore` so a
+/// relaunch returns paired and rendering; Unlink erases all of it.
 public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var runtime: DeviceRuntime
     public private(set) var port: UInt16 = 0
@@ -17,19 +22,28 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// transfer activates; a failed transfer leaves the current package in place.
     public private(set) var activePackage: PackageAssetStore?
     public var onChange: (() -> Void)?
+    public let identity: TLSIdentityMaterial
+    public let store: DeviceStateStore?
     private var deviceConfirmed = false
     private var pinnedController: [UInt8]?
-    public let identity: TLSIdentityMaterial
+    private var activeStoredRevision: StoredRevision?
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.device")
     private let clock: PairingClock
     private let lock = NSLock()
 
-    public init(runtime: DeviceRuntime, identity: TLSIdentityMaterial, clock: PairingClock = FixedClock(Date())) {
+    public init(
+        runtime: DeviceRuntime,
+        identity: TLSIdentityMaterial,
+        clock: PairingClock = FixedClock(Date()),
+        store: DeviceStateStore? = nil
+    ) {
         self.runtime = runtime
         self.identity = identity
         self.clock = clock
+        self.store = store
         self.runtime.identity = identity.pairingIdentity
+        restoreFromStore()
     }
 
     public func start() throws {
@@ -95,16 +109,20 @@ public final class DeviceLANServer: @unchecked Sendable {
             try runtime.confirmPairing(code: code, presentedOwner: owner, clock: clock)
         }
         pinnedController = runtime.pairing.owner?.publicKey
+        persist()
         onChange?()
     }
 
+    /// Erases owner, active revision, package bytes, and everything on disk.
     public func unlink() {
         lock.lock()
         runtime.unlink()
         activePackage = nil
+        activeStoredRevision = nil
         pairingCode = nil
         deviceConfirmed = false
         pinnedController = nil
+        try? store?.erase()
         lock.unlock()
         onChange?()
     }
@@ -121,6 +139,33 @@ public final class DeviceLANServer: @unchecked Sendable {
         lock.unlock()
         return value
     }
+
+    // MARK: Persistence
+
+    private func restoreFromStore() {
+        guard let store, let state = store.load() else { return }
+        runtime.restore(state)
+        pinnedController = state.owner?.publicKey
+        activeStoredRevision = state.activeStoredRevision
+        if runtime.activeRevision != nil,
+           let files = try? store.loadPackageFiles(), files.isEmpty == false
+        {
+            var assets: [String: PackageAsset] = [:]
+            for file in files {
+                guard let path = try? PackageAssetStore.hostRelativePath(file.path) else { continue }
+                assets[path] = PackageAsset(path: path, data: file.data, mime: PackageAssetStore.mime(for: path))
+            }
+            activePackage = PackageAssetStore(assets: assets)
+        }
+    }
+
+    /// Caller holds `lock`.
+    private func persist() {
+        guard let store else { return }
+        try? store.save(DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision))
+    }
+
+    // MARK: Connections
 
     private func ownerPin() -> [UInt8]? {
         lock.lock()
@@ -141,26 +186,28 @@ public final class DeviceLANServer: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
-        connection.start(queue: queue)
-        waitReady(connection)
+        startAndWaitReady(connection)
+        let peerPin = LANChannel.observedPeerPin(connection)
         let link = LANLink(connection: connection, queue: queue)
-        serve(link)
+        serve(link, peerPin: peerPin)
     }
 
-    private func waitReady(_ connection: NWConnection) {
+    /// Installs the state handler before `start` so a fast handshake cannot be missed.
+    private func startAndWaitReady(_ connection: NWConnection) {
         let done = DispatchSemaphore(value: 0)
         connection.stateUpdateHandler = { state in
             if case .ready = state { done.signal() }
             if case .failed = state { done.signal() }
         }
+        connection.start(queue: queue)
         _ = done.wait(timeout: .now() + 8)
     }
 
-    private func serve(_ link: LANLink) {
+    private func serve(_ link: LANLink, peerPin: [UInt8]?) {
         while true {
             do {
                 let request = try link.receive()
-                let reply = handle(request)
+                let reply = handle(request, peerPin: peerPin)
                 try link.send(reply)
             } catch {
                 break
@@ -168,7 +215,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         }
     }
 
-    private func handle(_ request: LANEnvelope) -> LANEnvelope {
+    private func handle(_ request: LANEnvelope, peerPin: [UInt8]?) -> LANEnvelope {
         if request.method == LANMethod.pairConfirm.rawValue {
             _ = waitUntilDeviceConfirmed(timeout: 60)
         }
@@ -188,8 +235,8 @@ public final class DeviceLANServer: @unchecked Sendable {
                 return ok(request, payload: hello)
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
-                guard let controllerPin = PeerPin.bytes(body.controllerPinHex),
-                      let nonce = PeerPin.parseHex(body.sessionNonceHex),
+                let controllerPin = try authenticatedPeer(peerPin, claimedHex: body.controllerPinHex)
+                guard let nonce = PeerPin.parseHex(body.sessionNonceHex),
                       nonce.count == PairingLimits.sessionNonceByteCount
                 else {
                     throw TransferFailure.validationFailed
@@ -217,25 +264,52 @@ public final class DeviceLANServer: @unchecked Sendable {
             case .pairConfirm:
                 guard deviceConfirmed else { throw TransferFailure.interrupted }
                 let body = try LANCodec.decodePayload(LANPairConfirm.self, json: request.payloadJSON)
-                guard let controllerPin = PeerPin.bytes(body.controllerPinHex) else {
-                    throw TransferFailure.validationFailed
-                }
+                let controllerPin = try authenticatedPeer(peerPin, claimedHex: body.controllerPinHex)
                 let controller = PairingIdentity(role: .controller, publicKey: controllerPin)
                 try runtime.confirmPairing(code: body.code, presentedOwner: controller, clock: clock)
                 pinnedController = runtime.pairing.owner?.publicKey
                 pairingCode = nil
+                persist()
                 onChange?()
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
             case .deploy:
+                try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(LANDeployBody.self, json: request.payloadJSON)
                 let staged = try stageFiles(body.files)
-                let outcome = try runtime.receiveDeployment(body.deployment, revision: body.revision)
+                let stagedDirectory = try store?.stagePackage(
+                    staged.values.sorted { $0.path < $1.path }.map { (path: $0.path, data: $0.data) }
+                )
+                let before = runtime
+                var outcome = try runtime.receiveDeployment(body.deployment, revision: body.revision)
                 if outcome.phase == .active {
+                    if let store, let stagedDirectory {
+                        do {
+                            try store.activatePackage(staged: stagedDirectory)
+                        } catch {
+                            store.discardStaged(stagedDirectory)
+                            runtime = before
+                            outcome.phase = .failed
+                            outcome.error = TransferFailure.interrupted.rawValue
+                            runtime.lastDeployment = outcome
+                            persist()
+                            return ok(request, payload: outcome)
+                        }
+                    }
                     activePackage = PackageAssetStore(assets: staged)
+                    activeStoredRevision = body.revision
+                    persist()
                     onChange?()
+                } else {
+                    if let store, let stagedDirectory {
+                        store.discardStaged(stagedDirectory)
+                    }
+                    // The failed record persists so a same-id retry answers the
+                    // same way after a relaunch; the active package is untouched.
+                    persist()
                 }
                 return ok(request, payload: outcome)
             case .queryActive:
+                try requireOwner(peerPin)
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
             case .none:
                 throw TransferFailure.validationFailed
@@ -247,8 +321,29 @@ public final class DeviceLANServer: @unchecked Sendable {
                 ok: false,
                 error: (error as? PairingFailure)?.rawValue
                     ?? (error as? TransferFailure)?.rawValue
+                    ?? (error is DeviceStateStoreError ? TransferFailure.interrupted.rawValue : nil)
                     ?? "failed"
             )
+        }
+    }
+
+    /// The pin a message claims must be the pin that completed this
+    /// connection's handshake. Returns the authenticated pin.
+    private func authenticatedPeer(_ peerPin: [UInt8]?, claimedHex: String) throws -> [UInt8] {
+        guard let peerPin, peerPin.count == PairingLimits.identityByteCount else {
+            throw TransferFailure.validationFailed
+        }
+        guard PeerPin.matches(expected: peerPin, presentedHex: claimedHex) else {
+            throw PairingFailure.identityChanged
+        }
+        return peerPin
+    }
+
+    /// Deploy and active-revision queries are owner-only, checked against the
+    /// handshake pin even though TLS already rejects other peers.
+    private func requireOwner(_ peerPin: [UInt8]?) throws {
+        guard let owner = runtime.pairing.owner?.publicKey, let peerPin, peerPin == owner else {
+            throw TransferFailure.notPaired
         }
     }
 

@@ -359,6 +359,27 @@ final class PairingDeployTests: XCTestCase {
         #endif
     }
 
+    func testHelloClaimingAnotherIdentityNeverReachesSAS() throws {
+        let device = FakeLANDevice(deviceId: "phone-h", name: "Impostor iPhone")
+        device.claimedHelloPin = PairingIdentityFactory.make(role: .device).publicKey
+        let harness = try makeHarness(device: device)
+        let router = harness.router
+
+        let rejected = router.call(name: "request_pairing", arguments: .object(["deviceId": .string("phone-h")]))
+        XCTAssertTrue(rejected.isError)
+        XCTAssertEqual(rejected.errorCode, "not_paired")
+        if case .text(let text) = rejected.content[0] {
+            XCTAssertTrue(text.contains("identity_changed"), text)
+        }
+        XCTAssertNil(device.runtime.pairingCode, "pair.begin was never sent")
+        XCTAssertTrue(harness.service.devices.pendingPairings().isEmpty)
+
+        device.claimedHelloPin = nil
+        let honest = try payload(router.call(name: "request_pairing", arguments: .object(["deviceId": .string("phone-h")])))
+        XCTAssertEqual(honest["devicePinHex"]?.string, PeerPin.hex(device.identityPin), "the SAS binds to the handshake pin")
+        XCTAssertEqual(honest["code"]?.string, device.runtime.pairingCode)
+    }
+
     func testJSONRPCListsPairingAndDeployToolsWithApprovalSchema() throws {
         let device = FakeLANDevice(deviceId: "phone-g", name: "RPC iPhone")
         let harness = try makeHarness(device: device)

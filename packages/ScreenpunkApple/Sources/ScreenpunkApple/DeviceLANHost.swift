@@ -12,12 +12,19 @@ public final class DeviceLANHost: ObservableObject {
     @Published public var activePackage: PackageAssetStore?
     public let server: DeviceLANServer?
 
-    public init(runtime: DeviceRuntime) {
+    /// `store` defaults to the per-user device home so pairing and the active
+    /// package survive a relaunch. Tests pass a temporary store.
+    public init(runtime: DeviceRuntime, store: DeviceStateStore? = nil) {
         if let identity = try? TLSIdentity.loadOrCreate(role: .device) {
             var runtime = runtime
             runtime.identity = identity.pairingIdentity
-            self.runtime = runtime
-            let server = DeviceLANServer(runtime: runtime, identity: identity)
+            let server = DeviceLANServer(
+                runtime: runtime,
+                identity: identity,
+                store: store ?? DeviceStateStore(root: DeviceStateStore.defaultRoot())
+            )
+            self.runtime = server.runtime
+            self.activePackage = server.activePackage
             self.server = server
             server.onChange = { [weak self] in
                 DispatchQueue.main.async { self?.refresh() }
