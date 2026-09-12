@@ -53,7 +53,9 @@ final class PackageValidatorTests: XCTestCase {
                     ManifestFile(path: "../secret", bytes: 1, sha256: String(repeating: "a", count: 64))
                 ])
             )
-        )
+        ) { error in
+            XCTAssertEqual((error as? PackageValidationError)?.issues.contains(.pathTraversal), true)
+        }
         XCTAssertThrowsError(
             try PackageValidator.validate(
                 manifest(files: [
@@ -64,6 +66,33 @@ final class PackageValidatorTests: XCTestCase {
         ) { error in
             XCTAssertEqual((error as? PackageValidationError)?.issues.contains(.duplicatePath), true)
         }
+    }
+
+    func testNormalizeRejectsTraversalShapesWithoutRegex() {
+        let rejected = [
+            "../secret",
+            "foo/../bar",
+            "foo/..",
+            "..",
+            "foo\\bar",
+            "foo\0bar",
+            "/etc/passwd",
+            "C:windows",
+            "c:/abs",
+            "%2e%2e/secret",
+            "foo/%2E%2E/bar"
+        ]
+        for path in rejected {
+            XCTAssertThrowsError(try PackagePath.normalize(path), path) { error in
+                XCTAssertEqual((error as? PackageValidationError)?.issues, [.pathTraversal], path)
+            }
+        }
+    }
+
+    func testNormalizeAcceptsRelativePackagePaths() throws {
+        XCTAssertEqual(try PackagePath.normalize("index.html"), "index.html")
+        XCTAssertEqual(try PackagePath.normalize("styles/theme.css"), "styles/theme.css")
+        XCTAssertEqual(try PackagePath.normalize("foo..bar"), "foo..bar")
     }
 
     func testStoreBoundsAndNativeChrome() throws {

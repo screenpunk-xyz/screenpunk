@@ -18,18 +18,34 @@ public struct PackageValidationError: Error, Equatable {
 }
 
 public enum PackagePath {
-    private static let traversal = try! NSRegularExpression(
-        pattern: #"(^|/)\.\.(/|$)|\\|\0|^/|^[A-Za-z]:"#
-    )
-
+    /// Rejects the same shapes as the JS `TRAVERSAL` regex
+    /// `(^|/)\.\.(/|$)|\\|\0|^/|^[A-Za-z]:` plus encoded `..`.
+    /// Apple `NSRegularExpression` (ICU) rejects that pattern because of `\0`.
     public static func normalize(_ path: String) throws -> String {
-        if path.lowercased().contains("%2e%2e") || traversal.firstMatch(
-            in: path,
-            range: NSRange(path.startIndex..., in: path)
-        ) != nil {
+        if containsTraversal(path) {
             throw PackageValidationError(issues: [.pathTraversal])
         }
         return path
+    }
+
+    private static func containsTraversal(_ path: String) -> Bool {
+        if path.lowercased().contains("%2e%2e") {
+            return true
+        }
+        if path.contains("\\") || path.contains("\0") || path.hasPrefix("/") {
+            return true
+        }
+        if hasWindowsDrivePrefix(path) {
+            return true
+        }
+        return path.split(separator: "/", omittingEmptySubsequences: false).contains("..")
+    }
+
+    private static func hasWindowsDrivePrefix(_ path: String) -> Bool {
+        guard path.count >= 2 else { return false }
+        let first = path[path.startIndex]
+        let second = path[path.index(after: path.startIndex)]
+        return first.isASCII && first.isLetter && second == ":"
     }
 }
 
