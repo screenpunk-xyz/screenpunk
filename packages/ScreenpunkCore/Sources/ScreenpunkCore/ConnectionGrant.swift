@@ -168,7 +168,7 @@ public enum ConnectionGrantValidator {
     private static func isAuthRef(_ value: String) -> Bool {
         guard (1...128).contains(value.count) else { return false }
         if value.lowercased().hasPrefix("bearer ") { return false }
-        return value.unicodeScalars.contains(where { $0 == " " || $0 == "\n" || $0 == "\t" }) == false
+        return value.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) }) == false
     }
 
     private static func isOrigin(_ value: String) -> Bool {
