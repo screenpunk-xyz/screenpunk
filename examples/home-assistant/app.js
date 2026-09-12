@@ -70,6 +70,8 @@
         );
         if (player.sources.length) {
           const select = document.createElement("select");
+          select.id = `${player.entityId}-source`;
+          select.name = `${player.entityId}-source`;
           select.setAttribute("aria-label", `${player.name} source`);
           select.disabled = player.unavailable;
           for (const source of player.sources) {
@@ -90,6 +92,8 @@
         slider.max = "100";
         slider.step = "1";
         slider.value = String(Math.round((player.volume || 0) * 100));
+        slider.id = `${player.entityId}-volume`;
+        slider.name = `${player.entityId}-volume`;
         slider.disabled = player.unavailable;
         slider.setAttribute("aria-label", `${player.name} volume`);
         slider.addEventListener("change", () => {
