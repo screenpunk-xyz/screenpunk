@@ -26,6 +26,17 @@ jobs:
       - name: Linux contracts
         run: ./scripts/ci/linux.sh
 
+  core-linux:
+    name: core-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: swift:6.1.3-noble@sha256:ed778a717c778240aa72f50e6c58e002d993fd445bc2516b484ba99c480dc25b
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ScreenpunkCore tests on Linux
+        run: ./scripts/ci/core-linux.sh
+
   security-and-hygiene:
     name: security-and-hygiene
     runs-on: ubuntu-24.04
@@ -64,6 +75,13 @@ jobs:
             echo "pairing fixtures must not contain credential-like tokens"
             exit 1
           fi
+          grep -q '"scenarios"' tests/feasibility/pairing/vectors.json
+          test -f tests/adapters/vectors.json
+          grep -q '"macIsRuntimeProxy": false' tests/adapters/vectors.json
+          test -f scripts/ci/core-linux.sh
+          for fixture in tests/feasibility/pairing/vectors.json tests/feasibility/isolation/attacks.json tests/adapters/vectors.json; do
+            node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "$fixture"
+          done
 
   apple-build-and-unit:
     name: apple-build-and-unit
@@ -96,6 +114,7 @@ jobs:
     if: always()
     needs:
       - contracts-and-sdk
+      - core-linux
       - security-and-hygiene
       - apple-build-and-unit
       - apple-ui-and-preview
@@ -104,11 +123,13 @@ jobs:
       - name: Aggregate required jobs
         run: |
           echo "contracts-and-sdk=${{ needs.contracts-and-sdk.result }}"
+          echo "core-linux=${{ needs.core-linux.result }}"
           echo "security-and-hygiene=${{ needs.security-and-hygiene.result }}"
           echo "apple-build-and-unit=${{ needs.apple-build-and-unit.result }}"
           echo "apple-ui-and-preview=${{ needs.apple-ui-and-preview.result }}"
           for result in \
             "${{ needs.contracts-and-sdk.result }}" \
+            "${{ needs.core-linux.result }}" \
             "${{ needs.security-and-hygiene.result }}" \
             "${{ needs.apple-build-and-unit.result }}" \
             "${{ needs.apple-ui-and-preview.result }}"
