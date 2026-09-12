@@ -16,6 +16,10 @@ let package = Package(
         .target(
             name: "ScreenpunkController",
             dependencies: ["ScreenpunkCore"]
+        ),
+        .testTarget(
+            name: "ScreenpunkControllerTests",
+            dependencies: ["ScreenpunkController"]
         )
     ]
 )

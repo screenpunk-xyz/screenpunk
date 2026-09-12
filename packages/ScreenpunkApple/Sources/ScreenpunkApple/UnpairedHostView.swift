@@ -1,7 +1,7 @@
 import SwiftUI
 import ScreenpunkCore
 
-/// Host-owned unpaired surface after Unlink. Pairing codes arrive in Milestone 3.
+/// Host-owned unpaired surface. Pairing codes appear in `PairingCodeView`.
 public struct UnpairedHostView: View {
     @Environment(\.colorScheme) private var colorScheme
 

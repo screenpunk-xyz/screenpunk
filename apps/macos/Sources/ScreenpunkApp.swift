@@ -1,23 +1,31 @@
 import SwiftUI
 import ScreenpunkApple
+import ScreenpunkController
+import ScreenpunkCore
 
 @main
 struct ScreenpunkApp: App {
+    @StateObject private var model = WorkbenchModel()
+    private let store = ControllerStore(
+        directory: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Screenpunk")
+    )
+
     var body: some Scene {
         WindowGroup {
-            AppleHostRoot()
-                .frame(minWidth: 390, minHeight: 844)
-        }
-    }
-}
-
-private struct AppleHostRoot: View {
-    var body: some View {
-        if let view = try? AppleHostRootView.offlineFixture() {
-            view
-        } else {
-            Text("Offline fixture missing")
-                .padding()
+            WorkbenchRootView(model: model)
+                .frame(minWidth: 960, minHeight: 640)
+                .onAppear {
+                    if let loaded = try? store.load() {
+                        model.session.drafts = loaded.drafts
+                        model.session.devices = loaded.devices
+                        model.session.selectedDeviceId = loaded.selectedDeviceId
+                        model.session.selectedRevision = loaded.selectedRevision
+                    }
+                }
+                .onReceive(model.$session) { session in
+                    try? store.save(session)
+                }
         }
     }
 }

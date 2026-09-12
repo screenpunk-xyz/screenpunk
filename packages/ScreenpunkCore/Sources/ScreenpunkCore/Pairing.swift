@@ -87,7 +87,7 @@ public enum PairingSAS: Sendable {
 }
 #endif
 
-public struct PairingSession: Sendable {
+public struct PairingSession: Sendable, Equatable {
     public var transcript: PairingTranscript
     public var expectedCode: String
     public var createdAt: Date
@@ -113,7 +113,7 @@ public struct PairingSession: Sendable {
 }
 
 /// One owning controller identity per device. No credentials are stored here.
-public struct DevicePairingState: Sendable {
+public struct DevicePairingState: Sendable, Equatable {
     public var owner: PairingIdentity?
     public var session: PairingSession?
 
