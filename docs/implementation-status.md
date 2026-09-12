@@ -8,7 +8,7 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 | Task | Fix `apple-build-and-unit` XcodeGen install; isolation; pairing fixtures; honest preview probe |
 | Owner | Implementation worker on `asher/codex/milestone-0-bootstrap` |
 | PR | https://github.com/screenpunk-xyz/screenpunk/pull/1 |
-| Tested revision | Local `./scripts/ci/linux.sh` — 22/22 SDK+schema+isolation+pairing tests. Apple jobs not claimed green until GitHub reruns |
+| Tested revision | `62d935a` local `./scripts/ci/linux.sh` — 22/22 SDK+schema+isolation+pairing tests. Apple jobs not claimed green until GitHub reruns |
 | Evidence | Isolation + pairing fixtures under `tests/feasibility/`. No WKWebView PNG from this Linux host |
 | Blockers | Copyright-owner legal name; bundle ID registration (proposed, not claimed). Not blocking this work |
 | Next action | Wait for GitHub `apple-*` on this push. Record `MACOS_26_SDK_UNAVAILABLE` / `SNAPSHOT_UNAVAILABLE` if the runner cannot produce them. Do not fake PNG evidence |
