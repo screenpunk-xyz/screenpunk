@@ -13,11 +13,13 @@ public struct TLSIdentityMaterial: @unchecked Sendable {
     }
 }
 
-enum TLSIdentity {
+public enum TLSIdentity {
     static let controllerTag = "xyz.screenpunk.tls.controller"
     static let deviceTag = "xyz.screenpunk.tls.device"
 
-    static func loadOrCreate(role: PairingRole) throws -> TLSIdentityMaterial {
+    /// Persistent per-user identity. The Mac workbench and `screenpunk-mcp`
+    /// share the controller tag, so a device sees one owner whichever client paired it.
+    public static func loadOrCreate(role: PairingRole) throws -> TLSIdentityMaterial {
         let tag = role == .controller ? controllerTag : deviceTag
         if let existing = try? load(role: role, tag: tag) {
             return existing

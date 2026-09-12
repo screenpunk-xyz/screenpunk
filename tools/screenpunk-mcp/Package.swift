@@ -11,6 +11,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../../packages/ScreenpunkCore"),
+        .package(path: "../../packages/ScreenpunkApple"),
         .package(path: "../../packages/ScreenpunkController"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.10.2")
     ],
@@ -19,6 +20,7 @@ let package = Package(
             name: "screenpunk-mcp",
             dependencies: [
                 "ScreenpunkCore",
+                "ScreenpunkApple",
                 "ScreenpunkController",
                 .product(name: "MCP", package: "swift-sdk")
             ]
