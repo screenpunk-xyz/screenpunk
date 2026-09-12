@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Weather</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-example="weather">
+  <header class="lockup">
+    <img class="mark on-light" src="mark.svg" alt="">
+    <img class="mark on-dark" src="mark-inverse.svg" alt="">
+    <img class="wordmark on-light" src="wordmark.svg" alt="Screenpunk">
+    <img class="wordmark on-dark" src="wordmark-inverse.svg" alt="">
+  </header>
+  <main>
+    <p class="eyebrow">Weather</p>
+    <h1 id="condition">Loading</h1>
+    <p class="place" id="place">San Francisco (sample)</p>
+    <section class="hero" aria-live="polite">
+      <p class="temp" id="temp">—</p>
+      <p class="condition" id="summary">Waiting for the first approved read.</p>
+      <p class="wind" id="wind"></p>
+    </section>
+    <section class="days" id="days" aria-label="Forecast"></section>
+    <p class="note warning" id="stale" hidden>Showing last successful data.</p>
+    <p class="note danger" id="error" hidden></p>
+    <p class="meta" id="updated"></p>
+    <p class="attribution" id="attribution">
+      Weather data by Open-Meteo.com
+      <code>https://open-meteo.com/</code>
+      · CC BY 4.0
+    </p>
+  </main>
+  <script src="model.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

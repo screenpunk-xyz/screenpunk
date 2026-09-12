@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "55555555-5555-4555-8555-555555555556",
+  "alias": "weather",
+  "origin": "https://customer-api.open-meteo.com",
+  "transport": "http",
+  "authRef": "keychain:weather-open-meteo",
+  "lan": false,
+  "allowInsecureHTTP": false,
+  "operations": [
+    {
+      "name": "getForecast",
+      "kind": "http",
+      "method": "GET",
+      "path": "/v1/forecast",
+      "idempotent": true,
+      "write": false,
+      "maxAgeSeconds": 1815
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Theater preview</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-example="theater">
+  <header class="lockup">
+    <img class="mark on-light" src="mark.svg" alt="">
+    <img class="mark on-dark" src="mark-inverse.svg" alt="">
+    <img class="wordmark on-light" src="wordmark.svg" alt="Screenpunk">
+    <img class="wordmark on-dark" src="wordmark-inverse.svg" alt="">
+  </header>
+  <main>
+    <p class="eyebrow">Home Assistant</p>
+    <h1>Theater</h1>
+    <div class="board">
+      <section class="card" aria-labelledby="lights-title">
+        <h2 id="lights-title">Lights</h2>
+        <div class="stack" id="lights"></div>
+        <p class="empty" id="lights-empty" hidden>No light entities in this grant.</p>
+      </section>
+      <section class="card" aria-labelledby="scenes-title">
+        <h2 id="scenes-title">Scenes</h2>
+        <div class="stack" id="scenes"></div>
+        <p class="empty" id="scenes-empty" hidden>No scene entities in this grant.</p>
+      </section>
+      <section class="card" aria-labelledby="media-title">
+        <h2 id="media-title">Media</h2>
+        <div class="stack" id="media"></div>
+        <p class="empty" id="media-empty" hidden>No media players in this grant.</p>
+      </section>
+    </div>
+    <p class="note warning" id="stale" hidden>Showing last successful states.</p>
+    <p class="note warning" id="events" hidden>Live events are optional. Buttons still use approved HTTP writes.</p>
+    <p class="note danger" id="error" hidden></p>
+    <p class="empty" id="updated"></p>
+  </main>
+  <script src="preview.js"></script>
+  <script src="model.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

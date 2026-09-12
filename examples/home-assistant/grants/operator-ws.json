@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "77777777-7777-4777-8777-777777777780",
+  "alias": "homeEvents",
+  "origin": "http://homeassistant.local:8123",
+  "transport": "ws",
+  "authRef": "keychain:ha-long-lived",
+  "lan": true,
+  "allowInsecureHTTP": true,
+  "operations": [
+    {
+      "name": "subscribeStates",
+      "kind": "ws",
+      "method": "GET",
+      "path": "/api/websocket",
+      "idempotent": true,
+      "write": false,
+      "maxAgeSeconds": 45
+    }
+  ]
+}

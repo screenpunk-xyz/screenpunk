@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "dashboardId": "55555555-5555-4555-8555-555555555501",
+  "name": "Weather",
+  "revision": "66666666-6666-4666-8666-666666666601",
+  "entrypoint": "index.html",
+  "sdkVersion": "1",
+  "target": {
+    "profileId": "fixture-phone",
+    "width": 390,
+    "height": 844,
+    "scale": 3,
+    "orientation": "portrait",
+    "safeArea": {
+      "top": 47,
+      "right": 0,
+      "bottom": 34,
+      "left": 0
+    }
+  },
+  "connections": [
+    {
+      "alias": "weather",
+      "required": true,
+      "operations": [
+        {
+          "name": "getForecast",
+          "kind": "http",
+          "maxAgeSeconds": 1815
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "app.js",
+      "bytes": 3924,
+      "sha256": "346d616258b003e92cd85597bcdfc337fde29dd05cfd66536477c5382cb7119c"
+    },
+    {
+      "path": "index.html",
+      "bytes": 1379,
+      "sha256": "8960fad05edb332d1d90225afb4b804c5f70a01d0061fce31d7f8f98ee2a8c41"
+    },
+    {
+      "path": "mark-inverse.svg",
+      "bytes": 25220,
+      "sha256": "3a1bff84d383f687e877ddcad7cada6753231e915e3112d69bd72864bb795977"
+    },
+    {
+      "path": "mark.svg",
+      "bytes": 9653,
+      "sha256": "6eadb923d4bff704aa61e00f6b54b3d56af2902b3c0ac38a2fc660f6e60fc415"
+    },
+    {
+      "path": "model.js",
+      "bytes": 5231,
+      "sha256": "503e4e4e67f5e6b17773f62df65a6f8475e4174bf978954fd92e49eeadc6fcab"
+    },
+    {
+      "path": "styles.css",
+      "bytes": 3279,
+      "sha256": "63713a1c84ac861b2900c6b83e15bc08ee432b1bb732009e7a947d7a8ef5364c"
+    },
+    {
+      "path": "wordmark-inverse.svg",
+      "bytes": 46142,
+      "sha256": "c35b1d09d1ad6cf5fd6c0391373316ee089a97f10292c8a6c65c74d1f4673206"
+    },
+    {
+      "path": "wordmark.svg",
+      "bytes": 46141,
+      "sha256": "12796de9630b1a2061262f6e97f44682e60273f7255f67df714ebf2d5cf6ee95"
+    }
+  ],
+  "digest": "f21378460168a32cf4168b69165c5db0e2eb412984a46df36311ab8b66a2758f"
+}

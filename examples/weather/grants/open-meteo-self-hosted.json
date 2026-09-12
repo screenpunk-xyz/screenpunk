@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "55555555-5555-4555-8555-555555555557",
+  "alias": "weather",
+  "origin": "https://weather.example.com",
+  "transport": "http",
+  "authRef": "keychain:weather-self-hosted",
+  "lan": false,
+  "allowInsecureHTTP": false,
+  "operations": [
+    {
+      "name": "getForecast",
+      "kind": "http",
+      "method": "GET",
+      "path": "/v1/forecast",
+      "idempotent": true,
+      "write": false,
+      "maxAgeSeconds": 1815
+    }
+  ]
+}
