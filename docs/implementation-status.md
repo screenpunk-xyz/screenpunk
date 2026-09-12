@@ -4,19 +4,25 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 
 | Field | Value |
 | --- | --- |
-| Milestone | 0 — Bootstrap and feasibility (bootstrap in this PR) |
-| Task | Repo layout, Apache/DCO, portable CI, bundled Style-Guide identity + tokens |
+| Milestone | 0 — Bootstrap and feasibility |
+| Task | Fix `apple-build-and-unit` XcodeGen install; isolation; pairing fixtures; honest preview probe |
 | Owner | Implementation worker on `asher/codex/milestone-0-bootstrap` |
-| PR | Not opened. GitHub MCP `create_pull_request` → **403 Resource not accessible by personal access token**. ManagePullRequest → **The head branch does not start with the required prefix `cursor/`**. Compare: https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-0-bootstrap |
-| Tested revision | `164dc72`; local `./scripts/ci/linux.sh` (5/5 SDK+schema tests + brand provenance). Apple jobs untested here |
-| Evidence | `assets/brand/PROVENANCE.md`, `docs/toolchain.md`, stable CI job ids |
-| Blockers | Copyright-owner legal name; bundle ID registration; Apple secrets (later); `macos-15` / Xcode unconfirmed; GitHub MCP branch-create 403 |
-| Next action | Milestone 0 feasibility spikes after this PR: hidden Mac preview, iOS isolation, pairing fixtures |
+| PR | https://github.com/screenpunk-xyz/screenpunk/pull/1 |
+| Tested revision | Local `./scripts/ci/linux.sh` — 22/22 SDK+schema+isolation+pairing tests. Apple jobs not claimed green until GitHub reruns |
+| Evidence | Isolation + pairing fixtures under `tests/feasibility/`. No WKWebView PNG from this Linux host |
+| Blockers | Copyright-owner legal name; bundle ID registration (proposed, not claimed). Not blocking this work |
+| Next action | Wait for GitHub `apple-*` on this push. Record `MACOS_26_SDK_UNAVAILABLE` / `SNAPSHOT_UNAVAILABLE` if the runner cannot produce them. Do not fake PNG evidence |
 
 ## Job names (stable)
 
 `contracts-and-sdk` · `apple-build-and-unit` · `apple-ui-and-preview` ·
 `security-and-hygiene` · `required-checks`
+
+`required-checks` and `apple-build-and-unit` were not weakened. The 2886a27
+failure was `./scripts/ci/apple.sh` exiting because XcodeGen 2.46.0 was
+required but never installed. `scripts/ci/install-xcodegen.sh` now downloads
+the pinned GitHub release zip and verifies
+`sha256:4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806`.
 
 ## Settled style contract
 
@@ -30,10 +36,28 @@ iOS 16+ / macOS 26+. No under-review logos/wordmarks.
 
 | Done | Remaining |
 | --- | --- |
-| Monorepo layout, license/DCO, brand copy + tokens + provenance | Hidden AppKit/WKWebView MCP screenshot spike |
-| Linux-testable Core + TypeScript SDK + draft schema fixtures | iOS 16 host isolation + content-process failure spike |
-| XcodeGen `project.yml` recipes | Pairing identity-pinning fixtures (no real credentials) |
-| SHA-pinned CI with required job names | First green `apple-*` run on GitHub macOS |
+| Monorepo layout, license/DCO, brand copy + tokens + provenance | First green GitHub `apple-*` run (in flight after this push) |
+| Linux-testable Core + TypeScript isolation + pairing SAS fixtures | Real hidden WKWebView PNG (only if macOS runner produces one) |
+| XcodeGen pin installed on the macOS runner; iOS 16 compile recipe | macOS 26 product-app compile if that SDK is absent on `macos-15` |
+| Preview helper (macOS 14 deploy) that records `SNAPSHOT_UNAVAILABLE` instead of a fake image | Simulator UI tests / content-process death on a real WKWebView |
 
 Planning-Files branch `asher/codex/style-guide-source` holds the operator
 corrections. Brand `Style-Guide/README.md` records the same contract.
+
+## Isolation and pairing (this change)
+
+- Custom scheme `screenpunk`, CSP `connect-src 'none'`, native networking only.
+- Attack fixtures: fetch/XHR/WS, remote script/style, navigation, iframe/form,
+  traversal, file URL, subframe bridge spoof. Content-process failure is
+  simulated as `content-process-terminated`; unlink remains available.
+- Pairing SAS is HMAC-SHA256 over `device || 0x00 || controller || 0x00 || session`
+  with info `screenpunk-pairing-sas-v1`. 6-digit code, 120s expiry, 5 failures.
+  MITM / key-change codes differ; second owner and mid-session key change reject.
+  Fixtures contain no credentials.
+
+## Hidden snapshot
+
+This worker is Linux. No PNG was generated here. `apple-ui-and-preview` runs
+`./scripts/ci/preview.sh`. Success of that *job* means the probe ran; a PNG
+artifact is uploaded only when the file is a real PNG. `SNAPSHOT_UNAVAILABLE`
+is a gap, not screenshot evidence.

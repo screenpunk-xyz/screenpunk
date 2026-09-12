@@ -1,0 +1,99 @@
+{
+  "scheme": "screenpunk",
+  "cspMustInclude": "connect-src 'none'",
+  "nativeNetworkingOnly": true,
+  "contentProcessFailure": "content-process-terminated",
+  "cases": [
+    {
+      "id": "local-script",
+      "kind": "script",
+      "url": "screenpunk://package/app.js",
+      "isMainFrame": true,
+      "expect": "allowLocalAsset"
+    },
+    {
+      "id": "fetch-https",
+      "kind": "fetch",
+      "url": "https://evil.example/api",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "xhr-http",
+      "kind": "xhr",
+      "url": "http://127.0.0.1/secret",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "websocket",
+      "kind": "websocket",
+      "url": "wss://evil.example/ws",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "remote-script",
+      "kind": "script",
+      "url": "https://cdn.example/x.js",
+      "isMainFrame": true,
+      "expect": "denyRemoteCode"
+    },
+    {
+      "id": "remote-style",
+      "kind": "stylesheet",
+      "url": "https://cdn.example/x.css",
+      "isMainFrame": true,
+      "expect": "denyRemoteCode"
+    },
+    {
+      "id": "navigation",
+      "kind": "navigation",
+      "url": "https://phish.example/",
+      "isMainFrame": true,
+      "expect": "denyNavigation"
+    },
+    {
+      "id": "iframe",
+      "kind": "iframe",
+      "url": "screenpunk://package/ok.html",
+      "isMainFrame": true,
+      "expect": "denyFrame"
+    },
+    {
+      "id": "form",
+      "kind": "form",
+      "url": "https://evil.example/submit",
+      "isMainFrame": true,
+      "expect": "denyFrame"
+    },
+    {
+      "id": "traversal",
+      "kind": "traversal",
+      "url": "screenpunk://package/../Secrets",
+      "isMainFrame": true,
+      "expect": "denyTraversal"
+    },
+    {
+      "id": "encoded-traversal",
+      "kind": "filePath",
+      "url": "screenpunk://package/%2e%2e/Secrets",
+      "isMainFrame": true,
+      "expect": "denyTraversal"
+    },
+    {
+      "id": "file-url",
+      "kind": "filePath",
+      "url": "file:///etc/passwd",
+      "isMainFrame": true,
+      "expect": "denyFilePath"
+    },
+    {
+      "id": "bridge-spoof-iframe",
+      "kind": "bridgeSpoof",
+      "url": "screenpunk://package/index.html",
+      "isMainFrame": false,
+      "expect": "denyBridgeSpoof"
+    }
+  ]
+}

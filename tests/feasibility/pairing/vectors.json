@@ -1,0 +1,31 @@
+{
+  "algorithm": "HMAC-SHA256",
+  "info": "screenpunk-pairing-sas-v1",
+  "note": "Short authentication string from the pairing transcript. Not a cipher, not an encryption key, no credentials.",
+  "expirySeconds": 120,
+  "maxFailedAttempts": 5,
+  "devicePublicKey": "0101010101010101010101010101010101010101010101010101010101010101",
+  "sessionNonce": "03030303030303030303030303030303",
+  "cases": [
+    {
+      "id": "honest",
+      "controllerPublicKey": "0202020202020202020202020202020202020202020202020202020202020202",
+      "macHex": "a925e71479f6e414d77ff75d5a90223b9e55d167bca62de174df53896e0c0a74",
+      "code": "833492"
+    },
+    {
+      "id": "mitm-substituted-controller",
+      "controllerPublicKey": "9999999999999999999999999999999999999999999999999999999999999999",
+      "macHex": "c329ab1c16ed593dbc6ee4cf55fe82d19a39e63da4870906f66a508b7f3b9524",
+      "code": "287900",
+      "expect": "codes-differ-from-honest"
+    },
+    {
+      "id": "key-change",
+      "controllerPublicKey": "0404040404040404040404040404040404040404040404040404040404040404",
+      "macHex": "7a979c89b0cfafdbe5128923661aaaf732385ce3d0c6ed20bbdb1057e70f7a04",
+      "code": "756361",
+      "expect": "codes-differ-from-honest"
+    }
+  ]
+}

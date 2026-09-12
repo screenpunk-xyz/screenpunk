@@ -45,6 +45,14 @@ jobs:
           test -f docs/apple-review-position.md
           ./scripts/verify-brand.mjs
           test -f schemas/dashboard-manifest.schema.json
+          test -f tests/feasibility/isolation/attacks.json
+          test -f tests/feasibility/pairing/vectors.json
+          grep -q "connect-src 'none'" tests/feasibility/isolation/attacks.json
+          grep -q "screenpunk-pairing-sas-v1" tests/feasibility/pairing/vectors.json
+          if grep -q "sk-" tests/feasibility/pairing/vectors.json; then
+            echo "pairing fixtures must not contain credential-like tokens"
+            exit 1
+          fi
 
   apple-build-and-unit:
     name: apple-build-and-unit
@@ -61,13 +69,16 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Preview-host spec present
-        run: |
-          test -f tools/preview-host/project.yml
-          test -f apps/ios/project.yml
-          test -f apps/macos/project.yml
-          echo "hidden WKWebView snapshot and simulator UI tests are Milestone 0 remaining work"
-          echo "bootstrap gate: project specs exist"
+      - name: Hidden preview probe
+        run: ./scripts/ci/preview.sh
+      - name: Upload real WKWebView PNG only
+        if: hashFiles('tests/feasibility/preview/last-snapshot.png') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: preview-wkwebview-snapshot
+          path: tests/feasibility/preview/last-snapshot.png
+          if-no-files-found: ignore
+          retention-days: 7
 
   required-checks:
     name: required-checks

@@ -12,8 +12,9 @@ assets in `screenpunk-xyz/Brand` (Codex Brand & App Guide at
 ## Status
 
 See [docs/implementation-status.md](docs/implementation-status.md). Milestone 0
-bootstrap is in progress. Feasibility spikes (hidden Mac preview, iOS isolation,
-pairing) are not done.
+continues on `asher/codex/milestone-0-bootstrap` (PR #1). Isolation and pairing
+fixtures are in-tree; hidden Mac snapshot evidence requires a real macOS
+toolchain and is not faked.
 
 ## Layout
 
@@ -28,8 +29,10 @@ assets/brand/ docs/ .github/workflows/
 ## Commands
 
 ```sh
-./scripts/ci/linux.sh          # schema, SDK, brand provenance (Linux)
-./scripts/generate-xcode.sh    # regenerate Xcode projects (macOS)
+./scripts/ci/linux.sh          # schema, SDK, brand, isolation/pairing fixtures
+./scripts/generate-xcode.sh    # install pinned XcodeGen 2.46.0; regenerate projects
+./scripts/ci/apple.sh          # macOS: Core tests + iOS 16 compile
+./scripts/ci/preview.sh        # macOS: hidden WKWebView probe (no fake PNG)
 ```
 
 ## License

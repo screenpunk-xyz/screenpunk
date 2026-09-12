@@ -12,6 +12,10 @@ dist/
 coverage/
 *.xcresult
 DerivedData/
+.ci-derived/
+.tools/
+tests/feasibility/preview/last-snapshot.png
+tests/feasibility/preview/last-attempt.txt
 .env
 .env.*
 !.env.example

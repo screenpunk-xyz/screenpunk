@@ -1,7 +1,8 @@
 import SwiftUI
+import ScreenpunkApple
 import ScreenpunkCore
 
-/// Compile stub. No first-party designed UI in Milestone 0 bootstrap.
+/// Compile stub. Isolation policy is wired; no first-party designed UI.
 @main
 struct ScreenpunkApp: App {
     var body: some Scene {
@@ -9,7 +10,10 @@ struct ScreenpunkApp: App {
             Text("Screenpunk")
                 .font(.body)
                 .padding()
-                .accessibilityLabel("Screenpunk \(PlatformRequirements.iosMinimum)")
+                .accessibilityLabel(
+                    "Screenpunk \(PlatformRequirements.iosMinimum) \(WebIsolation.customScheme)"
+                )
+                .accessibilityValue(WebIsolation.nativeNetworkingOnly ? "native-network" : "open")
         }
     }
 }

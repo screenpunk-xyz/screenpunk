@@ -26,8 +26,10 @@ Position to defend:
 
 Open feasibility questions that can force a product change:
 
-- Hidden WKWebView snapshot on the selected macOS CI image and a real Mac.
-- Isolation on iOS 16 versus current iOS.
+- Hidden WKWebView snapshot on the selected macOS CI image and a real Mac
+  (probe exists; no Linux stand-in PNG).
+- Isolation on iOS 16 versus current iOS (policy + fixtures exist; WK
+  enforcement still needs a device/simulator run).
 - Whether Apple treats LAN-deployed user HTML as downloaded code.
 
 Do not claim review will succeed. Update this document after the Milestone 0

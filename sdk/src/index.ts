@@ -1,4 +1,26 @@
 export {
+  CONTENT_PROCESS_TERMINATED,
+  CONTENT_SECURITY_POLICY,
+  CUSTOM_SCHEME,
+  NATIVE_NETWORKING_ONLY,
+  decideIsolation,
+  isLocalPackageURL
+} from "./isolation.js";
+export type { IsolationDecision, IsolationRequest, IsolationRequestKind } from "./isolation.js";
+
+export {
+  PAIRING_EXPIRY_SECONDS,
+  PAIRING_MAX_FAILURES,
+  PAIRING_SAS_INFO,
+  PairingError,
+  beginPairing,
+  confirmPairing,
+  emptyPairingState,
+  matchingCode
+} from "./pairing.js";
+export type { PairingFailure, PairingIdentity, PairingTranscript } from "./pairing.js";
+
+export {
   APPROVED_SOOT,
   APPROVED_PORCELAIN,
   LOGOMARK_REVISION,

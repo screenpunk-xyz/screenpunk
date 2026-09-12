@@ -2,13 +2,14 @@ name: ScreenpunkPreviewHost
 options:
   bundleIdPrefix: xyz.screenpunk
   deploymentTarget:
-    macOS: "26.0"
+    # Feasibility helper only. Product ScreenpunkMac stays macOS 26+.
+    macOS: "14.0"
   xcodeVersion: "16.0"
   createIntermediateGroups: true
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: xyz.screenpunk.preview-host
-    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"
     CODE_SIGNING_ALLOWED: "NO"
     INFOPLIST_GENERATION_MODE: GeneratedFile
@@ -27,6 +28,8 @@ targets:
       - path: Sources
     dependencies:
       - package: ScreenpunkCore
+      - sdk: WebKit.framework
+      - sdk: AppKit.framework
     settings:
       base:
         PRODUCT_NAME: ScreenpunkPreviewHost

@@ -29,10 +29,13 @@ From a clean checkout:
 ./scripts/ci/linux.sh
 ```
 
-Apple generation (macOS with XcodeGen 2.46.0):
+Apple generation (macOS). `./scripts/generate-xcode.sh` installs pinned
+XcodeGen 2.46.0 when it is not already on PATH:
 
 ```sh
 ./scripts/generate-xcode.sh
+./scripts/ci/apple.sh      # macOS CI: Core tests, iOS 16 compile
+./scripts/ci/preview.sh    # hidden WKWebView probe; no fake PNG
 ```
 
 Do not hand-edit generated `.xcodeproj` files. Change `project.yml` and regenerate.

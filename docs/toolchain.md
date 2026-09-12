@@ -6,7 +6,7 @@ executed Apple evidence.
 
 | Tool | Pin | Notes |
 | --- | --- | --- |
-| XcodeGen | 2.46.0 | Generate app projects from `project.yml`. Do not commit `.xcodeproj`. |
+| XcodeGen | 2.46.0 | Generate app projects from `project.yml`. CI installs the GitHub release zip (`sha256:4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806`) via `scripts/ci/install-xcodegen.sh`. Do not commit `.xcodeproj`. |
 | Node.js | 22 | SDK and Linux contract jobs |
 | TypeScript | 5.9.2 | SDK compile |
 | Swift (packages) | 5.9+ tools, Swift 6 language mode where hosts allow | ScreenpunkCore is Linux-testable |
@@ -26,4 +26,7 @@ executed Apple evidence.
 | swift-actions/setup-swift | v2.4.0 | `7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a` |
 
 `macos-latest` is not used. If `macos-15` cannot compile the macOS 26
-deployment target, record the runner gap and keep Linux jobs green.
+deployment target, `apple-build-and-unit` records `MACOS_26_SDK_UNAVAILABLE`
+and still compiles iOS 16 plus Swift packages. The preview helper deploys to
+macOS 14 so the hidden WKWebView probe can compile on that image. A failed
+snapshot is `SNAPSHOT_UNAVAILABLE`, not a placeholder PNG.
