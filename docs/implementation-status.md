@@ -7,8 +7,8 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 | Milestone | 1 — Contracts and standalone runtime (contract PR) |
 | Task | Pin schema/SDK/Swift models, package validator, store/bridge bounds, offline example, HTTP fixture |
 | Owner | Implementation worker on `asher/codex/milestone-1-contracts` |
-| PR | Opening from this branch. M0 stays https://github.com/screenpunk-xyz/screenpunk/pull/1 |
-| Tested revision | Local `./scripts/ci/linux.sh` 31/31 on this branch. Do not wait on M0 head rerun |
+| PR | Not opened. ManagePullRequest still requires `cursor/`; GitHub MCP `create_pull_request` 403. Compare: https://github.com/screenpunk-xyz/screenpunk/compare/asher/codex/milestone-0-bootstrap...asher/codex/milestone-1-contracts . M0 stays https://github.com/screenpunk-xyz/screenpunk/pull/1 |
+| Tested revision | `24080a2` local `./scripts/ci/linux.sh` 31/31. Do not wait on M0 head rerun |
 | Evidence | `docs/contracts.md`, `examples/offline-fixture/`, `tools/fixture-server/` |
 | Blockers | None new. Apple secrets / App Store Connect still later |
 | Next action | After this contract PR: parallel Apple host, connection adapters, richer SDK/fixtures |
