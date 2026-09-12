@@ -7,10 +7,10 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 | Milestone | 1 — Apple host (custom scheme, overlay/gesture, offline fixture) |
 | Task | Load `examples/offline-fixture` on iOS 16 + Mac via `screenpunk://` |
 | Owner | Implementation worker on `asher/codex/milestone-1-apple-host` |
-| PR | Opening from this branch. Contracts stay on `asher/codex/milestone-1-contracts`. M0 stays https://github.com/screenpunk-xyz/screenpunk/pull/1 |
-| Tested revision | Local `./scripts/ci/linux.sh` after this change. Apple compile/tests on GitHub |
+| PR | Not opened. ManagePullRequest still requires `cursor/`; GitHub MCP 403. Compare: https://github.com/screenpunk-xyz/screenpunk/compare/asher/codex/milestone-1-contracts...asher/codex/milestone-1-apple-host |
+| Tested revision | `3bc49e1` local `./scripts/ci/linux.sh` 31/31 + fixture resource lock. Apple compile/tests on GitHub |
 | Evidence | `packages/ScreenpunkApple` host + bundled fixture copy (hash-locked to examples/) |
-| Blockers | None new. Two-finger hold is iOS; Mac uses 10s press + VoiceOver Unlink action |
+| Blockers | None new. Two-finger hold is iOS; Mac uses 10s press + VoiceOver Unlink action. Not editing `PackageValidator.swift` (contracts worker owns the NSRegularExpression crash) |
 | Next action | GitHub `apple-*` on this branch. Connection adapters / browser SDK are other workers |
 
 ## Operator / brand (settled)
@@ -34,7 +34,8 @@ Not weakened. `apple-build-and-unit` now runs `swift test` for ScreenpunkApple.
 ## This branch
 
 - `PackageAssetStore` serves only `screenpunk://package/…` files from the bundled
-  offline fixture (copy of `examples/offline-fixture`)
+  offline fixture (copy of `examples/offline-fixture`). Path checks stay in the
+  host; they do not call `PackagePath.normalize`.
 - `PackageSchemeHandler` returns CSP + local bytes; navigation/new-window egress denied
 - Content-process death reloads the last package
 - Native `OfflineRingOverlay` (guide danger / onAction; no tap intercept). Hidden

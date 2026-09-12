@@ -41,7 +41,7 @@ public struct PackageAssetStore: Sendable {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey])
             guard values.isRegularFile == true else { continue }
             let rel = file.path.replacingOccurrences(of: directory.path + "/", with: "")
-            let path = try PackagePath.normalize(rel)
+            let path = try hostRelativePath(rel)
             let data = try Data(contentsOf: file)
             assets[path] = PackageAsset(path: path, data: data, mime: mime(for: path))
         }
@@ -60,11 +60,24 @@ public struct PackageAssetStore: Sendable {
     }
 
     public func asset(forSchemeURL url: String) throws -> PackageAsset {
-        let prefix = "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/"
-        guard url.hasPrefix(prefix) else { throw PackageAssetError.denied }
-        let path = try PackagePath.normalize(String(url.dropFirst(prefix.count)))
         guard IsolationEvaluator.isLocalPackageURL(url) else { throw PackageAssetError.denied }
+        let prefix = "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/"
+        let path = try hostRelativePath(String(url.dropFirst(prefix.count)))
         guard let asset = assets[path] else { throw PackageAssetError.missingFile }
         return asset
+    }
+
+    /// Host-local path check. Do not call `PackagePath.normalize` (NSRegularExpression
+    /// crash is being fixed on the contracts branch).
+    static func hostRelativePath(_ path: String) throws -> String {
+        let posix = path.replacingOccurrences(of: "\\", with: "/")
+        if posix.hasPrefix("/")
+            || posix.split(separator: "/").contains("..")
+            || posix.lowercased().contains("%2e%2e")
+            || posix.contains("\0")
+        {
+            throw PackageAssetError.denied
+        }
+        return posix
     }
 }
