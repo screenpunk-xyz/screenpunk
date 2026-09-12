@@ -60,6 +60,13 @@ public struct DashboardStore: Sendable {
         bytes += next - previous
     }
 
+    /// Drops saved state and every cached read; the budget starts over.
+    public mutating func clear() {
+        state.removeAll()
+        cache.removeAll()
+        bytes = 0
+    }
+
     public var usedBytes: Int { bytes }
 
     public static func cacheKey(alias: String, operation: String, parametersJSON: String) -> String {
