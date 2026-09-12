@@ -21,4 +21,24 @@ enum GuideColor {
     static func onDanger(colorScheme: ColorScheme) -> Color {
         hex(colorScheme == .dark ? OfflineOverlayLayout.darkLabelHex : OfflineOverlayLayout.lightLabelHex)
     }
+
+    static func canvas(colorScheme: ColorScheme) -> Color {
+        hex(colorScheme == .dark ? SemanticTokens.Dark.canvas : SemanticTokens.Light.canvas)
+    }
+
+    static func surface(colorScheme: ColorScheme) -> Color {
+        hex(colorScheme == .dark ? SemanticTokens.Dark.surface : SemanticTokens.Light.surface)
+    }
+
+    static func text(colorScheme: ColorScheme) -> Color {
+        hex(colorScheme == .dark ? SemanticTokens.Dark.text : SemanticTokens.Light.text)
+    }
+
+    static func secondary(colorScheme: ColorScheme) -> Color {
+        hex(colorScheme == .dark ? SemanticTokens.Dark.textSecondary : SemanticTokens.Light.textSecondary)
+    }
+
+    static func action(colorScheme: ColorScheme) -> Color {
+        hex(colorScheme == .dark ? SemanticTokens.Dark.action : SemanticTokens.Light.action)
+    }
 }

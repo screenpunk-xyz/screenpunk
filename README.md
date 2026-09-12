@@ -11,9 +11,7 @@ assets in `screenpunk-xyz/Brand` (Codex Brand & App Guide at
 
 ## Status
 
-See [docs/implementation-status.md](docs/implementation-status.md). Milestone 1
-contracts live on `asher/codex/milestone-1-contracts`. Milestone 0 remains
-https://github.com/screenpunk-xyz/screenpunk/pull/1.
+See [docs/implementation-status.md](docs/implementation-status.md).
 
 ## Layout
 
@@ -30,7 +28,7 @@ assets/brand/ docs/ .github/workflows/
 ```sh
 ./scripts/ci/linux.sh          # schema, SDK, package validator, HTTP/WS fixture adapters
 ./scripts/generate-xcode.sh    # install pinned XcodeGen 2.46.0; regenerate projects
-./scripts/ci/apple.sh          # macOS: Core tests + iOS 16 compile
+./scripts/ci/apple.sh          # macOS: Core/Apple/Controller tests + iOS 16 compile
 ./scripts/ci/preview.sh        # macOS: hidden WKWebView probe (no fake PNG)
 ```
 

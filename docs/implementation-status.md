@@ -4,20 +4,19 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 
 | Field | Value |
 | --- | --- |
-| Milestone | 1 — Apple host (custom scheme, overlay/gesture, offline fixture) |
-| Task | Load `examples/offline-fixture` on iOS 16 + Mac via `screenpunk://` |
-| Owner | Implementation worker on `asher/codex/milestone-1-apple-host` |
-| PR | https://github.com/screenpunk-xyz/screenpunk/pull/3 (base `main`) |
-| Tested revision | local `./scripts/ci/linux.sh` after rebase onto `origin/main` |
-| Evidence | `packages/ScreenpunkApple` host + bundled fixture copy (hash-locked to examples/) |
-| Blockers | Mac Unlink still 10s press + VoiceOver pending operator choice. Not editing `PackageValidator.swift` |
-| Next action | Required CI on this rebase; coordinator merges #3 when green |
+| Milestone | 2/3 — Apple workbench (discover, pair, preview, deploy) |
+| Task | LAN discovery, one-owner pairing, orientation, live preview, deploy, history/rollback |
+| Owner | Implementation worker on `asher/codex/milestone-2-workbench` |
+| PR | https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-2-workbench (ManagePullRequest rejected `asher/codex/`; GitHub MCP 403) |
+| Tested revision | `70390bd` local `./scripts/ci/linux.sh` 31+3 |
+| Evidence | Core workbench/transfer tests + Controller atomic snapshot + Apple chrome tests |
+| Blockers | Authenticated TLS 1.3 LAN transfer between two processes is not in this slice; Mac uses an in-process loopback device. Physical pairing still pending. |
+| Next action | Required CI; merge when green. MCP helper / extra examples / release workflows stay with other workers. |
 
 ## Operator / brand (settled)
 
 Copyright **Screenpunk, Inc.** Bundle IDs `xyz.screenpunk.*`. Codex guide
 tokens/palette/layout; stacked lockup; danger tokens for Offline/Unlink;
-iOS 27 controls with older-OS-safe fallbacks (this host uses iOS 16 SwiftUI);
 https://screenpunk-style-guide.gsuter.chatgpt.site
 
 Merge after required CI is green; do not wait for a second review; do not
@@ -25,32 +24,31 @@ weaken checks.
 
 ## Based on
 
-`origin/main` @ `a832355` (adapters #8 on top of contracts #2). Includes the
-PackagePath string-check fix so Apple `swift test` no longer hits the
-old `NSRegularExpression` crash.
+`origin/main` @ `2a84fdb` (Apple host #3 + adapters #8 + grant syntax #9).
 
 ## Job names (stable)
 
 `contracts-and-sdk` · `apple-build-and-unit` · `apple-ui-and-preview` ·
 `security-and-hygiene` · `required-checks`
 
-Not weakened. `apple-build-and-unit` still runs `swift test` for
-ScreenpunkCore and ScreenpunkApple.
+Not weakened. `apple-build-and-unit` now runs `swift test` for
+ScreenpunkController as well as Core and Apple.
 
 ## This branch
 
-- `PackageAssetStore` serves only `screenpunk://package/…` files from the bundled
-  offline fixture (copy of `examples/offline-fixture`). Path checks stay in the
-  host; they do not call `PackagePath.normalize`.
-- `PackageSchemeHandler` returns CSP + local bytes; navigation/new-window egress denied
-- Content-process death reloads the last package
-- Native `OfflineRingOverlay` (guide danger / onAction; no tap intercept). Hidden
-  when the fixture has zero connections
-- Native `UnlinkPanelView` (one Unlink button). iOS two-finger 10s hold;
-  VoiceOver custom action on both platforms
-- Unlink clears the in-memory package and returns to `UnpairedHostView`
-- iOS and Mac apps host `AppleHostRootView.offlineFixture()`
+- `_screenpunk._tcp` discovery records (advertised / manual / loopback). TXT
+  carries protocol major + opaque device id only.
+- One-owner pairing via existing SAS transcript; second Mac rejected.
+- Mac workbench sidebar: devices, Add Device, orientation, live preview banner,
+  Deploy, history/rollback, Forget unreachable.
+- iOS starts unpaired, shows pairing code when a session exists, then the
+  deployed dashboard. Unlink clears pairing and packages.
+- Deploy is idempotent on `deploymentId`. Failed/interrupted transfer keeps
+  the current revision. Rollback is a new deployment of an older revision.
+- Orientation is stored on the device profile; mismatched revisions are
+  rejected (no silent stretch).
+- Controller snapshot writes atomically under Application Support.
 
 ## Out of scope here
 
-Connection adapters and browser SDK bundle — other workers.
+MCP helper, extra dashboard examples, and release-workflow files.

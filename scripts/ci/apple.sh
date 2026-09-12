@@ -28,7 +28,7 @@ fi
 
 (cd packages/ScreenpunkCore && swift test)
 (cd packages/ScreenpunkApple && swift test)
-(cd packages/ScreenpunkController && swift build)
+(cd packages/ScreenpunkController && swift test)
 (cd tools/screenpunk-mcp && swift build)
 
 ios_proj="$ROOT/apps/ios/ScreenpunkiOS.xcodeproj"
