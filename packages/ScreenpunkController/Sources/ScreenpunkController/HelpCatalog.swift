@@ -83,7 +83,16 @@ public enum HelpCatalog: Sendable {
             "pairing": HelpTopic(
                 id: "pairing",
                 title: "Pairing",
-                body: "A device allows one owner. Pairing and new connections never self-approve through MCP."
+                body: """
+                A device allows one owner. request_pairing returns a six-digit matching code over the TLS 1.3 LAN link; the user compares it with the device screen and taps Confirm on the device, then confirm_pairing completes. Pairing and new connections never self-approve through MCP. forget_device does not erase the device.
+                """
+            ),
+            "deploy": HelpTopic(
+                id: "deploy",
+                title: "Deploy",
+                body: """
+                deploy_dashboard ships the exact previewed revision the user approved in chat (approved=true). A failed transfer keeps the device's current dashboard. Idempotent on deploymentId. The Mac is not a runtime proxy.
+                """
             )
         ]
     }

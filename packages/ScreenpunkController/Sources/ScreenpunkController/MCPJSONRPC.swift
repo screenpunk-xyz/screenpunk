@@ -67,7 +67,9 @@ public struct MCPJSONRPC: Sendable {
                 "resources": [
                     resource("screenpunk://help/onboarding", "Onboarding"),
                     resource("screenpunk://help/unlink", "Unlink recovery"),
-                    resource("screenpunk://help/preview", "Live preview")
+                    resource("screenpunk://help/preview", "Live preview"),
+                    resource("screenpunk://help/pairing", "Pairing"),
+                    resource("screenpunk://help/deploy", "Deploy")
                 ]
             ]
         case "resources/read":
@@ -99,53 +101,8 @@ public struct MCPJSONRPC: Sendable {
         ["uri": uri, "name": name, "mimeType": "text/plain"]
     }
 
-    private func inputSchema(for name: String) -> [String: Any] {
-        switch name {
-        case "update_dashboard":
-            return [
-                "type": "object",
-                "properties": [
-                    "dashboardId": ["type": "string"],
-                    "name": ["type": "string"],
-                    "baseRevision": ["type": "string"],
-                    "files": ["type": "array"],
-                    "target": ["type": "object"],
-                    "connections": ["type": "array"]
-                ],
-                "required": ["name", "files"]
-            ]
-        case "preview_dashboard", "interact_preview":
-            return [
-                "type": "object",
-                "properties": [
-                    "dashboardId": ["type": "string"],
-                    "revision": ["type": "string"],
-                    "live": ["type": "boolean", "default": true],
-                    "kind": ["type": "string"],
-                    "x": ["type": "number"],
-                    "y": ["type": "number"],
-                    "text": ["type": "string"],
-                    "dy": ["type": "number"]
-                ],
-                "required": ["dashboardId"]
-            ]
-        case "get_help":
-            return [
-                "type": "object",
-                "properties": [
-                    "topic": ["type": "string", "description": "unlink, preview, pairing, or onboarding"]
-                ]
-            ]
-        default:
-            return [
-                "type": "object",
-                "properties": [
-                    "dashboardId": ["type": "string"],
-                    "revision": ["type": "string"],
-                    "deviceId": ["type": "string"]
-                ]
-            ]
-        }
+    private func inputSchema(for name: String) -> Any {
+        MCPToolSchemas.inputSchema(for: name).jsonObject()
     }
 
     private func encode(_ object: [String: Any]) -> String {

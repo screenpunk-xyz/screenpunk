@@ -23,7 +23,7 @@
     {
       "name": "list_devices",
       "group": "discovery",
-      "description": "List paired devices with redacted capabilities, viewport, and reachability.",
+      "description": "List devices paired with this Mac (one owner per device) with viewport, reachability, active revision, history, and any pending pairing. No secrets.",
       "readOnlyHint": true,
       "destructiveHint": false,
       "openWorldHint": false
@@ -31,7 +31,7 @@
     {
       "name": "get_device",
       "group": "discovery",
-      "description": "Get one paired device. Unpaired or unknown IDs return not_paired.",
+      "description": "Get one paired device and, by default, probe it over the TLS 1.3 LAN link for reachability and active revision. Unpaired or unknown IDs return not_paired.",
       "readOnlyHint": true,
       "destructiveHint": false,
       "openWorldHint": false
@@ -39,7 +39,7 @@
     {
       "name": "discover_services",
       "group": "discovery",
-      "description": "List known advertised services. Not unrestricted subnet scanning.",
+      "description": "List known _screenpunk._tcp advertisements and manually entered hosts. Optional host and port remember a manual device. Not unrestricted subnet scanning.",
       "readOnlyHint": true,
       "destructiveHint": false,
       "openWorldHint": false
@@ -47,9 +47,25 @@
     {
       "name": "request_pairing",
       "group": "pairing",
-      "description": "Launch trusted native pairing confirmation. Never self-approves.",
+      "description": "Start SAS pairing with an advertised or manual device over TLS 1.3 and return the six-digit matching code to show the user. The device shows its own code; the user must compare them and tap Confirm on the device. Never self-approves.",
       "readOnlyHint": false,
       "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "confirm_pairing",
+      "group": "pairing",
+      "description": "Complete pairing after the user confirmed the matching code on the device. Returns permission_required until the device owner has tapped Confirm there; the agent cannot approve on the device's behalf.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "forget_device",
+      "group": "pairing",
+      "description": "Forget a device on this Mac only. This does not erase the device; its owner must hold two fingers for ten seconds and tap Unlink on the device.",
+      "readOnlyHint": false,
+      "destructiveHint": true,
       "openWorldHint": false
     },
     {
@@ -136,15 +152,16 @@
     {
       "name": "deploy_dashboard",
       "group": "delivery",
-      "description": "Deploy a selected revision after explicit user approval of the previewed revision. Agent-mediated approval, not a cryptographic guarantee. Requires a paired device.",
+      "description": "Deploy the exact previewed revision the user approved in chat to a paired device over the TLS 1.3 LAN link. Requires revision and approved=true; revisions never previewed by this controller return permission_required. Agent-mediated approval, not a cryptographic guarantee. Idempotent on deploymentId. A failed transfer keeps the device's current dashboard.",
       "readOnlyHint": false,
       "destructiveHint": true,
+      "idempotentHint": true,
       "openWorldHint": false
     },
     {
       "name": "list_versions",
       "group": "delivery",
-      "description": "List immutable revisions for a dashboard.",
+      "description": "List immutable revisions for a dashboard, whether each was previewed, and which devices have it active.",
       "readOnlyHint": true,
       "destructiveHint": false,
       "openWorldHint": false
@@ -152,15 +169,16 @@
     {
       "name": "rollback_dashboard",
       "group": "delivery",
-      "description": "Redeploy an older revision through the normal deployment path. Requires a paired device.",
+      "description": "Redeploy a revision from the device's history through the normal deployment path after the user chose it in chat (approved=true). Requires a paired device.",
       "readOnlyHint": false,
       "destructiveHint": true,
+      "idempotentHint": true,
       "openWorldHint": false
     },
     {
       "name": "get_deployment",
       "group": "diagnostics",
-      "description": "Get correlated deployment status. No silent queued deploy in the alpha.",
+      "description": "Get correlated deployment status by deploymentId: phase, error, and the device's active revision. No silent queued deploy in the alpha.",
       "readOnlyHint": true,
       "destructiveHint": false,
       "openWorldHint": false

@@ -48,7 +48,9 @@ enum OfficialMCPServer {
                 resources: [
                     Resource(name: "Onboarding", uri: "screenpunk://help/onboarding", description: "MCP setup and live preview"),
                     Resource(name: "Unlink recovery", uri: "screenpunk://help/unlink", description: "Two-finger ten-second Unlink gesture"),
-                    Resource(name: "Live preview", uri: "screenpunk://help/preview", description: HelpCatalog.livePreviewLabel)
+                    Resource(name: "Live preview", uri: "screenpunk://help/preview", description: HelpCatalog.livePreviewLabel),
+                    Resource(name: "Pairing", uri: "screenpunk://help/pairing", description: "SAS matching code, one owner per device, never self-approves"),
+                    Resource(name: "Deploy", uri: "screenpunk://help/deploy", description: "Deploy the previewed revision the user approved; failed transfer keeps the current dashboard")
                 ],
                 nextCursor: nil
             )
@@ -99,58 +101,18 @@ enum OfficialMCPServer {
     }
 
     private static func schema(for name: String) -> Value {
-        switch name {
-        case "update_dashboard":
-            return .object([
-                "type": .string("object"),
-                "required": .array([.string("name"), .string("files")]),
-                "properties": .object([
-                    "dashboardId": .object(["type": .string("string")]),
-                    "name": .object(["type": .string("string")]),
-                    "baseRevision": .object(["type": .string("string")]),
-                    "files": .object(["type": .string("array")]),
-                    "target": .object(["type": .string("object")]),
-                    "connections": .object(["type": .string("array")])
-                ])
-            ])
-        case "preview_dashboard", "interact_preview":
-            return .object([
-                "type": .string("object"),
-                "required": .array([.string("dashboardId")]),
-                "properties": .object([
-                    "dashboardId": .object(["type": .string("string")]),
-                    "revision": .object(["type": .string("string")]),
-                    "live": .object([
-                        "type": .string("boolean"),
-                        "default": .bool(true),
-                        "description": .string(HelpCatalog.livePreviewLabel)
-                    ]),
-                    "kind": .object(["type": .string("string")]),
-                    "x": .object(["type": .string("number")]),
-                    "y": .object(["type": .string("number")]),
-                    "text": .object(["type": .string("string")]),
-                    "dy": .object(["type": .string("number")])
-                ])
-            ])
-        case "get_help":
-            return .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "topic": .object([
-                        "type": .string("string"),
-                        "description": .string("unlink, preview, pairing, or onboarding")
-                    ])
-                ])
-            ])
-        default:
-            return .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "dashboardId": .object(["type": .string("string")]),
-                    "revision": .object(["type": .string("string")]),
-                    "deviceId": .object(["type": .string("string")])
-                ])
-            ])
+        toValue(MCPToolSchemas.inputSchema(for: name))
+    }
+
+    private static func toValue(_ json: JSONValue) -> Value {
+        switch json {
+        case .null: return .null
+        case .bool(let value): return .bool(value)
+        case .int(let value): return .int(value)
+        case .double(let value): return .double(value)
+        case .string(let value): return .string(value)
+        case .array(let values): return .array(values.map(toValue))
+        case .object(let values): return .object(values.mapValues(toValue))
         }
     }
 }
