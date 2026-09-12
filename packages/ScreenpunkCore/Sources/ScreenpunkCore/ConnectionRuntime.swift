@@ -56,6 +56,9 @@ public actor ConnectionRuntime {
             if response.body.count > prepared.request.maxBytes {
                 throw ConnectionFailure.sizeLimit
             }
+            guard (200...299).contains(response.status) else {
+                throw UpstreamStatusFailure(status: response.status)
+            }
             let json = String(decoding: response.body, as: UTF8.self)
             if prepared.write == false {
                 try dashboardStore.rememberRead(
@@ -78,16 +81,19 @@ public actor ConnectionRuntime {
                 )
             )
         } catch {
+            // Only an upstream 4xx/5xx carries a status into the stale result; a
+            // transport failure, refused redirect, or oversized body reports 0.
+            let upstreamStatus = (error as? UpstreamStatusFailure)?.status ?? 0
             if prepared.write == false, let cached = dashboardStore.cachedRead(cacheKey: prepared.cacheKey) {
                 _ = dashboardStore.markStale(cacheKey: prepared.cacheKey)
                 return ConnectionHTTPResult(
-                    statusCode: 0,
+                    statusCode: upstreamStatus,
                     body: Data(cached.valueJSON.utf8),
                     stale: true,
                     fetchedAt: cached.fetchedAt,
                     diagnostic: ConnectionRedaction.diagnostic(
                         operation: operation,
-                        status: 0,
+                        status: upstreamStatus,
                         origin: prepared.origin,
                         lan: prepared.lan,
                         at: clock.now
@@ -160,6 +166,10 @@ public actor ConnectionRuntime {
         try store.deleteAll()
         grants.removeAll()
         bindings.removeAll()
+    }
+
+    private struct UpstreamStatusFailure: Error {
+        var status: Int
     }
 
     private struct PreparedHTTP {
