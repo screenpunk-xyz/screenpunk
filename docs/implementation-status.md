@@ -7,8 +7,8 @@ Last updated: 2026-09-12 by worker `bc-a383ee27-f334-585d-9587-caa067438d3e`.
 | Milestone | 2/3 — Apple workbench (discover, pair, preview, deploy) |
 | Task | LAN discovery, one-owner pairing, orientation, live preview, deploy, history/rollback |
 | Owner | Implementation worker on `asher/codex/milestone-2-workbench` |
-| PR | pending |
-| Tested revision | local `./scripts/ci/linux.sh` after this branch |
+| PR | https://github.com/screenpunk-xyz/screenpunk/compare/main...asher/codex/milestone-2-workbench (ManagePullRequest rejected `asher/codex/`; GitHub MCP 403) |
+| Tested revision | `70390bd` local `./scripts/ci/linux.sh` 31+3 |
 | Evidence | Core workbench/transfer tests + Controller atomic snapshot + Apple chrome tests |
 | Blockers | Authenticated TLS 1.3 LAN transfer between two processes is not in this slice; Mac uses an in-process loopback device. Physical pairing still pending. |
 | Next action | Required CI; merge when green. MCP helper / extra examples / release workflows stay with other workers. |
