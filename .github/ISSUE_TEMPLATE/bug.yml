@@ -1,0 +1,18 @@
+name: Bug
+description: Report a defect in Screenpunk
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: input
+    id: sha
+    attributes:
+      label: Commit SHA / build
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: Do not paste credentials, pairing codes, or home-network secrets.

@@ -1,0 +1,39 @@
+name: ScreenpunkiOS
+options:
+  bundleIdPrefix: xyz.screenpunk
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: xyz.screenpunk.ios
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    SWIFT_VERSION: "5.9"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGNING_ALLOWED: "NO"
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    INFOPLIST_KEY_CFBundleDisplayName: Screenpunk
+    INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+    INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+    INFOPLIST_KEY_NSLocalNetworkUsageDescription: Screenpunk discovers a paired Mac on your local network.
+    INFOPLIST_KEY_NSBonjourServices: "_screenpunk._tcp"
+packages:
+  ScreenpunkCore:
+    path: ../../packages/ScreenpunkCore
+  ScreenpunkApple:
+    path: ../../packages/ScreenpunkApple
+targets:
+  ScreenpunkiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: ScreenpunkCore
+      - package: ScreenpunkApple
+    settings:
+      base:
+        PRODUCT_NAME: Screenpunk
+        INFOPLIST_KEY_NSHumanReadableCopyright: Copyright 2026 the Screenpunk contributors
