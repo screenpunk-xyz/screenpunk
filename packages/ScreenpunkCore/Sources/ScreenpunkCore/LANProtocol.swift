@@ -58,32 +58,63 @@ public struct LANHello: Sendable, Equatable, Codable {
 public struct LANPairBegin: Sendable, Equatable, Codable {
     public var controllerPinHex: String
     public var sessionNonceHex: String
+
+    public init(controllerPinHex: String, sessionNonceHex: String) {
+        self.controllerPinHex = controllerPinHex
+        self.sessionNonceHex = sessionNonceHex
+    }
 }
 
 public struct LANPairBeginResult: Sendable, Equatable, Codable {
     public var code: String
     public var devicePinHex: String
+
+    public init(code: String, devicePinHex: String) {
+        self.code = code
+        self.devicePinHex = devicePinHex
+    }
 }
 
 public struct LANPairConfirm: Sendable, Equatable, Codable {
     public var code: String
     public var controllerPinHex: String
+
+    public init(code: String, controllerPinHex: String) {
+        self.code = code
+        self.controllerPinHex = controllerPinHex
+    }
 }
 
 public struct LANFileBlob: Sendable, Equatable, Codable {
     public var path: String
     public var sha256: String
     public var dataBase64: String
+
+    public init(path: String, sha256: String, dataBase64: String) {
+        self.path = path
+        self.sha256 = sha256
+        self.dataBase64 = dataBase64
+    }
 }
 
 public struct LANDeployBody: Sendable, Equatable, Codable {
     public var deployment: DeploymentRecord
     public var revision: StoredRevision
     public var files: [LANFileBlob]
+
+    public init(deployment: DeploymentRecord, revision: StoredRevision, files: [LANFileBlob]) {
+        self.deployment = deployment
+        self.revision = revision
+        self.files = files
+    }
 }
 
 public struct LANActiveQuery: Sendable, Equatable, Codable {
     public var revision: String?
+
+    public init(revision: String? = nil) {
+        self.revision = revision
+    }
 }
 
 public enum LANCodec {

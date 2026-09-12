@@ -4,7 +4,7 @@ import ScreenpunkCore
 import Security
 #endif
 #if canImport(Security)
-public struct TLSIdentityMaterial: Sendable {
+public struct TLSIdentityMaterial: @unchecked Sendable {
     public var identity: SecIdentity
     public var pin: [UInt8]
     public var role: PairingRole
