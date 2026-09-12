@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "dashboardId": "77777777-7777-4777-8777-777777777701",
+  "name": "Theater",
+  "revision": "88888888-8888-4888-8888-888888888801",
+  "entrypoint": "index.html",
+  "sdkVersion": "1",
+  "target": {
+    "profileId": "fixture-phone",
+    "width": 844,
+    "height": 390,
+    "scale": 3,
+    "orientation": "landscape",
+    "safeArea": {
+      "top": 0,
+      "right": 47,
+      "bottom": 21,
+      "left": 47
+    }
+  },
+  "connections": [
+    {
+      "alias": "home",
+      "required": true,
+      "operations": [
+        {
+          "name": "getStates",
+          "kind": "http",
+          "maxAgeSeconds": 45
+        },
+        {
+          "name": "lightOn",
+          "kind": "http"
+        },
+        {
+          "name": "lightOff",
+          "kind": "http"
+        },
+        {
+          "name": "sceneOn",
+          "kind": "http"
+        },
+        {
+          "name": "mediaPlayPause",
+          "kind": "http"
+        },
+        {
+          "name": "volumeSet",
+          "kind": "http"
+        },
+        {
+          "name": "selectSource",
+          "kind": "http"
+        }
+      ]
+    },
+    {
+      "alias": "homeEvents",
+      "required": false,
+      "operations": [
+        {
+          "name": "subscribeStates",
+          "kind": "ws"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "app.js",
+      "bytes": 6327,
+      "sha256": "6d2d5885ef05e5db554cf966f668c5a411fb86928e28f306279d78b7e6138fb2"
+    },
+    {
+      "path": "index.html",
+      "bytes": 1776,
+      "sha256": "76e2e1bd9eb700596385ed4d0928ab7b45c193db62611b3797fb280a8ca6eb48"
+    },
+    {
+      "path": "mark-inverse.svg",
+      "bytes": 25220,
+      "sha256": "3a1bff84d383f687e877ddcad7cada6753231e915e3112d69bd72864bb795977"
+    },
+    {
+      "path": "mark.svg",
+      "bytes": 9653,
+      "sha256": "6eadb923d4bff704aa61e00f6b54b3d56af2902b3c0ac38a2fc660f6e60fc415"
+    },
+    {
+      "path": "model.js",
+      "bytes": 6666,
+      "sha256": "c55c62c5dfbb4328e55582e32da118b5254223f5668f42e2742a9aba2497c573"
+    },
+    {
+      "path": "styles.css",
+      "bytes": 3525,
+      "sha256": "a7d0981b43595d3fd1800b9d78a8edbc2f2f7304af725cad94bf739cfdeef979"
+    },
+    {
+      "path": "wordmark-inverse.svg",
+      "bytes": 46142,
+      "sha256": "c35b1d09d1ad6cf5fd6c0391373316ee089a97f10292c8a6c65c74d1f4673206"
+    },
+    {
+      "path": "wordmark.svg",
+      "bytes": 46141,
+      "sha256": "12796de9630b1a2061262f6e97f44682e60273f7255f67df714ebf2d5cf6ee95"
+    }
+  ],
+  "digest": "aa6be3dd54745935acdf636092ac01619b5d42a1a1d17d05fa8c2f4407acd6b4"
+}

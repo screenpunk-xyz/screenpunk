@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "77777777-7777-4777-8777-777777777777",
+  "alias": "home",
+  "origin": "http://127.0.0.1:4173",
+  "transport": "http",
+  "authRef": "keychain:ha-fixture",
+  "lan": true,
+  "allowInsecureHTTP": true,
+  "operations": [
+    {
+      "name": "getStates",
+      "kind": "http",
+      "method": "GET",
+      "path": "/api/states",
+      "idempotent": true,
+      "write": false,
+      "maxAgeSeconds": 45
+    },
+    {
+      "name": "lightOn",
+      "kind": "http",
+      "method": "POST",
+      "path": "/api/services/light/turn_on",
+      "idempotent": false,
+      "write": true
+    },
+    {
+      "name": "lightOff",
+      "kind": "http",
+      "method": "POST",
+      "path": "/api/services/light/turn_off",
+      "idempotent": false,
+      "write": true
+    },
+    {
+      "name": "sceneOn",
+      "kind": "http",
+      "method": "POST",
+      "path": "/api/services/scene/turn_on",
+      "idempotent": false,
+      "write": true
+    },
+    {
+      "name": "mediaPlayPause",
+      "kind": "http",
+      "method": "POST",
+      "path": "/api/services/media_player/media_play_pause",
+      "idempotent": false,
+      "write": true
+    },
+    {
+      "name": "volumeSet",
+      "kind": "http",
+      "method": "POST",
+      "path": "/api/services/media_player/volume_set",
+      "idempotent": false,
+      "write": true
+    },
+    {
+      "name": "selectSource",
+      "kind": "http",
+      "method": "POST",
+      "path": "/api/services/media_player/select_source",
+      "idempotent": false,
+      "write": true
+    }
+  ]
+}

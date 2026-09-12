@@ -1,0 +1,34 @@
+[
+  {
+    "entity_id": "light.theater",
+    "state": "on",
+    "attributes": {
+      "friendly_name": "Theater",
+      "brightness": 180
+    }
+  },
+  {
+    "entity_id": "light.sconce",
+    "state": "unavailable",
+    "attributes": {
+      "friendly_name": "Sconce"
+    }
+  },
+  {
+    "entity_id": "scene.movie",
+    "state": "on",
+    "attributes": {
+      "friendly_name": "Movie"
+    }
+  },
+  {
+    "entity_id": "media_player.theater",
+    "state": "playing",
+    "attributes": {
+      "friendly_name": "Theater",
+      "volume_level": 0.4,
+      "source": "Apple TV",
+      "source_list": ["Apple TV", "Blu-ray", "Tuner"]
+    }
+  }
+]
