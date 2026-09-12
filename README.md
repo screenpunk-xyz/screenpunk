@@ -28,7 +28,7 @@ assets/brand/ docs/ .github/workflows/
 ## Commands
 
 ```sh
-./scripts/ci/linux.sh          # schema, SDK, package validator, fixture server
+./scripts/ci/linux.sh          # schema, SDK, package validator, HTTP/WS fixture adapters
 ./scripts/generate-xcode.sh    # install pinned XcodeGen 2.46.0; regenerate projects
 ./scripts/ci/apple.sh          # macOS: Core tests + iOS 16 compile
 ./scripts/ci/preview.sh        # macOS: hidden WKWebView probe (no fake PNG)

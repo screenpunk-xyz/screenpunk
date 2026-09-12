@@ -1,0 +1,198 @@
+{
+  "macIsRuntimeProxy": false,
+  "followsRedirects": false,
+  "selfSignedHTTPSTrustedSilently": false,
+  "globalArbitraryLoads": false,
+  "cases": [
+    {
+      "id": "fixture-loopback-http",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": ["127.0.0.1"],
+      "expect": "allow",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false,
+            "maxAgeSeconds": 45
+          }
+        ]
+      }
+    },
+    {
+      "id": "public-grant-private-ip",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": ["10.0.0.8"],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "55555555-5555-4555-8555-555555555555",
+        "alias": "weather",
+        "origin": "https://weather.example",
+        "transport": "http",
+        "authRef": "keychain:weather",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "metadata-blocked",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": ["169.254.169.254"],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "66666666-6666-4666-8666-666666666666",
+        "alias": "lanbox",
+        "origin": "http://192.168.1.10",
+        "transport": "http",
+        "authRef": "keychain:lan",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "insecure-http-denied",
+      "operation": "getStatus",
+      "parameters": {},
+      "resolvedAddresses": ["203.0.113.10"],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "77777777-7777-4777-8777-777777777777",
+        "alias": "clear",
+        "origin": "http://example.invalid",
+        "transport": "http",
+        "authRef": "keychain:clear",
+        "lan": false,
+        "allowInsecureHTTP": false,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "auth-header-override",
+      "operation": "getStatus",
+      "parameters": { "Authorization": "Bearer stolen" },
+      "resolvedAddresses": ["127.0.0.1"],
+      "expect": "permission_required",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "path-expansion",
+      "operation": "getStatus",
+      "parameters": { "path": "/admin" },
+      "resolvedAddresses": ["127.0.0.1"],
+      "expect": "denied_egress",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-operation",
+      "operation": "dropTables",
+      "parameters": {},
+      "resolvedAddresses": ["127.0.0.1"],
+      "expect": "permission_required",
+      "grant": {
+        "schemaVersion": 1,
+        "id": "33333333-3333-4333-8333-333333333333",
+        "alias": "status",
+        "origin": "http://127.0.0.1:4173",
+        "transport": "http",
+        "authRef": "keychain:fixture-status",
+        "lan": true,
+        "allowInsecureHTTP": true,
+        "operations": [
+          {
+            "name": "getStatus",
+            "kind": "http",
+            "method": "GET",
+            "path": "/v1/status",
+            "idempotent": true,
+            "write": false
+          }
+        ]
+      }
+    }
+  ]
+}

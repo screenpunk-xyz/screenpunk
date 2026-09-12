@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "44444444-4444-4444-8444-444444444444",
+  "alias": "events",
+  "origin": "http://127.0.0.1:4173",
+  "transport": "ws",
+  "authRef": "keychain:fixture-events",
+  "lan": true,
+  "allowInsecureHTTP": true,
+  "operations": [
+    {
+      "name": "listen",
+      "kind": "ws",
+      "method": "GET",
+      "path": "/v1/events",
+      "idempotent": true,
+      "write": false,
+      "maxAgeSeconds": 45
+    }
+  ]
+}
