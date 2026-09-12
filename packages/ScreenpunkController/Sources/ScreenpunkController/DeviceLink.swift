@@ -6,7 +6,9 @@ import ScreenpunkCore
 /// device. The controller never proxies dashboard traffic through this link;
 /// devices perform their own HTTP/WS once a package is active.
 public protocol DeviceLink: AnyObject {
-    /// SHA-256 pin of the device identity once `hello` has run.
+    /// SHA-256 pin of the certificate the device presented in the TLS
+    /// handshake, set once `hello` has run and agreed with it. The SAS
+    /// transcript binds to this value, never to a pin the device merely claims.
     var devicePin: [UInt8]? { get }
     func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?) throws
     func hello() throws -> LANHello

@@ -36,6 +36,28 @@ enum LANChannel {
         parameters.includePeerToPeer = true
         return parameters
     }
+
+    /// SHA-256 pin of the leaf certificate the peer actually presented during
+    /// this connection's TLS handshake. Nil before `.ready` or when the peer
+    /// sent no certificate. Both sides bind the SAS transcript to this value,
+    /// never to a pin the peer merely claims in a message.
+    static func observedPeerPin(_ connection: NWConnection) -> [UInt8]? {
+        guard let metadata = connection.metadata(definition: NWProtocolTLS.definition) as? NWProtocolTLS.Metadata else {
+            return nil
+        }
+        var pin: [UInt8]?
+        let visited = sec_protocol_metadata_access_peer_certificate_chain(metadata.securityProtocolMetadata) { certificate in
+            guard pin == nil else { return }
+            let ref = sec_certificate_copy_ref(certificate).takeRetainedValue()
+            guard let key = SecCertificateCopyKey(ref),
+                  let data = SecKeyCopyExternalRepresentation(key, nil) as Data?
+            else {
+                return
+            }
+            pin = PeerPin.sha256(data)
+        }
+        return visited ? pin : nil
+    }
 }
 
 final class LANLink {

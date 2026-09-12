@@ -129,8 +129,12 @@ public final class DeviceCoordinator: @unchecked Sendable {
                     detail: "device speaks protocol \(hello.protocolMajor); this controller speaks \(DiscoveryService.protocolMajor)"
                 )
             }
-            guard let devicePin = PeerPin.bytes(hello.pinHex) else {
-                throw ControllerError.validationFailed(detail: "device did not present a well-formed identity")
+            // The link reports the pin observed in the TLS handshake and has
+            // already rejected a hello that claims a different identity.
+            guard let devicePin = link.devicePin, devicePin.count == PairingLimits.identityByteCount,
+                  PeerPin.matches(expected: devicePin, presentedHex: hello.pinHex)
+            else {
+                throw PairingFailure.identityChanged
             }
             let nonce = PairingIdentityFactory.nonce()
             let begin = try link.beginPairing(nonce: nonce)
