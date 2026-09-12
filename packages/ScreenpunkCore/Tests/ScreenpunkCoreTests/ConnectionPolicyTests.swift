@@ -66,7 +66,8 @@ final class ConnectionPolicyTests: XCTestCase {
         let first = try await runtime.request(alias: "status", operation: "getStatus", parameters: [:])
         XCTAssertFalse(first.stale)
         XCTAssertFalse(first.diagnostic.contains("Bearer"))
-        XCTAssertNotNil(await runtime.lastRead(alias: "status", operation: "getStatus", parameters: [:]))
+        let cachedRead = await runtime.lastRead(alias: "status", operation: "getStatus", parameters: [:])
+        XCTAssertNotNil(cachedRead)
 
         let writeGrant = writeGrantFixture()
         try await runtime.install(
@@ -74,7 +75,8 @@ final class ConnectionPolicyTests: XCTestCase {
             binding: ConnectionAuthBinding(authRef: writeGrant.authRef, placement: .none)
         )
         _ = try await runtime.request(alias: "writer", operation: "putValue", parameters: ["n": "1"])
-        XCTAssertNil(await runtime.lastRead(alias: "writer", operation: "putValue", parameters: ["n": "1"]))
+        let cachedWrite = await runtime.lastRead(alias: "writer", operation: "putValue", parameters: ["n": "1"])
+        XCTAssertNil(cachedWrite)
     }
 
     func testBearerComesFromStoreNotParameters() async throws {
