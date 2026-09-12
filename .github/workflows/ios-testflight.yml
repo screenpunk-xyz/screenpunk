@@ -1,0 +1,70 @@
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_to_testflight:
+        description: Upload the signed IPA to App Store Connect for TestFlight processing. Never submits an App Store release.
+        type: boolean
+        default: false
+
+concurrency:
+  group: ios-testflight-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  apple-precheck:
+    name: apple-precheck
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Unsigned Apple tests and compile
+        run: ./scripts/ci/apple.sh
+
+  ios-sign-export:
+    name: ios-sign-export
+    needs: apple-precheck
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: apple-release
+    env:
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      IOS_SIGNING_CERT_P12_BASE64: ${{ secrets.IOS_SIGNING_CERT_P12_BASE64 }}
+      IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Refuse App Store submission
+        run: |
+          set +x
+          echo "This workflow may export a signed IPA and optionally upload it for TestFlight."
+          echo "It never submits a build for App Store review."
+      - name: Signed IPA export
+        run: .github/workflows/scripts/ios-archive-export.sh
+      - name: Upload signed IPA artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: screenpunk-ios-ipa
+          path: ${{ runner.temp }}/screenpunk-release/Screenpunk.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: TestFlight upload
+        if: ${{ inputs.upload_to_testflight }}
+        run: .github/workflows/scripts/ios-upload-testflight.sh
+      - name: Skip TestFlight upload
+        if: ${{ !inputs.upload_to_testflight }}
+        run: |
+          echo "STATE: testflight-upload skipped"
+          echo "Re-run this workflow with upload_to_testflight enabled after inspecting the signed IPA."
+          echo "Do not treat a signed export as uploaded, processed, reviewed, or installed."
+      - name: Remove signing material
+        if: ${{ always() }}
+        run: .github/workflows/scripts/cleanup-apple-signing.sh

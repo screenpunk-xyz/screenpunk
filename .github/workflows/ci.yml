@@ -60,6 +60,35 @@ jobs:
           grep -q "Copyright 2026 Screenpunk, Inc." apps/macos/project.yml
           test -f docs/implementation-status.md
           test -f docs/apple-review-position.md
+          test -f docs/apple-release.md
+          test -f .github/workflows/ios-testflight.yml
+          test -f .github/workflows/macos-release.yml
+          for job in contracts-and-sdk core-linux security-and-hygiene apple-build-and-unit apple-ui-and-preview required-checks; do
+            grep -q "^  ${job}:" .github/workflows/ci.yml
+          done
+          for workflow in .github/workflows/ios-testflight.yml .github/workflows/macos-release.yml; do
+            grep -q "workflow_dispatch" "$workflow"
+            grep -q "apple-release" "$workflow"
+            grep -q "cancel-in-progress: false" "$workflow"
+            if grep -E '^[[:space:]]+(pull_request|pull_request_target|push):' "$workflow"; then
+              echo "release workflow must be workflow_dispatch only: $workflow"
+              exit 1
+            fi
+            if grep -Eq 'submitForReview|--submit-for-review' "$workflow"; then
+              echo "release path must not submit for App Store review"
+              exit 1
+            fi
+          done
+          for name in \
+            APPLE_TEAM_ID \
+            MAC_SIGNING_CERT_P12_BASE64 MAC_SIGNING_CERT_PASSWORD \
+            IOS_SIGNING_CERT_P12_BASE64 IOS_SIGNING_CERT_PASSWORD \
+            IOS_PROVISIONING_PROFILE_BASE64 \
+            ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY
+          do
+            grep -q "$name" docs/apple-release.md
+            grep -q "$name" .github/workflows/ios-testflight.yml .github/workflows/macos-release.yml
+          done
           ./scripts/verify-brand.mjs
           test -f schemas/dashboard-manifest.schema.json
           grep -q "https://screenpunk.xyz/schemas/dashboard-manifest/v1.json" schemas/dashboard-manifest.schema.json

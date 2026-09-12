@@ -1,0 +1,114 @@
+name: Mac Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_github_release:
+        description: Publish a GitHub Release only after signing and notarization succeed. Never publishes unsigned output.
+        type: boolean
+        default: false
+      release_tag:
+        description: Tag for the GitHub Release (required when publish_github_release is true), for example v0.1.0-alpha
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: macos-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  apple-precheck:
+    name: apple-precheck
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Unsigned Apple tests and compile
+        run: ./scripts/ci/apple.sh
+
+  macos-sign-notarize:
+    name: macos-sign-notarize
+    needs: apple-precheck
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: apple-release
+    env:
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      MAC_SIGNING_CERT_P12_BASE64: ${{ secrets.MAC_SIGNING_CERT_P12_BASE64 }}
+      MAC_SIGNING_CERT_PASSWORD: ${{ secrets.MAC_SIGNING_CERT_PASSWORD }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Signed notarized DMG
+        run: .github/workflows/scripts/macos-archive-notarize.sh
+      - name: Upload signed DMG and checksum
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: screenpunk-macos-dmg
+          path: |
+            ${{ runner.temp }}/screenpunk-release/Screenpunk.dmg
+            ${{ runner.temp }}/screenpunk-release/Screenpunk.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing material
+        if: ${{ always() }}
+        run: .github/workflows/scripts/cleanup-apple-signing.sh
+
+  macos-github-release:
+    name: macos-github-release
+    needs: macos-sign-notarize
+    if: ${{ inputs.publish_github_release }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: apple-release
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require release tag
+        run: |
+          set +x
+          if [[ -z "${{ inputs.release_tag }}" ]]; then
+            echo "release_tag is required when publish_github_release is true"
+            exit 1
+          fi
+          if [[ ! "${{ inputs.release_tag }}" =~ ^v[0-9] ]]; then
+            echo "release_tag must start with v and a digit"
+            exit 1
+          fi
+      - name: Download notarized DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +x
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "${{ github.run_id }}" --name screenpunk-macos-dmg --dir dist
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set +x
+          set -euo pipefail
+          test -f dist/Screenpunk.dmg
+          test -f dist/Screenpunk.dmg.sha256
+          checksum="$(cut -d ' ' -f 1 dist/Screenpunk.dmg.sha256)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "refusing to overwrite existing GitHub Release tag"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --target "${{ github.sha }}" \
+            --title "Screenpunk ${TAG}" \
+            --notes "Signed, notarized, and stapled Mac DMG from ${{ github.sha }}. SHA-256: ${checksum}. Unsigned builds are not published." \
+            dist/Screenpunk.dmg \
+            dist/Screenpunk.dmg.sha256
+          echo "STATE: github-release-published"
