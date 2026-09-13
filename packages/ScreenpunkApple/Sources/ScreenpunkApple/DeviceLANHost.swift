@@ -7,6 +7,8 @@ import ScreenpunkCore
 public final class DeviceLANHost: ObservableObject {
     @Published public var runtime: DeviceRuntime
     @Published public var pairingCode: String?
+    /// Confirm was tapped here; the Mac has not finished `pair.confirm` yet.
+    @Published public var awaitingControllerConfirm = false
     @Published public var port: UInt16 = 0
     @Published public var errorMessage: String?
     @Published public var activePackage: PackageAssetStore?
@@ -64,7 +66,10 @@ public final class DeviceLANHost: ObservableObject {
     public func refresh() {
         if let server {
             runtime = server.runtime
-            pairingCode = server.pairingCode ?? server.runtime.pairingCode
+            // `server.pairingCode` is the LAN pairing state of record; the
+            // runtime session may outlive it and must not resurrect the code.
+            pairingCode = server.pairingCode
+            awaitingControllerConfirm = server.awaitingControllerConfirm
             port = server.port
             activePackage = server.activePackage
         }

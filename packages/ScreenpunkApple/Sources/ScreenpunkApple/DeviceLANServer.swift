@@ -18,6 +18,14 @@ public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var runtime: DeviceRuntime
     public private(set) var port: UInt16 = 0
     public private(set) var pairingCode: String?
+    /// The owner tapped Confirm for the code on screen and the controller's
+    /// `pair.confirm` has not completed yet. Lets the UI say so instead of
+    /// showing the same code and button again.
+    public var awaitingControllerConfirm: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return deviceConfirmed && pairingCode != nil
+    }
     /// Package bytes of `runtime.activeRevision`. Replaced only after a
     /// transfer activates; a failed transfer leaves the current package in place.
     public private(set) var activePackage: PackageAssetStore?
@@ -31,17 +39,22 @@ public final class DeviceLANServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.device")
     private let clock: PairingClock
     private let lock = NSLock()
+    /// How long a frame body may trail its header. The wait *between* requests
+    /// has no deadline; see `serve`.
+    private let requestBodyTimeout: TimeInterval
 
     public init(
         runtime: DeviceRuntime,
         identity: TLSIdentityMaterial,
         clock: PairingClock = FixedClock(Date()),
-        store: DeviceStateStore? = nil
+        store: DeviceStateStore? = nil,
+        requestBodyTimeout: TimeInterval = 15
     ) {
         self.runtime = runtime
         self.identity = identity
         self.clock = clock
         self.store = store
+        self.requestBodyTimeout = requestBodyTimeout
         self.runtime.identity = identity.pairingIdentity
         restoreFromStore()
     }
@@ -203,10 +216,14 @@ public final class DeviceLANServer: @unchecked Sendable {
         _ = done.wait(timeout: .now() + 8)
     }
 
+    /// One connection, one request at a time, for as long as the peer keeps it
+    /// open. Any failure closes the connection so the controller sees a dead
+    /// socket rather than requests that are read and never answered.
     private func serve(_ link: LANLink, peerPin: [UInt8]?) {
+        defer { link.cancel() }
         while true {
             do {
-                let request = try link.receive()
+                let request = try link.receiveRequest(bodyTimeout: requestBodyTimeout)
                 let reply = handle(request, peerPin: peerPin)
                 try link.send(reply)
             } catch {
@@ -268,7 +285,11 @@ public final class DeviceLANServer: @unchecked Sendable {
                 let controller = PairingIdentity(role: .controller, publicKey: controllerPin)
                 try runtime.confirmPairing(code: body.code, presentedOwner: controller, clock: clock)
                 pinnedController = runtime.pairing.owner?.publicKey
+                // The session has done its job. Keeping it would leave
+                // `runtime.pairingCode` set and the code view on screen.
+                runtime.pairing.session = nil
                 pairingCode = nil
+                deviceConfirmed = false
                 persist()
                 onChange?()
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))

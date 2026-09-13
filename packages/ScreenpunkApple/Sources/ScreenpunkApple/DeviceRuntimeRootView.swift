@@ -49,10 +49,13 @@ public struct DeviceRuntimeRootView: View {
                     host.unlink()
                 }
             } else if let code = host.pairingCode {
-                PairingCodeView(code: code) { host.confirm() }
+                PairingCodeView(code: code, waiting: host.awaitingControllerConfirm) { host.confirm() }
                     .padding(24)
             } else {
-                UnpairedHostView(detail: host.port == 0 ? nil : "TLS 1.3 · port \(host.port)")
+                UnpairedHostView(
+                    detail: host.port == 0 ? nil : "TLS 1.3 · port \(host.port)",
+                    paired: host.runtime.isPaired
+                )
             }
         }
         .overlay(alignment: .bottom) {
