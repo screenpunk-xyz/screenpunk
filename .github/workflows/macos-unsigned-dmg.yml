@@ -4,6 +4,8 @@ name: Mac Unsigned DMG
 # GitHub environment. Signed and notarized builds stay on macos-release.yml.
 
 on:
+  # TEMPORARY: verification run on the PR only; removed before merge.
+  pull_request:
   workflow_dispatch:
     inputs:
       developer_dir:
