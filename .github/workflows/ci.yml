@@ -79,6 +79,21 @@ jobs:
               exit 1
             fi
           done
+          unsigned_workflow=.github/workflows/macos-unsigned-dmg.yml
+          test -f "$unsigned_workflow"
+          test -f docs/macos-unsigned-dmg.md
+          test -x scripts/build-unsigned-dmg.sh
+          grep -q "MACOS_26_SDK_UNAVAILABLE" scripts/build-unsigned-dmg.sh
+          grep -q "workflow_dispatch" "$unsigned_workflow"
+          grep -q "cancel-in-progress: false" "$unsigned_workflow"
+          if grep -E '^[[:space:]]+(pull_request|pull_request_target|push):' "$unsigned_workflow"; then
+            echo "unsigned DMG workflow must be workflow_dispatch only: $unsigned_workflow"
+            exit 1
+          fi
+          if grep -Eq 'secrets\.|vars\.|environment:|apple-release|notarytool' "$unsigned_workflow"; then
+            echo "unsigned DMG workflow must not use secrets, variables, an environment, or notarization"
+            exit 1
+          fi
           for name in \
             APPLE_TEAM_ID \
             MAC_SIGNING_CERT_P12_BASE64 MAC_SIGNING_CERT_PASSWORD \

@@ -29,6 +29,9 @@ executed Apple evidence.
 
 `macos-latest` is not used. If `macos-15` cannot compile the macOS 26
 deployment target, `apple-build-and-unit` records `MACOS_26_SDK_UNAVAILABLE`
-and still compiles iOS 16 plus Swift packages. The preview helper deploys to
+and still compiles iOS 16 plus Swift packages. The image's default Xcode
+(16.4) lacks that SDK, but the image also installs Xcode 26.x;
+`scripts/build-unsigned-dmg.sh` selects one through `DEVELOPER_DIR` and
+fails with the same marker when none is present. The preview helper deploys to
 macOS 14 so the hidden WKWebView probe can compile on that image. A failed
 snapshot is `SNAPSHOT_UNAVAILABLE`, not a placeholder PNG.

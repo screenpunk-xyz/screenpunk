@@ -28,6 +28,7 @@ current milestone, branches, and evidence.
 | [docs/mcp-install.md](docs/mcp-install.md) | Connect Codex, Claude Desktop, or Cursor to the bundled `screenpunk-mcp`; tools, approvals, errors |
 | [docs/unlink-and-recovery.md](docs/unlink-and-recovery.md) | Two-finger ten-second Unlink, Forget, Offline ring, failure recovery |
 | [docs/release-workflow.md](docs/release-workflow.md) | CI jobs, Apple secrets, signed and notarized Mac DMG, iOS TestFlight boundary |
+| [docs/macos-unsigned-dmg.md](docs/macos-unsigned-dmg.md) | Unsigned alpha Mac DMG from Actions: build, download, first launch via Open Anyway |
 | [docs/help/](docs/help/README.md) | Text returned by MCP `get_help` and shown in-app |
 | [docs/contracts.md](docs/contracts.md), [docs/toolchain.md](docs/toolchain.md) | Wire contracts; pinned tools and runners |
 | [docs/brand-policy.md](docs/brand-policy.md), [docs/apple-review-position.md](docs/apple-review-position.md) | Brand terms; App Review position |

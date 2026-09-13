@@ -111,7 +111,9 @@ xcrun stapler validate /Volumes/Screenpunk/Screenpunk.app
 If any stage fails, no release is published and the run log says which
 stage. Unsigned output is never published as a normal download; if you need
 to share an unsigned build for testing, share the CI artifact link and say
-so.
+so. The **Mac Unsigned DMG** workflow exists for exactly that
+([macos-unsigned-dmg.md](macos-unsigned-dmg.md)); it uses no secrets and
+no environment.
 
 ## iOS: signed IPA and TestFlight
 

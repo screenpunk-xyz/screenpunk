@@ -1,0 +1,43 @@
+name: Mac Unsigned DMG
+
+# Alpha artifact only: no Apple secrets, no Developer ID, no notarization, no
+# GitHub environment. Signed and notarized builds stay on macos-release.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      developer_dir:
+        description: Optional DEVELOPER_DIR, for example /Applications/Xcode_26.3.app/Contents/Developer. Empty picks the newest installed Xcode with a macOS 26 SDK.
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: macos-unsigned-dmg-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  macos-unsigned-dmg:
+    name: macos-unsigned-dmg
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build unsigned Screenpunk.app and wrap the DMG
+        env:
+          DEVELOPER_DIR: ${{ inputs.developer_dir }}
+          SCREENPUNK_UNSIGNED_OUT: ${{ runner.temp }}/screenpunk-unsigned
+        run: ./scripts/build-unsigned-dmg.sh
+      - name: Upload unsigned DMG, checksum, and build info
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: screenpunk-macos-unsigned-dmg
+          path: |
+            ${{ runner.temp }}/screenpunk-unsigned/Screenpunk-unsigned.dmg
+            ${{ runner.temp }}/screenpunk-unsigned/Screenpunk-unsigned.dmg.sha256
+            ${{ runner.temp }}/screenpunk-unsigned/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 14
