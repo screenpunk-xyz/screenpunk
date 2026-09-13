@@ -282,7 +282,11 @@ public struct WorkbenchRootView: View {
     private var detail: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let device = model.session.selectedDevice {
-                deviceDetail(device)
+                // Code card + 520 pt preview + actions exceed the minimum window
+                // height; without a scroll view the Deploy row is clipped away.
+                ScrollView {
+                    deviceDetail(device)
+                }
             } else {
                 Text("Select or add a device.")
                     .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
@@ -314,7 +318,9 @@ public struct WorkbenchRootView: View {
             .padding(.horizontal, 20)
             .padding(.top, 16)
 
-            if let code = device.pairingCode ?? model.phone.pairingCode {
+            // Only this device's code. Falling back to the loopback runtime showed
+            // its fixed code as a "new code" right after a real pairing succeeded.
+            if let code = device.pairingCode {
                 PairingCodeView(code: code, onConfirm: model.confirmPairing)
                     .padding(.horizontal, 20)
             }

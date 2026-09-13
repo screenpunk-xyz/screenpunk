@@ -18,6 +18,14 @@ public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var runtime: DeviceRuntime
     public private(set) var port: UInt16 = 0
     public private(set) var pairingCode: String?
+    /// The owner tapped Confirm for the code on screen and the controller's
+    /// `pair.confirm` has not completed yet. Lets the UI say so instead of
+    /// showing the same code and button again.
+    public var awaitingControllerConfirm: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return deviceConfirmed && pairingCode != nil
+    }
     /// Package bytes of `runtime.activeRevision`. Replaced only after a
     /// transfer activates; a failed transfer leaves the current package in place.
     public private(set) var activePackage: PackageAssetStore?
@@ -277,7 +285,11 @@ public final class DeviceLANServer: @unchecked Sendable {
                 let controller = PairingIdentity(role: .controller, publicKey: controllerPin)
                 try runtime.confirmPairing(code: body.code, presentedOwner: controller, clock: clock)
                 pinnedController = runtime.pairing.owner?.publicKey
+                // The session has done its job. Keeping it would leave
+                // `runtime.pairingCode` set and the code view on screen.
+                runtime.pairing.session = nil
                 pairingCode = nil
+                deviceConfirmed = false
                 persist()
                 onChange?()
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))

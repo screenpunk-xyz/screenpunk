@@ -221,9 +221,17 @@ final class LANTransferTests: XCTestCase {
         let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
 
         Thread.sleep(forTimeInterval: 1.0)
+        XCTAssertEqual(server.pairingCode, begin.code)
+        XCTAssertFalse(server.awaitingControllerConfirm)
         try server.confirmLocally()
+        XCTAssertTrue(server.awaitingControllerConfirm, "the tap is visible to the UI before the Mac confirms")
+        XCTAssertEqual(server.pairingCode, begin.code, "code stays on screen until the Mac finishes")
+
         XCTAssertNoThrow(try client.confirmPairing(code: begin.code), "device still answers after the pause")
         XCTAssertTrue(server.runtime.isPaired)
+        XCTAssertNil(server.pairingCode, "code leaves the screen once pairing completes")
+        XCTAssertNil(server.runtime.pairingCode, "the finished session does not linger and resurrect the code")
+        XCTAssertFalse(server.awaitingControllerConfirm)
 
         Thread.sleep(forTimeInterval: 1.0)
         XCTAssertNil(try client.queryActive(), "connection stays serviceable for the next request too")
