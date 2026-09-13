@@ -13,6 +13,8 @@ public struct AdvertisedDevice: Sendable, Equatable, Codable, Identifiable {
     public var host: String
     public var port: Int
     public var source: Source
+    /// Display name the device chose to advertise (TXT `n`). Untrusted, display only.
+    public var name: String?
 
     public enum Source: String, Sendable, Equatable, Codable {
         case advertised
@@ -25,13 +27,15 @@ public struct AdvertisedDevice: Sendable, Equatable, Codable, Identifiable {
         protocolMajor: Int = DiscoveryService.protocolMajor,
         host: String,
         port: Int,
-        source: Source
+        source: Source,
+        name: String? = nil
     ) {
         self.deviceId = deviceId
         self.protocolMajor = protocolMajor
         self.host = host
         self.port = port
         self.source = source
+        self.name = DeviceDisplayName.sanitize(name)
     }
 
     public var publishesSecrets: Bool { false }

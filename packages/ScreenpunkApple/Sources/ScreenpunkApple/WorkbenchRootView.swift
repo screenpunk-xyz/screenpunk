@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import ScreenpunkCore
 
@@ -5,10 +6,12 @@ import ScreenpunkCore
 public final class WorkbenchModel: ObservableObject {
     @Published public var session: WorkbenchSession
     @Published public var phone: DeviceRuntime
-    @Published public var manualHost = "127.0.0.1"
-    @Published public var manualPort = "7843"
+    @Published public var manualHost = ""
+    @Published public var manualPort = ""
     @Published public var status: String?
     public let hub: LoopbackDiscovery
+    /// How often the sidebar re-reads the hub so Bonjour finds show up without a click.
+    public static let discoveryPollSeconds: TimeInterval = 2
     private let clock = FixedClock(Date())
 #if canImport(Network) && canImport(Security)
     private var lanClients: [String: ControllerLANClient] = [:]
@@ -17,7 +20,8 @@ public final class WorkbenchModel: ObservableObject {
     private var browser: LANAdvertisementBrowser?
 #endif
 
-    public init(hub: LoopbackDiscovery = LoopbackDiscovery.shared) {
+    /// `browsesLAN: false` skips the Bonjour browser so tests see only what they put in `hub`.
+    public init(hub: LoopbackDiscovery = LoopbackDiscovery.shared, browsesLAN: Bool = true) {
         self.hub = hub
         let controller = PairingIdentityFactory.make(
             role: .controller,
@@ -42,9 +46,11 @@ public final class WorkbenchModel: ObservableObject {
         phone.advertise(on: hub)
         self.phone = phone
 #if canImport(Network) && canImport(Security)
-        let browser = LANAdvertisementBrowser(hub: hub)
-        browser.start()
-        self.browser = browser
+        if browsesLAN {
+            let browser = LANAdvertisementBrowser(hub: hub)
+            browser.start()
+            self.browser = browser
+        }
 #endif
         self.session.refreshDiscovery(hub)
     }
@@ -54,9 +60,72 @@ public final class WorkbenchModel: ObservableObject {
         session.refreshDiscovery(hub)
     }
 
-    public func addManual() {
-        let port = Int(manualPort) ?? 7843
-        session.addManual(host: manualHost, port: port, hub: hub)
+    /// Timer-driven re-read. Only writes `session` when the hub changed so the
+    /// persisted snapshot is not rewritten every tick.
+    public func pollDiscovery() {
+        let fresh = hub.browse()
+        if fresh != session.advertisements {
+            session.advertisements = fresh
+        }
+    }
+
+    // MARK: Sidebar
+
+    public func visibleDevices(developer: Bool) -> [PairedDevice] {
+        WorkbenchSidebar.visibleDevices(session.devices, advertisements: session.advertisements, developer: developer)
+    }
+
+    public func nearby(developer: Bool) -> [WorkbenchSidebar.NearbyEntry] {
+        WorkbenchSidebar.nearby(advertisements: session.advertisements, devices: session.devices, developer: developer)
+    }
+
+    public func title(for device: PairedDevice) -> String {
+        WorkbenchSidebar.title(for: device, advertisements: session.advertisements)
+    }
+
+    public func isSimulator(_ device: PairedDevice) -> Bool {
+        WorkbenchSidebar.isSimulator(device, advertisements: session.advertisements)
+    }
+
+    /// The advertisement a known device can be re-paired from, if it is still on the network.
+    public func repairAdvertisement(for device: PairedDevice) -> AdvertisedDevice? {
+        WorkbenchSidebar.advertisement(for: device, in: session.advertisements)
+    }
+
+    public var canAddByAddress: Bool {
+        WorkbenchSidebar.normalizeHost(manualHost) != nil && WorkbenchSidebar.parsePort(manualPort) != nil
+    }
+
+    /// Records the typed address and starts pairing with it in one step.
+    /// Returns false, with `status` set, when the address is unusable.
+    /// `pair: false` only records the entry (tests; no network).
+    @discardableResult
+    public func addByAddress(pair: Bool = true) -> Bool {
+        guard let host = WorkbenchSidebar.normalizeHost(manualHost),
+              let port = WorkbenchSidebar.parsePort(manualPort)
+        else {
+            status = WorkbenchCopy.invalidAddress
+            return false
+        }
+        let advertised = hub.addManual(host: host, port: port)
+        session.refreshDiscovery(hub)
+        manualHost = ""
+        manualPort = ""
+        status = nil
+        if pair {
+            startPairing(advertised: advertised)
+        }
+        return true
+    }
+
+    public func pairAgainSelected() {
+        guard let device = session.selectedDevice,
+              let advertised = repairAdvertisement(for: device)
+        else {
+            status = TransferFailure.deviceOffline.rawValue
+            return
+        }
+        startPairing(advertised: advertised)
     }
 
     public func startPairing(advertised: AdvertisedDevice) {
@@ -188,7 +257,12 @@ public final class WorkbenchModel: ObservableObject {
             let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
             lanClients[advertised.deviceId] = client
             lanCodes[advertised.deviceId] = begin.code
-            let name = hello.deviceId.isEmpty ? advertised.host : hello.deviceId
+            // Prefer the name the device sent; fall back to what it advertised.
+            // The id is stored only when nothing better exists and the sidebar
+            // then shows owner copy instead of it.
+            let name = hello.name
+                ?? advertised.name
+                ?? (hello.deviceId.isEmpty ? advertised.host : hello.deviceId)
             session.recordPairedDevice(
                 profile: DeviceProfile(deviceId: advertised.deviceId, name: name),
                 pairingCode: begin.code
@@ -228,9 +302,26 @@ public final class WorkbenchModel: ObservableObject {
 #endif
 }
 
+/// Sidebar geometry, asserted by tests. Mac guide: 14 pt body, 12 pt caption,
+/// 4/8/12/16 spacing steps.
+public enum WorkbenchSidebarLayout: Sendable {
+    public static let rowSpacing: CGFloat = 4
+    public static let rowVerticalPadding: CGFloat = 4
+    public static let pairButtonMinimumHeight: CGFloat = 24
+    public static let pairButtonCornerRadius: CGFloat = 8
+    public static let developerViewKey = "workbench.developerView"
+}
+
 public struct WorkbenchRootView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject public var model: WorkbenchModel
+    /// Off by default: the owner sees real devices only. On: the in-process
+    /// simulator, duplicate entries, and raw `source · host:port` lines.
+    @AppStorage(WorkbenchSidebarLayout.developerViewKey) private var developerView = false
+    @State private var addByAddressExpanded = false
+    private let discoveryTimer = Timer.publish(
+        every: WorkbenchModel.discoveryPollSeconds, on: .main, in: .common
+    ).autoconnect()
 
     public init(model: WorkbenchModel) {
         self.model = model
@@ -243,45 +334,189 @@ public struct WorkbenchRootView: View {
             detail
         }
         .background(GuideColor.canvas(colorScheme: colorScheme))
+        .onReceive(discoveryTimer) { _ in
+            model.pollDiscovery()
+            reconcileSelection()
+        }
+    }
+
+    // MARK: Sidebar
+
+    private var selection: Binding<String?> {
+        Binding(
+            get: {
+                let id = model.session.selectedDeviceId
+                return visibleDevices.contains { $0.profile.deviceId == id } ? id : nil
+            },
+            set: { model.session.selectedDeviceId = $0 }
+        )
+    }
+
+    private var visibleDevices: [PairedDevice] {
+        model.visibleDevices(developer: developerView)
+    }
+
+    private var developerBinding: Binding<Bool> {
+        Binding(
+            get: { developerView },
+            set: {
+                developerView = $0
+                reconcileSelection()
+            }
+        )
+    }
+
+    /// Keeps the selection on something the owner can see. A hidden simulator
+    /// selected from a previous run would otherwise drive Deploy invisibly.
+    private func reconcileSelection() {
+        let visible = visibleDevices
+        if let id = model.session.selectedDeviceId, visible.contains(where: { $0.profile.deviceId == id }) {
+            return
+        }
+        let next = visible.first?.profile.deviceId
+        if model.session.selectedDeviceId != next {
+            model.session.selectedDeviceId = next
+        }
     }
 
     private var sidebar: some View {
-        List(selection: Binding(
-            get: { model.session.selectedDeviceId },
-            set: { model.session.selectedDeviceId = $0 }
-        )) {
-            Section("Devices") {
-                ForEach(model.session.devices) { device in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(device.profile.name)
-                            .foregroundStyle(GuideColor.text(colorScheme: colorScheme))
-                        Text(deviceSubtitle(device))
-                            .font(.caption)
-                            .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
+        let devices = visibleDevices
+        let nearby = model.nearby(developer: developerView)
+        return List(selection: selection) {
+            Section {
+                if devices.isEmpty {
+                    hint(WorkbenchCopy.noDevices)
+                }
+                ForEach(devices) { device in
+                    deviceRow(device)
+                        .tag(Optional(device.profile.deviceId))
+                }
+            } header: {
+                Text(WorkbenchCopy.devicesSection)
+            }
+
+            Section {
+                if nearby.isEmpty {
+                    hint(WorkbenchCopy.noNearby)
+                }
+                // Index ids keep these rows out of the device selection.
+                ForEach(nearby.indices, id: \.self) { index in
+                    nearbyRow(nearby[index])
+                }
+                DisclosureGroup(isExpanded: $addByAddressExpanded) {
+                    addByAddressForm
+                } label: {
+                    Text(WorkbenchCopy.addByAddress)
+                        .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
+                }
+            } header: {
+                HStack {
+                    Text(WorkbenchCopy.addDeviceSection)
+                    Spacer()
+                    Button {
+                        model.refresh()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
                     }
-                    .tag(Optional(device.profile.deviceId))
+                    .buttonStyle(.borderless)
+                    .help(WorkbenchCopy.refresh)
+                    .accessibilityLabel(WorkbenchCopy.refresh)
                 }
             }
-            Section("Add Device") {
-                ForEach(model.session.advertisements) { ad in
-                    Button("\(ad.source.rawValue) \(ad.host):\(ad.port)") {
-                        model.startPairing(advertised: ad)
-                    }
+
+            Section {
+                DisclosureGroup {
+                    Toggle(WorkbenchCopy.developerToggle, isOn: developerBinding)
+                        .font(.callout)
+                } label: {
+                    Text(WorkbenchCopy.developerSection)
+                        .font(.callout)
+                        .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
                 }
-                HStack {
-                    TextField("Host", text: $model.manualHost)
-                    TextField("Port", text: $model.manualPort)
-                    Button("Add") { model.addManual() }
-                }
-                Button("Refresh") { model.refresh() }
             }
         }
+        .listStyle(.sidebar)
         .navigationTitle("Screenpunk")
     }
 
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, WorkbenchSidebarLayout.rowVerticalPadding)
+    }
+
+    private func deviceRow(_ device: PairedDevice) -> some View {
+        VStack(alignment: .leading, spacing: WorkbenchSidebarLayout.rowSpacing) {
+            Text(model.title(for: device))
+                .foregroundStyle(GuideColor.text(colorScheme: colorScheme))
+            Text(WorkbenchSidebar.subtitle(for: device))
+                .font(.caption)
+                .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
+        }
+        .padding(.vertical, WorkbenchSidebarLayout.rowVerticalPadding)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func nearbyRow(_ entry: WorkbenchSidebar.NearbyEntry) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: WorkbenchSidebarLayout.rowSpacing) {
+                Text(entry.title)
+                    .foregroundStyle(GuideColor.text(colorScheme: colorScheme))
+                Text(entry.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            Button(WorkbenchCopy.pair) {
+                model.startPairing(advertised: entry.advertisement)
+            }
+            .buttonStyle(SidebarActionButtonStyle(
+                fill: GuideColor.action(colorScheme: colorScheme),
+                label: GuideColor.onAction(colorScheme: colorScheme)
+            ))
+            .accessibilityLabel("\(WorkbenchCopy.pair) \(entry.title)")
+        }
+        .padding(.vertical, WorkbenchSidebarLayout.rowVerticalPadding)
+    }
+
+    private var addByAddressForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                TextField(WorkbenchCopy.hostPlaceholder, text: $model.manualHost)
+                    .textFieldStyle(.roundedBorder)
+                TextField(WorkbenchCopy.portPlaceholder, text: $model.manualPort)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 72)
+                Button(WorkbenchCopy.pair) {
+                    _ = model.addByAddress()
+                }
+                .buttonStyle(SidebarActionButtonStyle(
+                    fill: GuideColor.action(colorScheme: colorScheme),
+                    label: GuideColor.onAction(colorScheme: colorScheme)
+                ))
+                .disabled(model.canAddByAddress == false)
+                .opacity(model.canAddByAddress ? 1 : 0.5)
+                .accessibilityLabel("\(WorkbenchCopy.pair) \(WorkbenchCopy.addByAddress)")
+            }
+            Text(WorkbenchCopy.invalidAddress)
+                .font(.caption)
+                .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, WorkbenchSidebarLayout.rowVerticalPadding)
+    }
+
+    // MARK: Detail
+
     private var detail: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let device = model.session.selectedDevice {
+            if let device = model.session.selectedDevice,
+               visibleDevices.contains(where: { $0.profile.deviceId == device.profile.deviceId })
+            {
                 // Code card + 520 pt preview + actions exceed the minimum window
                 // height; without a scroll view the Deploy row is clipped away.
                 ScrollView {
@@ -301,7 +536,7 @@ public struct WorkbenchRootView: View {
     private func deviceDetail(_ device: PairedDevice) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(device.profile.name)
+                Text(model.title(for: device))
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(GuideColor.text(colorScheme: colorScheme))
                 Spacer()
@@ -341,6 +576,11 @@ public struct WorkbenchRootView: View {
             HStack {
                 Button("Deploy") { model.deploy() }
                     .disabled(device.pairingCode != nil)
+                // Known devices leave the Add Device list; this is how a device
+                // that was unlinked on the phone gets a fresh code.
+                if device.pairingCode == nil, model.repairAdvertisement(for: device) != nil {
+                    Button(WorkbenchCopy.pairAgain) { model.pairAgainSelected() }
+                }
                 Button("Forget") { model.forgetSelected() }
                 if let status = model.status {
                     Text(status)
@@ -380,10 +620,28 @@ public struct WorkbenchRootView: View {
                 .foregroundStyle(GuideColor.secondary(colorScheme: colorScheme))
         }
     }
+}
 
-    private func deviceSubtitle(_ device: PairedDevice) -> String {
-        let reach = device.reachable ? "reachable" : "unreachable"
-        let dash = device.activeRevision == nil ? "No dashboard" : StoredRevision.offlineFixture.name
-        return "\(reach) · \(device.profile.orientation.rawValue) · \(dash)"
+/// Compact brand-action pill for sidebar rows. The label carries the fill and
+/// the content shape so the whole pill is the click target.
+struct SidebarActionButtonStyle: ButtonStyle {
+    var fill: Color
+    var label: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(
+            cornerRadius: WorkbenchSidebarLayout.pairButtonCornerRadius, style: .continuous
+        )
+        return configuration.label
+            .font(.callout.weight(.semibold))
+            .padding(.horizontal, 12)
+            .frame(minHeight: WorkbenchSidebarLayout.pairButtonMinimumHeight)
+            .foregroundStyle(label)
+            .background(fill, in: shape)
+            .overlay {
+                shape.fill(Color.black.opacity(configuration.isPressed ? 0.22 : 0))
+            }
+            .contentShape(shape)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }

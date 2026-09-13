@@ -187,14 +187,20 @@ public final class DeviceLANServer: @unchecked Sendable {
         return pin
     }
 
+    /// TXT carries the protocol version, the opaque id, and a display name
+    /// (`n`). The name is untrusted and only labels the device on the Mac.
     private func advertiseBonjour(on listener: NWListener) {
+        var txt = [
+            "v": "\(DiscoveryService.protocolMajor)",
+            "id": runtime.profile.deviceId
+        ]
+        if let name = DeviceDisplayName.sanitize(runtime.profile.name) {
+            txt["n"] = name
+        }
         listener.service = NWListener.Service(
             name: runtime.profile.deviceId,
             type: DiscoveryService.type,
-            txtRecord: NWTXTRecord([
-                "v": "\(DiscoveryService.protocolMajor)",
-                "id": runtime.profile.deviceId
-            ])
+            txtRecord: NWTXTRecord(txt)
         )
     }
 
@@ -247,7 +253,8 @@ public final class DeviceLANServer: @unchecked Sendable {
                 let hello = LANHello(
                     role: .device,
                     deviceId: runtime.profile.deviceId,
-                    pinHex: PeerPin.hex(identity.pin)
+                    pinHex: PeerPin.hex(identity.pin),
+                    name: runtime.profile.name
                 )
                 return ok(request, payload: hello)
             case .pairBegin:

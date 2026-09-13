@@ -41,4 +41,8 @@ enum GuideColor {
     static func action(colorScheme: ColorScheme) -> Color {
         hex(colorScheme == .dark ? SemanticTokens.Dark.action : SemanticTokens.Light.action)
     }
+
+    static func onAction(colorScheme: ColorScheme) -> Color {
+        hex(colorScheme == .dark ? SemanticTokens.Dark.onAction : SemanticTokens.Light.onAction)
+    }
 }

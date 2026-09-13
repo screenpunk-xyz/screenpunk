@@ -1,5 +1,8 @@
 import SwiftUI
 import ScreenpunkCore
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// iOS device: advertise over TLS 1.3, pair with one owner, then show the deployed dashboard.
 public struct DeviceRuntimeRootView: View {
@@ -16,9 +19,20 @@ public struct DeviceRuntimeRootView: View {
 #endif
     }
 
+    /// Name the Mac shows for this device. iOS 16+ returns the generic model
+    /// name ("iPhone", "iPad") unless the app holds the user-assigned-name
+    /// entitlement; either is a human label, never an address.
+    public static func localDeviceName() -> String {
+#if canImport(UIKit) && !os(watchOS)
+        return DeviceDisplayName.sanitize(UIDevice.current.name) ?? "iPhone"
+#else
+        return "This iPhone"
+#endif
+    }
+
     public static func unpairedLoopback() -> DeviceRuntimeRootView {
         let identity = PairingIdentityFactory.make(role: .device)
-        let profile = DeviceProfile(deviceId: "phone-local", name: "This iPhone")
+        let profile = DeviceProfile(deviceId: "phone-local", name: localDeviceName())
         let ad = AdvertisedDevice(
             deviceId: profile.deviceId,
             host: "127.0.0.1",

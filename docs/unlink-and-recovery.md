@@ -46,11 +46,14 @@ Forget is not a remote wipe. Neither action revokes upstream tokens.
 
 ## Re-pair
 
-After Unlink, choose **Add Device** on the Mac again. Fresh identities and a
-fresh code are used. If the Mac still has an old record for the device, the
-device now presents a different identity; the Mac treats that as an
-identity change and requires re-pairing, so Forget the old record first. A
-second Mac can pair only after the device has been unlinked.
+After Unlink, pair from the Mac again. If the Mac still lists the device
+under **Devices**, select it and press **Pair Again**; otherwise it
+reappears under **Add Device** and you press **Pair**. Fresh identities and
+a fresh code are used. If the Mac still has an old record for the device,
+the device now presents a different identity; the Mac treats that as an
+identity change and requires re-pairing, so Forget the old record first if
+Pair Again is refused. A second Mac can pair only after the device has been
+unlinked.
 
 ## Reinstalling the device app
 
