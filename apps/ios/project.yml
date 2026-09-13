@@ -18,7 +18,9 @@ settings:
     INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_NSLocalNetworkUsageDescription: Screenpunk advertises this device and pairs with your Mac on the local network.
-    INFOPLIST_KEY_NSBonjourServices: "_screenpunk._tcp"
+    # NSBonjourServices is an array and has no INFOPLIST_KEY_ build setting, so it
+    # lives in Info.plist; Xcode merges the generated keys into that file.
+    INFOPLIST_FILE: Info.plist
 packages:
   ScreenpunkCore:
     path: ../../packages/ScreenpunkCore
