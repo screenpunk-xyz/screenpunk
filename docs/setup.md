@@ -46,6 +46,15 @@ inside the bundle by absolute path, so moving or renaming the app breaks
 those references until you update them
 ([details](mcp-install.md#if-you-move-or-rename-the-app)).
 
+### From the unsigned alpha DMG
+
+Until the signed release has its secrets, the **Mac Unsigned DMG** Actions
+workflow produces `Screenpunk-unsigned.dmg` as a run artifact: no Developer
+ID, not notarized. Download it from the Actions run, mount, drag Screenpunk
+to Applications, and allow the first launch under System Settings →
+Privacy & Security → **Open Anyway**. Steps and limits:
+[macos-unsigned-dmg.md](macos-unsigned-dmg.md).
+
 ### From source
 
 Requirements: Xcode with the macOS 26 SDK; Node 22 only if you also run the
