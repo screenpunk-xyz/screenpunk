@@ -198,6 +198,37 @@ final class LANTransferTests: XCTestCase {
         XCTAssertNil(coldStart.activePackage)
     }
 
+    /// A person sits between `pair.begin` and `pair.confirm` (compare codes,
+    /// tap Confirm). The device must keep answering on the same connection no
+    /// matter how long that gap is; it used to give up after the frame timeout
+    /// and swallow the next request without replying.
+    func testDeviceKeepsServingAcrossHumanPauseBetweenRequests() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-pause")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-pause")
+        let runtime = DeviceRuntime(
+            identity: deviceIdentity.pairingIdentity,
+            profile: DeviceProfile(deviceId: "pause-phone", name: "Pause iPhone"),
+            advertisement: AdvertisedDevice(deviceId: "pause-phone", host: "127.0.0.1", port: 0, source: .advertised)
+        )
+        // Body timeout far below the pause so the old idle limit would trip.
+        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity, requestBodyTimeout: 0.3)
+        try server.start()
+        defer { server.stop() }
+
+        let client = ControllerLANClient(identity: controllerIdentity)
+        try client.connect(host: "127.0.0.1", port: server.port)
+        _ = try client.hello()
+        let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+
+        Thread.sleep(forTimeInterval: 1.0)
+        try server.confirmLocally()
+        XCTAssertNoThrow(try client.confirmPairing(code: begin.code), "device still answers after the pause")
+        XCTAssertTrue(server.runtime.isPaired)
+
+        Thread.sleep(forTimeInterval: 1.0)
+        XCTAssertNil(try client.queryActive(), "connection stays serviceable for the next request too")
+    }
+
     func testHelloPinMustMatchTLSHandshakePin() throws {
         let realDevice = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-real")
         let rogueDevice = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-rogue")

@@ -31,17 +31,22 @@ public final class DeviceLANServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.device")
     private let clock: PairingClock
     private let lock = NSLock()
+    /// How long a frame body may trail its header. The wait *between* requests
+    /// has no deadline; see `serve`.
+    private let requestBodyTimeout: TimeInterval
 
     public init(
         runtime: DeviceRuntime,
         identity: TLSIdentityMaterial,
         clock: PairingClock = FixedClock(Date()),
-        store: DeviceStateStore? = nil
+        store: DeviceStateStore? = nil,
+        requestBodyTimeout: TimeInterval = 15
     ) {
         self.runtime = runtime
         self.identity = identity
         self.clock = clock
         self.store = store
+        self.requestBodyTimeout = requestBodyTimeout
         self.runtime.identity = identity.pairingIdentity
         restoreFromStore()
     }
@@ -203,10 +208,14 @@ public final class DeviceLANServer: @unchecked Sendable {
         _ = done.wait(timeout: .now() + 8)
     }
 
+    /// One connection, one request at a time, for as long as the peer keeps it
+    /// open. Any failure closes the connection so the controller sees a dead
+    /// socket rather than requests that are read and never answered.
     private func serve(_ link: LANLink, peerPin: [UInt8]?) {
+        defer { link.cancel() }
         while true {
             do {
-                let request = try link.receive()
+                let request = try link.receiveRequest(bodyTimeout: requestBodyTimeout)
                 let reply = handle(request, peerPin: peerPin)
                 try link.send(reply)
             } catch {

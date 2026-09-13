@@ -32,7 +32,15 @@ enum LANChannel {
                 complete(pin != nil)
             }
         }, queue)
-        let parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+        let tcp = NWProtocolTCP.Options()
+        // The device now waits between requests without a deadline (a person
+        // is comparing codes or deciding to deploy), so a half-open peer must
+        // fail through keepalive rather than park a reader forever.
+        tcp.enableKeepalive = true
+        tcp.keepaliveIdle = 15
+        tcp.keepaliveInterval = 5
+        tcp.keepaliveCount = 3
+        let parameters = NWParameters(tls: tls, tcp: tcp)
         parameters.includePeerToPeer = true
         return parameters
     }
@@ -76,6 +84,7 @@ final class LANLink {
             done.signal()
         })
         if done.wait(timeout: .now() + timeout) == .timedOut {
+            connection.cancel()
             throw TransferFailure.interrupted
         }
         if sendError != nil {
@@ -84,13 +93,33 @@ final class LANLink {
     }
 
     func receive(timeout: TimeInterval = 15) throws -> LANEnvelope {
-        let header = try receiveExact(4, timeout: timeout)
+        try receive(headerTimeout: timeout, bodyTimeout: timeout)
+    }
+
+    /// Server-side wait for the next request. A human sits between requests
+    /// (compare codes, tap Confirm, press Deploy), so the header wait has no
+    /// deadline; it ends when a frame arrives or the connection fails. The
+    /// body must still follow its header within `bodyTimeout`.
+    func receiveRequest(bodyTimeout: TimeInterval = 15) throws -> LANEnvelope {
+        try receive(headerTimeout: nil, bodyTimeout: bodyTimeout)
+    }
+
+    func cancel() {
+        connection.cancel()
+    }
+
+    private func receive(headerTimeout: TimeInterval?, bodyTimeout: TimeInterval) throws -> LANEnvelope {
+        let header = try receiveExact(4, timeout: headerTimeout)
         let length = try LANCodec.messageLength(fromHeader: header)
-        let body = try receiveExact(length, timeout: timeout)
+        let body = try receiveExact(length, timeout: bodyTimeout)
         return try LANCodec.decode(body)
     }
 
-    private func receiveExact(_ count: Int, timeout: TimeInterval) throws -> Data {
+    /// A timed-out read leaves its completion registered on the connection;
+    /// when bytes finally arrive it would swallow the next frame header. The
+    /// link therefore cancels the connection on timeout so the peer sees a
+    /// closed socket at once instead of waiting out its own timer.
+    private func receiveExact(_ count: Int, timeout: TimeInterval?) throws -> Data {
         let done = DispatchSemaphore(value: 0)
         var result: Result<Data, Error> = .failure(TransferFailure.interrupted)
         connection.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, error in
@@ -103,8 +132,13 @@ final class LANLink {
             }
             done.signal()
         }
-        if done.wait(timeout: .now() + timeout) == .timedOut {
-            throw TransferFailure.interrupted
+        if let timeout {
+            if done.wait(timeout: .now() + timeout) == .timedOut {
+                connection.cancel()
+                throw TransferFailure.interrupted
+            }
+        } else {
+            done.wait()
         }
         return try result.get()
     }
