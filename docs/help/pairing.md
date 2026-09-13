@@ -3,10 +3,11 @@
 1. Open Screenpunk on the iPhone or iPad. It shows **Ready to pair** and
    asks for Local Network permission. Allow it, and keep Screenpunk in the
    foreground; it only advertises itself while it is on screen.
-2. On the Mac, open Screenpunk and choose **Add Device**. Devices
-   advertising on the local network appear in a list. If yours does not,
-   enter its host and port manually; the device shows them when you ask on
-   its unpaired screen.
+2. On the Mac, open Screenpunk. Under **Add Device** in the sidebar, the
+   phone appears by name within a few seconds (or press the refresh arrow).
+   Press **Pair** next to it. If it never appears, open **Add by address**
+   and enter the host and port from the device's **Ready to pair** screen,
+   then press **Pair**.
 3. Both screens show the same six-digit matching code. Confirm on both,
    and only if the codes match exactly. If they differ, cancel on both and
    start again.

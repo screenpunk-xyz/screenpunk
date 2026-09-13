@@ -115,10 +115,15 @@ deployment all happen on the Mac.
 
 1. Keep Screenpunk foreground on the device. It advertises
    `_screenpunk._tcp` only while on screen, and the advertisement carries
-   only a protocol version and an opaque device ID.
-2. On the Mac choose **Add Device**. Pick the device from the list, or
-   enter its host and port manually; the device shows them when you ask on
-   its unpaired screen.
+   only a protocol version, an opaque device ID, and the device's display
+   name (the generic "iPhone" or "iPad" unless iOS shares your custom
+   name). No secrets.
+2. On the Mac, the device appears by name under **Add Device** in the
+   sidebar within a few seconds; press **Pair** next to it. If it does not
+   appear, press the refresh arrow, or open **Add by address** and enter
+   the host and port from the device's unpaired screen. Devices already
+   paired with this Mac are listed under **Devices** instead; use
+   **Pair Again** on one of those after it has been unlinked.
 3. Compare the six-digit matching code on both screens. Confirm on both,
    and only if they match exactly. Codes expire after two minutes; five
    failed confirmations pause pairing.
@@ -236,7 +241,7 @@ intentional and happens only when a preview is requested.
 
 | Symptom | Check |
 | --- | --- |
-| Device not listed in Add Device | Screenpunk foreground on the device; Local Network allowed on both; same network or VLAN; Bonjour not blocked. Fall back to manual host and port |
+| Device not listed in Add Device | Screenpunk foreground on the device; Local Network allowed on both; same network or VLAN; Bonjour not blocked. A device already under **Devices** is not listed twice; use **Pair Again** there. Fall back to **Add by address** |
 | Codes differ | Another device or Mac is pairing, or the network is interfering. Cancel on both and retry. Never confirm mismatched codes |
 | "Another Mac owns this device" | Unlink on the device first |
 | Preview fails or times out | Mac awake and logged in, not at the login window. Read the diagnostics returned with the error: missing asset or JavaScript error in the package |

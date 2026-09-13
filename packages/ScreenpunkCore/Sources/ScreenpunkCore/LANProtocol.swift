@@ -46,12 +46,21 @@ public struct LANHello: Sendable, Equatable, Codable {
     public var deviceId: String
     public var pinHex: String
     public var protocolMajor: Int
+    /// Owner-facing device name. Optional so peers without it still decode.
+    public var name: String?
 
-    public init(role: PairingRole, deviceId: String, pinHex: String, protocolMajor: Int = DiscoveryService.protocolMajor) {
+    public init(
+        role: PairingRole,
+        deviceId: String,
+        pinHex: String,
+        protocolMajor: Int = DiscoveryService.protocolMajor,
+        name: String? = nil
+    ) {
         self.role = role
         self.deviceId = deviceId
         self.pinHex = pinHex
         self.protocolMajor = protocolMajor
+        self.name = DeviceDisplayName.sanitize(name)
     }
 }
 

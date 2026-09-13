@@ -32,30 +32,31 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
         browser = nil
     }
 
+    private struct TXTFields {
+        var id: String
+        var major: Int
+        var name: String?
+    }
+
     private func publish(_ results: Set<NWBrowser.Result>) {
         for result in results {
             let meta = txtFields(result)
             switch result.endpoint {
             case .hostPort(let host, let port):
-                advertise(deviceId: meta.id, host: "\(host)", port: Int(port.rawValue), major: meta.major)
+                advertise(meta, host: "\(host)", port: Int(port.rawValue))
             default:
                 resolve(result, meta: meta)
             }
         }
     }
 
-    private func resolve(_ result: NWBrowser.Result, meta: (id: String, major: Int)) {
+    private func resolve(_ result: NWBrowser.Result, meta: TXTFields) {
         let connection = NWConnection(to: result.endpoint, using: .tcp)
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
                 if case .hostPort(let host, let port) = connection.currentPath?.remoteEndpoint {
-                    self?.advertise(
-                        deviceId: meta.id,
-                        host: "\(host)",
-                        port: Int(port.rawValue),
-                        major: meta.major
-                    )
+                    self?.advertise(meta, host: "\(host)", port: Int(port.rawValue))
                 }
                 connection.cancel()
             case .failed:
@@ -67,35 +68,36 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
         connection.start(queue: queue)
     }
 
-    private func advertise(deviceId: String, host: String, port: Int, major: Int) {
-        guard port > 0, deviceId.isEmpty == false else { return }
+    private func advertise(_ meta: TXTFields, host: String, port: Int) {
+        guard port > 0, meta.id.isEmpty == false else { return }
         hub.advertise(
             AdvertisedDevice(
-                deviceId: deviceId,
-                protocolMajor: major,
+                deviceId: meta.id,
+                protocolMajor: meta.major,
                 host: host,
                 port: port,
-                source: .advertised
+                source: .advertised,
+                name: meta.name
             )
         )
     }
 
-    private func txtFields(_ result: NWBrowser.Result) -> (id: String, major: Int) {
-        var deviceId = "advertised"
-        var major = DiscoveryService.protocolMajor
+    private func txtFields(_ result: NWBrowser.Result) -> TXTFields {
+        var meta = TXTFields(id: "advertised", major: DiscoveryService.protocolMajor, name: nil)
         if case .bonjour(let txt) = result.metadata {
             let fields = txt.dictionary
             if let id = fields["id"], id.isEmpty == false {
-                deviceId = id
+                meta.id = id
             }
             if let version = fields["v"], let parsed = Int(version) {
-                major = parsed
+                meta.major = parsed
             }
+            meta.name = DeviceDisplayName.sanitize(fields["n"])
         }
-        if deviceId == "advertised", case .service(let name, _, _, _) = result.endpoint {
-            deviceId = name
+        if meta.id == "advertised", case .service(let name, _, _, _) = result.endpoint {
+            meta.id = name
         }
-        return (deviceId, major)
+        return meta
     }
 }
 #endif

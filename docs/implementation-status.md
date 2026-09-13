@@ -97,9 +97,11 @@ Not weakened.
   the uncompressed public point and is bound after SAS confirmation.
 - One-owner pairing stays on the existing HMAC-SHA256 SAS. A second controller
   is rejected at TLS pin after the owner is set.
-- Mac workbench still has an in-process loopback device. Advertised/manual
-  devices use `ControllerLANClient` over TLS. `_screenpunk._tcp` browse feeds
-  the same discovery hub; TXT is still `v` + opaque `id` only.
+- Mac workbench still has an in-process loopback device, hidden from the
+  owner sidebar unless the Developer toggle is on. Advertised/manual devices
+  use `ControllerLANClient` over TLS. `_screenpunk._tcp` browse feeds the
+  same discovery hub; TXT is `v` + opaque `id` + display name `n` (untrusted,
+  display only; also returned in `hello`).
 - Deploy is idempotent on `deploymentId`. File blobs are hash-checked before
   activation. Failed/corrupt transfer keeps `activeRevision`. Rollback is a new
   deploy. `query.active` reads the device revision.
