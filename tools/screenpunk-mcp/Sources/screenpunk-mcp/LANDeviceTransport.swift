@@ -76,6 +76,11 @@ final class LANDeviceLink: DeviceLink {
         try client.deploy(body)
     }
 
+    func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
+        try client.deployScreenSet(body)
+    }
+    func queryActiveState() throws -> LANActiveQuery { try client.queryActiveState() }
+
     func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
         try client.provisionHomeAssistant(configuration)
     }

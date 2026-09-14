@@ -8,10 +8,15 @@ import ScreenpunkCore
 final class FakeLANDevice: @unchecked Sendable {
     var runtime: DeviceRuntime
     let identityPin: [UInt8]
-    let host = "192.168.4.20"
-    let port: UInt16 = 7843
+    var host = "192.168.4.20"
+    var port: UInt16 = 7843
     var online = true
     var supportsHomeAssistant = false
+    var supportsScreenSets = true
+    var installedSet: [LANScreenSetEntry]?
+    var selectedDashboardId: String?
+    var failSetAtIndex: Int?
+    private var completedSets: [String: (LANScreenSetDeployBody, LANScreenSetReceipt)] = [:]
     var failProvisioning = false
     var installedHomeAssistant: HomeAssistantProvisioning?
 
@@ -74,7 +79,7 @@ final class FakeLANDevice: @unchecked Sendable {
             switch LANMethod(rawValue: request.method) {
             case .hello:
                 let shown = claimedHelloPin ?? identityPin
-                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: supportsHomeAssistant ? ["home-assistant-http-v1"] : nil, profile: runtime.profile))
+                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: (supportsHomeAssistant ? ["home-assistant-http-v1"] : []) + (supportsScreenSets ? ["screen-set-v1"] : []), profile: runtime.profile))
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
                 guard PeerPin.matches(expected: peerPin, presentedHex: body.controllerPinHex) else {
@@ -126,7 +131,7 @@ final class FakeLANDevice: @unchecked Sendable {
                     throw TransferFailure.notPaired
                 }
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
-            case .homeAssistantProvision, .homeAssistantRevoke, .none:
+            case .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
                 throw TransferFailure.validationFailed
             }
         } catch {
@@ -137,6 +142,40 @@ final class FakeLANDevice: @unchecked Sendable {
                 error: (error as? PairingFailure)?.rawValue ?? (error as? TransferFailure)?.rawValue ?? "failed"
             )
         }
+    }
+
+    func installSet(_ body: LANScreenSetDeployBody, controllerPin: [UInt8]) throws -> LANScreenSetReceipt {
+        guard online, supportsScreenSets, ownerPin == controllerPin else { throw TransferFailure.notPaired }
+        try body.validate()
+        if let (original, receipt) = completedSets[body.deploymentId] {
+            guard original == body else { throw TransferFailure.validationFailed }
+            return receipt
+        }
+        var staged = runtime
+        var selectedRuntime = runtime
+        var selectedFiles: [String: Data] = [:]
+        for (index, item) in body.screens.enumerated() {
+            if failSetAtIndex == index { throw TransferFailure.interrupted }
+            if item.homeAssistant != nil && (!supportsHomeAssistant || failProvisioning) { throw TransferFailure.validationFailed }
+            var files: [String: Data] = [:]
+            for file in item.deployment.files {
+                guard let data = Data(base64Encoded: file.dataBase64), DeploymentDigest.sha256Hex(data) == file.sha256 else { throw TransferFailure.validationFailed }
+                files[try PackagePath.normalize(file.path)] = data
+            }
+            let outcome = try staged.receiveDeployment(item.deployment.deployment, revision: item.deployment.revision)
+            guard outcome.phase == .active else { throw TransferFailure.targetMismatch }
+            if item.deployment.revision.dashboardId == body.selectedDashboardId { selectedRuntime = staged; selectedFiles = files }
+        }
+        runtime = selectedRuntime
+        receivedFiles = selectedFiles
+        installedHomeAssistant = body.screens.first { $0.deployment.revision.dashboardId == body.selectedDashboardId }?.homeAssistant
+        installedSet = body.screens.map { .init(dashboardId: $0.deployment.revision.dashboardId, revision: $0.deployment.revision.revision, name: $0.name) }
+        selectedDashboardId = body.selectedDashboardId
+        deployAttempts += body.screens.count
+        let receipt = LANScreenSetReceipt(deploymentId: body.deploymentId, deviceId: runtime.profile.deviceId,
+            screens: installedSet!, selectedDashboardId: body.selectedDashboardId)
+        completedSets[body.deploymentId] = (body, receipt)
+        return receipt
     }
 
     private func expectedCode(for transcript: PairingTranscript) -> String {
@@ -201,6 +240,13 @@ final class FakeLANLink: DeviceLink {
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord {
         let reply = try request(.deploy, body)
         return try LANCodec.decodePayload(DeploymentRecord.self, json: reply.payloadJSON)
+    }
+
+    func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
+        try device.installSet(body, controllerPin: controllerPin)
+    }
+    func queryActiveState() throws -> LANActiveQuery {
+        LANActiveQuery(revision: try queryActive(), screens: device.installedSet, selectedDashboardId: device.selectedDashboardId)
     }
 
     func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {

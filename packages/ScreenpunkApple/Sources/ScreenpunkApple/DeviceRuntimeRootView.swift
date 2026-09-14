@@ -8,6 +8,7 @@ import UIKit
 public struct DeviceRuntimeRootView: View {
     @State private var fallback: DeviceRuntime
     @State private var confirmError: String?
+    @State private var showDeviceMenu = false
 #if canImport(Network) && canImport(Security)
     @StateObject private var host: DeviceLANHost
 #endif
@@ -32,7 +33,7 @@ public struct DeviceRuntimeRootView: View {
 
     public static func unpairedLoopback() -> DeviceRuntimeRootView {
         let identity = PairingIdentityFactory.make(role: .device)
-        var profile = DeviceProfile(deviceId: "phone-local", name: localDeviceName(), model: DeviceModelName.current)
+        var profile = DeviceProfile(deviceId: DeviceInstallIdentity.pendingID, name: localDeviceName(), model: DeviceModelName.current)
 #if os(iOS)
         let bounds = UIScreen.main.bounds
         profile.width = Int(min(bounds.width, bounds.height))
@@ -45,7 +46,9 @@ public struct DeviceRuntimeRootView: View {
             source: .advertised
         )
         var runtime = DeviceRuntime(identity: identity, profile: profile, advertisement: ad)
+#if !canImport(Network) || !canImport(Security)
         runtime.advertise(on: LoopbackDiscovery.shared)
+#endif
         return DeviceRuntimeRootView(runtime: runtime)
     }
 
@@ -77,14 +80,42 @@ public struct DeviceRuntimeRootView: View {
                         .scaleEffect(scale)
                         .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                 }.ignoresSafeArea().background(.black)
-            } else if let code = host.pairingCode {
-                PairingCodeView(code: code, waiting: host.awaitingControllerConfirm) { host.confirm() }
-                    .padding(24)
+                    .deviceScreenSwipes(screens: host.screenSet?.screens.map(\.entry) ?? [],
+                                        selectedID: host.screenSet?.selectedDashboardId,
+                                        enabled: !showDeviceMenu && host.pairingCode == nil) { offset in
+                        host.advanceScreen(by: offset)
+                    }
+                    .ignoresSafeArea()
+                    .accessibilityAction(named: "Next screen") { host.advanceScreen(by: 1) }
+                    .accessibilityAction(named: "Previous screen") { host.advanceScreen(by: -1) }
             } else {
                 UnpairedHostView(
                     detail: host.port == 0 ? nil : "TLS 1.3 · port \(host.port)",
                     paired: host.runtime.isPaired
                 )
+            }
+        }
+        .allowsHitTesting(host.pairingCode == nil && !showDeviceMenu)
+        .accessibilityHidden(host.pairingCode != nil || showDeviceMenu)
+        .overlay {
+            if showDeviceMenu {
+                UnlinkPanelView(onUnlink: { showDeviceMenu = false; host.unlink() },
+                    onDismiss: { showDeviceMenu = false }, screens: host.screenSet?.screens.map(\.entry) ?? [],
+                    selectedDashboardId: host.screenSet?.selectedDashboardId) { dashboardId in
+                        host.selectScreen(dashboardId)
+                        if host.errorMessage == nil { showDeviceMenu = false }
+                    }
+            }
+        }
+        .overlay {
+            if let code = host.pairingCode {
+                ZStack {
+                    Color.black.opacity(0.45).ignoresSafeArea()
+                    PairingCodeView(code: code, waiting: host.awaitingControllerConfirm,
+                                    onCancel: { host.cancelPairing() }) { host.confirm() }
+                        .frame(maxWidth: 420).padding(24)
+                }
+                .accessibilityAddTraits(.isModal)
             }
         }
         .overlay(alignment: .bottom) {
@@ -132,6 +163,14 @@ public struct DeviceRuntimeRootView: View {
         }
     }
 
+    private var currentScreenName: String {
+#if canImport(Network) && canImport(Security)
+        host.screenSet?.screens.first(where: { $0.revision.dashboardId == host.screenSet?.selectedDashboardId })?.name ?? "Screen"
+#else
+        "Screen"
+#endif
+    }
+
     private var homeAssistantRuntime: HomeAssistantDeviceRuntime? {
 #if canImport(Network) && canImport(Security)
         host.server?.homeAssistantRuntime
@@ -149,13 +188,14 @@ public struct DeviceRuntimeRootView: View {
         onUnlink: @escaping () -> Void
     ) -> some View {
         if let package {
-            DashboardRuntimeView(store: package, homeAssistant: homeAssistantRuntime, revision: revision, onUnlink: onUnlink)
+            DashboardRuntimeView(store: package, homeAssistant: homeAssistantRuntime, revision: revision,
+                                 screenName: currentScreenName, onMenu: { showDeviceMenu = true }, onUnlink: onUnlink)
                 .ignoresSafeArea()
                 .id(revision)
         } else if revision == StoredRevision.offlineFixture.revision,
                   let store = try? PackageAssetStore.bundledOfflineFixture()
         {
-            DashboardRuntimeView(store: store, onUnlink: onUnlink)
+            DashboardRuntimeView(store: store, screenName: currentScreenName, onMenu: { showDeviceMenu = true }, onUnlink: onUnlink)
                 .ignoresSafeArea()
                 .id(revision)
         } else {

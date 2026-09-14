@@ -174,7 +174,7 @@ Rules the runtime enforces regardless of what an agent says or is told:
 onboarding resources so an agent can read it before you ask.
 
 The one every agent should know: to remove Screenpunk from a device, hold
-two fingers on its screen for ten seconds, then tap **Unlink**. That erases
+two fingers on its screen for five seconds, open the device menu, choose **Disconnect**, and confirm. That erases
 the dashboard, its credentials, and the pairing. Forgetting an unreachable
 device on the Mac does not erase the device.
 

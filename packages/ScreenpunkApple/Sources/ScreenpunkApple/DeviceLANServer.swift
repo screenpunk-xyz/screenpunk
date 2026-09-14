@@ -29,6 +29,8 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Package bytes of `runtime.activeRevision`. Replaced only after a
     /// transfer activates; a failed transfer leaves the current package in place.
     public private(set) var activePackage: PackageAssetStore?
+    public private(set) var screenSet: DeviceInstalledScreenSet?
+    private var screenPackages: [String: PackageAssetStore] = [:]
     public var onChange: (() -> Void)?
     public let identity: TLSIdentityMaterial
     public let store: DeviceStateStore?
@@ -40,9 +42,10 @@ public final class DeviceLANServer: @unchecked Sendable {
     private func homeAssistantScope() -> HomeAssistantDeviceRuntime.Scope? {
         lock.lock(); defer { lock.unlock() }
         guard let owner = runtime.pairing.owner, let revision = runtime.activeRevision, let dashboardId = activeStoredRevision?.dashboardId else { return nil }
-        return .init(owner: PeerPin.hex(owner.publicKey), revision: revision, dashboardId: dashboardId)
+        return .init(owner: PeerPin.hex(owner.publicKey), revision: revision, dashboardId: dashboardId, grantSet: screenSet?.grantSet)
     }
     private var deviceConfirmed = false
+    private var pairingExpiry: DispatchWorkItem?
     private var pinnedController: [UInt8]?
     private var activeStoredRevision: StoredRevision?
     private var listener: NWListener?
@@ -56,7 +59,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     public init(
         runtime: DeviceRuntime,
         identity: TLSIdentityMaterial,
-        clock: PairingClock = FixedClock(Date()),
+        clock: PairingClock = SystemClock(),
         store: DeviceStateStore? = nil,
         homeAssistantVault: HomeAssistantDeviceVault = HomeAssistantDeviceVault(),
         requestBodyTimeout: TimeInterval = 15
@@ -69,6 +72,8 @@ public final class DeviceLANServer: @unchecked Sendable {
         self.requestBodyTimeout = requestBodyTimeout
         self.runtime.identity = identity.pairingIdentity
         restoreFromStore()
+        let migratedDeployment = DeviceInstallIdentity.migrate(&self.runtime, pin: identity.pin)
+        if migratedDeployment { persist() }
         if runtime.profile.model != nil {
             let orientation = self.runtime.profile.orientation
             self.runtime.profile.model = runtime.profile.model
@@ -134,6 +139,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     public func confirmLocally() throws {
         lock.lock()
         defer { lock.unlock() }
+        expirePairingIfNeededLocked()
         guard let code = pairingCode ?? runtime.pairingCode else {
             throw PairingFailure.expired
         }
@@ -146,13 +152,53 @@ public final class DeviceLANServer: @unchecked Sendable {
         onChange?()
     }
 
+    /// Cancels only the pending handshake. Existing ownership and deployed content remain intact.
+    public func cancelPairing() {
+        lock.lock()
+        clearPendingPairingLocked()
+        lock.unlock()
+        onChange?()
+    }
+
+    /// Also called by the scheduled expiry and directly by deterministic tests.
+    public func expirePairingIfNeeded() {
+        lock.lock()
+        expirePairingIfNeededLocked()
+        lock.unlock()
+    }
+
+    private func expirePairingIfNeededLocked() {
+        guard let session = runtime.pairing.session,
+              clock.now.timeIntervalSince(session.createdAt) >= PairingLimits.expirySeconds else { return }
+        clearPendingPairingLocked()
+        onChange?()
+    }
+
+    private func clearPendingPairingLocked() {
+        pairingExpiry?.cancel()
+        pairingExpiry = nil
+        runtime.pairing.session = nil
+        pairingCode = nil
+        deviceConfirmed = false
+    }
+
+    private func schedulePairingExpiryLocked() {
+        pairingExpiry?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.expirePairingIfNeeded() }
+        pairingExpiry = work
+        queue.asyncAfter(deadline: .now() + PairingLimits.expirySeconds + 0.1, execute: work)
+    }
+
     /// Erases owner, active revision, package bytes, and everything on disk.
     public func unlink() {
         lock.lock()
         try? homeAssistantVault.revoke()
         let homeAssistantRuntime = self.homeAssistantRuntime
         Task { await homeAssistantRuntime.cancelPending() }
+        clearPendingPairingLocked()
         runtime.unlink()
+        screenSet = nil
+        screenPackages = [:]
         activePackage = nil
         activeStoredRevision = nil
         pairingCode = nil
@@ -183,6 +229,17 @@ public final class DeviceLANServer: @unchecked Sendable {
         runtime.restore(state)
         pinnedController = state.owner?.publicKey
         activeStoredRevision = state.activeStoredRevision
+        if let installed = state.screenSet {
+            var packages: [String: PackageAssetStore] = [:]
+            for screen in installed.screens {
+                guard let files = try? store.loadPackageFiles(directory: screen.packageDirectory), !files.isEmpty else { return }
+                packages[screen.revision.dashboardId] = packageStore(files)
+            }
+            screenSet = installed
+            screenPackages = packages
+            activateSelectionLocked(installed.selectedDashboardId)
+            return
+        }
         if runtime.activeRevision != nil,
            let files = try? store.loadPackageFiles(), files.isEmpty == false
         {
@@ -198,7 +255,9 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Caller holds `lock`.
     private func persist() {
         guard let store else { return }
-        try? store.save(DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision))
+        var state = DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision)
+        state.screenSet = screenSet
+        try? store.save(state)
     }
 
     // MARK: Connections
@@ -278,7 +337,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
                     name: runtime.profile.name,
-                    capabilities: ["home-assistant-http-v1"],
+                    capabilities: ["home-assistant-http-v1", "screen-set-v1"],
                     profile: runtime.profile
                 )
                 return ok(request, payload: hello)
@@ -305,6 +364,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 )
                 pairingCode = code
                 deviceConfirmed = false
+                schedulePairingExpiryLocked()
                 onChange?()
                 return ok(
                     request,
@@ -319,12 +379,14 @@ public final class DeviceLANServer: @unchecked Sendable {
                 pinnedController = runtime.pairing.owner?.publicKey
                 // The session has done its job. Keeping it would leave
                 // `runtime.pairingCode` set and the code view on screen.
-                runtime.pairing.session = nil
-                pairingCode = nil
-                deviceConfirmed = false
+                clearPendingPairingLocked()
                 persist()
                 onChange?()
-                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId))
+            case .deploySet:
+                try requireOwner(peerPin)
+                let body = try LANCodec.decodePayload(LANScreenSetDeployBody.self, json: request.payloadJSON)
+                return ok(request, payload: try installScreenSetLocked(body, owner: PeerPin.hex(peerPin!)))
             case .deploy:
                 try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(LANDeployBody.self, json: request.payloadJSON)
@@ -355,6 +417,8 @@ public final class DeviceLANServer: @unchecked Sendable {
                         let service = homeAssistantRuntime
                         Task { await service.cancelPending() }
                     }
+                    screenSet = nil
+                    screenPackages = [:]
                     activePackage = PackageAssetStore(assets: staged)
                     activeStoredRevision = body.revision
                     persist()
@@ -373,7 +437,11 @@ public final class DeviceLANServer: @unchecked Sendable {
                 let body = try LANCodec.decodePayload(HomeAssistantProvisioning.self, json: request.payloadJSON)
                 guard body.revision == runtime.activeRevision,
                       body.dashboardId == activeStoredRevision?.dashboardId else { throw TransferFailure.validationFailed }
-                try homeAssistantVault.provision(body, owner: PeerPin.hex(peerPin!))
+                if let generation = screenSet?.grantSet {
+                    try homeAssistantVault.provisionInGeneration(body, owner: PeerPin.hex(peerPin!), generation: generation)
+                } else {
+                    try homeAssistantVault.provision(body, owner: PeerPin.hex(peerPin!))
+                }
                 onChange?()
                 return ok(request, payload: HomeAssistantProvisioningReceipt(
                     deviceId: runtime.profile.deviceId, dashboardId: body.dashboardId, revision: body.revision,
@@ -387,7 +455,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 return ok(request, payload: ["revoked": true])
             case .queryActive:
                 try requireOwner(peerPin)
-                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId))
             case .none:
                 throw TransferFailure.validationFailed
             }
@@ -403,6 +471,109 @@ public final class DeviceLANServer: @unchecked Sendable {
                     ?? "failed"
             )
         }
+    }
+
+    /// Selection changes only after persistence succeeds; swiping never changes installed membership.
+    public func selectScreen(_ dashboardId: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var next = screenSet, next.screens.contains(where: { $0.revision.dashboardId == dashboardId }) else { return }
+        guard next.selectedDashboardId != dashboardId else { return }
+        next.selectedDashboardId = dashboardId
+        if let store {
+            var state = DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision)
+            state.screenSet = next
+            if let screen = next.screens.first(where: { $0.revision.dashboardId == dashboardId }) {
+                state.activeRevision = screen.revision.revision
+                state.activeStoredRevision = screen.revision
+                state.lastDeployment = screen.deployment
+            }
+            try store.save(state)
+        }
+        screenSet = next
+        activateSelectionLocked(dashboardId)
+        let service = homeAssistantRuntime
+        Task { await service.cancelPending() }
+        onChange?()
+    }
+
+    private func activateSelectionLocked(_ dashboardId: String) {
+        guard let screen = screenSet?.screens.first(where: { $0.revision.dashboardId == dashboardId }) else { return }
+        activeStoredRevision = screen.revision
+        activePackage = screenPackages[dashboardId]
+        runtime.activeRevision = screen.revision.revision
+        runtime.lastDeployment = screen.deployment
+        runtime.profile.apply(orientation: screen.revision.orientation)
+    }
+
+    private func packageStore(_ files: [(path: String, data: Data)]) -> PackageAssetStore {
+        var assets: [String: PackageAsset] = [:]
+        for file in files {
+            guard let path = try? PackageAssetStore.hostRelativePath(file.path) else { continue }
+            assets[path] = PackageAsset(path: path, data: file.data, mime: PackageAssetStore.mime(for: path))
+        }
+        return PackageAssetStore(assets: assets)
+    }
+
+    /// Immutable package directories and grant generations are prepared first. Replacing the
+    /// device-state file is the sole commit point, so interrupted preparation is unreachable.
+    private func installScreenSetLocked(_ body: LANScreenSetDeployBody, owner: String) throws -> LANScreenSetReceipt {
+        try body.validate()
+        guard body.deviceId == runtime.profile.deviceId else { throw TransferFailure.targetMismatch }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(body)))
+        if let current = screenSet, current.deploymentId == body.deploymentId {
+            guard current.contentDigest == digest else { throw TransferFailure.validationFailed }
+            return .init(deploymentId: current.deploymentId, deviceId: body.deviceId,
+                         screens: current.screens.map(\.entry), selectedDashboardId: current.deployedSelectedDashboardId)
+        }
+        let generation = UUID().uuidString
+        var directories: [URL] = []
+        var screens: [DeviceInstalledScreen] = []
+        var packages: [String: PackageAssetStore] = [:]
+        var committed = false
+        defer {
+            if !committed {
+                for directory in directories { store?.discardStaged(directory) }
+                try? homeAssistantVault.removeGeneration(generation)
+            }
+        }
+        for item in body.screens {
+            var candidate = runtime
+            candidate.lastDeployment = nil
+            let outcome = try candidate.receiveDeployment(item.deployment.deployment, revision: item.deployment.revision)
+            guard outcome.phase == .active else { throw TransferFailure.targetMismatch }
+            let assets = try stageFiles(item.deployment.files)
+            guard assets["index.html"] != nil else { throw TransferFailure.validationFailed }
+            let files = assets.values.map { (path: $0.path, data: $0.data) }
+            let directory = try store?.stagePackage(files)
+            if let directory { directories.append(directory) }
+            screens.append(.init(name: item.name, revision: item.deployment.revision, deployment: outcome,
+                                 packageDirectory: directory?.lastPathComponent ?? "package"))
+            packages[item.deployment.revision.dashboardId] = PackageAssetStore(assets: assets)
+        }
+        try homeAssistantVault.stage(body.screens.compactMap(\.homeAssistant), owner: owner, generation: generation)
+        let installed = DeviceInstalledScreenSet(deploymentId: body.deploymentId, contentDigest: digest,
+            grantSet: generation, screens: screens, selectedDashboardId: body.selectedDashboardId)
+        guard let selected = screens.first(where: { $0.revision.dashboardId == body.selectedDashboardId }) else {
+            throw TransferFailure.validationFailed
+        }
+        var state = DevicePersistedState(owner: runtime.pairing.owner, activeRevision: selected.revision.revision,
+            activeStoredRevision: selected.revision, lastDeployment: selected.deployment)
+        state.screenSet = installed
+        try store?.save(state)
+        committed = true
+        screenSet = installed
+        screenPackages = packages
+        activateSelectionLocked(body.selectedDashboardId)
+        let service = homeAssistantRuntime
+        Task { await service.cancelPending() }
+        // Cleanup after the commit cannot invalidate the newly selected generation.
+        try? homeAssistantVault.retainGeneration(generation)
+        store?.prunePackageGenerations(keeping: Set(screens.map(\.packageDirectory)))
+        onChange?()
+        return .init(deploymentId: body.deploymentId, deviceId: body.deviceId,
+                     screens: screens.map(\.entry), selectedDashboardId: body.selectedDashboardId)
     }
 
     /// The pin a message claims must be the pin that completed this
@@ -429,9 +600,12 @@ public final class DeviceLANServer: @unchecked Sendable {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             lock.lock()
+            expirePairingIfNeededLocked()
             let done = deviceConfirmed
+            let cancelled = pairingCode == nil
             lock.unlock()
             if done { return true }
+            if cancelled { return false }
             Thread.sleep(forTimeInterval: 0.05)
         }
         lock.lock()

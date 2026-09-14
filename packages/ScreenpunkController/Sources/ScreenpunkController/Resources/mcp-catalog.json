@@ -63,7 +63,7 @@
     {
       "name": "forget_device",
       "group": "pairing",
-      "description": "Forget a device on this Mac only. This does not erase the device; its owner must hold two fingers for ten seconds and tap Unlink on the device.",
+      "description": "Forget a device on this Mac only. This does not erase the device; its owner must hold two fingers for five seconds to open the device menu, then choose Disconnect and confirm on the device.",
       "readOnlyHint": false,
       "destructiveHint": true,
       "openWorldHint": false
@@ -194,7 +194,7 @@
     {
       "name": "get_help",
       "group": "diagnostics",
-      "description": "Troubleshooting help. Topic unlink explains the two-finger ten-second Unlink recovery gesture.",
+      "description": "Troubleshooting help. Topic unlink explains the five-second two-finger device menu gesture and confirmed Disconnect.",
       "readOnlyHint": true,
       "destructiveHint": false,
       "openWorldHint": false

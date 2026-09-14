@@ -16,6 +16,8 @@ public protocol DeviceLink: AnyObject {
     func beginPairing(nonce: [UInt8]) throws -> LANPairBeginResult
     func confirmPairing(code: String) throws
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord
+    func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt
+    func queryActiveState() throws -> LANActiveQuery
     func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt
     func revokeHomeAssistant() throws
     func queryActive() throws -> String?
@@ -23,6 +25,11 @@ public protocol DeviceLink: AnyObject {
 }
 
 public extension DeviceLink {
+    func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to apply screens.")
+    }
+    func queryActiveState() throws -> LANActiveQuery { LANActiveQuery(revision: try queryActive()) }
+
     func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
         throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on the phone to use Home Assistant.")
     }
@@ -50,6 +57,8 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
     public var pairedAt: Date
     public var lastSeenAt: Date?
     public var displayName: String?
+    public var screenSet: [LANScreenSetEntry]?
+    public var selectedDashboardId: String?
 
     public init(
         device: PairedDevice,
@@ -58,7 +67,9 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
         devicePinHex: String,
         pairedAt: Date,
         lastSeenAt: Date? = nil,
-        displayName: String? = nil
+        displayName: String? = nil,
+        screenSet: [LANScreenSetEntry]? = nil,
+        selectedDashboardId: String? = nil
     ) {
         self.device = device
         self.host = host
@@ -67,6 +78,8 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
         self.pairedAt = pairedAt
         self.lastSeenAt = lastSeenAt
         self.displayName = displayName
+        self.screenSet = screenSet
+        self.selectedDashboardId = selectedDashboardId
     }
 
     public var devicePin: [UInt8]? { PeerPin.bytes(devicePinHex) }
@@ -112,6 +125,9 @@ public final class DeviceDirectory: @unchecked Sendable {
     public func upsert(_ record: PairedDeviceRecord) throws {
         acquire()
         defer { release() }
+        if let existing = records.first(where: { $0.id == record.id }), existing.devicePin != record.devicePin {
+            throw PairingFailure.identityChanged
+        }
         records.removeAll { $0.id == record.id }
         records.append(record)
         try persist()
@@ -122,7 +138,13 @@ public final class DeviceDirectory: @unchecked Sendable {
         acquire()
         defer { release() }
         guard let index = records.firstIndex(where: { $0.id == deviceId }) else { return nil }
-        mutate(&records[index])
+        var updated = records[index]
+        mutate(&updated)
+        guard updated.devicePin == records[index].devicePin,
+              !records.enumerated().contains(where: { $0.offset != index && $0.element.id == updated.id }) else {
+            throw PairingFailure.identityChanged
+        }
+        records[index] = updated
         try persist()
         return records[index]
     }

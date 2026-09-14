@@ -9,7 +9,7 @@ public struct HelpTopic: Sendable, Equatable {
 
 public enum HelpCatalog: Sendable {
     public static let unlinkGesture =
-        "Hold two fingers on the device screen for ten seconds, then tap Unlink. Dashboard, credentials, and pairing are erased."
+        "Hold two fingers on the device screen for five seconds to open the device menu, then choose Disconnect and confirm. Opening the menu does not erase anything. Confirming Disconnect erases screens, credentials, and pairing."
 
     public static let forgetDoesNotErase =
         "Forgetting an unreachable device on the Mac does not erase it."
@@ -61,16 +61,16 @@ public enum HelpCatalog: Sendable {
 
                 Preview is live by default. Actions in a live preview can control approved devices. Screenshot capture itself does not click controls.
 
-                Unlink recovery: hold two fingers on the device screen for ten seconds, then tap Unlink. Dashboard, credentials, and pairing are erased. Forgetting an unreachable device on the Mac does not erase it.
+                Device recovery: hold two fingers on the device screen for five seconds to open the device menu, then choose Disconnect and confirm. Only confirming Disconnect erases screens, credentials, and pairing. Forgetting an unreachable device on the Mac does not erase it.
                 """
             ),
             "unlink": HelpTopic(
                 id: "unlink",
-                title: "Unlink a device",
+                title: "Disconnect a device",
                 body: """
                 \(unlinkGesture)
 
-                \(forgetDoesNotErase) This Mac has forgotten the device. To remove its dashboard and pairing, hold two fingers on its screen for 10 seconds, then tap Unlink.
+                \(forgetDoesNotErase) This Mac has forgotten the device. To remove its screens and pairing, hold two fingers on its screen for five seconds to open the device menu, then choose Disconnect and confirm.
                 """
             ),
             "preview": HelpTopic(

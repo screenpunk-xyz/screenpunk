@@ -236,28 +236,53 @@ public final class ControllerService: @unchecked Sendable {
     }
 
     public func ship(record: DashboardRevisionRecord, deviceId: String, deploymentId: String?) throws -> DeploymentRecord {
-        try PackageValidator.validate(record.manifest)
-        let revision = try storedRevision(for: record.manifest)
-        let files = try transferBlobs(for: record)
         let id = deploymentId ?? UUID().uuidString.lowercased()
-        let usesHome = record.manifest.connections.contains { $0.alias == "home" }
-        let configuration: HomeAssistantProvisioning?
-        if usesHome {
-            guard let provider = homeAssistantConfiguration else {
-                throw ControllerError.permissionRequired("Set up Home Assistant in Screenpunk’s Connections page before applying this screen.")
-            }
-            do { configuration = try provider(record.manifest.dashboardId, record.manifest.revision, id) }
-            catch { throw ControllerError.permissionRequired("Check Home Assistant in Screenpunk’s Connections page before applying this screen. Its saved token or address is unavailable.") }
-            try devices.requireHomeAssistantSupport(deviceId: deviceId)
-        } else { configuration = nil }
-        let outcome = try devices.deploy(deviceId: deviceId, revision: revision, files: files, deploymentId: id)
-        if outcome.phase == .active, let configuration {
-            do { _ = try devices.provisionHomeAssistant(deviceId: deviceId, configuration: configuration) }
-            catch {
-                throw ControllerError.validationFailed(detail: "The screen was applied, but Home Assistant could not be installed on the phone. Keep the phone open and apply the screen again. Phone access has not been verified.")
-            }
+        let receipt: LANScreenSetReceipt
+        do {
+            receipt = try shipSet(records: [record], deviceId: deviceId,
+                selectedDashboardId: record.manifest.dashboardId, deploymentId: id)
+        } catch {
+            if let failed = devices.directory.get(deviceId)?.device.deployments.first(where: { $0.deploymentId == id && $0.phase == .failed }) { return failed }
+            throw error
         }
-        return outcome
+        return DeploymentRecord(deploymentId: id, revision: record.manifest.revision,
+            dashboardId: record.manifest.dashboardId, deviceId: receipt.deviceId, phase: .active)
+    }
+
+    public func shipSet(records: [DashboardRevisionRecord], deviceId: String,
+                        selectedDashboardId: String, deploymentId: String? = nil) throws -> LANScreenSetReceipt {
+        guard (1...12).contains(records.count), Set(records.map { $0.manifest.dashboardId }).count == records.count,
+              Set(records.map { $0.manifest.revision }).count == records.count,
+              records.contains(where: { $0.manifest.dashboardId == selectedDashboardId }) else {
+            throw ControllerError.validationFailed(detail: "Choose between one and twelve distinct screens.")
+        }
+        let id = deploymentId ?? UUID().uuidString.lowercased()
+        // Prepare every package before obtaining credentials or sending a mutation.
+        let packages = try records.enumerated().map { index, record -> LANDeployBody in
+            try PackageValidator.validate(record.manifest)
+            let revision = try storedRevision(for: record.manifest)
+            return LANDeployBody(deployment: DeploymentRecord(deploymentId: records.count == 1 ? id : "\(id)-\(index)",
+                revision: revision.revision, dashboardId: revision.dashboardId, deviceId: deviceId, phase: .queued),
+                revision: revision, files: try transferBlobs(for: record))
+        }
+        try devices.requireScreenSetSupport(deviceId: deviceId)
+        let items = try zip(records, packages).map { record, package -> LANScreenSetItem in
+            let configuration: HomeAssistantProvisioning?
+            if record.manifest.connections.contains(where: { $0.alias == "home" }) {
+                guard let provider = homeAssistantConfiguration else {
+                    throw ControllerError.permissionRequired("Set up Home Assistant in Connections before applying these screens. The device has not been changed.")
+                }
+                do {
+                    configuration = try provider(record.manifest.dashboardId, record.manifest.revision, package.deployment.deploymentId)
+                    try configuration?.validate()
+                } catch {
+                    throw ControllerError.permissionRequired("Check the saved Home Assistant connection before applying these screens. The device has not been changed.")
+                }
+            } else { configuration = nil }
+            return LANScreenSetItem(name: record.manifest.name, deployment: package, homeAssistant: configuration)
+        }
+        return try devices.deployScreenSet(LANScreenSetDeployBody(schemaVersion: 1, deploymentId: id, deviceId: deviceId,
+            screens: items, selectedDashboardId: selectedDashboardId))
     }
 
     public func defaultTarget() -> ManifestTarget {

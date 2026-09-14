@@ -51,7 +51,7 @@ enum OfficialMCPServer {
             .init(
                 resources: [
                     Resource(name: "Onboarding", uri: "screenpunk://help/onboarding", description: "MCP setup and live preview"),
-                    Resource(name: "Unlink recovery", uri: "screenpunk://help/unlink", description: "Two-finger ten-second Unlink gesture"),
+                    Resource(name: "Disconnect recovery", uri: "screenpunk://help/unlink", description: "Five-second two-finger device menu gesture and confirmed Disconnect"),
                     Resource(name: "Live preview", uri: "screenpunk://help/preview", description: HelpCatalog.livePreviewLabel),
                     Resource(name: "Pairing", uri: "screenpunk://help/pairing", description: "SAS matching code, one owner per device, never self-approves"),
                     Resource(name: "Deploy", uri: "screenpunk://help/deploy", description: "Deploy the previewed revision the user approved; failed transfer keeps the current dashboard")

@@ -170,7 +170,7 @@ device ([setup.md](setup.md#from-source-onto-your-own-device)).
 - [ ] Logs and artifacts contain no secrets, home dashboard data, or
       credentials.
 - [ ] Release notes tell users how to reset a device: hold two fingers on
-      the screen for ten seconds, then tap **Unlink**.
+      the screen for five seconds, open the device menu, choose **Disconnect**, and confirm.
 - [ ] [implementation-status.md](implementation-status.md) updated with
       artifact IDs and signing status.
 

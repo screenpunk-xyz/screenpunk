@@ -31,6 +31,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
     private var links: [String: DeviceLink] = [:]
     private let lock = NSLock()
     private let now: @Sendable () -> Date
+    private let discoveryLock = NSLock()
+    private var discoveryCache: [String: (hello: LANHello, pin: [UInt8], seen: Date)] = [:]
 
     private struct PendingPairing {
         var deviceId: String
@@ -78,7 +80,77 @@ public final class DeviceCoordinator: @unchecked Sendable {
     // MARK: Discovery
 
     public func discover() -> [AdvertisedDevice] {
-        hub.browse()
+        discoveryLock.lock()
+        defer { discoveryLock.unlock() }
+        guard let factory = try? requireFactory() else { return hub.browse() }
+        let advertisements = hub.browse()
+        let addresses = Set(advertisements.map { "\($0.host):\($0.port)" })
+        discoveryCache = discoveryCache.filter { addresses.contains($0.key) }
+        var resolved: [String: AdvertisedDevice] = [:]
+        for var advertisement in advertisements {
+            if advertisement.source == .loopback {
+                resolved[advertisement.deviceId] = advertisement
+                continue
+            }
+            let address = "\(advertisement.host):\(advertisement.port)"
+            do {
+                let identity: (hello: LANHello, pin: [UInt8], seen: Date)
+                if let cached = discoveryCache[address], now().timeIntervalSince(cached.seen) < 10 {
+                    identity = cached
+                } else {
+                    guard let port = UInt16(exactly: advertisement.port), port > 0 else { continue }
+                    let link = try factory.makeLink()
+                    defer { link.cancel() }
+                    // Read-only identity discovery; no pairing, deployment or credentials.
+                    try link.connect(host: advertisement.host, port: port, pinnedDevice: nil)
+                    let hello = try link.hello()
+                    guard hello.protocolMajor == DiscoveryService.protocolMajor,
+                          let pin = link.devicePin, pin.count == PairingLimits.identityByteCount,
+                          PeerPin.matches(expected: pin, presentedHex: hello.pinHex) else { continue }
+                    identity = (hello, pin, now())
+                    discoveryCache[address] = identity
+                }
+                let known = directory.list().first { $0.devicePin == identity.pin }
+                let id = try verifiedDeviceId(hello: identity.hello, pin: identity.pin)
+                advertisement.deviceId = id
+                advertisement.name = DeviceDisplayName.sanitize(identity.hello.name) ?? advertisement.name
+                if let known {
+                    // Only a verified match to the saved TLS pin can move a paired endpoint.
+                    if known.host != advertisement.host || known.port != advertisement.port ||
+                        known.id != id || known.device.profile.model != identity.hello.profile?.model {
+                        _ = try directory.update(known.id) { current in
+                            current.host = advertisement.host
+                            current.port = advertisement.port
+                            current.device.profile.deviceId = id
+                            for index in current.device.deployments.indices { current.device.deployments[index].deviceId = id }
+                            if var profile = identity.hello.profile {
+                                profile.deviceId = id
+                                if let name = current.displayName { profile.name = name }
+                                current.device.profile = profile
+                            }
+                        }
+                    }
+                }
+                if resolved[id]?.source != .advertised { resolved[id] = advertisement }
+            } catch {
+                // An unreachable or foreign-owned endpoint is not a verified pairing candidate.
+                discoveryCache[address] = nil
+            }
+        }
+        return resolved.values.sorted { $0.deviceId < $1.deviceId }
+    }
+
+    private func verifiedDeviceId(hello: LANHello, pin: [UInt8]) throws -> String {
+        guard !hello.deviceId.isEmpty, hello.deviceId != "phone-local",
+              hello.profile == nil || hello.profile?.deviceId == hello.deviceId else {
+            throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device before pairing.")
+        }
+        if let existing = directory.get(hello.deviceId), existing.devicePin != pin { throw PairingFailure.identityChanged }
+        if let existing = directory.list().first(where: { $0.devicePin == pin }),
+           existing.id != hello.deviceId, existing.id != "phone-local" {
+            throw PairingFailure.identityChanged
+        }
+        return hello.deviceId
     }
 
     @discardableResult
@@ -111,7 +183,6 @@ public final class DeviceCoordinator: @unchecked Sendable {
         let target = try resolveTarget(deviceId: deviceId, host: host, port: port)
         let factory = try requireFactory()
         let known = directory.get(target.deviceId)
-            ?? directory.list().first { $0.host == target.host && $0.port == Int(target.port) }
 
         cancelPending(target.deviceId)
 
@@ -137,6 +208,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             else {
                 throw PairingFailure.identityChanged
             }
+            let resolvedId = try verifiedDeviceId(hello: hello, pin: devicePin)
             let nonce = PairingIdentityFactory.nonce()
             let begin = try link.beginPairing(nonce: nonce)
             guard PeerPin.matches(expected: devicePin, presentedHex: begin.devicePinHex) else {
@@ -150,18 +222,20 @@ public final class DeviceCoordinator: @unchecked Sendable {
             )
             let started = now()
             let name = DeviceDisplayName.label(name: hello.name, deviceId: hello.deviceId, fallback: "Paired device")
-            let resolvedId = hello.deviceId.isEmpty ? target.deviceId : hello.deviceId
+            let matched = directory.list().first { $0.devicePin == devicePin }
+            var profile = hello.profile
+            profile?.deviceId = resolvedId
             let entry = PendingPairing(
                 deviceId: resolvedId,
-                deviceName: known?.device.profile.name ?? name,
+                deviceName: matched?.displayName ?? name,
                 host: target.host,
                 port: Int(target.port),
                 devicePin: devicePin,
                 code: begin.code,
                 startedAt: started,
-                rePairing: known != nil,
+                rePairing: matched != nil,
                 link: link,
-                profile: hello.profile
+                profile: profile
             )
             lock.lock()
             if resolvedId != target.deviceId {
@@ -178,7 +252,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
                 devicePinHex: PeerPin.hex(devicePin),
                 startedAt: started,
                 expiresAt: started.addingTimeInterval(PairingLimits.expirySeconds),
-                rePairing: known != nil
+                rePairing: matched != nil
             )
         } catch {
             link.cancel()
@@ -220,18 +294,23 @@ public final class DeviceCoordinator: @unchecked Sendable {
             reachable: true
         )
         if let existing = directory.get(deviceId) {
+            guard existing.devicePin == entry.devicePin else { throw PairingFailure.identityChanged }
             device = existing.device
+            if let profile = entry.profile { device.profile = profile }
+            if let name = existing.displayName { device.profile.name = name }
             device.owner = factory.controllerIdentity
             device.reachable = true
             device.pairingCode = nil
         }
+        if let active = try? entry.link.queryActive() { device.activeRevision = active }
         let record = PairedDeviceRecord(
             device: device,
             host: entry.host,
             port: entry.port,
             devicePinHex: PeerPin.hex(entry.devicePin),
             pairedAt: pairedAt,
-            lastSeenAt: pairedAt
+            lastSeenAt: pairedAt,
+            displayName: directory.get(deviceId)?.displayName
         )
         try directory.upsert(record)
         lock.lock()
@@ -261,11 +340,15 @@ public final class DeviceCoordinator: @unchecked Sendable {
         }
         guard probe else { return record }
         do {
-            let active = try withLink(record) { try $0.queryActive() }
+            let active = try withLink(record) { try $0.queryActiveState() }
             let seen = now()
             return try directory.update(deviceId) { current in
                 current.device.reachable = true
-                current.device.activeRevision = active
+                current.device.activeRevision = active.revision
+                if let screens = active.screens {
+                    current.screenSet = screens
+                    current.selectedDashboardId = active.selectedDashboardId
+                }
                 current.lastSeenAt = seen
             } ?? record
         } catch {
@@ -276,7 +359,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
     }
 
     /// Forget on the Mac only. The device keeps its dashboard and pairing until
-    /// its owner performs the two-finger Unlink gesture on the device itself.
+    /// its owner opens the device menu and confirms Disconnect on the device itself.
     public func forget(deviceId: String) throws -> Bool {
         cancelPending(deviceId)
         lock.lock()
@@ -309,7 +392,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             deploymentId: deploymentId,
             revision: revision.revision,
             dashboardId: revision.dashboardId,
-            deviceId: deviceId,
+            deviceId: record.id,
             phase: .queued
         )
         let body = LANDeployBody(deployment: queued, revision: revision, files: files)
@@ -323,6 +406,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
         let outcome: DeploymentRecord
         do {
             outcome = try withLink(record) { try $0.deploy(body) }
+            guard outcome.deviceId == record.id else { throw TransferFailure.targetMismatch }
         } catch {
             _ = try? directory.update(deviceId) { $0.device.reachable = false }
             throw mapTransfer(error)
@@ -345,11 +429,75 @@ public final class DeviceCoordinator: @unchecked Sendable {
         return outcome
     }
 
+    /// No package or credential is sent until the current peer advertises atomic sets.
+    public func requireScreenSetSupport(deviceId: String) throws {
+        let record = try ownedRecord(deviceId)
+        let hello: LANHello
+        do { hello = try withLink(record) { try $0.hello() } }
+        catch { throw mapTransfer(error) }
+        guard hello.deviceId == deviceId, hello.capabilities?.contains("screen-set-v1") == true else {
+            throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device before applying screens. Its current screens have been kept.")
+        }
+    }
+
+    public func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
+        let record = try ownedRecord(body.deviceId)
+        try body.validate()
+        let encoded = try LANCodec.encodePayload(body)
+        let envelope = LANEnvelope(requestId: UUID().uuidString, method: LANMethod.deploySet.rawValue, payloadJSON: encoded)
+        guard try LANCodec.encode(envelope).count <= LANProtocolLimits.maxMessageBytes else {
+            throw ControllerError.validationFailed(detail: "The selected screens exceed the transfer limit. Choose fewer screens or reduce their assets.")
+        }
+        let receipt: LANScreenSetReceipt
+        do { receipt = try withLink(record) { try $0.deployScreenSet(body) } }
+        catch {
+            if (error as? TransferFailure) == .targetMismatch, body.screens.count == 1 {
+                var failed = body.screens[0].deployment.deployment
+                failed.phase = .failed; failed.error = TransferFailure.targetMismatch.rawValue
+                try directory.update(record.id) { current in
+                    if !current.device.deployments.contains(where: { $0.deploymentId == failed.deploymentId }) {
+                        current.device.deployments.append(failed)
+                    }
+                }
+            }
+            throw mapTransfer(error)
+        }
+        let expected = body.screens.map { LANScreenSetEntry(dashboardId: $0.deployment.revision.dashboardId, revision: $0.deployment.revision.revision, name: $0.name) }
+        guard receipt.schemaVersion == 1, receipt.deploymentId == body.deploymentId,
+              receipt.deviceId == body.deviceId, receipt.screens == expected,
+              receipt.selectedDashboardId == body.selectedDashboardId,
+              let visible = receipt.screens.first(where: { $0.dashboardId == receipt.selectedDashboardId }) else {
+            throw ControllerError.validationFailed(detail: "The device returned an invalid screen-set receipt. Refresh its status before applying again.")
+        }
+        try directory.update(record.id) { current in
+            current.screenSet = receipt.screens
+            current.selectedDashboardId = receipt.selectedDashboardId
+            current.device.activeRevision = visible.revision
+            if let selected = body.screens.first(where: { $0.deployment.revision.dashboardId == visible.dashboardId }) {
+                current.device.profile.apply(orientation: selected.deployment.revision.orientation)
+            }
+            current.device.draftRevision = nil
+            current.device.reachable = true
+            current.lastSeenAt = now()
+            for item in body.screens {
+                var deployment = item.deployment.deployment
+                deployment.phase = .active
+                if !current.device.deployments.contains(where: { $0.deploymentId == deployment.deploymentId }) {
+                    current.device.deployments.append(deployment)
+                }
+                if !current.device.history.contains(where: { $0.revision == item.deployment.revision.revision }) {
+                    current.device.history.append(item.deployment.revision)
+                }
+            }
+        }
+        return receipt
+    }
+
     /// Check support before replacing the current screen or transmitting credentials.
     public func requireHomeAssistantSupport(deviceId: String) throws {
         let record = try ownedRecord(deviceId)
         let hello = try withLink(record) { try $0.hello() }
-        guard hello.deviceId == deviceId, hello.capabilities?.contains("home-assistant-http-v1") == true else {
+        guard hello.deviceId == record.id, hello.capabilities?.contains("home-assistant-http-v1") == true else {
             throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on the phone to use Home Assistant. The current screen has been kept.")
         }
     }
@@ -358,7 +506,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
         let record = try ownedRecord(deviceId)
         try configuration.validate()
         let receipt = try withLink(record) { try $0.provisionHomeAssistant(configuration) }
-        guard receipt.installed, receipt.deviceId == deviceId,
+        guard receipt.installed, receipt.deviceId == record.id,
               receipt.dashboardId == configuration.dashboardId, receipt.revision == configuration.revision,
               receipt.connectionId == configuration.connectionId, receipt.provisioningId == configuration.provisioningId else {
             throw ControllerError.validationFailed(detail: "The phone returned an invalid Home Assistant installation receipt.")
@@ -398,7 +546,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
         guard let deviceId, deviceId.isEmpty == false else {
             throw ControllerError.validationFailed(detail: "deviceId or host+port required")
         }
-        if let advertised = hub.browse().first(where: { $0.deviceId == deviceId }) {
+        if let advertised = discover().first(where: { $0.deviceId == deviceId })
+            ?? hub.browse().first(where: { $0.deviceId == deviceId }) {
             guard let nwPort = UInt16(exactly: advertised.port), nwPort > 0 else {
                 throw ControllerError.deviceOffline("advertised port \(advertised.port) is invalid")
             }
@@ -458,10 +607,14 @@ public final class DeviceCoordinator: @unchecked Sendable {
         }
         let link = try factory.makeLink()
         do {
-            let advertised = hub.browse().first { $0.deviceId == record.id }
+            let advertised = discover().first { $0.deviceId == record.id }
             try link.connect(host: advertised?.host ?? record.host, port: UInt16(exactly: advertised?.port ?? Int(port)) ?? port, pinnedDevice: record.devicePin)
             let hello = try link.hello()
-            if let profile = hello.profile, profile.deviceId == record.id {
+            guard let pin = link.devicePin, pin == record.devicePin,
+                  hello.deviceId == record.id,
+                  PeerPin.matches(expected: pin, presentedHex: hello.pinHex) else { throw PairingFailure.identityChanged }
+            if var profile = hello.profile {
+                profile.deviceId = record.id
                 _ = try directory.update(record.id) { current in
                     current.device.profile = profile
                     if let name = current.displayName { current.device.profile.name = name }
@@ -507,7 +660,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             switch failure {
             case .secondOwner:
                 return .notPaired(
-                    "second_owner: the device already belongs to another Mac. Unlink it on the device first (hold two fingers for ten seconds, then tap Unlink)."
+                    "second_owner: the device already belongs to another Mac. On the device, hold two fingers for five seconds to open the device menu, then choose Disconnect and confirm."
                 )
             case .identityChanged:
                 return .notPaired("identity_changed: the device presented a different identity than the one pinned; forget_device and pair again only if you replaced the device")
@@ -534,7 +687,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             case .deviceOffline:
                 return .deviceOffline("device unreachable")
             case .interrupted:
-                return .deviceOffline("transfer interrupted; the device keeps its current dashboard")
+                return .deviceOffline("Transfer interrupted. Refresh the device status before trying again.")
             case .validationFailed:
                 return .validationFailed(detail: "device rejected the package (hash or path check)")
             case .targetMismatch:

@@ -98,18 +98,19 @@ test("catalog pairs and deploys through the LAN link without self-approval", () 
   assert.match(mcpDocs, /keeps its\s+current dashboard/i);
 });
 
-test("help and docs include the two-finger ten-second Unlink gesture", () => {
+test("help and docs include the five-second device menu and confirmed Disconnect flow", () => {
   const unlink = help.unlink.body;
   assert.match(unlink, /two fingers/i);
-  assert.match(unlink, /ten seconds|10 seconds/i);
-  assert.match(unlink, /Unlink/);
-  assert.match(unlink, /Dashboard, credentials, and pairing are erased/i);
+  assert.match(unlink, /five seconds|5 seconds/i);
+  assert.match(unlink, /device menu.*Disconnect and confirm/i);
+  assert.match(unlink, /Opening the menu does not erase anything/i);
+  assert.match(unlink, /Confirming Disconnect erases screens, credentials, and pairing/i);
   assert.match(unlink, /does not erase/i);
   assert.match(help.onboarding.body, /two fingers/i);
   assert.match(help.onboarding.body, /workbench/i);
   assert.match(help.preview.body, /live by default/i);
   assert.match(mcpDocs, /two fingers/);
-  assert.match(mcpDocs, /ten seconds/);
+  assert.match(mcpDocs, /five seconds/);
   assert.match(mcpDocs, /does not erase/);
   assert.match(mcpDocs, /Claude Desktop/);
   assert.match(mcpDocs, /Codex/);

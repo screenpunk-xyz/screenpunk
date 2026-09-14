@@ -112,7 +112,7 @@ public enum MCPCatalog: Sendable {
                 MCPToolDescriptor(
                     name: "get_help",
                     group: "diagnostics",
-                    description: "Troubleshooting help. Topic unlink explains the two-finger ten-second Unlink recovery gesture.",
+                    description: "Troubleshooting help. Topic unlink explains the five-second two-finger device menu gesture and confirmed Disconnect.",
                     readOnlyHint: true,
                     destructiveHint: false,
                     idempotentHint: nil,

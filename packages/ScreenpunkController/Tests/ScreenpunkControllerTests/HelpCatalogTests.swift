@@ -3,18 +3,17 @@ import XCTest
 import ScreenpunkCore
 
 final class HelpCatalogTests: XCTestCase {
-    func testUnlinkTopicIncludesTwoFingerTenSecondGesture() {
+    func testDisconnectHelpRequiresFiveSecondMenuAndSeparateConfirmation() {
         let topic = HelpCatalog.topic(id: "unlink")
         XCTAssertTrue(topic.body.lowercased().contains("two fingers"))
-        XCTAssertTrue(topic.body.contains("ten seconds") || topic.body.contains("10 seconds"))
-        XCTAssertTrue(topic.body.contains("Unlink"))
-        XCTAssertTrue(topic.body.contains("Dashboard, credentials, and pairing are erased")
-            || topic.body.lowercased().contains("pairing are erased"))
+        XCTAssertTrue(topic.body.contains("five seconds") || topic.body.contains("5 seconds"))
+        XCTAssertTrue(topic.body.contains("Disconnect"))
+        XCTAssertTrue(topic.body.contains("Opening the menu does not erase anything"))
+        XCTAssertTrue(topic.body.contains("Confirming Disconnect erases screens, credentials, and pairing"))
         XCTAssertTrue(topic.body.contains(HelpCatalog.forgetDoesNotErase)
             || topic.body.lowercased().contains("does not erase"))
         XCTAssertEqual(HelpCatalog.unlinkFingers, 2)
-        XCTAssertEqual(HelpCatalog.unlinkHoldsSeconds, 10)
-        XCTAssertEqual(UnlinkGestureSpec.actionCount, 1)
+        XCTAssertEqual(HelpCatalog.unlinkHoldsSeconds, 5)
     }
 
     func testOnboardingIncludesUnlinkAndHiddenHelper() {

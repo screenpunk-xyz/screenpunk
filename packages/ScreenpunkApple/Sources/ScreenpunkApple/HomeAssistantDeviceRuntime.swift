@@ -6,6 +6,7 @@ public final class HomeAssistantDeviceVault: @unchecked Sendable {
     private let lock = NSLock()
     private let store: any CredentialStore
     private let account = "provisioning-v1"
+    private let setsAccount = "screen-set-grants-v1"
     public init(store: any CredentialStore = KeychainCredentialStore(service: "xyz.screenpunk.device.home-assistant")) {
         self.store = store
     }
@@ -28,11 +29,57 @@ public final class HomeAssistantDeviceVault: @unchecked Sendable {
     public func revoke() throws {
         lock.lock(); defer { lock.unlock() }
         try store.delete(account)
+        try store.delete(setsAccount)
     }
-    func record(owner: String, revision: String) throws -> Record {
+    /// Staging adds a new generation without replacing grants referenced by committed device state.
+    func stage(_ configurations: [HomeAssistantProvisioning], owner: String, generation: String) throws {
+        for config in configurations { try config.validate() }
         lock.lock(); defer { lock.unlock() }
-        guard let data = try store.secret(for: account) else { throw ConnectionFailure.permissionRequired }
-        let record = try JSONDecoder().decode(Record.self, from: data)
+        var sets = try grantSets()
+        sets[generation] = configurations.map { Record(owner: owner, configuration: $0, generation: UUID()) }
+        try store.put(JSONEncoder().encode(sets), for: setsAccount)
+    }
+    func provisionInGeneration(_ configuration: HomeAssistantProvisioning, owner: String, generation: String) throws {
+        try configuration.validate()
+        lock.lock(); defer { lock.unlock() }
+        var sets = try grantSets()
+        var records = sets[generation] ?? []
+        if let previous = records.first(where: { $0.configuration.provisioningId == configuration.provisioningId }) {
+            guard previous.owner == owner, previous.configuration == configuration else { throw ConnectionFailure.validationFailed }
+            return
+        }
+        records.removeAll { $0.configuration.dashboardId == configuration.dashboardId }
+        records.append(Record(owner: owner, configuration: configuration, generation: UUID()))
+        sets[generation] = records
+        try store.put(JSONEncoder().encode(sets), for: setsAccount)
+    }
+    func removeGeneration(_ generation: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        var sets = try grantSets(); sets.removeValue(forKey: generation)
+        try store.put(JSONEncoder().encode(sets), for: setsAccount)
+    }
+    func retainGeneration(_ generation: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        let sets = try grantSets()
+        try store.put(JSONEncoder().encode(sets.filter { $0.key == generation }), for: setsAccount)
+        try store.delete(account)
+    }
+    private func grantSets() throws -> [String: [Record]] {
+        guard let data = try store.secret(for: setsAccount) else { return [:] }
+        return try JSONDecoder().decode([String: [Record]].self, from: data)
+    }
+    func record(owner: String, revision: String, grantSet: String? = nil) throws -> Record {
+        lock.lock(); defer { lock.unlock() }
+        let record: Record
+        if let grantSet {
+            guard let found = try grantSets()[grantSet]?.first(where: { $0.owner == owner && $0.configuration.revision == revision }) else {
+                throw ConnectionFailure.permissionRequired
+            }
+            record = found
+        } else {
+            guard let data = try store.secret(for: account) else { throw ConnectionFailure.permissionRequired }
+            record = try JSONDecoder().decode(Record.self, from: data)
+        }
         guard record.owner == owner, record.configuration.revision == revision else { throw ConnectionFailure.permissionRequired }
         try record.configuration.validate()
         return record
@@ -45,7 +92,10 @@ public actor HomeAssistantDeviceRuntime {
         public var owner: String
         public var revision: String
         public var dashboardId: String
-        public init(owner: String, revision: String, dashboardId: String) { self.owner = owner; self.revision = revision; self.dashboardId = dashboardId }
+        public var grantSet: String?
+        public init(owner: String, revision: String, dashboardId: String, grantSet: String? = nil) {
+            self.owner = owner; self.revision = revision; self.dashboardId = dashboardId; self.grantSet = grantSet
+        }
     }
     private let vault: HomeAssistantDeviceVault
     private let scope: @Sendable () -> Scope?
@@ -65,7 +115,7 @@ public actor HomeAssistantDeviceRuntime {
 
     public func request(revision: String, alias: String, operation: String, parameters: [String: String]) async throws -> ConnectionHTTPResult {
         guard alias == "home", let current = scope(), current.revision == revision else { throw ConnectionFailure.permissionRequired }
-        let record = try vault.record(owner: current.owner, revision: revision)
+        let record = try vault.record(owner: current.owner, revision: revision, grantSet: current.grantSet)
         let config = record.configuration
         guard config.dashboardId == current.dashboardId else { throw ConnectionFailure.permissionRequired }
         let authorized = try config.authorize(operation: operation, parameters: parameters)
@@ -121,7 +171,7 @@ public actor HomeAssistantDeviceRuntime {
     }
 
     private func requireCurrent(_ record: HomeAssistantDeviceVault.Record, _ expected: Scope) throws {
-        guard scope() == expected, try vault.record(owner: expected.owner, revision: expected.revision).generation == record.generation else {
+        guard scope() == expected, try vault.record(owner: expected.owner, revision: expected.revision, grantSet: expected.grantSet).generation == record.generation else {
             cached = nil
             throw ConnectionFailure.permissionRequired
         }

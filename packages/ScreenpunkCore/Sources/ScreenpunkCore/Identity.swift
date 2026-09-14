@@ -77,5 +77,5 @@ public enum OfflineOverlaySpec: Sendable {
     public static let lightDangerHex = SemanticTokens.Light.danger
     public static let darkDangerHex = SemanticTokens.Dark.danger
     public static let label = "Offline"
-    public static let holdSecondsForUnlink = 10
+    public static let holdSecondsForUnlink = 5
 }

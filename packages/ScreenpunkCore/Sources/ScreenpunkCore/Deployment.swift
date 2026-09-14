@@ -124,7 +124,7 @@ public struct StoredRevision: Sendable, Equatable, Codable, Identifiable {
 public enum WorkbenchCopy: Sendable {
     public static let livePreview = "Live preview — actions control your devices"
     public static let forgetUnreachable =
-        "This Mac has forgotten the device. To remove its dashboard and pairing, hold two fingers on its screen for 10 seconds, then tap Unlink."
+        "This Mac has forgotten the device. To remove its dashboard and pairing, hold two fingers on its screen for 5 seconds, then choose Disconnect in the device menu and confirm."
 }
 
 public enum TransferFailure: String, Error, Sendable, Equatable {

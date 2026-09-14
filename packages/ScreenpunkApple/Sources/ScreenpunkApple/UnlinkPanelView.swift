@@ -1,46 +1,84 @@
 import SwiftUI
 import ScreenpunkCore
+#if os(iOS)
+import UIKit
+#endif
 
-/// Native Unlink panel. One action button. Tap outside dismisses.
+/// Native device menu. Disconnect is never performed by opening the menu.
 public struct UnlinkPanelView: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @State private var confirmingDisconnect = false
     public var onUnlink: () -> Void
     public var onDismiss: () -> Void
+    public var screens: [LANScreenSetEntry]
+    public var selectedDashboardId: String?
+    public var onSelect: (String) -> Void
 
-    public init(onUnlink: @escaping () -> Void, onDismiss: @escaping () -> Void) {
-        self.onUnlink = onUnlink
-        self.onDismiss = onDismiss
+    public init(onUnlink: @escaping () -> Void, onDismiss: @escaping () -> Void,
+                screens: [LANScreenSetEntry] = [], selectedDashboardId: String? = nil,
+                onSelect: @escaping (String) -> Void = { _ in }) {
+        self.onUnlink = onUnlink; self.onDismiss = onDismiss
+        self.screens = screens; self.selectedDashboardId = selectedDashboardId; self.onSelect = onSelect
     }
 
     public var body: some View {
+        GeometryReader { geometry in
         ZStack {
-            Color.black.opacity(0.32)
-                .ignoresSafeArea()
-                .onTapGesture(perform: onDismiss)
-                .accessibilityLabel("Dismiss unlink")
-            VStack(alignment: .leading, spacing: 16) {
-                Text(UnlinkGestureSpec.explanation)
-                    .font(.body)
-                    .foregroundStyle(GuideColor.text(colorScheme: colorScheme))
-                    .fixedSize(horizontal: false, vertical: true)
-                // The style owns frame, fill, and content shape so the whole
-                // pill is the hit target, not just the word.
-                Button(UnlinkGestureSpec.actionTitle, action: onUnlink)
-                    .buttonStyle(UnlinkActionButtonStyle(
-                        fill: GuideColor.danger(colorScheme: colorScheme),
-                        label: GuideColor.onDanger(colorScheme: colorScheme)
-                    ))
-                    .accessibilityLabel(UnlinkGestureSpec.actionTitle)
+            Color.black.opacity(0.45).ignoresSafeArea().onTapGesture(perform: onDismiss)
+                .accessibilityLabel("Close device menu")
+            VStack(alignment: .leading, spacing: 18) {
+                Text(confirmingDisconnect ? "Disconnect this device?" : "Device menu")
+                    .font(.title3.bold())
+                if confirmingDisconnect {
+                    Text("This removes all deployed screens, pairing, and saved connection credentials from this device.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 12) {
+                        Button("Cancel") { confirmingDisconnect = false }
+                            .buttonStyle(UnlinkActionButtonStyle(fill: DeviceMenuColors.secondaryButton,
+                                label: .primary))
+                        Button("Disconnect", action: onUnlink)
+                            .buttonStyle(UnlinkActionButtonStyle(fill: DeviceMenuColors.destructive,
+                                label: .white))
+                    }
+                } else {
+                    if screens.count > 1 {
+                        Text("Choose a screen").font(.subheadline).foregroundStyle(.secondary)
+                        ScrollView {
+                            VStack(spacing: 8) {
+                                ForEach(Array(screens.enumerated()), id: \.element.dashboardId) { index, screen in
+                                    Button { onSelect(screen.dashboardId) } label: {
+                                        HStack(spacing: 12) {
+                                            Image(systemName: "rectangle.stack").font(.title2)
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(screen.name).font(.headline)
+                                                Text("\(index + 1) of \(screens.count)").font(.caption).foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            if selectedDashboardId == screen.dashboardId { Image(systemName: "checkmark.circle.fill").foregroundStyle(DeviceMenuColors.primaryButton) }
+                                        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                                    }.buttonStyle(.plain)
+                                        .accessibilityValue(selectedDashboardId == screen.dashboardId ? "Current screen" : "")
+                                }
+                            }
+                        }.frame(maxHeight: min(320, max(80, geometry.size.height - 250)))
+                        Divider()
+                    }
+                    HStack(spacing: 12) {
+                        Button("Disconnect…") { confirmingDisconnect = true }
+                            .buttonStyle(UnlinkActionButtonStyle(fill: DeviceMenuColors.secondaryButton,
+                                label: DeviceMenuColors.destructive))
+                        Button("Close", action: onDismiss)
+                            .buttonStyle(UnlinkActionButtonStyle(fill: DeviceMenuColors.primaryButton,
+                                label: .white))
+                    }
+                }
             }
-            .padding(20)
-            .frame(maxWidth: 360)
-            .background(
-                GuideColor.surface(colorScheme: colorScheme),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
+            .foregroundStyle(.primary)
+            .padding(24).frame(maxWidth: 420)
+            .background(DeviceMenuColors.surface, in: RoundedRectangle(cornerRadius: 20))
             .padding(24)
+        }.accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
         }
-        .accessibilityElement(children: .contain)
     }
 }
 
@@ -79,4 +117,19 @@ public enum UnlinkPanelLayout: Sendable {
     public static func pressedScale(_ pressed: Bool) -> CGFloat {
         pressed ? 0.97 : 1
     }
+}
+
+/// Platform semantic colors follow appearance and accessibility contrast settings.
+private enum DeviceMenuColors {
+#if os(iOS)
+    static let primaryButton = Color(uiColor: .systemBlue)
+    static let destructive = Color(uiColor: .systemRed)
+    static let secondaryButton = Color(uiColor: .tertiarySystemFill)
+    static let surface = Color(uiColor: .secondarySystemGroupedBackground)
+#else
+    static let primaryButton = Color.blue
+    static let destructive = Color.red
+    static let secondaryButton = Color.primary.opacity(0.08)
+    static let surface = Color(nsColor: .windowBackgroundColor)
+#endif
 }

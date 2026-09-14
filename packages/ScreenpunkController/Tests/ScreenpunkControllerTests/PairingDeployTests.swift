@@ -5,13 +5,146 @@ import ScreenpunkCore
 final class PairingDeployTests: XCTestCase {
     private let controllerIdentity = PairingIdentityFactory.make(role: .controller)
 
+    func testTwoDevicesRemainDistinctAcrossPairingDiscoveryAndRestart() throws {
+        let phone = FakeLANDevice(deviceId: "device-iphone-mini", name: "iPhone mini")
+        let tablet = FakeLANDevice(deviceId: "device-ipad-air", name: "iPad Air")
+        tablet.host = "192.168.4.21"
+        let harness = try makeHarness(device: phone)
+        let coordinator = harness.service.devices
+        let factory = MultipleDevicesFactory(devices: [phone, tablet], controllerIdentity: controllerIdentity)
+        coordinator.attach(factory)
+        coordinator.hub.reset()
+        for (name, device) in [("bonjour:phone-local", phone), ("bonjour:phone-local (2)", tablet)] {
+            coordinator.hub.advertise(AdvertisedDevice(deviceId: name, host: device.host, port: Int(device.port), source: .advertised))
+        }
+        let nearby = coordinator.discover()
+        XCTAssertEqual(nearby.count, 2)
+        XCTAssertEqual(Set(nearby.map(\.deviceId)).count, 2)
+        let first = try coordinator.requestPairing(deviceId: nearby.first { $0.name == "iPhone mini" }!.deviceId, host: nil, port: nil)
+        phone.confirmLocally()
+        let pairedPhone = try coordinator.confirmPairing(deviceId: first.deviceId)
+        let second = try coordinator.requestPairing(deviceId: nearby.first { $0.name == "iPad Air" }!.deviceId, host: nil, port: nil)
+        tablet.confirmLocally()
+        let pairedTablet = try coordinator.confirmPairing(deviceId: second.deviceId)
+        XCTAssertNotEqual(pairedPhone.id, pairedTablet.id)
+        XCTAssertEqual(coordinator.listDevices().count, 2)
+        XCTAssertEqual(pairedPhone.device.profile.name, "iPhone mini")
+        XCTAssertEqual(pairedTablet.device.profile.name, "iPad Air")
+        let ads = coordinator.discover()
+        XCTAssertTrue(WorkbenchSidebar.nearby(advertisements: ads, devices: coordinator.listDevices().map(\.device), developer: false).isEmpty)
+        // A duplicate manual address must collapse to the same authenticated identity.
+        coordinator.addManual(host: phone.host, port: Int(phone.port))
+        XCTAssertEqual(coordinator.discover().count, 2)
+        // Reboot changes both Bonjour names and ports; trust follows the saved pin.
+        phone.port = 8001; tablet.port = 8002
+        coordinator.hub.reset()
+        coordinator.hub.advertise(AdvertisedDevice(deviceId: "bonjour:renamed-a", host: phone.host, port: Int(phone.port), source: .advertised))
+        coordinator.hub.advertise(AdvertisedDevice(deviceId: "bonjour:renamed-b", host: tablet.host, port: Int(tablet.port), source: .advertised))
+        let reopened = DeviceCoordinator(directory: DeviceDirectory(url: harness.directoryURL), hub: coordinator.hub, linkFactory: factory)
+        XCTAssertEqual(reopened.discover().count, 2)
+        XCTAssertTrue(try reopened.device(pairedPhone.id, probe: true).device.reachable)
+        XCTAssertTrue(try reopened.device(pairedTablet.id, probe: true).device.reachable)
+        XCTAssertEqual(reopened.directory.get(pairedPhone.id)?.port, 8001)
+        XCTAssertEqual(reopened.directory.get(pairedTablet.id)?.port, 8002)
+    }
+
+    func testLegacySavedPairingSurvivesNativeIdentityUpgrade() throws {
+        let phone = FakeLANDevice(deviceId: "device-native-id", name: "iPhone")
+        let harness = try makeHarness(device: phone)
+        let coordinator = harness.service.devices
+        let request = try coordinator.requestPairing(deviceId: nil, host: phone.host, port: Int(phone.port))
+        phone.confirmLocally()
+        var original = try coordinator.confirmPairing(deviceId: request.deviceId)
+        _ = try coordinator.directory.remove(original.id)
+        original.device.profile.deviceId = "phone-local"
+        original.displayName = "Desk phone"
+        original.device.profile.name = "Desk phone"
+        try coordinator.directory.upsert(original)
+        phone.runtime.profile.deviceId = "device-new-native-id"
+        phone.port = 9001
+        coordinator.hub.reset()
+        coordinator.hub.advertise(AdvertisedDevice(deviceId: "new-bonjour-name", host: phone.host, port: Int(phone.port), source: .advertised))
+        let reopened = DeviceCoordinator(directory: DeviceDirectory(url: harness.directoryURL), hub: coordinator.hub, linkFactory: coordinator.linkFactory)
+        XCTAssertEqual(reopened.discover().first?.deviceId, "device-new-native-id")
+        XCTAssertNil(reopened.directory.get("phone-local"))
+        let refreshed = try reopened.device("device-new-native-id", probe: true)
+        XCTAssertTrue(refreshed.device.reachable)
+        XCTAssertEqual(refreshed.displayName, "Desk phone")
+        XCTAssertEqual(refreshed.device.profile.name, "Desk phone")
+        XCTAssertEqual(refreshed.id, "device-new-native-id")
+        XCTAssertEqual(refreshed.devicePin, phone.identityPin)
+    }
+
+    func testSharedLegacyIdentityRequiresAppUpdate() throws {
+        let phone = FakeLANDevice(deviceId: "phone-local", name: "Phone")
+        let harness = try makeHarness(device: phone)
+        XCTAssertTrue(harness.service.devices.discover().isEmpty)
+        XCTAssertThrowsError(try harness.service.devices.requestPairing(deviceId: nil, host: phone.host, port: Int(phone.port))) { error in
+            XCTAssertEqual((error as? ControllerError)?.code, .unsupportedVersion)
+        }
+        XCTAssertNil(phone.pairingCode)
+        XCTAssertTrue(harness.service.devices.listDevices().isEmpty)
+    }
+
+    func testDirectoryCannotOverwriteDifferentIdentity() throws {
+        let phone = FakeLANDevice(deviceId: "same-id", name: "Phone")
+        let harness = try makeHarness(device: phone)
+        try pair(harness.router, device: phone, deviceId: "same-id")
+        let original = try XCTUnwrap(harness.service.devices.directory.get("same-id"))
+        var impostor = original
+        impostor.devicePinHex = PeerPin.hex(PairingIdentityFactory.make(role: .device).publicKey)
+        XCTAssertThrowsError(try harness.service.devices.directory.upsert(impostor))
+        XCTAssertEqual(harness.service.devices.directory.get("same-id"), original)
+    }
+
+    func testPairedDeviceKeepsActiveScreenAndCanProvisionHomeAssistant() throws {
+        let device = FakeLANDevice(deviceId: "device-native-phone", name: "Phone")
+        device.supportsHomeAssistant = true
+        let harness = try makeHarness(device: device)
+        let request = try harness.service.devices.requestPairing(deviceId: nil, host: device.host, port: Int(device.port))
+        device.confirmLocally()
+        device.runtime.activeRevision = "already-running"
+        let paired = try harness.service.devices.confirmPairing(deviceId: request.deviceId)
+        XCTAssertEqual(paired.device.activeRevision, "already-running")
+        let screen = try harness.service.updateDashboard(arguments: .object([
+            "name": .string("Lights"),
+            "connections": .array([
+                .object([
+                    "alias": .string("home"),
+                    "required": .bool(true),
+                    "operations": .array([
+                        .object(["name": .string("getStates"), "kind": .string("http")])
+                    ])
+                ])
+            ]),
+            "files": .array([.object(["path": .string("index.html"), "text": .string("<p>Lights</p>")])])
+        ]))
+        harness.service.homeAssistantConfiguration = { dashboard, revision, id in
+            HomeAssistantProvisioning(dashboardId: dashboard, connectionId: "connection", provisioningId: id,
+                revision: revision, origin: "http://192.168.1.2:8123", allowInsecureHTTP: true, token: "test-token")
+        }
+        let outcome = try harness.service.ship(record: screen, deviceId: paired.id, deploymentId: "legacy-install")
+        XCTAssertEqual(outcome.phase, .active)
+        XCTAssertEqual(outcome.deviceId, paired.id)
+        XCTAssertEqual(device.runtime.lastDeployment?.deviceId, paired.id)
+        XCTAssertEqual(device.installedHomeAssistant?.revision, outcome.revision)
+    }
+
     func testHomeAssistantPreflightPreservesScreenAndBindsInstalledRevision() throws {
         let device = FakeLANDevice(deviceId: "ha-phone", name: "HA Phone")
         let harness = try makeHarness(device: device)
         try pair(harness.router, device: device, deviceId: "ha-phone")
         let record = try harness.service.updateDashboard(arguments: .object([
             "name": .string("Lights"),
-            "connections": .array([.object(["alias": .string("home"), "required": .bool(true), "operations": .array([.object(["name": .string("getStates"), "kind": .string("http")])])])]),
+            "connections": .array([
+                .object([
+                    "alias": .string("home"),
+                    "required": .bool(true),
+                    "operations": .array([
+                        .object(["name": .string("getStates"), "kind": .string("http")])
+                    ])
+                ])
+            ]),
             "files": .array([.object(["path": .string("index.html"), "text": .string("<p>Lights</p>")])])
         ]))
         XCTAssertEqual(record.manifest.connections.first?.operations?.first?.name, "getStates")
@@ -31,9 +164,10 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertEqual(device.installedHomeAssistant?.provisioningId, "install-1")
         XCTAssertFalse(device.receivedFiles.values.contains { String(decoding: $0, as: UTF8.self).contains("test-token") })
         device.failProvisioning = true
-        XCTAssertThrowsError(try harness.service.ship(record: record, deviceId: "ha-phone", deploymentId: "install-2")) { error in
-            XCTAssertTrue((error as? ControllerError)?.detail.contains("screen was applied") == true)
-        }
+        XCTAssertThrowsError(try harness.service.ship(record: record, deviceId: "ha-phone", deploymentId: "install-2"))
+        XCTAssertEqual(device.runtime.activeRevision, outcome.revision)
+        XCTAssertEqual(device.installedHomeAssistant?.provisioningId, "install-1")
+        XCTAssertEqual(device.deployAttempts, 1, "Credential failure must preserve the previous screen and grant together")
     }
 
     func testConnectionInspectionIsReadOnlyAndScopedByAlias() throws {
@@ -377,7 +511,7 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertEqual(forgotten["forgotten"]?.bool, true)
         XCTAssertEqual(forgotten["deviceErased"]?.bool, false)
         XCTAssertTrue(forgotten["detail"]?.string?.contains("two fingers") == true)
-        XCTAssertTrue(forgotten["detail"]?.string?.contains("Unlink") == true)
+        XCTAssertTrue(forgotten["detail"]?.string?.contains("Disconnect") == true)
         XCTAssertTrue(device.isPaired, "forget on the Mac never erases the device")
         XCTAssertEqual(try payload(router.call(name: "list_devices", arguments: .object([:])))["devices"]?.array?.count, 0)
 
@@ -476,6 +610,79 @@ final class PairingDeployTests: XCTestCase {
         var now = Date()
     }
 
+    func testScreenSetCommitFailureRetryAndSingleReplacement() throws {
+        let device = FakeLANDevice(deviceId: "set-phone", name: "Phone")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "set-phone")
+        let first = try createDashboard(harness.service, marker: "FIRST")
+        let second = try createDashboard(harness.service, marker: "SECOND")
+        _ = try harness.service.ship(record: first, deviceId: "set-phone", deploymentId: "initial")
+        let before = harness.service.devices.directory.get("set-phone")
+        device.failSetAtIndex = 1
+        XCTAssertThrowsError(try harness.service.shipSet(records: [first, second], deviceId: "set-phone",
+            selectedDashboardId: first.manifest.dashboardId, deploymentId: "set"))
+        XCTAssertEqual(device.runtime.activeRevision, first.manifest.revision)
+        XCTAssertEqual(device.installedSet?.count, 1)
+        XCTAssertEqual(harness.service.devices.directory.get("set-phone")?.screenSet, before?.screenSet)
+        device.failSetAtIndex = nil
+        let receipt = try harness.service.shipSet(records: [first, second], deviceId: "set-phone",
+            selectedDashboardId: first.manifest.dashboardId, deploymentId: "set")
+        XCTAssertEqual(receipt.screens.map(\.dashboardId), [first.manifest.dashboardId, second.manifest.dashboardId])
+        let attempts = device.deployAttempts
+        let retry = try harness.service.shipSet(records: [first, second], deviceId: "set-phone",
+            selectedDashboardId: first.manifest.dashboardId, deploymentId: "set")
+        XCTAssertEqual(receipt, retry)
+        XCTAssertEqual(device.deployAttempts, attempts)
+        XCTAssertThrowsError(try harness.service.shipSet(records: [second, first], deviceId: "set-phone",
+            selectedDashboardId: second.manifest.dashboardId, deploymentId: "set"))
+        let reopened = DeviceDirectory(url: harness.directoryURL)
+        XCTAssertEqual(reopened.get("set-phone")?.screenSet, receipt.screens)
+        device.selectedDashboardId = second.manifest.dashboardId
+        device.runtime.activeRevision = second.manifest.revision
+        let queried = try harness.service.devices.device("set-phone", probe: true)
+        XCTAssertEqual(queried.selectedDashboardId, second.manifest.dashboardId)
+        XCTAssertEqual(queried.device.activeRevision, second.manifest.revision)
+        _ = try harness.service.ship(record: second, deviceId: "set-phone", deploymentId: "single")
+        XCTAssertEqual(device.installedSet?.map(\.dashboardId), [second.manifest.dashboardId])
+        XCTAssertEqual(harness.service.devices.directory.get("set-phone")?.screenSet?.count, 1)
+    }
+
+    func testScreenSetPreflightRejectsDuplicatesAndUnsupportedPeersBeforeCredentials() throws {
+        let device = FakeLANDevice(deviceId: "set-preflight", name: "Phone")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "set-preflight")
+        let screen = try createDashboard(harness.service, marker: "BASE")
+        XCTAssertThrowsError(try harness.service.shipSet(records: [screen, screen], deviceId: device.runtime.profile.deviceId,
+            selectedDashboardId: screen.manifest.dashboardId))
+        device.supportsScreenSets = false
+        XCTAssertThrowsError(try harness.service.shipSet(records: [screen], deviceId: device.runtime.profile.deviceId,
+            selectedDashboardId: screen.manifest.dashboardId)) { error in
+                XCTAssertEqual((error as? ControllerError)?.code, .unsupportedVersion)
+        }
+        XCTAssertEqual(device.deployAttempts, 0)
+        XCTAssertNil(device.installedSet)
+    }
+
+    func testEscapedEnvelopeSizeIsRejectedBeforeSending() throws {
+        let device = FakeLANDevice(deviceId: "size-phone", name: "Phone")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "size-phone")
+        let screen = try createDashboard(harness.service, marker: "SMALL")
+        let revision = try harness.service.storedRevision(for: screen.manifest)
+        let deployment = DeploymentRecord(deploymentId: "size", revision: revision.revision,
+            dashboardId: revision.dashboardId, deviceId: "size-phone", phase: .queued)
+        let item = LANScreenSetItem(name: String(repeating: "\"", count: 600_000),
+            deployment: LANDeployBody(deployment: deployment, revision: revision, files: try harness.service.transferBlobs(for: screen)))
+        let body = LANScreenSetDeployBody(deploymentId: "size", deviceId: "size-phone", screens: [item], selectedDashboardId: revision.dashboardId)
+        XCTAssertLessThan(try LANCodec.encodePayload(body).utf8.count + 512, LANProtocolLimits.maxMessageBytes,
+            "The old estimate would have accepted this escaped payload")
+        XCTAssertThrowsError(try harness.service.devices.deployScreenSet(body)) { error in
+            XCTAssertTrue((error as? ControllerError)?.detail.contains("transfer limit") == true)
+        }
+        XCTAssertEqual(device.deployAttempts, 0)
+        XCTAssertNil(device.installedSet)
+    }
+
     private func makeHarness(
         device: FakeLANDevice,
         identity: PairingIdentity? = nil,
@@ -563,4 +770,30 @@ final class PairingDeployTests: XCTestCase {
             diagnostics: ["injected"]
         )
     }
+}
+
+private struct MultipleDevicesFactory: DeviceLinkFactory {
+    let devices: [FakeLANDevice]
+    let controllerIdentity: PairingIdentity
+    func makeLink() throws -> DeviceLink { MultipleDevicesLink(devices: devices, controllerPin: controllerIdentity.publicKey) }
+}
+
+private final class MultipleDevicesLink: DeviceLink {
+    let devices: [FakeLANDevice]
+    let controllerPin: [UInt8]
+    var connected: FakeLANLink?
+    var devicePin: [UInt8]? { connected?.devicePin }
+    init(devices: [FakeLANDevice], controllerPin: [UInt8]) { self.devices = devices; self.controllerPin = controllerPin }
+    func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?) throws {
+        guard let device = devices.first(where: { $0.host == host && $0.port == port }) else { throw TransferFailure.deviceOffline }
+        let link = FakeLANLink(device: device, controllerPin: controllerPin)
+        try link.connect(host: host, port: port, pinnedDevice: pinnedDevice)
+        connected = link
+    }
+    func hello() throws -> LANHello { try connected!.hello() }
+    func beginPairing(nonce: [UInt8]) throws -> LANPairBeginResult { try connected!.beginPairing(nonce: nonce) }
+    func confirmPairing(code: String) throws { try connected!.confirmPairing(code: code) }
+    func deploy(_ body: LANDeployBody) throws -> DeploymentRecord { try connected!.deploy(body) }
+    func queryActive() throws -> String? { try connected!.queryActive() }
+    func cancel() { connected?.cancel(); connected = nil }
 }

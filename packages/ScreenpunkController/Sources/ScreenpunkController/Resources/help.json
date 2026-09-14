@@ -1,11 +1,11 @@
 {
   "onboarding": {
     "title": "Screenpunk MCP",
-    "body": "Screenpunk starts its local controller and hidden preview helper automatically when this MCP server launches. The Mac workbench does not need to be visibly open.\n\nPreview is live by default. Actions in a live preview can control approved devices. Screenshot capture itself does not click controls.\n\nDeployment of a previewed revision is agent-mediated chat approval, not a cryptographic guarantee.\n\nUnlink recovery: hold two fingers on the device screen for ten seconds, then tap Unlink. Dashboard, credentials, and pairing are erased. Forgetting an unreachable device on the Mac does not erase it."
+    "body": "Screenpunk starts its local controller and hidden preview helper automatically when this MCP server launches. The Mac workbench does not need to be visibly open.\n\nPreview is live by default. Actions in a live preview can control approved devices. Screenshot capture itself does not click controls.\n\nDeployment of a previewed revision is agent-mediated chat approval, not a cryptographic guarantee.\n\nDevice recovery: hold two fingers on the device screen for five seconds to open the device menu, then choose Disconnect and confirm. Only confirming Disconnect erases screens, credentials, and pairing. Forgetting an unreachable device on the Mac does not erase it."
   },
   "unlink": {
-    "title": "Unlink a device",
-    "body": "Hold two fingers on the device screen for ten seconds, then tap Unlink. Dashboard, credentials, and pairing are erased.\n\nForgetting an unreachable device on the Mac does not erase it. This Mac has forgotten the device. To remove its dashboard and pairing, hold two fingers on its screen for 10 seconds, then tap Unlink.\n\nA reachable unlink from the Mac asks the phone to erase and reports acknowledgment. Forget is not remote erasure or upstream-token revocation."
+    "title": "Disconnect a device",
+    "body": "Hold two fingers on the device screen for five seconds to open the device menu, then choose Disconnect and confirm. Opening the menu does not erase anything. Confirming Disconnect erases screens, credentials, and pairing.\n\nForgetting an unreachable device on the Mac does not erase it. This Mac has forgotten the device. To remove its screens and pairing, hold two fingers on its screen for five seconds to open the device menu, then choose Disconnect and confirm.\n\nDisconnect is confirmed on the device. Forget on the Mac is not remote erasure or upstream-token revocation."
   },
   "preview": {
     "title": "Live preview",

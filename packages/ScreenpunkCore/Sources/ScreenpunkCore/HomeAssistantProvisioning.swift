@@ -37,6 +37,8 @@ public struct HomeAssistantProvisioning: Codable, Sendable, Equatable {
 
     public static let services: [String: (domain: String, service: String)] = [
         "lightOn": ("light", "turn_on"), "lightOff": ("light", "turn_off"),
+        "switchOn": ("switch", "turn_on"), "switchOff": ("switch", "turn_off"),
+        "scriptOn": ("script", "turn_on"),
         "sceneOn": ("scene", "turn_on"), "mediaPlayPause": ("media_player", "media_play_pause"),
         "volumeSet": ("media_player", "volume_set"), "selectSource": ("media_player", "select_source")
     ]

@@ -13,6 +13,7 @@ public enum LANMethod: String, Sendable, Codable, Equatable {
     case pairBegin = "pair.begin"
     case pairConfirm = "pair.confirm"
     case deploy
+    case deploySet = "deploy.set"
     case queryActive = "query.active"
     case homeAssistantProvision = "homeAssistant.provision"
     case homeAssistantRevoke = "homeAssistant.revoke"
@@ -129,8 +130,10 @@ public struct LANDeployBody: Sendable, Equatable, Codable {
 public struct LANActiveQuery: Sendable, Equatable, Codable {
     public var revision: String?
 
-    public init(revision: String? = nil) {
-        self.revision = revision
+    public var screens: [LANScreenSetEntry]?
+    public var selectedDashboardId: String?
+    public init(revision: String? = nil, screens: [LANScreenSetEntry]? = nil, selectedDashboardId: String? = nil) {
+        self.revision = revision; self.screens = screens; self.selectedDashboardId = selectedDashboardId
     }
 }
 
