@@ -7,6 +7,10 @@ public final class ControllerService: @unchecked Sendable {
     public let devices: DeviceCoordinator
     public private(set) var renderer: PreviewRenderer?
     public private(set) var helperStarted = false
+    // Installed once by the native app/MCP bootstrap, before serving requests.
+    public var homeAssistantConfiguration: (@Sendable (String, String, String) throws -> HomeAssistantProvisioning)?
+    public var connectionDescription: (@Sendable () throws -> Data)?
+    public var connectionInspection: (@Sendable (String?) throws -> Data)?
     private var reviewedRevisions: Set<String> = []
     private let lock = NSLock()
 
@@ -121,6 +125,10 @@ public final class ControllerService: @unchecked Sendable {
         guard let renderer else {
             throw ControllerError.snapshotUnavailable(reason: "helper_not_found")
         }
+        let nativeConnection: HomeAssistantProvisioning?
+        if live, record.manifest.connections.contains(where: { $0.alias == "home" }), let provider = homeAssistantConfiguration {
+            nativeConnection = try provider(record.manifest.dashboardId, record.manifest.revision, UUID().uuidString)
+        } else { nativeConnection = nil }
         let request = PreviewRequest(
             dashboardId: record.manifest.dashboardId,
             revision: record.manifest.revision,
@@ -129,7 +137,8 @@ public final class ControllerService: @unchecked Sendable {
             width: record.manifest.target.width,
             height: record.manifest.target.height,
             live: live,
-            interaction: interaction
+            interaction: interaction,
+            nativeHomeAssistant: nativeConnection
         )
         let capture = try renderer.render(request)
         guard PNGMagic.isPNG(capture.png) else {
@@ -226,16 +235,29 @@ public final class ControllerService: @unchecked Sendable {
         return blobs.sorted { $0.path < $1.path }
     }
 
-    private func ship(record: DashboardRevisionRecord, deviceId: String, deploymentId: String?) throws -> DeploymentRecord {
+    public func ship(record: DashboardRevisionRecord, deviceId: String, deploymentId: String?) throws -> DeploymentRecord {
         try PackageValidator.validate(record.manifest)
         let revision = try storedRevision(for: record.manifest)
         let files = try transferBlobs(for: record)
-        return try devices.deploy(
-            deviceId: deviceId,
-            revision: revision,
-            files: files,
-            deploymentId: deploymentId ?? UUID().uuidString.lowercased()
-        )
+        let id = deploymentId ?? UUID().uuidString.lowercased()
+        let usesHome = record.manifest.connections.contains { $0.alias == "home" }
+        let configuration: HomeAssistantProvisioning?
+        if usesHome {
+            guard let provider = homeAssistantConfiguration else {
+                throw ControllerError.permissionRequired("Set up Home Assistant in Screenpunk’s Connections page before applying this screen.")
+            }
+            do { configuration = try provider(record.manifest.dashboardId, record.manifest.revision, id) }
+            catch { throw ControllerError.permissionRequired("Check Home Assistant in Screenpunk’s Connections page before applying this screen. Its saved token or address is unavailable.") }
+            try devices.requireHomeAssistantSupport(deviceId: deviceId)
+        } else { configuration = nil }
+        let outcome = try devices.deploy(deviceId: deviceId, revision: revision, files: files, deploymentId: id)
+        if outcome.phase == .active, let configuration {
+            do { _ = try devices.provisionHomeAssistant(deviceId: deviceId, configuration: configuration) }
+            catch {
+                throw ControllerError.validationFailed(detail: "The screen was applied, but Home Assistant could not be installed on the phone. Keep the phone open and apply the screen again. Phone access has not been verified.")
+            }
+        }
+        return outcome
     }
 
     public func defaultTarget() -> ManifestTarget {
@@ -263,13 +285,15 @@ public final class ControllerService: @unchecked Sendable {
 
     private func parseConnections(_ value: JSONValue?) throws -> [ManifestConnection] {
         guard let items = value?.array else { return [] }
-        return items.compactMap { item in
-            guard let alias = item["alias"]?.string else { return nil }
-            return ManifestConnection(
-                alias: alias,
-                required: item["required"]?.bool ?? false,
-                operations: nil
-            )
+        return try items.map { item in
+            guard let alias = item["alias"]?.string else { throw ControllerError.validationFailed(detail: "Connection alias is required.") }
+            let operations: [ManifestOperation]? = try item["operations"]?.array?.map { operation in
+                guard let name = operation["name"]?.string, let kind = operation["kind"]?.string else {
+                    throw ControllerError.validationFailed(detail: "Connection operations need a name and kind.")
+                }
+                return ManifestOperation(name: name, kind: kind, maxAgeSeconds: operation["maxAgeSeconds"]?.int)
+            }
+            return ManifestConnection(alias: alias, required: item["required"]?.bool ?? false, operations: operations)
         }
     }
 }

@@ -65,7 +65,7 @@ Output: `Screenpunk-unsigned.dmg`, its `.sha256`, and `BUILD-INFO.txt`.
    ([setup.md](setup.md#install-the-mac-app)) also returns.
 
 Control-click → **Open** was the pre-Sequoia shortcut; macOS 15 removed it,
-and Screenpunk requires macOS 26, so use the Settings path. Terminal
+and Screenpunk requires macOS 14 or newer, so use the Settings path. Terminal
 alternative for a DMG you built yourself or downloaded from this
 repository's Actions run:
 

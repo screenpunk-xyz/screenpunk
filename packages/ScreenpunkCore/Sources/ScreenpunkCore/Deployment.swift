@@ -11,19 +11,22 @@ public struct DeviceProfile: Sendable, Equatable, Codable {
     public var orientation: DeviceOrientation
     public var width: Int
     public var height: Int
+    public var model: String?
 
     public init(
         deviceId: String,
         name: String,
         orientation: DeviceOrientation = .portrait,
         width: Int = 390,
-        height: Int = 844
+        height: Int = 844,
+        model: String? = nil
     ) {
         self.deviceId = deviceId
         self.name = name
         self.orientation = orientation
         self.width = width
         self.height = height
+        self.model = model
     }
 
     public mutating func apply(orientation: DeviceOrientation) {

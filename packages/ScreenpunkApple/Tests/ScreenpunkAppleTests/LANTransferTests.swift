@@ -116,8 +116,8 @@ final class LANTransferTests: XCTestCase {
         var landscape = StoredRevision.offlineFixture
         landscape.revision = "33333333-3333-4333-8333-333333333333"
         landscape.orientation = .landscape
-        landscape.width = 844
-        landscape.height = 390
+        landscape.width = 1024
+        landscape.height = 768
         let mismatch = try client.deploy(
             LANDeployBody(
                 deployment: DeploymentRecord(

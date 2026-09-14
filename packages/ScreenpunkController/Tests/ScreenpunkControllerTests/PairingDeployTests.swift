@@ -5,6 +5,61 @@ import ScreenpunkCore
 final class PairingDeployTests: XCTestCase {
     private let controllerIdentity = PairingIdentityFactory.make(role: .controller)
 
+    func testHomeAssistantPreflightPreservesScreenAndBindsInstalledRevision() throws {
+        let device = FakeLANDevice(deviceId: "ha-phone", name: "HA Phone")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "ha-phone")
+        let record = try harness.service.updateDashboard(arguments: .object([
+            "name": .string("Lights"),
+            "connections": .array([.object(["alias": .string("home"), "required": .bool(true), "operations": .array([.object(["name": .string("getStates"), "kind": .string("http")])])])]),
+            "files": .array([.object(["path": .string("index.html"), "text": .string("<p>Lights</p>")])])
+        ]))
+        XCTAssertEqual(record.manifest.connections.first?.operations?.first?.name, "getStates")
+        XCTAssertThrowsError(try harness.service.ship(record: record, deviceId: "ha-phone", deploymentId: "install-1"))
+        XCTAssertEqual(device.deployAttempts, 0, "Missing configuration must not replace the screen")
+        harness.service.homeAssistantConfiguration = { dashboard, revision, id in
+            HomeAssistantProvisioning(dashboardId: dashboard, connectionId: "connection", provisioningId: id,
+                revision: revision, origin: "http://192.168.1.2:8123", allowInsecureHTTP: true, token: "test-token")
+        }
+        XCTAssertThrowsError(try harness.service.ship(record: record, deviceId: "ha-phone", deploymentId: "install-1"))
+        XCTAssertEqual(device.deployAttempts, 0, "Older phones must keep the current screen")
+        device.supportsHomeAssistant = true
+        let outcome = try harness.service.ship(record: record, deviceId: "ha-phone", deploymentId: "install-1")
+        XCTAssertEqual(outcome.phase, .active)
+        XCTAssertEqual(device.installedHomeAssistant?.revision, outcome.revision)
+        XCTAssertEqual(device.installedHomeAssistant?.dashboardId, outcome.dashboardId)
+        XCTAssertEqual(device.installedHomeAssistant?.provisioningId, "install-1")
+        XCTAssertFalse(device.receivedFiles.values.contains { String(decoding: $0, as: UTF8.self).contains("test-token") })
+        device.failProvisioning = true
+        XCTAssertThrowsError(try harness.service.ship(record: record, deviceId: "ha-phone", deploymentId: "install-2")) { error in
+            XCTAssertTrue((error as? ControllerError)?.detail.contains("screen was applied") == true)
+        }
+    }
+
+    func testConnectionInspectionIsReadOnlyAndScopedByAlias() throws {
+        let harness = try makeHarness(device: FakeLANDevice(deviceId: "inspect", name: "Phone"))
+        harness.service.connectionInspection = { query in
+            XCTAssertEqual(query, "Game lights")
+            return Data("{\"entities\":[{\"entity_id\":\"light.game_lights\"}]}".utf8)
+        }
+        let result = harness.router.call(name: "inspect_connection", arguments: .object(["alias": .string("home"), "query": .string("Game lights")]))
+        XCTAssertFalse(result.isError)
+        XCTAssertEqual(try payload(result)["entities"]?.array?.first?["entity_id"]?.string, "light.game_lights")
+        XCTAssertTrue(harness.router.call(name: "inspect_connection", arguments: .object(["alias": .string("other")])).isError)
+    }
+
+    func testCustomDeviceNameSurvivesReconnectionAndViewportRefresh() throws {
+        let device = FakeLANDevice(deviceId: "phone-rename", name: "iPhone")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "phone-rename")
+        try harness.service.devices.directory.update("phone-rename") { $0.displayName = "Desk iPhone"; $0.device.profile.name = "Desk iPhone" }
+        let reopened = DeviceCoordinator(directory: DeviceDirectory(url: harness.directoryURL), hub: harness.service.devices.hub, linkFactory: harness.service.devices.linkFactory)
+        let record = try reopened.device("phone-rename", probe: true)
+        XCTAssertTrue(record.device.reachable)
+        XCTAssertEqual(record.displayName, "Desk iPhone")
+        XCTAssertEqual(record.device.profile.name, "Desk iPhone")
+    }
+
     func testDiscoverRequestConfirmPairsOneOwnerAndPersists() throws {
         let device = FakeLANDevice(deviceId: "phone-a", name: "Kitchen iPhone")
         let harness = try makeHarness(device: device)
@@ -163,7 +218,7 @@ final class PairingDeployTests: XCTestCase {
                 "dashboardId": .string(id),
                 "name": .string("Alpha"),
                 "baseRevision": .string(first.manifest.revision),
-                "target": .object(["orientation": .string("landscape"), "width": .int(844), "height": .int(390)]),
+                "target": .object(["orientation": .string("landscape"), "width": .int(1024), "height": .int(768)]),
                 "files": .array([.object(["path": .string("index.html"), "text": .string("<p>WIDE</p>")])])
             ])
         )

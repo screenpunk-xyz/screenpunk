@@ -14,6 +14,8 @@ public enum LANMethod: String, Sendable, Codable, Equatable {
     case pairConfirm = "pair.confirm"
     case deploy
     case queryActive = "query.active"
+    case homeAssistantProvision = "homeAssistant.provision"
+    case homeAssistantRevoke = "homeAssistant.revoke"
 }
 
 public struct LANEnvelope: Sendable, Equatable, Codable {
@@ -48,19 +50,25 @@ public struct LANHello: Sendable, Equatable, Codable {
     public var protocolMajor: Int
     /// Owner-facing device name. Optional so peers without it still decode.
     public var name: String?
+    public var capabilities: [String]?
+    public var profile: DeviceProfile?
 
     public init(
         role: PairingRole,
         deviceId: String,
         pinHex: String,
         protocolMajor: Int = DiscoveryService.protocolMajor,
-        name: String? = nil
+        name: String? = nil,
+        capabilities: [String]? = nil,
+        profile: DeviceProfile? = nil
     ) {
+        self.capabilities = capabilities
         self.role = role
         self.deviceId = deviceId
         self.pinHex = pinHex
         self.protocolMajor = protocolMajor
         self.name = DeviceDisplayName.sanitize(name)
+        self.profile = profile
     }
 }
 

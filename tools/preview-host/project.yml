@@ -2,7 +2,6 @@ name: ScreenpunkPreviewHost
 options:
   bundleIdPrefix: xyz.screenpunk
   deploymentTarget:
-    # Feasibility helper only. Product ScreenpunkMac stays macOS 26+.
     macOS: "14.0"
   xcodeVersion: "16.0"
   createIntermediateGroups: true

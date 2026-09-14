@@ -7,6 +7,7 @@ public final class DashboardPackageStore: @unchecked Sendable {
     private let fileManager: FileManager
     private let lockURL: URL
     private var lockHandle: FileHandle?
+    private let localLock = NSLock()
 
     public init(root: URL, fileManager: FileManager = .default) throws {
         self.root = root
@@ -90,6 +91,7 @@ public final class DashboardPackageStore: @unchecked Sendable {
                 throw ControllerError.validationFailed(detail: "files required")
             }
             let id = dashboardId ?? UUID().uuidString.lowercased()
+            var preservedSettings: Data?
             if let existing = try? readHead(dashboardId: id) {
                 if let baseRevision, baseRevision != existing.draftRevision {
                     throw ControllerError.revisionConflict(
@@ -101,10 +103,17 @@ public final class DashboardPackageStore: @unchecked Sendable {
                 }
             }
 
+            if let existing = try? readHead(dashboardId: id) {
+                preservedSettings = try? Data(contentsOf: revisionDir(dashboardId: id, revision: existing.draftRevision).appendingPathComponent(ScreenDesignSettings.path))
+            }
+            var inputs = files
+            if let preservedSettings, !inputs.contains(where: { $0.path == ScreenDesignSettings.path }) {
+                inputs.append(DashboardFileInput(path: ScreenDesignSettings.path, base64: preservedSettings.base64EncodedString()))
+            }
             var assets: [(path: String, data: Data)] = []
             var inventory: [ManifestFile] = []
             var seen = Set<String>()
-            for file in files {
+            for file in inputs {
                 let path = try PackagePath.normalize(file.path)
                 if seen.contains(path) {
                     throw ControllerError.validationFailed(detail: "duplicate path \(path)")
@@ -121,6 +130,10 @@ public final class DashboardPackageStore: @unchecked Sendable {
                 )
             }
 
+            let settings = try ScreenDesignSettings.read(files: Dictionary(uniqueKeysWithValues: assets.map { ($0.path, $0.data) }))
+            guard let orientation = DeviceOrientation(rawValue: target.orientation), settings.orientations.allows(orientation) else {
+                throw ControllerError.validationFailed(detail: "The target orientation is not supported by this screen.")
+            }
             let revision = UUID().uuidString.lowercased()
             var manifest = DashboardManifest(
                 schemaVersion: PackageLimits.schemaMajor,
@@ -158,6 +171,17 @@ public final class DashboardPackageStore: @unchecked Sendable {
             let head = HeadRecord(name: name, draftRevision: revision, updatedAt: now)
             try writeHead(dashboardId: id, head: head)
             return try getRevisionUnlocked(dashboardId: id, revision: revision)
+        }
+    }
+
+    /// Remove the library entry; keep deployed device content untouched.
+    public func deleteDashboard(dashboardId: String) throws {
+        guard UUID(uuidString: dashboardId) != nil else {
+            throw ControllerError.validationFailed(detail: "invalid screen identifier")
+        }
+        try withLock {
+            _ = try readHead(dashboardId: dashboardId)
+            try fileManager.removeItem(at: dashboardDir(dashboardId))
         }
     }
 
@@ -236,6 +260,8 @@ public final class DashboardPackageStore: @unchecked Sendable {
     }
 
     private func withLock<T>(_ body: () throws -> T) throws -> T {
+        localLock.lock()
+        defer { localLock.unlock() }
         flockExclusive()
         defer { flockUnlock() }
         return try body()

@@ -33,7 +33,10 @@ public struct KeychainCredentialStore: CredentialStore, Sendable {
 
     public func put(_ secret: Data, for authRef: String) throws {
         #if canImport(Security)
-        try delete(authRef)
+        let updated = SecItemUpdate(baseQuery(account: authRef) as CFDictionary,
+                                    [kSecValueData as String: secret] as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else { throw ConnectionFailure.permissionRequired }
         var query = baseQuery(account: authRef)
         query[kSecValueData as String] = secret
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly

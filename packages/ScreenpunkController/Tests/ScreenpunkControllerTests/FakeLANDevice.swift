@@ -11,6 +11,10 @@ final class FakeLANDevice: @unchecked Sendable {
     let host = "192.168.4.20"
     let port: UInt16 = 7843
     var online = true
+    var supportsHomeAssistant = false
+    var failProvisioning = false
+    var installedHomeAssistant: HomeAssistantProvisioning?
+
     var lieAboutCode = false
     /// Claim this pin in `hello` instead of the handshake identity.
     var claimedHelloPin: [UInt8]?
@@ -70,7 +74,7 @@ final class FakeLANDevice: @unchecked Sendable {
             switch LANMethod(rawValue: request.method) {
             case .hello:
                 let shown = claimedHelloPin ?? identityPin
-                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown)))
+                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: supportsHomeAssistant ? ["home-assistant-http-v1"] : nil, profile: runtime.profile))
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
                 guard PeerPin.matches(expected: peerPin, presentedHex: body.controllerPinHex) else {
@@ -122,7 +126,7 @@ final class FakeLANDevice: @unchecked Sendable {
                     throw TransferFailure.notPaired
                 }
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
-            case .none:
+            case .homeAssistantProvision, .homeAssistantRevoke, .none:
                 throw TransferFailure.validationFailed
             }
         } catch {
@@ -197,6 +201,14 @@ final class FakeLANLink: DeviceLink {
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord {
         let reply = try request(.deploy, body)
         return try LANCodec.decodePayload(DeploymentRecord.self, json: reply.payloadJSON)
+    }
+
+    func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
+        guard device.supportsHomeAssistant, !device.failProvisioning else { throw TransferFailure.validationFailed }
+        guard device.runtime.activeRevision == configuration.revision else { throw TransferFailure.validationFailed }
+        device.installedHomeAssistant = configuration
+        return HomeAssistantProvisioningReceipt(deviceId: device.runtime.profile.deviceId, dashboardId: configuration.dashboardId,
+            revision: configuration.revision, connectionId: configuration.connectionId, provisioningId: configuration.provisioningId)
     }
 
     func queryActive() throws -> String? {

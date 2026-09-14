@@ -34,7 +34,7 @@ public enum HelpCatalog: Sendable {
     }
 
     public static func loadTopics() -> [String: HelpTopic] {
-        if let url = Bundle.module.url(forResource: "help", withExtension: "json"),
+        if let url = BundledResources.bundle.url(forResource: "help", withExtension: "json"),
            let data = try? Data(contentsOf: url),
            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: [String: String]]
         {

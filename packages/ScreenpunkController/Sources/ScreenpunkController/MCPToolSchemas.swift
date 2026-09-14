@@ -34,6 +34,11 @@ public enum MCPToolSchemas {
                     "dy": number()
                 ]
             )
+        case "describe_connection", "inspect_connection":
+            return object(required: ["alias"], properties: [
+                "alias": string("Use home for Home Assistant."),
+                "query": string("Optional case-insensitive entity ID or friendly-name filter. Reads only; returns at most 200 matching entities.")
+            ])
         case "get_help":
             return object(
                 required: [],

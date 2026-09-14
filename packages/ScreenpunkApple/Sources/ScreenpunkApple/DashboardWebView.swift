@@ -13,14 +13,20 @@ import AppKit
 public struct DashboardWebView: UIViewRepresentable {
     public var store: PackageAssetStore
     public var onUnlinkHold: () -> Void
+    public var homeAssistant: HomeAssistantDeviceRuntime?
+    public var revision: String
+    public var onConnectionHealth: (Bool) -> Void
 
-    public init(store: PackageAssetStore, onUnlinkHold: @escaping () -> Void) {
+    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onUnlinkHold: @escaping () -> Void) {
         self.store = store
+        self.homeAssistant = homeAssistant
+        self.revision = revision
+        self.onConnectionHealth = onConnectionHealth
         self.onUnlinkHold = onUnlinkHold
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, revision: revision, onConnectionHealth: onConnectionHealth, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeUIView(context: Context) -> WKWebView {
@@ -36,14 +42,20 @@ public struct DashboardWebView: UIViewRepresentable {
 public struct DashboardWebView: NSViewRepresentable {
     public var store: PackageAssetStore
     public var onUnlinkHold: () -> Void
+    public var homeAssistant: HomeAssistantDeviceRuntime?
+    public var revision: String
+    public var onConnectionHealth: (Bool) -> Void
 
-    public init(store: PackageAssetStore, onUnlinkHold: @escaping () -> Void) {
+    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onUnlinkHold: @escaping () -> Void) {
         self.store = store
+        self.homeAssistant = homeAssistant
+        self.revision = revision
+        self.onConnectionHealth = onConnectionHealth
         self.onUnlinkHold = onUnlinkHold
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, revision: revision, onConnectionHealth: onConnectionHealth, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -60,21 +72,46 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     let handler: PackageSchemeHandler
     var onUnlinkHold: () -> Void
     private var installedRules = false
+    private var bridge: HomeAssistantWebBridge?
 
-    init(store: PackageAssetStore, onUnlinkHold: @escaping () -> Void) {
+    init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onUnlinkHold: @escaping () -> Void) {
         self.handler = PackageSchemeHandler(store: store)
         self.onUnlinkHold = onUnlinkHold
+        if let homeAssistant {
+            self.bridge = HomeAssistantWebBridge(runtime: homeAssistant, revision: revision, onHealth: onConnectionHealth)
+        }
     }
+
+    deinit { bridge?.cancel() }
 
     func makeWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
         config.setURLSchemeHandler(handler, forURLScheme: IsolationPolicy.customScheme)
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+        if let bridge {
+            config.userContentController.add(bridge, name: "screenpunk")
+            if let url = Bundle.module.url(forResource: "runtime-sdk", withExtension: "js"),
+               let source = try? String(contentsOf: url) {
+                config.userContentController.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            }
+        }
         let webView = WKWebView(frame: .zero, configuration: config)
+        bridge?.attach(to: webView)
         webView.navigationDelegate = self
         webView.uiDelegate = self
 #if os(iOS)
         webView.isOpaque = true
+        webView.scrollView.pinchGestureRecognizer?.isEnabled = false
+        webView.scrollView.bouncesZoom = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.delegate = self
+#endif
+#if os(iOS)
+        config.userContentController.addUserScript(WKUserScript(
+            source: Self.fixedViewportScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        ))
 #endif
         installUnlinkRecognizer(on: webView)
         installContentRules(on: webView)
@@ -136,11 +173,43 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        bridge?.cancel()
         if let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/index.html") {
             webView.load(URLRequest(url: url))
         }
     }
 }
+
+#if os(iOS)
+extension DashboardWebCoordinator: UIScrollViewDelegate {
+    public func viewForZooming(in scrollView: UIScrollView) -> UIView? { nil }
+
+    public func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        scrollView.pinchGestureRecognizer?.isEnabled = false
+    }
+
+    // Viewport also suppresses double-tap and input-focus magnification while
+    // leaving ordinary scrolling and the native accessibility system available.
+    static let fixedViewportScript = """
+    (() => {
+      const value = 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+      const apply = () => {
+        let metas = [...document.querySelectorAll('meta[name="viewport"]')];
+        if (!metas.length) {
+          const meta = document.createElement('meta');
+          meta.name = 'viewport';
+          (document.head || document.documentElement).appendChild(meta);
+          metas = [meta];
+        }
+        metas.forEach(meta => { if (meta.content !== value) meta.content = value; });
+      };
+      apply();
+      new MutationObserver(apply).observe(document.head || document.documentElement,
+        { childList: true, subtree: true, attributes: true, attributeFilter: ['content', 'name'] });
+    })();
+    """
+}
+#endif
 
 #if os(iOS)
 final class TwoFingerHoldRecognizer: UIGestureRecognizer {

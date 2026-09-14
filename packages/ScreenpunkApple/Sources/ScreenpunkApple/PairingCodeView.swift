@@ -4,7 +4,7 @@ import ScreenpunkCore
 public struct PairingCodeView: View {
     @Environment(\.colorScheme) private var colorScheme
     public var code: String
-    /// Confirm was already tapped on this screen; the other side has to finish.
+    /// The owner confirmed; the Mac completes the handshake automatically.
     public var waiting: Bool
     public var onConfirm: () -> Void
 
@@ -53,6 +53,6 @@ public struct PairingCodeView: View {
 enum PairingCodeCopy {
     static let headline = "Match this code on both screens"
     static let confirm = "Confirm"
-    static let waiting = "Confirmed here"
-    static let waitingDetail = "Now press Confirm in Screenpunk on the Mac."
+    static let waiting = "Connecting…"
+    static let waitingDetail = "Your Mac will finish pairing automatically."
 }

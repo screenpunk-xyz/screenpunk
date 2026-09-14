@@ -14,6 +14,9 @@ public struct DashboardRevisionRecord: Sendable, Equatable {
     public var files: [String: Data]
     public var createdAt: Date
     public var packageDirectory: URL
+    public init(manifest: DashboardManifest, files: [String: Data], createdAt: Date, packageDirectory: URL) {
+        self.manifest = manifest; self.files = files; self.createdAt = createdAt; self.packageDirectory = packageDirectory
+    }
 }
 
 public struct DashboardFileInput: Sendable, Equatable {
@@ -79,7 +82,7 @@ public struct MCPCatalogFile: Sendable, Equatable {
 
 public enum MCPCatalog: Sendable {
     public static func load() -> MCPCatalogFile {
-        if let url = Bundle.module.url(forResource: "mcp-catalog", withExtension: "json"),
+        if let url = BundledResources.bundle.url(forResource: "mcp-catalog", withExtension: "json"),
            let data = try? Data(contentsOf: url),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         {

@@ -5,6 +5,8 @@ import ScreenpunkController
 enum OfficialMCPServer {
     static func run(service: ControllerService) async throws {
         _ = service.ensureHelper()
+        let presence = AgentPresenceSession(root: service.store.root)
+        defer { presence.stop() }
         let router = MCPToolRouter(service: service)
         let catalog = router.catalog
         let onboarding = HelpCatalog.topic(id: "onboarding").body
@@ -20,6 +22,7 @@ enum OfficialMCPServer {
         )
 
         await server.withMethodHandler(ListTools.self) { _ in
+            presence.activate()
             let tools = catalog.tools.map { tool in
                 Tool(
                     name: tool.name,
@@ -38,6 +41,7 @@ enum OfficialMCPServer {
         }
 
         await server.withMethodHandler(CallTool.self) { params in
+            presence.activate()
             let arguments = jsonValue(params.arguments)
             let result = router.call(name: params.name, arguments: arguments)
             return .init(content: mcpContent(result.content), isError: result.isError)

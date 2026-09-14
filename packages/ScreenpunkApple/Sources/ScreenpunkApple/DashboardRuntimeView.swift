@@ -8,14 +8,21 @@ public struct DashboardRuntimeView: View {
     public var requiredFailedOrStale: Bool
     public var onUnlink: () -> Void
 
+    public var homeAssistant: HomeAssistantDeviceRuntime?
+    public var revision: String
+    @State private var connectionUnhealthy = false
     @State private var showUnlink = false
 
     public init(
         store: PackageAssetStore,
+        homeAssistant: HomeAssistantDeviceRuntime? = nil,
+        revision: String = "",
         connectionCount: Int = 0,
         requiredFailedOrStale: Bool = false,
         onUnlink: @escaping () -> Void = {}
     ) {
+        self.homeAssistant = homeAssistant
+        self.revision = revision
         self.store = store
         self.connectionCount = connectionCount
         self.requiredFailedOrStale = requiredFailedOrStale
@@ -37,11 +44,12 @@ public struct DashboardRuntimeView: View {
     public var body: some View {
         ZStack {
 #if canImport(WebKit)
-            DashboardWebView(store: store, onUnlinkHold: { showUnlink = true })
+            DashboardWebView(store: store, homeAssistant: homeAssistant, revision: revision,
+                             onConnectionHealth: { connectionUnhealthy = !$0 }, onUnlinkHold: { showUnlink = true })
 #else
             Text("WKWebView unavailable")
 #endif
-            if showOffline {
+            if showOffline || connectionUnhealthy {
                 OfflineRingOverlay()
             }
             if showUnlink {
