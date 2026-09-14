@@ -1,5 +1,5 @@
 (function (root) {
-  const POLL_SECONDS = 15;
+  const POLL_SECONDS = 2;
   const MAX_AGE_SECONDS = POLL_SECONDS * 2 + 15;
   const LIGHT_LIMIT = 8;
   const SCENE_LIMIT = 6;
@@ -44,6 +44,10 @@
       } catch {
         return { data: value, stale: false, fetchedAt: null, statusCode: 0 };
       }
+    }
+    if (typeof value === "object" && value !== null && Object.prototype.hasOwnProperty.call(value, "value")) {
+      const nested = unwrapResult(value.value);
+      return { ...nested, stale: value.stale === true || nested.stale };
     }
     if (typeof value === "object" && value !== null && Object.prototype.hasOwnProperty.call(value, "body")) {
       let data = value.body;

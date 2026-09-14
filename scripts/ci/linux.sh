@@ -18,7 +18,7 @@ npm test
 
 cd "$ROOT"
 node --test "tests/**/*.test.mjs"
-node --test examples/weather/test.mjs examples/home-assistant/test.mjs
+node --test examples/weather/test.mjs examples/home-assistant/test.mjs examples/game-lights/test.mjs
 node --test tests/mcp/*.test.mjs
 
 echo "linux contracts-and-sdk ok"

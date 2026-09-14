@@ -2,13 +2,13 @@ name: ScreenpunkMac
 options:
   bundleIdPrefix: xyz.screenpunk
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "14.0"
   xcodeVersion: "16.0"
   createIntermediateGroups: true
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: xyz.screenpunk.macos
-    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"
     CODE_SIGNING_ALLOWED: "NO"
     GENERATE_INFOPLIST_FILE: YES

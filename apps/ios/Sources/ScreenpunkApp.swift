@@ -5,7 +5,7 @@ import ScreenpunkApple
 struct ScreenpunkApp: App {
     var body: some Scene {
         WindowGroup {
-            DeviceRuntimeRootView.unpairedLoopback()
+            KioskLaunchView()
         }
     }
 }

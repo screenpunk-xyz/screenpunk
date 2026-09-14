@@ -17,6 +17,7 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
     private let height: CGFloat
     private var window: NSWindow?
     private var webView: WKWebView?
+    private var homeAssistantBridge: HomeAssistantPreviewBridge?
     private var finished = false
     private var waitingForReady = false
     var onComplete: (() -> Void)?
@@ -44,15 +45,36 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
 
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
-        if case .package(let directory) = mode, let store = try? PackageAssetStore.load(directory: directory) {
-            config.setURLSchemeHandler(PackageSchemeHandler(store: store), forURLScheme: IsolationPolicy.customScheme)
+        if case .package(let directory) = mode {
+            do {
+                let store = try PackageAssetStore.load(directory: directory)
+                config.setURLSchemeHandler(PackageSchemeHandler(store: store), forURLScheme: IsolationPolicy.customScheme)
+                if ProcessInfo.processInfo.environment["SCREENPUNK_PREVIEW_LIVE"] == "1",
+                   let data = try? Data(contentsOf: directory.appendingPathComponent("manifest.json")),
+                   let manifest = try? JSONDecoder().decode(DashboardManifest.self, from: data),
+                   manifest.connections.contains(where: { $0.alias == "home" }) {
+                    let input = FileHandle.standardInput.readData(ofLength: 16 * 1024)
+                    if !input.isEmpty, input.count < 16 * 1024,
+                       let provisioning = try? JSONDecoder().decode(HomeAssistantProvisioning.self, from: input),
+                       provisioning.dashboardId == manifest.dashboardId, provisioning.revision == manifest.revision {
+                        homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, provisioning: provisioning)
+                    }
+                }
+            } catch {
+                fail("package_load_failed: \(error)")
+                return
+            }
         }
         let readyScript = WKUserScript(
             source: """
             window.__SCREENPUNK_READY = false;
             window.screenpunk = window.screenpunk || {};
             window.screenpunk.runtime = window.screenpunk.runtime || {};
-            window.screenpunk.runtime.ready = function () { window.__SCREENPUNK_READY = true; };
+            const nativeReady = window.screenpunk.runtime.ready;
+            window.screenpunk.runtime.ready = function () {
+                window.__SCREENPUNK_READY = true;
+                return nativeReady ? nativeReady.call(window.screenpunk.runtime) : Promise.resolve();
+            };
             """,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
@@ -60,6 +82,7 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         config.userContentController.addUserScript(readyScript)
 
         let webView = WKWebView(frame: rect, configuration: config)
+        homeAssistantBridge?.attach(to: webView)
         webView.navigationDelegate = self
         window.contentView = webView
         self.window = window

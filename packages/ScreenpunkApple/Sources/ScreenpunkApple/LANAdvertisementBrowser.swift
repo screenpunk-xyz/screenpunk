@@ -10,6 +10,7 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     private let hub: LoopbackDiscovery
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.browse")
     private var browser: NWBrowser?
+    private var activeIDs = Set<String>()
 
     public init(hub: LoopbackDiscovery) {
         self.hub = hub
@@ -30,6 +31,11 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     public func stop() {
         browser?.cancel()
         browser = nil
+        queue.async { [weak self] in
+            guard let self else { return }
+            for id in self.activeIDs { self.hub.withdraw(id) }
+            self.activeIDs.removeAll()
+        }
     }
 
     private struct TXTFields {
@@ -39,6 +45,9 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     }
 
     private func publish(_ results: Set<NWBrowser.Result>) {
+        let current = Set(results.map { txtFields($0).id })
+        for id in activeIDs.subtracting(current) { hub.withdraw(id) }
+        activeIDs = current
         for result in results {
             let meta = txtFields(result)
             switch result.endpoint {
@@ -69,7 +78,7 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     }
 
     private func advertise(_ meta: TXTFields, host: String, port: Int) {
-        guard port > 0, meta.id.isEmpty == false else { return }
+        guard port > 0, meta.id.isEmpty == false, activeIDs.contains(meta.id) else { return }
         hub.advertise(
             AdvertisedDevice(
                 deviceId: meta.id,

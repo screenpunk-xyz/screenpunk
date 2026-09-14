@@ -18,7 +18,8 @@ let package = Package(
             name: "ScreenpunkApple",
             dependencies: ["ScreenpunkCore"],
             resources: [
-                .copy("Resources/offline-fixture")
+                .copy("Resources/offline-fixture"),
+                .copy("Resources/runtime-sdk.js")
             ]
         ),
         .testTarget(

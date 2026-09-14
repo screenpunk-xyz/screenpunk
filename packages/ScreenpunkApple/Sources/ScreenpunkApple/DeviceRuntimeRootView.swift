@@ -32,7 +32,12 @@ public struct DeviceRuntimeRootView: View {
 
     public static func unpairedLoopback() -> DeviceRuntimeRootView {
         let identity = PairingIdentityFactory.make(role: .device)
-        let profile = DeviceProfile(deviceId: "phone-local", name: localDeviceName())
+        var profile = DeviceProfile(deviceId: "phone-local", name: localDeviceName(), model: DeviceModelName.current)
+#if os(iOS)
+        let bounds = UIScreen.main.bounds
+        profile.width = Int(min(bounds.width, bounds.height))
+        profile.height = Int(max(bounds.width, bounds.height))
+#endif
         let ad = AdvertisedDevice(
             deviceId: profile.deviceId,
             host: "127.0.0.1",
@@ -59,9 +64,19 @@ public struct DeviceRuntimeRootView: View {
     private var lanBody: some View {
         Group {
             if let revision = host.runtime.activeRevision {
-                deployedDashboard(revision: revision, package: host.activePackage) {
-                    host.unlink()
-                }
+                GeometryReader { geometry in
+                    let profile = host.runtime.profile
+                    let width = CGFloat(profile.width), height = CGFloat(profile.height)
+                    let rotate = (geometry.size.width > geometry.size.height) != (width > height)
+                    let displayWidth = rotate ? height : width
+                    let displayHeight = rotate ? width : height
+                    let scale = min(geometry.size.width / displayWidth, geometry.size.height / displayHeight)
+                    deployedDashboard(revision: revision, package: host.activePackage) { host.unlink() }
+                        .frame(width: width, height: height)
+                        .rotationEffect(.degrees(rotate ? 90 : 0))
+                        .scaleEffect(scale)
+                        .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                }.ignoresSafeArea().background(.black)
             } else if let code = host.pairingCode {
                 PairingCodeView(code: code, waiting: host.awaitingControllerConfirm) { host.confirm() }
                     .padding(24)
@@ -117,6 +132,14 @@ public struct DeviceRuntimeRootView: View {
         }
     }
 
+    private var homeAssistantRuntime: HomeAssistantDeviceRuntime? {
+#if canImport(Network) && canImport(Security)
+        host.server?.homeAssistantRuntime
+#else
+        nil
+#endif
+    }
+
     /// Renders the package delivered over the LAN for `revision`. `.id(revision)`
     /// rebuilds the web view when a new revision activates.
     @ViewBuilder
@@ -126,7 +149,7 @@ public struct DeviceRuntimeRootView: View {
         onUnlink: @escaping () -> Void
     ) -> some View {
         if let package {
-            DashboardRuntimeView(store: package, onUnlink: onUnlink)
+            DashboardRuntimeView(store: package, homeAssistant: homeAssistantRuntime, revision: revision, onUnlink: onUnlink)
                 .ignoresSafeArea()
                 .id(revision)
         } else if revision == StoredRevision.offlineFixture.revision,

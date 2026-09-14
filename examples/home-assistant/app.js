@@ -5,6 +5,7 @@
   let timer = 0;
   let unsubscribe = null;
   let readySent = false;
+  let connectionUnavailable = true;
 
   const els = {
     lights: document.getElementById("lights"),
@@ -44,7 +45,7 @@
       ...snapshot.lights.map((light) =>
         button(light.on ? `${light.name} on` : `${light.name} off`, {
           pressed: light.on,
-          disabled: light.unavailable,
+          disabled: connectionUnavailable || light.unavailable,
           onClick: () => callWrite(light.on ? "lightOff" : "lightOn", model.lightParameters(light.entityId))
         })
       )
@@ -53,7 +54,7 @@
       ...snapshot.scenes.map((scene) =>
         button(scene.name, {
           className: "secondary",
-          disabled: scene.unavailable,
+          disabled: connectionUnavailable || scene.unavailable,
           onClick: () => callWrite("sceneOn", model.sceneParameters(scene.entityId))
         })
       )
@@ -64,7 +65,7 @@
         wrap.className = "stack";
         wrap.append(
           button(player.playing ? `Pause ${player.name}` : `Play ${player.name}`, {
-            disabled: player.unavailable,
+            disabled: connectionUnavailable || player.unavailable,
             onClick: () => callWrite("mediaPlayPause", model.mediaParameters(player.entityId))
           })
         );
@@ -73,7 +74,7 @@
           select.id = `${player.entityId}-source`;
           select.name = `${player.entityId}-source`;
           select.setAttribute("aria-label", `${player.name} source`);
-          select.disabled = player.unavailable;
+          select.disabled = connectionUnavailable || player.unavailable;
           for (const source of player.sources) {
             const option = document.createElement("option");
             option.value = source;
@@ -94,7 +95,7 @@
         slider.value = String(Math.round((player.volume || 0) * 100));
         slider.id = `${player.entityId}-volume`;
         slider.name = `${player.entityId}-volume`;
-        slider.disabled = player.unavailable;
+        slider.disabled = connectionUnavailable || player.unavailable;
         slider.setAttribute("aria-label", `${player.name} volume`);
         slider.addEventListener("change", () => {
           callWrite(
@@ -128,6 +129,7 @@
       const raw = await sdk.connections.request("home", "getStates", {});
       const unwrapped = model.unwrapResult(raw);
       snapshot = model.parseTheater(unwrapped.data, await configured());
+      connectionUnavailable = unwrapped.stale;
       els.stale.hidden = !unwrapped.stale;
       els.error.hidden = true;
       if (unwrapped.fetchedAt) {
@@ -135,6 +137,8 @@
       }
       render();
     } catch (error) {
+      connectionUnavailable = true;
+      render();
       els.error.hidden = false;
       els.error.textContent = "Required states read failed. Last data is kept when the host has a cache.";
       if (error && /permission_required/.test(String(error.message))) {
@@ -146,7 +150,7 @@
   }
 
   async function callWrite(operation, parameters) {
-    if (!sdk?.connections?.request) return;
+    if (!sdk?.connections?.request || connectionUnavailable) return;
     els.error.hidden = true;
     try {
       await sdk.connections.request("home", operation, model.assertSafeParameters(parameters));

@@ -89,7 +89,7 @@ select_developer_dir() {
 
 if ! select_developer_dir; then
   echo "MACOS_26_SDK_UNAVAILABLE"
-  echo "no installed Xcode ships a macOS 26 SDK; the product Mac app deploys to macOS 26+ and this script does not lower that target"
+  echo "no installed Xcode ships a macOS 26 SDK; the build uses its Liquid Glass APIs while deploying to macOS 14+"
   echo "install Xcode 26 or point DEVELOPER_DIR at one, then rerun"
   exit 1
 fi
@@ -124,7 +124,9 @@ dmg="${OUT_DIR}/Screenpunk-unsigned.dmg"
 build_info="${OUT_DIR}/BUILD-INFO.txt"
 rm -rf "$stage" "$dmg" "${dmg}.sha256" "$build_info"
 
-echo "=== Release build: arm64, macOS 26+, ad-hoc identity (no Developer ID, no team) ==="
+# Remove obsolete command-line resource layout from earlier development builds.
+rm -rf "$derived/Build/Products/Release/Screenpunk.app/Contents/MacOS/ScreenpunkApple_ScreenpunkApple.bundle" "$derived/Build/Products/Release/Screenpunk.app/Contents/MacOS/ScreenpunkController_ScreenpunkController.bundle"
+echo "=== Release build: arm64, macOS 14+, ad-hoc identity (no Developer ID, no team) ==="
 # Command-line settings override the project's CODE_SIGNING_ALLOWED=NO for this
 # build only; apps/macos/project.yml stays unsigned for PR CI.
 xcodebuild \
@@ -150,6 +152,25 @@ if [[ -z "$app" || ! -x "${app}/Contents/MacOS/Screenpunk" ]]; then
   echo "build finished but Screenpunk.app was not found under ${derived}/Build/Products"
   exit 1
 fi
+
+echo "=== bundled MCP server and preview helper ==="
+swift build --package-path "$ROOT/tools/screenpunk-mcp" -c release -Xswiftc -swift-version -Xswiftc 5
+mcp_bin="$(swift build --package-path "$ROOT/tools/screenpunk-mcp" -c release --show-bin-path)"
+ditto "$mcp_bin/screenpunk-mcp" "$app/Contents/MacOS/screenpunk-mcp"
+# Resource bundles live in Resources, outside the signed executable directory.
+for resource in "$mcp_bin"/*.bundle; do
+  [[ -d "$resource" ]] || continue
+  rm -rf "$app/Contents/MacOS/$(basename "$resource")"
+  ditto "$resource" "$app/Contents/Resources/$(basename "$resource")"
+done
+xcodebuild -project "$ROOT/tools/preview-host/ScreenpunkPreviewHost.xcodeproj" \
+  -scheme ScreenpunkPreviewHost -configuration Release -destination 'generic/platform=macOS' \
+  -derivedDataPath "$OUT_DIR/preview-derived" ARCHS=arm64 CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build
+mkdir -p "$app/Contents/Helpers"
+ditto "$OUT_DIR/preview-derived/Build/Products/Release/ScreenpunkPreviewHost.app" "$app/Contents/Helpers/ScreenpunkPreviewHost.app"
+codesign --force --sign - "$app/Contents/MacOS/screenpunk-mcp"
+codesign --force --deep --sign - "$app"
 
 echo "=== signature: must verify and must be ad-hoc ==="
 codesign --verify --deep --strict --verbose=2 "$app"
@@ -198,6 +219,8 @@ state=unsigned: ad-hoc identity, no Developer ID, not notarized, not stapled
 first_launch=System Settings > Privacy & Security > Open Anyway (see docs/macos-unsigned-dmg.md)
 git_sha=${git_sha}
 marketing_version=${marketing_version}
+minimum_macos=14.0
+architecture=arm64
 build_number=${build_number}
 xcode=${xcode_version}
 developer_dir=${DEVELOPER_DIR:-$(xcode-select -p)}

@@ -46,7 +46,7 @@ public final class ControllerLANClient: @unchecked Sendable {
             port: nwPort,
             using: parameters
         )
-        try waitReady(connection)
+        try waitReady(connection, timeout: pinnedDevice == nil ? 60 : 8)
         let observed = LANChannel.observedPeerPin(connection)
         if let expected = pinnedDevice ?? devicePin, observed != expected {
             connection.cancel()
@@ -111,6 +111,19 @@ public final class ControllerLANClient: @unchecked Sendable {
         return try LANCodec.decodePayload(DeploymentRecord.self, json: reply.payloadJSON)
     }
 
+    public func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
+        try configuration.validate()
+        guard lastHello?.capabilities?.contains("home-assistant-http-v1") == true else {
+            throw ConnectionFailure.validationFailed
+        }
+        let reply = try request(method: .homeAssistantProvision, payload: configuration)
+        return try LANCodec.decodePayload(HomeAssistantProvisioningReceipt.self, json: reply.payloadJSON)
+    }
+
+    public func revokeHomeAssistant() throws {
+        _ = try request(method: .homeAssistantRevoke, payload: [String: String]())
+    }
+
     public func queryActive() throws -> String? {
         let reply = try request(method: .queryActive, payload: LANActiveQuery())
         return try LANCodec.decodePayload(LANActiveQuery.self, json: reply.payloadJSON).revision
@@ -123,7 +136,7 @@ public final class ControllerLANClient: @unchecked Sendable {
         observedDevicePin = nil
     }
 
-    private func waitReady(_ connection: NWConnection) throws {
+    private func waitReady(_ connection: NWConnection, timeout: TimeInterval) throws {
         let ready = DispatchSemaphore(value: 0)
         var failed: Error?
         connection.stateUpdateHandler = { state in
@@ -141,7 +154,7 @@ public final class ControllerLANClient: @unchecked Sendable {
             }
         }
         connection.start(queue: queue)
-        if ready.wait(timeout: .now() + 8) == .timedOut {
+        if ready.wait(timeout: .now() + timeout) == .timedOut {
             connection.cancel()
             throw TransferFailure.interrupted
         }

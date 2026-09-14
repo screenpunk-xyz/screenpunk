@@ -150,11 +150,20 @@ public struct MCPToolRouter: Sendable {
                 "revision": manifest.revision,
                 "digest": manifest.digest ?? ""
             ])
-        case "list_connections", "describe_connection", "inspect_connection":
-            return json([
-                "connections": [],
-                "detail": "No approved connections in this controller. Secrets are never returned."
-            ])
+        case "list_connections", "describe_connection":
+            if let alias = arguments["alias"]?.string, alias != "home" {
+                throw ControllerError.validationFailed(detail: "Unknown connection alias. Call list_connections.")
+            }
+            if let describe = service.connectionDescription {
+                return .text(String(decoding: try describe(), as: UTF8.self))
+            }
+            return json(["connections": [], "detail": "Set up Home Assistant in the Mac app’s Connections page. Secrets are never returned."])
+        case "inspect_connection":
+            guard arguments["alias"]?.string == "home", let inspect = service.connectionInspection else {
+                throw ControllerError.validationFailed(detail: "Use alias home for the configured Home Assistant connection.")
+            }
+            do { return .text(String(decoding: try inspect(arguments["query"]?.string), as: UTF8.self)) }
+            catch { throw ControllerError.validationFailed(detail: "Home Assistant could not be read. Check its address, token permissions, and connection in the Mac app.") }
         case "preview_dashboard":
             return try preview(arguments: arguments, interaction: nil)
         case "interact_preview":
@@ -361,6 +370,10 @@ public struct MCPToolRouter: Sendable {
             "revision": record.manifest.revision,
             "digest": record.manifest.digest ?? "",
             "entrypoint": record.manifest.entrypoint,
+            "connections": record.manifest.connections.map { connection -> [String: Any] in
+                ["alias": connection.alias, "required": connection.required,
+                 "operations": (connection.operations ?? []).map { ["name": $0.name, "kind": $0.kind] }]
+            },
             "target": [
                 "profileId": record.manifest.target.profileId,
                 "width": record.manifest.target.width,

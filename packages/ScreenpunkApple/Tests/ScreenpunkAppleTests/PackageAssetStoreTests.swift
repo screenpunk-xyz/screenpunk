@@ -3,6 +3,17 @@ import XCTest
 import ScreenpunkCore
 
 final class PackageAssetStoreTests: XCTestCase {
+    func testLoadsThroughTemporaryDirectoryAliasAndRejectsEscapingSymlink() throws {
+        let root = URL(fileURLWithPath: "/tmp/sp-assets-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("<h1>screen</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+        XCTAssertEqual(try PackageAssetStore.load(directory: root).assets["index.html"]?.data, Data("<h1>screen</h1>".utf8))
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("escape.txt"), withDestinationURL: URL(fileURLWithPath: "/etc/hosts"))
+        // A symlink is either skipped as non-regular or rejected; it must never expose its target.
+        if let loaded = try? PackageAssetStore.load(directory: root) { XCTAssertNil(loaded.assets["escape.txt"]) }
+    }
+
     func testBundledOfflineFixtureServesCustomScheme() throws {
         let store = try PackageAssetStore.bundledOfflineFixture()
         let html = try store.asset(forSchemeURL: "screenpunk://package/index.html")

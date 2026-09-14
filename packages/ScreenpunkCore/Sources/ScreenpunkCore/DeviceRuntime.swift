@@ -71,7 +71,11 @@ public struct DeviceRuntime: Sendable, Equatable {
             return fail(next, error: TransferFailure.interrupted)
         }
         next.phase = .validating
-        if failAt == .validating || revision.matches(profile: profile) == false {
+        // A saved screen can use either orientation of this device's viewport.
+        // Commit the orientation only after activation, so a failure is atomic.
+        var targetProfile = profile
+        targetProfile.apply(orientation: revision.orientation)
+        if failAt == .validating || revision.matches(profile: targetProfile) == false {
             return fail(next, error: TransferFailure.targetMismatch)
         }
         if failAt == .activating {
@@ -79,6 +83,7 @@ public struct DeviceRuntime: Sendable, Equatable {
             return fail(next, error: TransferFailure.interrupted)
         }
         next.phase = .activating
+        profile = targetProfile
         activeRevision = revision.revision
         stagedRevision = nil
         next.phase = .active

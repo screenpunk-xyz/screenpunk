@@ -32,6 +32,16 @@ public final class DeviceLANServer: @unchecked Sendable {
     public var onChange: (() -> Void)?
     public let identity: TLSIdentityMaterial
     public let store: DeviceStateStore?
+    public let homeAssistantVault: HomeAssistantDeviceVault
+    public lazy var homeAssistantRuntime = HomeAssistantDeviceRuntime(vault: homeAssistantVault) { [weak self] in
+        self?.homeAssistantScope()
+    }
+
+    private func homeAssistantScope() -> HomeAssistantDeviceRuntime.Scope? {
+        lock.lock(); defer { lock.unlock() }
+        guard let owner = runtime.pairing.owner, let revision = runtime.activeRevision, let dashboardId = activeStoredRevision?.dashboardId else { return nil }
+        return .init(owner: PeerPin.hex(owner.publicKey), revision: revision, dashboardId: dashboardId)
+    }
     private var deviceConfirmed = false
     private var pinnedController: [UInt8]?
     private var activeStoredRevision: StoredRevision?
@@ -48,8 +58,10 @@ public final class DeviceLANServer: @unchecked Sendable {
         identity: TLSIdentityMaterial,
         clock: PairingClock = FixedClock(Date()),
         store: DeviceStateStore? = nil,
+        homeAssistantVault: HomeAssistantDeviceVault = HomeAssistantDeviceVault(),
         requestBodyTimeout: TimeInterval = 15
     ) {
+        self.homeAssistantVault = homeAssistantVault
         self.runtime = runtime
         self.identity = identity
         self.clock = clock
@@ -57,6 +69,14 @@ public final class DeviceLANServer: @unchecked Sendable {
         self.requestBodyTimeout = requestBodyTimeout
         self.runtime.identity = identity.pairingIdentity
         restoreFromStore()
+        if runtime.profile.model != nil {
+            let orientation = self.runtime.profile.orientation
+            self.runtime.profile.model = runtime.profile.model
+            self.runtime.profile.width = runtime.profile.width
+            self.runtime.profile.height = runtime.profile.height
+            self.runtime.profile.orientation = .portrait
+            self.runtime.profile.apply(orientation: orientation)
+        }
     }
 
     public func start() throws {
@@ -129,6 +149,9 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Erases owner, active revision, package bytes, and everything on disk.
     public func unlink() {
         lock.lock()
+        try? homeAssistantVault.revoke()
+        let homeAssistantRuntime = self.homeAssistantRuntime
+        Task { await homeAssistantRuntime.cancelPending() }
         runtime.unlink()
         activePackage = nil
         activeStoredRevision = nil
@@ -254,7 +277,9 @@ public final class DeviceLANServer: @unchecked Sendable {
                     role: .device,
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
-                    name: runtime.profile.name
+                    name: runtime.profile.name,
+                    capabilities: ["home-assistant-http-v1"],
+                    profile: runtime.profile
                 )
                 return ok(request, payload: hello)
             case .pairBegin:
@@ -323,6 +348,13 @@ public final class DeviceLANServer: @unchecked Sendable {
                             return ok(request, payload: outcome)
                         }
                     }
+                    // Exact-revision binding denies superseded grants immediately.
+                    // Retire their secrets as well; a failed deployment never reaches here.
+                    if before.activeRevision != runtime.activeRevision || activeStoredRevision?.dashboardId != body.revision.dashboardId {
+                        try? homeAssistantVault.revoke()
+                        let service = homeAssistantRuntime
+                        Task { await service.cancelPending() }
+                    }
                     activePackage = PackageAssetStore(assets: staged)
                     activeStoredRevision = body.revision
                     persist()
@@ -336,6 +368,23 @@ public final class DeviceLANServer: @unchecked Sendable {
                     persist()
                 }
                 return ok(request, payload: outcome)
+            case .homeAssistantProvision:
+                try requireOwner(peerPin)
+                let body = try LANCodec.decodePayload(HomeAssistantProvisioning.self, json: request.payloadJSON)
+                guard body.revision == runtime.activeRevision,
+                      body.dashboardId == activeStoredRevision?.dashboardId else { throw TransferFailure.validationFailed }
+                try homeAssistantVault.provision(body, owner: PeerPin.hex(peerPin!))
+                onChange?()
+                return ok(request, payload: HomeAssistantProvisioningReceipt(
+                    deviceId: runtime.profile.deviceId, dashboardId: body.dashboardId, revision: body.revision,
+                    connectionId: body.connectionId, provisioningId: body.provisioningId))
+            case .homeAssistantRevoke:
+                try requireOwner(peerPin)
+                try homeAssistantVault.revoke()
+                let service = homeAssistantRuntime
+                Task { await service.cancelPending() }
+                onChange?()
+                return ok(request, payload: ["revoked": true])
             case .queryActive:
                 try requireOwner(peerPin)
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
@@ -349,6 +398,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 ok: false,
                 error: (error as? PairingFailure)?.rawValue
                     ?? (error as? TransferFailure)?.rawValue
+                    ?? (error as? ConnectionFailure)?.rawValue
                     ?? (error is DeviceStateStoreError ? TransferFailure.interrupted.rawValue : nil)
                     ?? "failed"
             )

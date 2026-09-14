@@ -31,6 +31,7 @@ public struct PackageAssetStore: Sendable, Equatable {
     }
 
     public static func load(directory: URL) throws -> PackageAssetStore {
+        let directory = directory.resolvingSymlinksInPath()
         var assets: [String: PackageAsset] = [:]
         let enumerator = FileManager.default.enumerator(
             at: directory,
@@ -40,7 +41,10 @@ public struct PackageAssetStore: Sendable, Equatable {
         while let file = enumerator?.nextObject() as? URL {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey])
             guard values.isRegularFile == true else { continue }
-            let rel = file.path.replacingOccurrences(of: directory.path + "/", with: "")
+            let resolvedPath = file.resolvingSymlinksInPath().path
+            let prefix = directory.path + "/"
+            guard resolvedPath.hasPrefix(prefix) else { throw PackageAssetError.denied }
+            let rel = String(resolvedPath.dropFirst(prefix.count))
             let path = try hostRelativePath(rel)
             let data = try Data(contentsOf: file)
             assets[path] = PackageAsset(path: path, data: data, mime: mime(for: path))
@@ -50,7 +54,7 @@ public struct PackageAssetStore: Sendable, Equatable {
 
     public static func bundledOfflineFixture() throws -> PackageAssetStore {
         let candidates = [
-            Bundle.module.url(forResource: "offline-fixture", withExtension: nil),
+            BundledResources.bundle.url(forResource: "offline-fixture", withExtension: nil),
             Bundle.main.url(forResource: "offline-fixture", withExtension: nil)
         ]
         guard let dir = candidates.compactMap({ $0 }).first else {

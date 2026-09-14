@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import ScreenpunkCore
 
 /// One authenticated control channel to a device. The production implementation
@@ -15,8 +16,19 @@ public protocol DeviceLink: AnyObject {
     func beginPairing(nonce: [UInt8]) throws -> LANPairBeginResult
     func confirmPairing(code: String) throws
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord
+    func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt
+    func revokeHomeAssistant() throws
     func queryActive() throws -> String?
     func cancel()
+}
+
+public extension DeviceLink {
+    func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on the phone to use Home Assistant.")
+    }
+    func revokeHomeAssistant() throws {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on the phone to manage Home Assistant.")
+    }
 }
 
 /// Creates links that present this controller's persistent identity.
@@ -37,6 +49,7 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
     public var devicePinHex: String
     public var pairedAt: Date
     public var lastSeenAt: Date?
+    public var displayName: String?
 
     public init(
         device: PairedDevice,
@@ -44,7 +57,8 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
         port: Int,
         devicePinHex: String,
         pairedAt: Date,
-        lastSeenAt: Date? = nil
+        lastSeenAt: Date? = nil,
+        displayName: String? = nil
     ) {
         self.device = device
         self.host = host
@@ -52,6 +66,7 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
         self.devicePinHex = devicePinHex
         self.pairedAt = pairedAt
         self.lastSeenAt = lastSeenAt
+        self.displayName = displayName
     }
 
     public var devicePin: [UInt8]? { PeerPin.bytes(devicePinHex) }
@@ -63,9 +78,14 @@ public final class DeviceDirectory: @unchecked Sendable {
     public let url: URL
     private var records: [PairedDeviceRecord]
     private let lock = NSLock()
+    private var fileLock: FileHandle?
 
     public init(url: URL) {
         self.url = url
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lockURL = url.appendingPathExtension("lock")
+        if !FileManager.default.fileExists(atPath: lockURL.path) { FileManager.default.createFile(atPath: lockURL.path, contents: Data()) }
+        fileLock = try? FileHandle(forUpdating: lockURL)
         if let loaded = try? AtomicJSONStore.read([PairedDeviceRecord].self, from: url) {
             records = loaded
         } else {
@@ -78,20 +98,20 @@ public final class DeviceDirectory: @unchecked Sendable {
     }
 
     public func list() -> [PairedDeviceRecord] {
-        lock.lock()
-        defer { lock.unlock() }
+        acquire()
+        defer { release() }
         return records.sorted { $0.id < $1.id }
     }
 
     public func get(_ deviceId: String) -> PairedDeviceRecord? {
-        lock.lock()
-        defer { lock.unlock() }
+        acquire()
+        defer { release() }
         return records.first { $0.id == deviceId }
     }
 
     public func upsert(_ record: PairedDeviceRecord) throws {
-        lock.lock()
-        defer { lock.unlock() }
+        acquire()
+        defer { release() }
         records.removeAll { $0.id == record.id }
         records.append(record)
         try persist()
@@ -99,8 +119,8 @@ public final class DeviceDirectory: @unchecked Sendable {
 
     @discardableResult
     public func update(_ deviceId: String, _ mutate: (inout PairedDeviceRecord) -> Void) throws -> PairedDeviceRecord? {
-        lock.lock()
-        defer { lock.unlock() }
+        acquire()
+        defer { release() }
         guard let index = records.firstIndex(where: { $0.id == deviceId }) else { return nil }
         mutate(&records[index])
         try persist()
@@ -109,8 +129,8 @@ public final class DeviceDirectory: @unchecked Sendable {
 
     @discardableResult
     public func remove(_ deviceId: String) throws -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        acquire()
+        defer { release() }
         let before = records.count
         records.removeAll { $0.id == deviceId }
         if records.count != before {
@@ -121,14 +141,24 @@ public final class DeviceDirectory: @unchecked Sendable {
     }
 
     public func deployment(_ deploymentId: String) -> (PairedDeviceRecord, DeploymentRecord)? {
-        lock.lock()
-        defer { lock.unlock() }
+        acquire()
+        defer { release() }
         for record in records {
             if let match = record.device.deployments.first(where: { $0.deploymentId == deploymentId }) {
                 return (record, match)
             }
         }
         return nil
+    }
+
+    private func acquire() {
+        lock.lock()
+        if let fd = fileLock?.fileDescriptor { _ = flock(fd, LOCK_EX) }
+        if let loaded = try? AtomicJSONStore.read([PairedDeviceRecord].self, from: url) { records = loaded }
+    }
+    private func release() {
+        if let fd = fileLock?.fileDescriptor { _ = flock(fd, LOCK_UN) }
+        lock.unlock()
     }
 
     private func persist() throws {

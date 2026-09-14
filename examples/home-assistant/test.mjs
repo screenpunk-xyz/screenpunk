@@ -19,7 +19,7 @@ test("theater snapshot disables unavailable lights and keeps media", () => {
   assert.equal(snapshot.scenes[0].name, "Movie");
   assert.equal(snapshot.media[0].source, "Apple TV");
   assert.equal(snapshot.media[0].volume, 0.4);
-  assert.equal(model.POLL_SECONDS, 15);
+  assert.equal(model.POLL_SECONDS, 2);
 });
 
 test("configured entity filter omits extra lights", () => {
@@ -76,4 +76,12 @@ test("committed HA grants have refs, not secrets", () => {
     assert.match(text, /keychain:/);
     assert.equal(/Bearer |sk-|password=/i.test(text), false);
   }
+});
+
+
+test("native SDK envelopes preserve states and stale status", () => {
+  const result = model.unwrapResult({ value: states, stale: true });
+  assert.deepEqual(result.data, states);
+  assert.equal(result.stale, true);
+  assert.ok(model.parseTheater(result.data).lights.length > 0);
 });

@@ -17,7 +17,7 @@ settings:
     INFOPLIST_KEY_CFBundleDisplayName: Screenpunk
     INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-    INFOPLIST_KEY_NSLocalNetworkUsageDescription: Screenpunk advertises this device and pairs with your Mac on the local network.
+    INFOPLIST_KEY_NSLocalNetworkUsageDescription: Screenpunk pairs with your Mac and connects directly to approved services such as Home Assistant on your local network.
     # NSBonjourServices is an array and has no INFOPLIST_KEY_ build setting, so it
     # lives in Info.plist; Xcode merges the generated keys into that file.
     INFOPLIST_FILE: Info.plist

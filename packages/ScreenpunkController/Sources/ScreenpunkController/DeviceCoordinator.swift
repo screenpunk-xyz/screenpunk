@@ -42,6 +42,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
         var startedAt: Date
         var rePairing: Bool
         var link: DeviceLink
+        var profile: DeviceProfile?
     }
 
     public init(
@@ -148,7 +149,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
                 nonce: nonce
             )
             let started = now()
-            let name = hello.deviceId.isEmpty ? target.host : hello.deviceId
+            let name = DeviceDisplayName.label(name: hello.name, deviceId: hello.deviceId, fallback: "Paired device")
             let resolvedId = hello.deviceId.isEmpty ? target.deviceId : hello.deviceId
             let entry = PendingPairing(
                 deviceId: resolvedId,
@@ -159,7 +160,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
                 code: begin.code,
                 startedAt: started,
                 rePairing: known != nil,
-                link: link
+                link: link,
+                profile: hello.profile
             )
             lock.lock()
             if resolvedId != target.deviceId {
@@ -213,7 +215,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
 
         let pairedAt = now()
         var device = PairedDevice(
-            profile: DeviceProfile(deviceId: deviceId, name: entry.deviceName),
+            profile: entry.profile ?? DeviceProfile(deviceId: deviceId, name: entry.deviceName),
             owner: factory.controllerIdentity,
             reachable: true
         )
@@ -343,6 +345,40 @@ public final class DeviceCoordinator: @unchecked Sendable {
         return outcome
     }
 
+    /// Check support before replacing the current screen or transmitting credentials.
+    public func requireHomeAssistantSupport(deviceId: String) throws {
+        let record = try ownedRecord(deviceId)
+        let hello = try withLink(record) { try $0.hello() }
+        guard hello.deviceId == deviceId, hello.capabilities?.contains("home-assistant-http-v1") == true else {
+            throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on the phone to use Home Assistant. The current screen has been kept.")
+        }
+    }
+
+    public func provisionHomeAssistant(deviceId: String, configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
+        let record = try ownedRecord(deviceId)
+        try configuration.validate()
+        let receipt = try withLink(record) { try $0.provisionHomeAssistant(configuration) }
+        guard receipt.installed, receipt.deviceId == deviceId,
+              receipt.dashboardId == configuration.dashboardId, receipt.revision == configuration.revision,
+              receipt.connectionId == configuration.connectionId, receipt.provisioningId == configuration.provisioningId else {
+            throw ControllerError.validationFailed(detail: "The phone returned an invalid Home Assistant installation receipt.")
+        }
+        return receipt
+    }
+
+    public func revokeHomeAssistant(deviceId: String) throws {
+        let record = try ownedRecord(deviceId)
+        try withLink(record) { try $0.revokeHomeAssistant() }
+    }
+
+    private func ownedRecord(_ deviceId: String) throws -> PairedDeviceRecord {
+        let factory = try requireFactory()
+        guard let record = directory.get(deviceId), record.device.owner == factory.controllerIdentity else {
+            throw ControllerError.notPaired("Pair this device before managing its connections.")
+        }
+        return record
+    }
+
     // MARK: Helpers
 
     private struct Target {
@@ -422,8 +458,15 @@ public final class DeviceCoordinator: @unchecked Sendable {
         }
         let link = try factory.makeLink()
         do {
-            try link.connect(host: record.host, port: port, pinnedDevice: record.devicePin)
-            _ = try link.hello()
+            let advertised = hub.browse().first { $0.deviceId == record.id }
+            try link.connect(host: advertised?.host ?? record.host, port: UInt16(exactly: advertised?.port ?? Int(port)) ?? port, pinnedDevice: record.devicePin)
+            let hello = try link.hello()
+            if let profile = hello.profile, profile.deviceId == record.id {
+                _ = try directory.update(record.id) { current in
+                    current.device.profile = profile
+                    if let name = current.displayName { current.device.profile.name = name }
+                }
+            }
         } catch {
             link.cancel()
             throw error
