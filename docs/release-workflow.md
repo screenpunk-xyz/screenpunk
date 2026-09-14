@@ -6,24 +6,82 @@ revision, inside a protected GitHub environment. Nothing here signs up for
 Apple services, accepts agreements, registers identifiers, or uploads to
 the App Store on your behalf.
 
-Status: the release workflow files are being written (Milestone 5). This
-document fixes the names, inputs, and steps they must match; the YAML must
-use exactly the secret and variable names below. Until those workflows
-merge and you have added the secrets, every build is unsigned and the
-project reports "signing pending".
+The workflows are implemented: [Mac Release](../.github/workflows/macos-release.yml),
+[iOS TestFlight](../.github/workflows/ios-testflight.yml), and
+[Mac Unsigned DMG](../.github/workflows/macos-unsigned-dmg.yml). Signing and
+publication still depend on configured credentials, explicit dispatch inputs,
+and successful run evidence. A local development-signed install is not a public
+release. See [apple-release.md](apple-release.md) for workflow input details.
+
+## One repository, independent application releases
+
+Keep applications and their shared contracts in this monorepo. Mac, iOS,
+future Windows, and future services distributed as Docker images can each have
+their own version, build, release notes, and publication schedule. A Docker
+image versions the service it packages, rather than inventing an unrelated
+application version. Windows and Docker workflows are not implemented yet.
+
+PRs should deliver one coherent change: prefer app-specific PRs for isolated
+fixes, and use cross-app PRs when a feature or protocol requires coordinated
+implementation. Unrelated changes should ship through separate PRs. See
+[CONTRIBUTING.md](../CONTRIBUTING.md) and the PR template.
+
+Before releasing one application, record its tested compatibility with the
+other released applications and protocol/schema versions. Devices do not
+update together. Shared changes must preserve supported older clients or
+explicitly gate unsupported behavior and document the upgrade order.
+
+Version and tag each published application independently. For new GitHub
+release tags, use a platform suffix compatible with the current Mac workflow's
+`v`-plus-digit validation, such as `v0.2.0-macos` or `v0.2.0-ios` (examples,
+not existing releases). Use an explicit title such as **Screenpunk for Mac
+0.2.0** and mark alpha/beta entries as prereleases. Do not reuse a tag or imply
+that another application was released by the same entry. Record the source
+commit, app version, and build number in release notes; verify the built
+version, since the current Mac `release_tag` input does not set it.
+
+Mac and iOS release workflows are dispatched independently today, although
+both run the shared Apple precheck. CI currently runs the complete required
+suite on every PR, including documentation PRs. Future selective CI should
+run affected app checks and all dependent checks for shared changes; this
+policy does not claim path filtering or separate per-app CI already exists.
+
+## Downloads and release history
+
+The README is the user-facing download index. Keep one row per application
+with platform requirements, current public version, stable/beta/planned status,
+and a direct release or install-channel link. Until a build is published,
+label testing instructions as testing and planned platforms as unavailable.
+Never use an expiring Actions artifact as the normal public download.
+
+Use the repository's [All releases](https://github.com/screenpunk-xyz/screenpunk/releases)
+page for the full chronological history. Label each entry by application.
+Link README rows to the specific platform release, rather than the repository's
+single `releases/latest` destination, which may point to a different app.
+iOS rows should use a verified TestFlight or App Store install link when
+available; Docker should use the published image and quickstart.
+
+When publishing, update the affected README row and release notes with version,
+requirements, compatibility, installation instructions, and known limitations.
+Name future assets clearly by platform, version, and architecture. The current
+Mac workflow emits `Screenpunk.dmg` and its checksum and a generic release
+title; edit the title/notes to identify Mac before announcing the release.
+Workflow changes for automated naming are separate implementation work.
 
 ## What runs on every PR
 
 | Required job | Runner | Checks |
 | --- | --- | --- |
 | `contracts-and-sdk` | `ubuntu-24.04` | Schema fixtures, TypeScript SDK tests, package validator, HTTP/WS adapter vectors (`./scripts/ci/linux.sh`) |
+| `core-linux` | `ubuntu-24.04` with pinned Swift container | ScreenpunkCore tests on Linux (`./scripts/ci/core-linux.sh`) |
 | `security-and-hygiene` | `ubuntu-24.04` | LICENSE/NOTICE, brand provenance, bundle IDs, fixture presence, credential-like strings |
 | `apple-build-and-unit` | `macos-15` | Swift package tests, Mac build when the macOS 26 SDK is present, iOS 16 compile (`./scripts/ci/apple.sh`) |
 | `apple-ui-and-preview` | `macos-15` | Hidden WKWebView snapshot probe; uploads a real PNG only (`./scripts/ci/preview.sh`) |
-| `required-checks` | `ubuntu-24.04` | Passes only when all four above succeeded |
+| `required-checks` | `ubuntu-24.04` | Passes only when all five above succeeded |
 
-Merge policy: merge after `required-checks` is green; do not wait for a
-second review; never weaken or bypass a required check. PR builds are
+Merge policy: merge only after `required-checks` is green on the current PR
+head, review feedback is resolved, and applicable repository approval rules
+are satisfied. Never weaken or bypass a required check. PR builds are
 unsigned. Obsolete PR runs are cancelled; release runs are not. Artifacts
 are fixtures and sanitized screenshots only, retained 7 days.
 
@@ -82,25 +140,29 @@ Preconditions: `required-checks` is green on the `main` SHA you chose, and
 the TEST_PLAN evidence for that SHA is recorded.
 
 1. GitHub > Actions > the Mac release workflow (its file is under
-   `.github/workflows/`) > Run workflow. Choose `main`, enter the version
-   tag and, if the workflow asks, the exact SHA. Approve the
+   `.github/workflows/`) > Run workflow. Choose `main` after verifying its exact SHA. Leave
+   `publish_github_release` false for an artifact-only run, or enable it and
+   supply `release_tag` for publication. Approve the
    `apple-release` deployment when GitHub prompts you.
-2. The run builds the arm64 macOS 26+ app, signs nested contents inside out
+2. The run builds the arm64 macOS 14+ app (using the macOS 26+ SDK), signs nested contents inside out
    (`screenpunk-mcp`, the preview helper, frameworks, then the app) with
    the Developer ID Application identity and hardened runtime, applies only
    the entitlements documented in the repository, packages a DMG, submits
-   it to Apple's notary service, staples the ticket, verifies with
-   `codesign --verify --deep --strict` and `spctl --assess`, writes a
+   it to Apple's notary service, staples the DMG ticket, verifies signing and stapling, attempts
+   `spctl --assess`, writes a
    SHA-256 checksum, uploads the artifact, and publishes a GitHub Release
-   only if every step succeeded.
+   when the signing job succeeds and publication is enabled. The hosted
+   runner may report Gatekeeper assessment as incomplete without failing;
+   verify Gatekeeper on a real Mac before announcing the download.
 3. Download the DMG and its checksum. Verify on a Mac, ideally a clean one:
 
 ```sh
-shasum -a 256 -c Screenpunk-<version>.dmg.sha256
-spctl -a -vv -t open --context context:primary-signature Screenpunk-<version>.dmg
-hdiutil attach Screenpunk-<version>.dmg
+shasum -a 256 Screenpunk.dmg
+# Compare the hash with Screenpunk.dmg.sha256 (which may contain a runner path).
+spctl -a -vv -t open --context context:primary-signature Screenpunk.dmg
+hdiutil attach Screenpunk.dmg
 codesign --verify --deep --strict --verbose=2 /Volumes/Screenpunk/Screenpunk.app
-xcrun stapler validate /Volumes/Screenpunk/Screenpunk.app
+xcrun stapler validate Screenpunk.dmg
 ```
 
 4. Drag the app to `/Applications`, launch it, and confirm Gatekeeper opens
@@ -122,13 +184,13 @@ TestFlight only when you dispatch the upload. The agreed finish is
 "ready for the operator's TestFlight upload", not an autonomous upload or
 an App Store submission.
 
-1. Actions > the iOS archive workflow > Run workflow on `main`. Approve the
-   `apple-release` deployment. The run archives with the Apple Distribution
-   certificate and profile, exports the IPA, and uploads it as a workflow
-   artifact.
-2. When you want that build in TestFlight, dispatch the upload workflow
-   (or the upload input, if the archive workflow provides one) for the same
-   run. It uploads with the App Store Connect API key.
+1. Actions > **iOS TestFlight** > Run workflow on the verified `main`
+   revision with `upload_to_testflight` false. Approve the `apple-release`
+   deployment. It archives, exports, and retains the signed IPA artifact.
+2. For TestFlight, dispatch **iOS TestFlight** with `upload_to_testflight`
+   true. This performs a new archive/export and uploads that run's IPA; it
+   does not upload a previously exported artifact. Verify the source SHA,
+   app version, and build number again before dispatch.
 3. In App Store Connect > TestFlight, wait for processing. Answer the
    export compliance question yourself; Screenpunk uses only standard
    HTTPS/TLS, but the declaration is yours to make.
@@ -156,6 +218,10 @@ device ([setup.md](setup.md#from-source-onto-your-own-device)).
 ## Release checklist
 
 - [ ] `main` SHA with `required-checks` green.
+- [ ] Target application, version, build number, release channel, and tested
+      cross-app compatibility recorded.
+- [ ] Public release title identifies the application; README download row
+      links to the verified release or install channel and states availability.
 - [ ] TEST_PLAN evidence recorded for this SHA: which devices and OS
       versions were physically verified.
 - [ ] Release notes separate verified devices from intended compatibility.
@@ -189,8 +255,8 @@ device ([setup.md](setup.md#from-source-onto-your-own-device)).
   Installed devices keep their local dashboards regardless.
 - iOS: expire the build in App Store Connect > TestFlight.
 - Devices are never affected by a release action; a dashboard problem is
-  fixed by redeploying or rolling back from the Mac, or with the two-finger
-  Unlink on the device.
+  fixed by redeploying or rolling back from the Mac, or through the five-second two-finger device menu and confirmed
+  **Disconnect** action.
 
 ## Status words to use in reports
 
