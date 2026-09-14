@@ -282,7 +282,7 @@ final class UnlinkTests: XCTestCase {
 
     func testUnlinkChromeIsNativeSingleActionAndSurvivesContentDeath() {
         XCTAssertEqual(UnlinkGestureSpec.fingers, 2)
-        XCTAssertEqual(UnlinkGestureSpec.holdSeconds, 10)
+        XCTAssertEqual(UnlinkGestureSpec.holdSeconds, 5)
         XCTAssertEqual(UnlinkGestureSpec.actionCount, 1)
         XCTAssertEqual(UnlinkGestureSpec.actionTitle, "Unlink")
         XCTAssertTrue(UnlinkGestureSpec.worksOverTerminatedWebContent)

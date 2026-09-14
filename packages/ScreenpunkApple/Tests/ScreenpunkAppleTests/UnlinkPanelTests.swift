@@ -17,7 +17,7 @@ final class UnlinkPanelTests: XCTestCase {
 
     func testHoldGateIsUnchanged() {
         XCTAssertEqual(UnlinkGestureSpec.fingers, 2)
-        XCTAssertEqual(NativeChromeHost.holdSeconds, 10)
+        XCTAssertEqual(NativeChromeHost.holdSeconds, 5)
         XCTAssertEqual(NativeChromeHost.unlinkActionCount, 1)
     }
 

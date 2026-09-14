@@ -12,6 +12,7 @@ public final class DeviceLANHost: ObservableObject {
     @Published public var port: UInt16 = 0
     @Published public var errorMessage: String?
     @Published public var activePackage: PackageAssetStore?
+    @Published public var screenSet: DeviceInstalledScreenSet?
     public let server: DeviceLANServer?
 
     /// `store` defaults to the per-user device home so pairing and the active
@@ -27,6 +28,7 @@ public final class DeviceLANHost: ObservableObject {
             )
             self.runtime = server.runtime
             self.activePackage = server.activePackage
+            self.screenSet = server.screenSet
             self.server = server
             server.onChange = { [weak self] in
                 DispatchQueue.main.async { self?.refresh() }
@@ -58,6 +60,28 @@ public final class DeviceLANHost: ObservableObject {
         }
     }
 
+    public func cancelPairing() {
+        server?.cancelPairing()
+        errorMessage = nil
+        refresh()
+    }
+
+    public func advanceScreen(by offset: Int) {
+        guard let set = screenSet, let index = set.screens.firstIndex(where: { $0.revision.dashboardId == set.selectedDashboardId }) else { return }
+        guard let next = ScreenCarousel.index(from: index, offset: offset, count: set.screens.count) else { return }
+        selectScreen(set.screens[next].revision.dashboardId)
+    }
+
+    public func selectScreen(_ dashboardId: String) {
+        do {
+            try server?.selectScreen(dashboardId)
+            errorMessage = nil
+            refresh()
+        } catch {
+            errorMessage = "Could not switch screens. Try again."
+        }
+    }
+
     public func unlink() {
         server?.unlink()
         refresh()
@@ -72,6 +96,7 @@ public final class DeviceLANHost: ObservableObject {
             awaitingControllerConfirm = server.awaitingControllerConfirm
             port = server.port
             activePackage = server.activePackage
+            screenSet = server.screenSet
         }
     }
 }

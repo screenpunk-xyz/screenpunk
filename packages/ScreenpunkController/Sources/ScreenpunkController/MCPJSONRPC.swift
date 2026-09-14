@@ -66,7 +66,7 @@ public struct MCPJSONRPC: Sendable {
             result = [
                 "resources": [
                     resource("screenpunk://help/onboarding", "Onboarding"),
-                    resource("screenpunk://help/unlink", "Unlink recovery"),
+                    resource("screenpunk://help/unlink", "Disconnect recovery"),
                     resource("screenpunk://help/preview", "Live preview"),
                     resource("screenpunk://help/pairing", "Pairing"),
                     resource("screenpunk://help/deploy", "Deploy")

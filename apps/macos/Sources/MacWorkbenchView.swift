@@ -52,7 +52,7 @@ struct MacWorkbenchView: View {
         } message: { Text(model.error ?? "") }
         .confirmationDialog("Forget \(model.title)?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Device", role: .destructive) { model.forgetDevice() }
-        } message: { Text("Its screen keeps running. To pair with a different Mac, unlink on the device by holding two fingers on the screen for 10 seconds.") }
+        } message: { Text("Its screen keeps running. To pair with a different Mac, hold two fingers on the device screen for five seconds to open the device menu, then choose Disconnect and confirm.") }
         .confirmationDialog("Delete this screen?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Screen", role: .destructive) { model.deleteScreen() }
         } message: { Text("It will be removed from your library. Screens already running on devices keep running.") }
@@ -64,7 +64,7 @@ struct MacWorkbenchView: View {
                 LazyVStack(spacing: 8) {
                     if model.section == "Devices" {
                         ForEach(model.nearby) { entry in
-                            sidebarItem(id: entry.id, title: entry.title, subtitle: "Ready to pair", symbol: model.deviceSymbol(entry.title)) {
+                            sidebarItem(id: entry.id, title: entry.title, subtitle: "Ready to pair", symbol: model.deviceSymbol(entry.title), rowID: "nearby:\(entry.id)") {
                                 if model.selection != entry.id {
                                     Button { model.pair(entry) } label: { Image(systemName: "plus").font(.system(size: 16, weight: .semibold)).frame(width: 24, height: 24) }
                                         .workbenchButton(prominent: true, circular: true).tint(Color(nsColor: .systemGreen))
@@ -102,7 +102,7 @@ struct MacWorkbenchView: View {
             .onKeyPress(.upArrow) { moveSidebarSelection(-1); return .handled }
             .onKeyPress(.downArrow) { moveSidebarSelection(1); return .handled }
             .onChange(of: model.selection) { _, id in
-                if let id { proxy.scrollTo(id) }
+                if let id { proxy.scrollTo(model.section == "Devices" && model.nearby.contains(where: { $0.id == id }) ? "nearby:\(id)" : id) }
             }
         }
         .background(DesktopSidebarMaterial(isActive: windowIsActive).ignoresSafeArea())
@@ -153,7 +153,7 @@ struct MacWorkbenchView: View {
         let index = model.selection.flatMap { ids.firstIndex(of: $0) } ?? (offset > 0 ? -1 : ids.count)
         model.select(ids[min(max(index + offset, 0), ids.count - 1)])
     }
-    private func sidebarItem<Actions: View>(id: String, title: String, subtitle: String?, symbol: String, @ViewBuilder actions: () -> Actions) -> some View {
+    private func sidebarItem<Actions: View>(id: String, title: String, subtitle: String?, symbol: String, rowID: String? = nil, @ViewBuilder actions: () -> Actions) -> some View {
         let selected = !connectionsSelected && model.selection == id
         return HStack(spacing: 8) {
             Button {
@@ -173,7 +173,7 @@ struct MacWorkbenchView: View {
         .foregroundStyle(selected && windowIsActive ? Color.white : windowIsActive ? Color.primary : Color.secondary)
         .padding(.horizontal, 12).padding(.vertical, 10)
         .background(selected ? (windowIsActive ? WorkbenchPalette.accent : Color.primary.opacity(0.12)) : .clear, in: .rect(cornerRadius: 12))
-        .id(id)
+        .id(rowID ?? id)
     }
     private func screenPickerRow(_ title: String, symbol: String, selected: Bool = false) -> some View {
         HStack(spacing: 10) {
@@ -252,24 +252,12 @@ struct MacWorkbenchView: View {
         if model.device != nil && model.section == "Devices" {
             ToolbarItem(placement: .principal) {
                 Button { screenPicker.toggle() } label: {
-                    HStack(spacing: 8) { Image(systemName: model.selectedScreen.map { model.symbol(for: $0) } ?? "rectangle"); Text(model.screenName).lineLimit(1); if model.hasUnappliedScreen { Text("Not Applied").font(.caption).foregroundStyle(.secondary) }; Image(systemName: "chevron.down").font(.caption.weight(.semibold)) }.frame(minHeight: 24)
+                    HStack(spacing: 8) { Image(systemName: model.deviceScreens.multiple ? "rectangle.stack" : model.selectedScreen.map { model.symbol(for: $0) } ?? "rectangle"); Text(model.screenSelectorTitle).lineLimit(1); if model.hasUnappliedScreen { Text("Not Applied").font(.caption).foregroundStyle(.secondary) }; Image(systemName: "chevron.down").font(.caption.weight(.semibold)) }.frame(minHeight: 24)
                 }
                 .workbenchButton()
                 .help(model.hasUnappliedScreen ? "Selected screen · Apply to send to device" : "Current screen")
                 .popover(isPresented: $screenPicker, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Screens").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).padding(8)
-                        ForEach(model.screens, id: \.dashboardId) { screen in
-                            Button { model.chooseScreen(screen.dashboardId); screenPicker = false } label: {
-                                screenPickerRow(screen.name, symbol: model.symbol(for: screen.dashboardId), selected: model.selectedScreen == screen.dashboardId)
-                            }.buttonStyle(.plain)
-                        }
-                        Divider().padding(.vertical, 4)
-                        Button { screenPicker = false; model.duplicateScreen() } label: {
-                            screenPickerRow("Duplicate Screen…", symbol: "plus.square.on.square")
-                        }.buttonStyle(.plain).disabled(!model.canDuplicate)
-                        Button { screenPicker = false; model.newScreen() } label: { screenPickerRow("New Screen…", symbol: "plus") }.buttonStyle(.plain)
-                    }.padding(8).frame(width: 270)
+                    DeviceScreenPicker(model: model) { screenPicker = false }
                 }
             }.workbenchSeparateBackground()
             ToolbarItemGroup(placement: .primaryAction) {
@@ -277,13 +265,13 @@ struct MacWorkbenchView: View {
                 Button { model.applyScreen() } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.up.doc")
-                        Text("Apply Screen")
+                        Text(model.applyLabel)
                     }.frame(minHeight: 24).foregroundStyle(.white)
                 }
                 .workbenchButton(prominent: true)
                 .tint(WorkbenchPalette.accent)
                 .controlSize(.large)
-                .accessibilityLabel("Apply Screen")
+                .accessibilityLabel(model.applyLabel)
                 .disabled(!model.canApply)
             }.workbenchSeparateBackground()
         } else if model.section == "Screens", model.selectedScreen != nil {

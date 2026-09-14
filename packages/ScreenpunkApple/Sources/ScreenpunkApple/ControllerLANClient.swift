@@ -111,6 +111,18 @@ public final class ControllerLANClient: @unchecked Sendable {
         return try LANCodec.decodePayload(DeploymentRecord.self, json: reply.payloadJSON)
     }
 
+    public func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
+        try body.validate()
+        guard lastHello?.capabilities?.contains("screen-set-v1") == true else { throw TransferFailure.validationFailed }
+        let reply = try request(method: .deploySet, payload: body, timeout: 30)
+        return try LANCodec.decodePayload(LANScreenSetReceipt.self, json: reply.payloadJSON)
+    }
+
+    public func queryActiveState() throws -> LANActiveQuery {
+        let reply = try request(method: .queryActive, payload: LANActiveQuery())
+        return try LANCodec.decodePayload(LANActiveQuery.self, json: reply.payloadJSON)
+    }
+
     public func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
         try configuration.validate()
         guard lastHello?.capabilities?.contains("home-assistant-http-v1") == true else {
@@ -181,8 +193,7 @@ public final class ControllerLANClient: @unchecked Sendable {
             if reply.error == PairingFailure.secondOwner.rawValue { throw PairingFailure.secondOwner }
             if reply.error == PairingFailure.identityChanged.rawValue { throw PairingFailure.identityChanged }
             if reply.error == PairingFailure.codeMismatch.rawValue { throw PairingFailure.codeMismatch }
-            if reply.error == TransferFailure.validationFailed.rawValue { throw TransferFailure.validationFailed }
-            if reply.error == TransferFailure.notPaired.rawValue { throw TransferFailure.notPaired }
+            if let raw = reply.error, let failure = TransferFailure(rawValue: raw) { throw failure }
             throw TransferFailure.interrupted
         }
         return reply

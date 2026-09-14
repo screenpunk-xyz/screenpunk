@@ -227,10 +227,10 @@ intentional and happens only when a preview is requested.
 
 ## Remove Screenpunk
 
-- Device: hold two fingers on the screen for ten seconds, tap **Unlink**,
+- Device: hold two fingers on the screen for five seconds, open the device menu, choose **Disconnect**, confirm,
   then delete the app. Deleting the app without unlinking leaves the Mac
   believing the device is paired until you Forget it there.
-- Mac: Unlink or Forget each device, quit Screenpunk, remove it from
+- Mac: Forget each device, quit Screenpunk, remove it from
   `/Applications`, delete the `screenpunk` entry from each agent client
   ([mcp-install.md](mcp-install.md#uninstall)), and delete Keychain items
   labeled Screenpunk if you want the credentials gone.

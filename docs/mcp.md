@@ -122,7 +122,7 @@ controller without the LAN transport returns `device_offline`.
 
 ## Unlink recovery
 
-Hold two fingers on the device screen for ten seconds, then tap Unlink.
+Hold two fingers on the device screen for five seconds, open the device menu, choose Disconnect, and confirm.
 Dashboard, credentials, and pairing are erased.
 
 Forgetting an unreachable device on the Mac does not erase it. The phone still

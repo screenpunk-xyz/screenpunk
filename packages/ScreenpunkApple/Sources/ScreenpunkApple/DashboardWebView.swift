@@ -12,21 +12,23 @@ import AppKit
 #if os(iOS)
 public struct DashboardWebView: UIViewRepresentable {
     public var store: PackageAssetStore
+    public var onReady: () -> Void
     public var onUnlinkHold: () -> Void
     public var homeAssistant: HomeAssistantDeviceRuntime?
     public var revision: String
     public var onConnectionHealth: (Bool) -> Void
 
-    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onUnlinkHold: @escaping () -> Void) {
+    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
         self.store = store
         self.homeAssistant = homeAssistant
         self.revision = revision
         self.onConnectionHealth = onConnectionHealth
+        self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, revision: revision, onConnectionHealth: onConnectionHealth, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, revision: revision, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeUIView(context: Context) -> WKWebView {
@@ -41,21 +43,23 @@ public struct DashboardWebView: UIViewRepresentable {
 #elseif os(macOS)
 public struct DashboardWebView: NSViewRepresentable {
     public var store: PackageAssetStore
+    public var onReady: () -> Void
     public var onUnlinkHold: () -> Void
     public var homeAssistant: HomeAssistantDeviceRuntime?
     public var revision: String
     public var onConnectionHealth: (Bool) -> Void
 
-    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onUnlinkHold: @escaping () -> Void) {
+    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
         self.store = store
         self.homeAssistant = homeAssistant
         self.revision = revision
         self.onConnectionHealth = onConnectionHealth
+        self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, revision: revision, onConnectionHealth: onConnectionHealth, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, revision: revision, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -70,12 +74,14 @@ public struct DashboardWebView: NSViewRepresentable {
 
 public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     let handler: PackageSchemeHandler
+    var onReady: () -> Void
     var onUnlinkHold: () -> Void
     private var installedRules = false
     private var bridge: HomeAssistantWebBridge?
 
-    init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onUnlinkHold: @escaping () -> Void) {
+    init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
         self.handler = PackageSchemeHandler(store: store)
+        self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold
         if let homeAssistant {
             self.bridge = HomeAssistantWebBridge(runtime: homeAssistant, revision: revision, onHealth: onConnectionHealth)
@@ -103,6 +109,8 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         webView.isOpaque = true
         webView.scrollView.pinchGestureRecognizer?.isEnabled = false
         webView.scrollView.bouncesZoom = false
+        // One-finger gestures belong to the dashboard; two fingers are native navigation.
+        webView.scrollView.panGestureRecognizer.maximumNumberOfTouches = 1
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.delegate = self
 #endif
@@ -172,6 +180,8 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         nil
     }
 
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onReady() }
+
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         bridge?.cancel()
         if let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/index.html") {
@@ -212,53 +222,21 @@ extension DashboardWebCoordinator: UIScrollViewDelegate {
 #endif
 
 #if os(iOS)
-final class TwoFingerHoldRecognizer: UIGestureRecognizer {
-    private var timer: Timer?
+final class TwoFingerHoldRecognizer: UILongPressGestureRecognizer {
     private let fire: () -> Void
 
     init(fire: @escaping () -> Void) {
         self.fire = fire
         super.init(target: nil, action: nil)
+        numberOfTouchesRequired = UnlinkGestureSpec.fingers
+        minimumPressDuration = TimeInterval(UnlinkGestureSpec.holdSeconds)
+        allowableMovement = 12
+        addTarget(self, action: #selector(recognized))
     }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        refresh(event)
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        refresh(event)
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        refresh(event)
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        clear()
-    }
-
-    private func refresh(_ event: UIEvent) {
-        let count = event.allTouches?.filter { $0.phase == .began || $0.phase == .moved || $0.phase == .stationary }.count ?? 0
-        if count == UnlinkGestureSpec.fingers {
-            if timer == nil {
-                timer = Timer.scheduledTimer(
-                    withTimeInterval: TimeInterval(UnlinkGestureSpec.holdSeconds),
-                    repeats: false
-                ) { [weak self] _ in
-                    self?.state = .recognized
-                    self?.fire()
-                    self?.clear()
-                }
-            }
-        } else {
-            clear()
-        }
-    }
-
-    private func clear() {
-        timer?.invalidate()
-        timer = nil
-        state = .possible
+    @objc private func recognized() {
+        guard state == .began else { return }
+        fire()
     }
 }
 

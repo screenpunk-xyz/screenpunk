@@ -22,6 +22,6 @@ Rules for every topic:
 - Never say the Mac can erase a device remotely, or that Unlink revokes
   tokens in Home Assistant or any other upstream service. It does not.
 - Every topic that mentions resetting a device states the gesture exactly:
-  hold two fingers on the screen for ten seconds, then tap **Unlink**.
+  hold two fingers on the screen for five seconds, open the device menu, choose **Disconnect**, and confirm.
 
 An unknown topic returns this list of topics, not an error.

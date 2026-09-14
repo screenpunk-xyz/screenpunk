@@ -28,7 +28,7 @@ enum AgentSetupProfile: String, CaseIterable, Identifiable {
         allCases.first { $0.rawValue == connectionName(name) }
     }
     var agentName: String { self == .generic ? "Local Agent" : rawValue }
-    var configurationLabel: String { self == .codex ? "Codex configuration · TOML" : "MCP configuration · JSON" }
+    var configurationLabel: String { self == .codex ? "Command to launch" : "MCP configuration · JSON" }
     var instructions: [String] {
         switch self {
         case .cursor:
@@ -40,9 +40,10 @@ enum AgentSetupProfile: String, CaseIterable, Identifiable {
                     "Merge the screenpunk entry below into claude_desktop_config.json, keeping your existing servers. On Mac, this file is in ~/Library/Application Support/Claude/.",
                     "Quit and reopen Claude Desktop. Start a chat and enable Screenpunk’s tools. This setup is for local Claude Desktop MCP, not a web connector URL."]
         case .codex:
-            return ["In Finder, choose Go → Go to Folder, enter ~/.codex, and open config.toml in a text editor. Create config.toml if it does not exist.",
-                    "Merge the TOML below into ~/.codex/config.toml. Keep your existing settings; update an existing screenpunk table rather than adding it twice.",
-                    "Save and restart the local Codex client, then start a task. The CLI and IDE extension share this configuration on the same Mac."]
+            return ["In Codex, open Plugins → MCPs and choose Connect to a custom MCP.",
+                    "Set Name to Screenpunk and Type to STDIO. Paste the command below into Command to launch. Leave Arguments empty.",
+                    "Under Environment variables, add key SCREENPUNK_AGENT_NAME with value Codex. Leave Environment variable passthrough and Working directory empty.",
+                    "Click Save, then start a local task and ask Codex to use Screenpunk’s tools. Enable the server or restart Codex if needed."]
         case .generic:
             return ["Use an agent app on this Mac that supports local MCP (STDIO) and tool calling. A model server alone is not an MCP client.",
                     "Add a server named screenpunk. Set its command to the executable below, leave arguments empty, and add the environment variable. For clients using mcpServers JSON, merge this example into their configuration.",
@@ -61,24 +62,12 @@ enum AgentSetupProfile: String, CaseIterable, Identifiable {
     }
     func configuration(executable: String) -> String {
         if self == .codex {
-            return """
-            [mcp_servers.screenpunk]
-            command = \(Self.quoted(executable))
-            args = []
-
-            [mcp_servers.screenpunk.env]
-            SCREENPUNK_AGENT_NAME = \(Self.quoted(agentName))
-            """
+            return executable
         }
         var server: [String: Any] = ["command": executable, "args": [String](), "env": ["SCREENPUNK_AGENT_NAME": agentName]]
         if self != .claude { server["type"] = "stdio" }
         let value: [String: Any] = ["mcpServers": ["screenpunk": server]]
         let data = try! JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        return String(decoding: data, as: UTF8.self)
-    }
-    private static func quoted(_ value: String) -> String {
-        // JSON basic-string escapes are also valid TOML basic-string escapes.
-        let data = try! JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .withoutEscapingSlashes])
         return String(decoding: data, as: UTF8.self)
     }
 }

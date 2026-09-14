@@ -39,7 +39,7 @@ struct AgentConnectionSheet: View {
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).workbenchButton()
-                Button(copied ? "Copied" : "Copy Configuration", systemImage: "doc.on.doc") {
+                Button(copied ? "Copied" : (agent == .codex ? "Copy Command" : "Copy Configuration"), systemImage: "doc.on.doc") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(configuration, forType: .string)
                     copied = true

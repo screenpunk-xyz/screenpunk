@@ -12,6 +12,9 @@ public struct DashboardRuntimeView: View {
     public var revision: String
     @State private var connectionUnhealthy = false
     @State private var showUnlink = false
+    @State private var loaded = false
+    public var onMenu: (() -> Void)?
+    public var screenName: String
 
     public init(
         store: PackageAssetStore,
@@ -19,8 +22,12 @@ public struct DashboardRuntimeView: View {
         revision: String = "",
         connectionCount: Int = 0,
         requiredFailedOrStale: Bool = false,
+        screenName: String = "Screen",
+        onMenu: (() -> Void)? = nil,
         onUnlink: @escaping () -> Void = {}
     ) {
+        self.onMenu = onMenu
+        self.screenName = screenName
         self.homeAssistant = homeAssistant
         self.revision = revision
         self.store = store
@@ -45,10 +52,21 @@ public struct DashboardRuntimeView: View {
         ZStack {
 #if canImport(WebKit)
             DashboardWebView(store: store, homeAssistant: homeAssistant, revision: revision,
-                             onConnectionHealth: { connectionUnhealthy = !$0 }, onUnlinkHold: { showUnlink = true })
+                             onConnectionHealth: { connectionUnhealthy = !$0 },
+                             onReady: { loaded = true }, onUnlinkHold: openMenu)
 #else
             Text("WKWebView unavailable")
 #endif
+            if !loaded {
+                ZStack {
+                    Color.black
+                    VStack(spacing: 16) {
+                        Image(systemName: "rectangle.stack").font(.system(size: 44))
+                        Text(screenName).font(.title2)
+                        ProgressView("Opening screen…").tint(.white)
+                    }.foregroundStyle(.white)
+                }.allowsHitTesting(false).transition(.opacity)
+            }
             if showOffline || connectionUnhealthy {
                 OfflineRingOverlay()
             }
@@ -62,9 +80,10 @@ public struct DashboardRuntimeView: View {
                 )
             }
         }
-        .accessibilityAction(named: Text(UnlinkGestureSpec.actionTitle)) {
-            showUnlink = true
-        }
-        .accessibilityHint(UnlinkGestureSpec.explanation)
+        .accessibilityAction(named: "Device menu", openMenu)
+        .accessibilityHint("Hold two fingers for five seconds to open the device menu.")
+    }
+    private func openMenu() {
+        if let onMenu { onMenu() } else { showUnlink = true }
     }
 }

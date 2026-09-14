@@ -26,6 +26,10 @@ final class MacWorkbenchModel: ObservableObject {
     @Published var screens: [DashboardSummary] = []
     @Published var agents: [AgentPresence] = []
     @Published var selectedScreen: String?
+    @Published private(set) var deviceScreens = DeviceScreenSelection()
+    private var screenSelections: [String: DeviceScreenSelection] = [:]
+    private var appliedSetSources: [String: [String: String]] = [:]
+    private var previewRequest = UUID()
     @Published var preview: PackageAssetStore?
     @Published var previewKey = UUID()
     @Published var screenPreviewProfile: ScreenPreviewProfile = .defaultProfile {
@@ -75,11 +79,35 @@ final class MacWorkbenchModel: ObservableObject {
     var screenSupport: ScreenOrientationSupport { (try? record.map { try ScreenDesignSettings.read(files: $0.files).orientations }) ?? .both }
     func supports(_ orientation: DeviceOrientation) -> Bool { screenSupport.allows(orientation) }
     var canDuplicate: Bool { record != nil }
-    var canApply: Bool { device != nil && selectedScreen != nil && preview != nil && !busy }
+    var screenSelectorTitle: String { deviceScreens.multiple ? "\(deviceScreens.ids.count) \(deviceScreens.ids.count == 1 ? "Screen" : "Screens")" : screenName }
+    var applyLabel: String { deviceScreens.ids.count > 1 ? "Apply Screens" : "Apply Screen" }
+    var canApply: Bool { device != nil && !deviceScreens.ids.isEmpty && deviceScreens.ids.allSatisfy { id in screens.contains { $0.dashboardId == id } } && !busy }
     var hasUnappliedScreen: Bool {
-        guard let device, selectedScreen != nil else { return false }
-        if previewIsApplied { return orientation != device.device.profile.orientation }
-        return appliedScreens[device.id] != selectedScreen || appliedOrientations[device.id] != orientation.rawValue || (record != nil && appliedSourceRevisions[device.id] != record?.manifest.revision)
+        guard let device else { return false }
+        let installed = device.screenSet?.map(\.dashboardId) ?? appliedScreens[device.id].map { [$0] } ?? []
+        if deviceScreens.ids != installed { return true }
+        if orientation != device.device.profile.orientation { return true }
+        if let sources = appliedSetSources[device.id] {
+            return deviceScreens.ids.contains { id in
+                guard let screen = screens.first(where: { $0.dashboardId == id }), let source = sources[id] else { return false }
+                return source != screen.draftRevision
+            }
+        }
+        if previewIsApplied { return false }
+        return record != nil && appliedSourceRevisions[device.id] != record?.manifest.revision
+    }
+    private func rememberScreenSelection() {
+        guard section == "Devices", let device else { return }
+        screenSelections[device.id] = deviceScreens
+    }
+    func setMultipleScreens(_ enabled: Bool) {
+        deviceScreens.setMultiple(enabled, preferred: selectedScreen)
+        rememberScreenSelection()
+        if let id = deviceScreens.ids.first, !deviceScreens.ids.contains(selectedScreen ?? "") { focusScreen(id) }
+    }
+    private func installedSelection(_ device: PairedDeviceRecord) -> DeviceScreenSelection {
+        let ids = device.screenSet?.map(\.dashboardId) ?? selectedScreen.map { [$0] } ?? []
+        return DeviceScreenSelection(ids: ids, multiple: ids.count > 1)
     }
     func symbol(for id: String) -> String { symbols[id] ?? "star" }
     func deviceSymbol(_ name: String, landscape: Bool = false) -> String {
@@ -91,6 +119,7 @@ final class MacWorkbenchModel: ObservableObject {
         do {
             service = try ControllerService.bootstrap()
             if let service { let status = transport.attach(to: service); if !service.devices.transportAvailable { error = status } }
+            appliedSetSources = UserDefaults.standard.dictionary(forKey: "appliedSetSources") as? [String: [String: String]] ?? [:]
             symbols = UserDefaults.standard.dictionary(forKey: "screenSymbols") as? [String:String] ?? [:]
             appliedSourceRevisions = UserDefaults.standard.dictionary(forKey: "appliedSourceRevisions") as? [String:String] ?? [:]
             appliedPackagePaths = UserDefaults.standard.dictionary(forKey: "appliedPackagePaths") as? [String:String] ?? [:]
@@ -124,12 +153,25 @@ final class MacWorkbenchModel: ObservableObject {
         refreshing = true
         queue.async {
             if probe { for device in service.devices.listDevices() { _ = try? service.devices.device(device.id, probe: true) } }
+            let advertisements = service.devices.discover()
             let devices = service.devices.listDevices()
-            let nearby = WorkbenchSidebar.nearby(advertisements: service.devices.discover(), devices: devices.map(\.device), developer: false)
+            let nearby = WorkbenchSidebar.nearby(advertisements: advertisements, devices: devices.map(\.device), developer: false)
             let screens = Result { try service.listDashboards() }
             let agents = AgentPresence.active(in: service.store.root)
             Task { @MainActor in
+                let previousDevice = self.device
+                let hadDraft = self.hasUnappliedScreen
                 self.refreshing = false; self.devices = devices; self.nearby = nearby; self.agents = agents
+                if self.section == "Devices", let previousDevice,
+                   let current = devices.first(where: { $0.devicePin == previousDevice.devicePin }), current.id != previousDevice.id {
+                    self.select(current.id)
+                }
+                if self.section == "Devices", !hadDraft, let current = self.device,
+                   current.id == previousDevice?.id,
+                   (current.screenSet != previousDevice?.screenSet || current.selectedDashboardId != previousDevice?.selectedDashboardId || current.device.activeRevision != previousDevice?.device.activeRevision) {
+                    self.screenSelections[current.id] = nil
+                    self.select(current.id)
+                }
                 if case .success(let value) = screens {
                     let changed = value != self.screens
                     self.screens = value
@@ -140,28 +182,46 @@ final class MacWorkbenchModel: ObservableObject {
         }
     }
     func select(_ id: String?) {
+        previewRequest = UUID()
         selection = id; notice = nil; preview = nil; record = nil; previewIsApplied = false
         if section == "Screens" { selectedScreen = id }
         else if let device {
-            selectedScreen = device.device.history.first(where: { $0.revision == device.device.activeRevision })?.dashboardId
+            selectedScreen = device.selectedDashboardId ?? device.device.history.first(where: { $0.revision == device.device.activeRevision })?.dashboardId
                 ?? appliedScreens[device.id]
             orientation = DeviceOrientation(rawValue: appliedOrientations[device.id] ?? "") ?? device.device.profile.orientation
         } else { selectedScreen = nil }
-        if let device, section == "Devices", device.device.activeRevision != nil { loadAppliedPreview(device) }
-        else if let selectedScreen { loadPreview(selectedScreen) }
+        if let device, section == "Devices" {
+            let installed = installedSelection(device)
+            deviceScreens = screenSelections[device.id] ?? installed
+            if !deviceScreens.ids.contains(selectedScreen ?? "") { selectedScreen = deviceScreens.ids.first }
+            if deviceScreens.ids == installed.ids, device.device.activeRevision != nil { loadAppliedPreview(device) }
+            else if let selectedScreen { loadPreview(selectedScreen) }
+        } else if let selectedScreen { loadPreview(selectedScreen) }
     }
     private func loadAppliedPreview(_ device: PairedDeviceRecord) {
         guard let service, let active = device.device.activeRevision else { return }
+        let request = UUID(); previewRequest = request
         let dashboardId = selectedScreen
         let cachedPath = appliedPackagePaths[device.id]
         queue.async {
             var applied: DashboardRevisionRecord?
             if let dashboardId { applied = try? service.getDashboard(dashboardId: dashboardId, revision: active) }
+            if applied == nil, dashboardId == nil {
+                for screen in (try? service.listDashboards()) ?? [] {
+                    if let match = try? service.getDashboard(dashboardId: screen.dashboardId, revision: active) { applied = match; break }
+                }
+            }
             if applied == nil {
                 var paths: [URL] = cachedPath.map { [URL(fileURLWithPath: $0)] } ?? []
                 let folder = service.store.root.appendingPathComponent("device-packages")
                 let roots = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
                 if let dashboardId { paths += roots.map { $0.appendingPathComponent("dashboards/\(dashboardId)/revisions/\(active)") } }
+                else {
+                    for root in roots {
+                        let dashboards = (try? FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("dashboards"), includingPropertiesForKeys: nil)) ?? []
+                        paths += dashboards.map { $0.appendingPathComponent("revisions/\(active)") }
+                    }
+                }
                 for path in paths {
                     guard let data = try? Data(contentsOf: path.appendingPathComponent("manifest.json")),
                           let manifest = try? JSONDecoder().decode(DashboardManifest.self, from: data), manifest.revision == active,
@@ -173,16 +233,30 @@ final class MacWorkbenchModel: ObservableObject {
             let assets = applied.flatMap { try? PackageAssetStore.load(directory: $0.packageDirectory) }
                 ?? (active == StoredRevision.offlineFixture.revision ? try? PackageAssetStore.bundledOfflineFixture() : nil)
             Task { @MainActor in
-                guard self.selection == device.id, self.section == "Devices" else { return }
+                guard self.previewRequest == request, self.selection == device.id, self.section == "Devices" else { return }
                 self.record = applied; self.preview = assets; self.previewIsApplied = true; self.previewKey = UUID()
-                if let applied { self.selectedScreen = applied.manifest.dashboardId; self.orientation = DeviceOrientation(rawValue: applied.manifest.target.orientation) ?? .portrait }
+                if let applied {
+                    self.selectedScreen = applied.manifest.dashboardId
+                    if self.deviceScreens.ids.isEmpty { self.deviceScreens = DeviceScreenSelection(ids: [applied.manifest.dashboardId]) }
+                    self.orientation = DeviceOrientation(rawValue: applied.manifest.target.orientation) ?? .portrait }
             }
         }
     }
     func switchSection() { select(section == "Devices" ? devices.first?.id ?? nearby.first?.id : screens.first?.dashboardId) }
-    func chooseScreen(_ id: String) { previewIsApplied = false; selectedScreen = id; loadPreview(id) }
+    func chooseScreen(_ id: String) {
+        guard !busy else { return }
+        guard deviceScreens.choose(id) else { error = "Choose up to twelve screens for this device."; return }
+        rememberScreenSelection()
+        if deviceScreens.ids.contains(id) { focusScreen(id) }
+        else if selectedScreen == id {
+            if let next = deviceScreens.ids.first { focusScreen(next) }
+            else { previewRequest = UUID(); selectedScreen = nil; preview = nil; record = nil; previewIsApplied = false }
+        }
+    }
+    private func focusScreen(_ id: String) { previewIsApplied = false; selectedScreen = id; loadPreview(id) }
     func loadPreview(_ id: String) {
         guard let service else { return }
+        let request = UUID(); previewRequest = request
         queue.async {
             let result = Result { () -> (DashboardRevisionRecord, PackageAssetStore) in
                 let record = try service.getDashboard(dashboardId: id, revision: nil)
@@ -191,7 +265,7 @@ final class MacWorkbenchModel: ObservableObject {
                 return (record, assets)
             }
             Task { @MainActor in
-                guard self.selectedScreen == id else { return }
+                guard self.previewRequest == request, self.selectedScreen == id else { return }
                 switch result {
                 case .success(let (record, assets)):
                     self.record = record; self.preview = assets; self.previewKey = UUID()
@@ -224,9 +298,10 @@ final class MacWorkbenchModel: ObservableObject {
                 switch result {
                 case .success(let record):
                     self.pairingTimer?.invalidate(); self.pairingTimer = nil; self.pairing = nil
+                    self.nearby.removeAll { $0.id == record.id }
                     self.devices.removeAll { $0.id == record.id }; self.devices.append(record)
                     self.select(record.id); self.refresh()
-                    self.notice = "Paired. Choose a screen to put on this device."
+                    self.notice = record.device.activeRevision == nil ? "Paired. Choose a screen to put on this device." : "Device connected."
                 case .failure(let error):
                     if (error as? ControllerError)?.code == .permissionRequired { return }
                     self.cancelPairing(); self.error = (error as? ControllerError)?.detail ?? error.localizedDescription
@@ -288,7 +363,7 @@ final class MacWorkbenchModel: ObservableObject {
         run({ try $0.devices.forget(deviceId: device.id) }) { _ in
             self.devices.removeAll { $0.id == device.id }; self.appliedScreens[device.id] = nil
             self.persistPreferences(); self.select(nil)
-            self.notice = "Device forgotten. To pair it with a different Mac, hold two fingers on its screen for 10 seconds, then tap Unlink."
+            self.notice = "Device forgotten. To pair it with a different Mac, hold two fingers on its screen for five seconds to open the device menu, then choose Disconnect and confirm."
         }
     }
     func setScreenSupport(_ support: ScreenOrientationSupport) {
@@ -311,24 +386,33 @@ final class MacWorkbenchModel: ObservableObject {
         }
     }
     func applyScreen() {
-        guard let device, let record else { return }
+        guard let device, canApply else { return }
+        let ids = deviceScreens.ids
+        let visible = selectedScreen.flatMap { ids.contains($0) ? $0 : nil } ?? ids[0]
         let orientation = orientation
+        let deviceTitle = title
         run({ service in
-            let prepared = try ScreenPackagePreparation.prepare(record, for: device.device.profile, orientation: orientation, root: service.store.root)
-            let outcome = try service.ship(record: prepared, deviceId: device.id, deploymentId: nil)
-            guard outcome.phase == .active else {
-                throw ControllerError.validationFailed(detail: outcome.error == "targetMismatch" ? "This phone build does not support changing orientation yet. Apply in its current orientation, or install the updated iPhone app." : outcome.error ?? "The device could not activate this screen. Its current screen is unchanged.")
+            let sources = try ids.map { try service.getDashboard(dashboardId: $0, revision: nil) }
+            let prepared = try sources.map { source in
+                do { return try ScreenPackagePreparation.prepare(source, for: device.device.profile, orientation: orientation, root: service.store.root) }
+                catch { throw ControllerError.validationFailed(detail: "\(source.manifest.name): \((error as? ControllerError)?.detail ?? error.localizedDescription) No screens have been changed on the device.") }
             }
-            return (outcome, prepared.packageDirectory.path)
-        }) { (_, path) in
-            self.appliedSourceRevisions[device.id] = record.manifest.revision
-            self.appliedPackagePaths[device.id] = path
-            self.appliedScreens[device.id] = record.manifest.dashboardId
+            let receipt = try service.shipSet(records: prepared, deviceId: device.id, selectedDashboardId: visible)
+            return (receipt, sources, prepared, try service.devices.device(device.id, probe: false))
+        }) { (receipt, sources, prepared, updated) in
+            self.appliedSetSources[device.id] = Dictionary(uniqueKeysWithValues: sources.map { ($0.manifest.dashboardId, $0.manifest.revision) })
+            self.appliedSourceRevisions[device.id] = sources.first { $0.manifest.dashboardId == visible }?.manifest.revision
+            self.appliedPackagePaths[device.id] = prepared.first { $0.manifest.dashboardId == visible }?.packageDirectory.path
+            self.appliedScreens[device.id] = visible
             self.appliedOrientations[device.id] = orientation.rawValue
-            self.persistPreferences(); self.notice = "\(record.manifest.name) applied to \(self.title)."
+            if let index = self.devices.firstIndex(where: { $0.id == device.id }) { self.devices[index] = updated }
+            self.persistPreferences()
+            if self.selection == device.id, self.section == "Devices" { self.loadAppliedPreview(updated) }
+            self.notice = receipt.screens.count > 1 ? "\(receipt.screens.count) screens applied to \(deviceTitle). Swipe left or right with two fingers on the device to switch screens." : "Screen applied to \(deviceTitle)."
         }
     }
     private func persistPreferences() {
+        UserDefaults.standard.set(appliedSetSources, forKey: "appliedSetSources")
         UserDefaults.standard.set(appliedSourceRevisions, forKey: "appliedSourceRevisions")
         UserDefaults.standard.set(appliedPackagePaths, forKey: "appliedPackagePaths")
         UserDefaults.standard.set(symbols, forKey: "screenSymbols")
@@ -363,6 +447,12 @@ final class MacWorkbenchModel: ObservableObject {
             self.symbols[record.manifest.dashboardId] = draft.symbol; self.persistPreferences(); self.discardDraft()
             self.previewIsApplied = false
             self.selectedScreen = record.manifest.dashboardId
+            if self.section == "Devices" {
+                if !self.deviceScreens.ids.contains(record.manifest.dashboardId) {
+                    if !self.deviceScreens.choose(record.manifest.dashboardId) { self.notice = "Screen saved. The device already has twelve screens selected." }
+                }
+                self.rememberScreenSelection()
+            }
             if self.section == "Screens" { self.selection = record.manifest.dashboardId }
             self.loadPreview(record.manifest.dashboardId); self.notice = "Screen saved."
         }

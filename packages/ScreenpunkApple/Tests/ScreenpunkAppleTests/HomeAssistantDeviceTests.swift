@@ -27,6 +27,19 @@ final class HomeAssistantDeviceTests: XCTestCase {
                        [["entity_id": "sensor.new", "state": "23"]])
     }
 
+    func testScriptAndSwitchRoutesRejectBroadOrMismatchedTargets() throws {
+        let config = configuration()
+        for (operation, entity, path) in [("scriptOn", "script.theater_on", "/api/services/script/turn_on"), ("switchOn", "switch.stars", "/api/services/switch/turn_on"), ("switchOff", "switch.screen_led", "/api/services/switch/turn_off")] {
+            let action = try config.authorize(operation: operation, parameters: ["entity_id": entity])
+            XCTAssertEqual(action.path, path)
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: action.body!) as? [String: String])
+            XCTAssertEqual(body, ["entity_id": entity])
+            XCTAssertThrowsError(try config.authorize(operation: operation, parameters: ["entity_id": "light.game_lights"]))
+            XCTAssertThrowsError(try config.authorize(operation: operation, parameters: ["entity_id": entity, "area_id": "basement"]))
+            XCTAssertThrowsError(try config.authorize(operation: operation, parameters: ["entity_id": entity + "," + entity]))
+        }
+    }
+
     func testVaultIsBoundIdempotentAndRejectsInvalidReplacement() throws {
         let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
         var config = configuration()

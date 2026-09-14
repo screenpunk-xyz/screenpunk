@@ -7,8 +7,10 @@ public struct PairingCodeView: View {
     /// The owner confirmed; the Mac completes the handshake automatically.
     public var waiting: Bool
     public var onConfirm: () -> Void
+    public var onCancel: (() -> Void)?
 
-    public init(code: String, waiting: Bool = false, onConfirm: @escaping () -> Void) {
+    public init(code: String, waiting: Bool = false, onCancel: (() -> Void)? = nil, onConfirm: @escaping () -> Void) {
+        self.onCancel = onCancel
         self.code = code
         self.waiting = waiting
         self.onConfirm = onConfirm
@@ -38,6 +40,9 @@ public struct PairingCodeView: View {
             .disabled(waiting)
             .opacity(waiting ? 0.6 : 1)
             .accessibilityLabel(waiting ? PairingCodeCopy.waiting : PairingCodeCopy.confirm)
+            if let onCancel, !waiting {
+                Button("Cancel", action: onCancel).buttonStyle(.plain)
+            }
             if waiting {
                 Text(PairingCodeCopy.waitingDetail)
                     .font(.footnote)

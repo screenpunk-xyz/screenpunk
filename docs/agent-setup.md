@@ -1,17 +1,17 @@
 # Connecting local agents
 
-The native Connect an Agent sheet provides Cursor, Claude Desktop, Codex, and Generic / Local Models profiles. Changing profile changes its numbered instructions, configuration format, documentation link, and SCREENPUNK_AGENT_NAME. Copy exports only the displayed configuration; the app never overwrites client settings. Install the app in Applications and reopen the sheet before copying its executable path.
+The native Connect an Agent sheet provides Cursor, Claude Desktop, Codex, and Generic / Local Models profiles. Changing profile changes its numbered instructions, configuration format, documentation link, and SCREENPUNK_AGENT_NAME. Copy exports only the displayed configuration (or the launch command for Codex); the app never overwrites client settings. Install the app in Applications and reopen the sheet before copying its executable path.
 
 - Cursor: Customize → MCPs → + New MCP Server; global ~/.cursor/mcp.json or project .cursor/mcp.json; stdio command/args/env JSON.
 - Claude Desktop: Claude menu → Settings → Developer → Edit Config; merge mcpServers JSON in ~/Library/Application Support/Claude/claude_desktop_config.json, then restart. Remote web connectors are a separate transport; this profile uses the local developer configuration.
-- Codex: In Finder, Go → Go to Folder → ~/.codex; open config.toml in a text editor (create it if missing), and merge the displayed TOML. The current Codex desktop Settings does not expose a dedicated MCP servers page. Existing screenpunk tables must be updated, not duplicated. Local CLI and IDE share the same host configuration.
+- Codex: Open Plugins → MCPs → Connect to a custom MCP. Set Name to Screenpunk and Type to STDIO. Use Copy Command in Screenpunk to copy the resolved bundled screenpunk-mcp executable path, then paste it into Command to launch. Leave Arguments empty. Add environment variable SCREENPUNK_AGENT_NAME with value Codex. Leave Environment variable passthrough and Working directory empty. Click Save, start a local task, and ask Codex to use Screenpunk’s tools; enable the server or restart Codex if needed. This desktop setup does not require Finder or editing config.toml.
 - Generic: a local agent host must support MCP STDIO and the chosen model must support tool use. The executable, empty arguments, and environment are given in conventional mcpServers JSON; host schemas can vary. An HTTP-only host needs an adapter. A bare model inference server is not an MCP client.
 
 Grok Bot is not presented as a working local option. Its documented cloud-computer/plugin execution model needs a separate integration check; marketplace presence alone does not establish local access. Grok web custom URL connectors are a different product path and would require a reachable HTTP service/bridge; this app currently bundles a local STDIO server. No bridge, tunnel, marketplace publication, or new agent connection was created by this UI change.
 
 Verified September 13, 2026:
 - https://cursor.com/docs/mcp (Customize, configuration paths, STDIO schema); user supplied the current MCPs → New MCP Server screenshot.
-- https://developers.openai.com/codex/mcp/ (redirects to official Learn MCP docs; TOML/STDIO setup). Local codex mcp add --help independently confirms command/env support.
+- User-supplied Codex desktop screenshot (September 13, 2026) verifies Plugins → MCPs → Connect to a custom MCP and the STDIO command, arguments, environment, working directory, and Save fields. https://developers.openai.com/codex/mcp/ remains the general MCP reference.
 - https://modelcontextprotocol.io/docs/develop/connect-local-servers (Claude Desktop developer configuration).
 - https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp (local vs remote connector distinction).
 - https://cursor.com/docs/grok-bot/work (cloud computer and local execution distinction).

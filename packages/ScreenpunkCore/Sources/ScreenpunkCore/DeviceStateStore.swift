@@ -14,6 +14,7 @@ public struct DevicePersistedState: Sendable, Equatable, Codable {
     public var activeRevision: String?
     public var activeStoredRevision: StoredRevision?
     public var lastDeployment: DeploymentRecord?
+    public var screenSet: DeviceInstalledScreenSet?
     public var savedAt: Date
 
     public init(
@@ -148,8 +149,12 @@ public struct DeviceStateStore: Sendable {
     }
 
     /// Relative path → bytes for the active package, sorted by path.
-    public func loadPackageFiles() throws -> [(path: String, data: Data)] {
-        guard hasPackage else { return [] }
+    public func loadPackageFiles(directory: String = "package") throws -> [(path: String, data: Data)] {
+        guard directory == "package" || (directory.hasPrefix("package.staging-") && !directory.contains("/") && !directory.contains("..")) else {
+            throw DeviceStateStoreError.invalidPath(directory)
+        }
+        let packageURL = root.appendingPathComponent(directory, isDirectory: true)
+        guard fileManager.fileExists(atPath: packageURL.path) else { return [] }
         let base = packageURL.standardizedFileURL.path
         var files: [(path: String, data: Data)] = []
         guard let enumerator = fileManager.enumerator(
@@ -168,6 +173,14 @@ public struct DeviceStateStore: Sendable {
             files.append((relative, try Data(contentsOf: item)))
         }
         return files.sorted { $0.path < $1.path }
+    }
+
+    /// Remove only package generations that no committed screen references.
+    public func prunePackageGenerations(keeping directories: Set<String>) {
+        guard let contents = try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
+        for url in contents where url.lastPathComponent.hasPrefix("package.staging-") && !directories.contains(url.lastPathComponent) {
+            try? fileManager.removeItem(at: url)
+        }
     }
 
     /// Unlink: everything under `root` goes, including leftovers from

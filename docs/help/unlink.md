@@ -1,27 +1,24 @@
-# Unlink a device
+# Disconnect a device
 
-To remove Screenpunk's dashboard from an iPhone or iPad, hold two fingers
-anywhere on its screen for ten seconds, then tap **Unlink**.
+Hold two fingers on the device screen for five seconds to open the native
+device menu. Choose **Disconnect…**, then confirm **Disconnect**.
 
-- Keep both fingers down for the whole ten seconds. Lifting early cancels
-  and nothing changes.
-- The panel has exactly one button. Tapping outside it closes the panel
-  without doing anything.
+- Opening the menu does not erase anything. **Close** or tapping outside
+  dismisses it; **Cancel** returns from confirmation to the menu.
+- Lift either finger before five seconds: nothing changes.
+- The menu also lets you choose among installed screens. Two-finger swipes
+  switch screens without opening the menu; ordinary one-finger controls keep working.
 - The gesture works over a loading page, an error page, and a crashed
-  dashboard. The panel is native; dashboard code cannot block or hide it.
-- VoiceOver: focus the dashboard, swipe to the **Unlink** custom action,
-  and double-tap. It opens the same panel.
+  dashboard. Dashboard code cannot block or hide the native menu.
+- VoiceOver exposes a **Device menu** action that opens the same menu.
 
-Unlink erases the dashboard, its cached data and saved state, the
-connection credentials stored on the device, and the pairing with its Mac.
-Anything still transferring is cancelled. The device returns to **Ready to
-pair**, and any Mac can pair with it again.
+Confirming Disconnect removes all deployed screens, cached data and saved
+state, connection credentials stored on the device, and pairing with its Mac.
+The device returns to **Ready to pair**.
 
-Unlink does not revoke tokens upstream. If a Home Assistant or API token
-must stop working everywhere, revoke it in that service as well.
+Disconnect does not revoke tokens upstream. To stop a Home Assistant or API
+token from working everywhere, revoke it in that service as well.
 
-From the Mac: if the device is reachable, **Unlink** in its device page
-asks the device to erase itself and reports whether it acknowledged. If the
-device is unreachable, **Forget** removes only the Mac's record. The device
-keeps its dashboard and credentials until someone performs the gesture on
-it. The Mac cannot erase a device remotely.
+**Forget Device** on the Mac removes its saved record. It does not erase
+screens or credentials on the device. To erase those, use the device menu.
+The MCP help topic and resource retain the stable `unlink` identifier.

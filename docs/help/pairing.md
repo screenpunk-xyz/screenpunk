@@ -16,7 +16,7 @@
 Codes expire after two minutes. Five wrong confirmations pause pairing;
 start over. A device belongs to one Mac at a time; a second Mac cannot pair
 with it until it is unlinked. To unlink, hold two fingers on the device's
-screen for ten seconds, then tap **Unlink** (`get_help` topic `unlink`).
+screen for five seconds, open the device menu, choose **Disconnect**, and confirm (`get_help` topic `unlink`).
 
 Pairing authorizes one Mac to manage the device. It does not grant access
 to any service. Connections are approved separately in Screenpunk on the

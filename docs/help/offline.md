@@ -21,5 +21,5 @@ expired. Fix the connection in Screenpunk on the Mac and deploy again if
 its settings changed.
 
 The ring is not a reason to reset the device. To remove the dashboard
-entirely, hold two fingers on the screen for ten seconds, then tap
-**Unlink**.
+entirely, hold two fingers on the screen for five seconds to open the device menu. Choose
+**Disconnect**, then confirm.

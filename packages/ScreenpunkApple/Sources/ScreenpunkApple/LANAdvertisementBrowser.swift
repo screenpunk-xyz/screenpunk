@@ -20,7 +20,7 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
         if browser != nil { return }
         let parameters = NWParameters()
         parameters.includePeerToPeer = true
-        let browser = NWBrowser(for: .bonjour(type: DiscoveryService.type, domain: nil), using: parameters)
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: DiscoveryService.type, domain: nil), using: parameters)
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             self?.publish(results)
         }
@@ -95,16 +95,17 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
         var meta = TXTFields(id: "advertised", major: DiscoveryService.protocolMajor, name: nil)
         if case .bonjour(let txt) = result.metadata {
             let fields = txt.dictionary
-            if let id = fields["id"], id.isEmpty == false {
-                meta.id = id
-            }
             if let version = fields["v"], let parsed = Int(version) {
                 meta.major = parsed
             }
             meta.name = DeviceDisplayName.sanitize(fields["n"])
         }
-        if meta.id == "advertised", case .service(let name, _, _, _) = result.endpoint {
-            meta.id = name
+        // Bonjour may suffix duplicate service names. Preserve each endpoint until
+        // the controller reconciles it using the identity observed over TLS.
+        if case .service(let name, let type, let domain, _) = result.endpoint {
+            meta.id = "bonjour:\(name).\(type).\(domain)"
+        } else {
+            meta.id = "bonjour:\(result.endpoint)"
         }
         return meta
     }

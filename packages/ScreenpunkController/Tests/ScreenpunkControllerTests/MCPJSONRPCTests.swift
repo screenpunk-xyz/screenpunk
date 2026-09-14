@@ -11,7 +11,7 @@ final class MCPJSONRPCTests: XCTestCase {
         let initLine = try rpc.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
         XCTAssertTrue(initLine?.contains("screenpunk") == true)
         XCTAssertTrue(initLine?.contains("two fingers") == true)
-        XCTAssertTrue(initLine?.contains("ten seconds") == true)
+        XCTAssertTrue(initLine?.contains("five seconds") == true)
 
         let toolsLine = try rpc.handle(line: #"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#) ?? ""
         XCTAssertTrue(toolsLine.contains("preview_dashboard"))
@@ -23,13 +23,13 @@ final class MCPJSONRPCTests: XCTestCase {
             line: #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_help","arguments":{"topic":"unlink"}}}"#
         ) ?? ""
         XCTAssertTrue(helpLine.contains("two fingers"))
-        XCTAssertTrue(helpLine.contains("Unlink"))
+        XCTAssertTrue(helpLine.contains("Disconnect"))
         XCTAssertTrue(helpLine.contains("does not erase"))
 
         let resource = try rpc.handle(
             line: #"{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"screenpunk://help/unlink"}}"#
         ) ?? ""
-        XCTAssertTrue(resource.contains("ten seconds") || resource.contains("10 seconds"))
+        XCTAssertTrue(resource.contains("five seconds") || resource.contains("5 seconds"))
     }
 
     func testPreviewToolCallReturnsImageContentOverJSONRPC() throws {

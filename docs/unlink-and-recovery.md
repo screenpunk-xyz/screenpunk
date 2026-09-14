@@ -4,25 +4,20 @@ How to reset a device, what the Mac can and cannot do for it, and what
 survives failures. The gesture on the device is the only way to erase a
 device that the Mac cannot reach.
 
-## Unlink on the device
+## Disconnect on the device
 
-Hold two fingers anywhere on the screen for ten continuous seconds. A small
-native panel appears with the text "Unlinking removes the dashboard and
-connection credentials." and exactly one button: **Unlink**.
+Hold two fingers on the screen for five seconds to open the native device menu.
+Choose **Disconnect…**, then confirm **Disconnect** to erase the device.
 
-- Lift either finger before ten seconds: nothing happens.
-- Tap outside the panel: it closes and nothing changes.
-- Tap **Unlink**: the reset happens immediately. There is no second
-  confirmation.
-- Ordinary one-finger taps and scrolls keep working in the dashboard; the
-  gesture does not interfere with them.
-- The gesture works over a loading page, an error page, and a crashed
-  web-content process. The panel is native and sits above the web view;
-  dashboard code cannot draw, block, or dismiss it.
-- VoiceOver: focus the dashboard, swipe up or down to the **Unlink**
-  custom action, and double-tap. The same panel opens.
+- Lift either finger before five seconds: nothing happens.
+- **Close** or tapping outside dismisses the menu without erasing anything.
+- **Cancel** on confirmation returns to the device menu.
+- The menu lists installed screens; two-finger swipes also switch between them.
+- Ordinary one-finger taps and scrolls keep working in the dashboard.
+- The native menu works over loading, error, and crashed web content.
+- VoiceOver exposes the **Device menu** action.
 
-What Unlink removes:
+What Disconnect removes:
 
 | Removed | Notes |
 | --- | --- |
@@ -35,25 +30,17 @@ What Unlink removes:
 The device returns to **Ready to pair**. Nothing is sent to the Mac; if the
 Mac still lists the device, Forget it there.
 
-## From the Mac: Unlink or Forget
+## From the Mac: Forget Device
 
-| Device reachable | Action | Result |
-| --- | --- | --- |
-| Yes | **Unlink** | The Mac asks the device to erase itself, waits for the acknowledgment, then removes its own record. It reports the actual acknowledgment, not an assumption |
-| No | **Forget** | The Mac removes its record immediately. The device is unchanged. The Mac shows: "This Mac has forgotten the device. To remove its dashboard and pairing, hold two fingers on its screen for 10 seconds, then tap Unlink." |
-
-Forget is not a remote wipe. Neither action revokes upstream tokens.
+**Forget Device** removes the Mac's saved record. It does not erase screens
+or credentials on the device and does not revoke upstream tokens. Use the
+device menu to disconnect and erase its local content.
 
 ## Re-pair
 
-After Unlink, pair from the Mac again. If the Mac still lists the device
-under **Devices**, select it and press **Pair Again**; otherwise it
-reappears under **Add Device** and you press **Pair**. Fresh identities and
-a fresh code are used. If the Mac still has an old record for the device,
-the device now presents a different identity; the Mac treats that as an
-identity change and requires re-pairing, so Forget the old record first if
-Pair Again is refused. A second Mac can pair only after the device has been
-unlinked.
+After Disconnect, forget any old Mac entry. Select the device under **Ready
+to pair** and start pairing on the Mac, compare both codes, and confirm on
+the device. A second Mac can pair only after the device is disconnected.
 
 ## Reinstalling the device app
 

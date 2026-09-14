@@ -161,7 +161,7 @@ final class PackageValidatorTests: XCTestCase {
         XCTAssertEqual(try store.get(key: "k"), "1")
         XCTAssertTrue(store.usedBytes > 0)
         XCTAssertEqual(UnlinkGestureSpec.actionCount, 1)
-        XCTAssertEqual(UnlinkGestureSpec.holdSeconds, 10)
+        XCTAssertEqual(UnlinkGestureSpec.holdSeconds, 5)
         XCTAssertFalse(OfflineOverlayLayout.usesSystemRed)
         XCTAssertEqual(OfflineOverlayLayout.lightDangerHex, "#A52C42")
         XCTAssertFalse(ConnectionHealth.overlayVisible(requiredFailedOrStale: true, connectionCount: 0))
