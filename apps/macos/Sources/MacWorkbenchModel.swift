@@ -29,6 +29,13 @@ final class MacWorkbenchModel: ObservableObject {
     @Published private(set) var deviceScreens = DeviceScreenSelection()
     private var screenSelections: [String: DeviceScreenSelection] = [:]
     private var appliedSetSources: [String: [String: String]] = [:]
+    private let previewThumbnails: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 24; cache.totalCostLimit = 24 * 1024 * 1024
+        return cache
+    }()
+    private var thumbnailRequests: [String: Task<NSImage?, Never>] = [:]
+    private let thumbnailQueue = DispatchQueue(label: "xyz.screenpunk.thumbnail", qos: .utility)
     private var previewRequest = UUID()
     @Published var preview: PackageAssetStore?
     @Published var previewKey = UUID()
@@ -64,6 +71,7 @@ final class MacWorkbenchModel: ObservableObject {
 
     var previewDashboardId: String { record?.manifest.dashboardId ?? "" }
     var previewRevision: String { record?.manifest.revision ?? "" }
+    var previewManifest: DashboardManifest? { record?.manifest }
     var previewUsesHomeAssistant: Bool { record?.manifest.connections.contains { $0.alias == "home" } ?? false }
     var device: PairedDeviceRecord? { devices.first { $0.id == selection } }
     var detected: WorkbenchSidebar.NearbyEntry? { nearby.first { $0.id == selection } }
@@ -129,7 +137,7 @@ final class MacWorkbenchModel: ObservableObject {
             appliedOrientations = UserDefaults.standard.dictionary(forKey: "appliedOrientations") as? [String:String] ?? [:]
             if let saved = UserDefaults.standard.string(forKey: "screenPreviewProfile"), let profile = ScreenPreviewProfile.all.first(where: { $0.id == saved }) { screenPreviewProfile = profile }
             draft = try? JSONDecoder().decode(ScreenDraft.self, from: Data(contentsOf: draftURL))
-            refresh()
+            refresh(probe: true)
             timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
                 Task { @MainActor in guard let self else { return }; self.ticks += 1; self.refresh(probe: self.ticks % 5 == 0) }
             }
@@ -154,8 +162,8 @@ final class MacWorkbenchModel: ObservableObject {
         guard let service, !refreshing, !busy, pairing == nil else { return }
         refreshing = true
         queue.async {
-            if probe { for device in service.devices.listDevices() { _ = try? service.devices.device(device.id, probe: true) } }
             let advertisements = service.devices.discover()
+            if probe { for device in service.devices.listDevices() { _ = try? service.devices.device(device.id, probe: true) } }
             let devices = service.devices.listDevices()
             let nearby = WorkbenchSidebar.nearby(advertisements: advertisements, devices: devices.map(\.device), developer: false)
             let screens = Result { try service.listDashboards() }
@@ -232,11 +240,18 @@ final class MacWorkbenchModel: ObservableObject {
                     break
                 }
             }
+            let appliedPackageMissing = applied == nil
+            if applied == nil, let dashboardId {
+                applied = try? service.getDashboard(dashboardId: dashboardId, revision: nil)
+            }
             let assets = applied.flatMap { try? PackageAssetStore.load(directory: $0.packageDirectory) }
                 ?? (active == StoredRevision.offlineFixture.revision ? try? PackageAssetStore.bundledOfflineFixture() : nil)
             Task { @MainActor in
                 guard self.previewRequest == request, self.selection == device.id, self.section == "Devices" else { return }
-                self.record = applied; self.preview = assets; self.previewIsApplied = true; self.previewKey = UUID()
+                self.record = applied; self.preview = assets; self.previewIsApplied = !appliedPackageMissing; self.previewKey = UUID()
+                if appliedPackageMissing, applied != nil {
+                    self.notice = "Showing the saved screen. The applied version is not available on this Mac."
+                }
                 if let applied {
                     self.selectedScreen = applied.manifest.dashboardId
                     if self.deviceScreens.ids.isEmpty { self.deviceScreens = DeviceScreenSelection(ids: [applied.manifest.dashboardId]) }
@@ -254,6 +269,50 @@ final class MacWorkbenchModel: ObservableObject {
             if let next = deviceScreens.ids.first { focusScreen(next) }
             else { previewRequest = UUID(); selectedScreen = nil; preview = nil; record = nil; previewIsApplied = false }
         }
+    }
+    private func thumbnailKey(_ id: String, revision: String, size: CGSize) -> String {
+        "\(id):\(revision):\(Int(size.width))x\(Int(size.height))"
+    }
+    func cachedPreviewThumbnail(_ id: String, revision: String, size: CGSize) -> NSImage? {
+        previewThumbnails.object(forKey: thumbnailKey(id, revision: revision, size: size) as NSString)
+            ?? previewThumbnails.object(forKey: thumbnailKey(id, revision: "last", size: size) as NSString)
+    }
+    func previewThumbnail(_ id: String, revision: String, size: CGSize) async -> NSImage? {
+        let key = thumbnailKey(id, revision: revision, size: size)
+        if let image = previewThumbnails.object(forKey: key as NSString) { return image }
+        if let request = thumbnailRequests[key] { return await request.value }
+        guard let service, let renderer = service.helper.makeRenderer(), !Task.isCancelled else { return nil }
+        let request = Task { @MainActor [weak self] () -> NSImage? in
+            guard let self else { return nil }
+            // Share in-flight work across carousel view recreation. Only static, credential-free
+            // captures use document readiness; strict MCP review captures are unchanged.
+            let data: Data? = await withCheckedContinuation { continuation in
+                self.thumbnailQueue.async {
+                    let capture = try? { () throws -> PreviewCapture in
+                        let record = try service.getDashboard(dashboardId: id, revision: revision.isEmpty ? nil : revision)
+                        return try renderer.render(PreviewRequest(dashboardId: id, revision: record.manifest.revision,
+                            digest: record.manifest.digest ?? "", packageDirectory: record.packageDirectory,
+                            width: Int(size.width), height: Int(size.height), live: false,
+                            waitsForRuntimeReady: false, timeoutSeconds: 6))
+                    }()
+                    continuation.resume(returning: capture?.png)
+                }
+            }
+            defer { self.thumbnailRequests[key] = nil }
+            guard let data, let image = NSImage(data: data) else { return nil }
+            let cost = Int(image.size.width * image.size.height * 4)
+            self.previewThumbnails.setObject(image, forKey: key as NSString, cost: cost)
+            self.previewThumbnails.setObject(image, forKey: self.thumbnailKey(id, revision: "last", size: size) as NSString, cost: cost)
+            return image
+        }
+        thumbnailRequests[key] = request
+        return await request.value
+    }
+
+    func browseScreen(_ offset: Int) {
+        guard section == "Devices", device != nil, !busy,
+              let id = deviceScreens.previewNeighbor(of: selectedScreen, offset: offset) else { return }
+        focusScreen(id)
     }
     private func focusScreen(_ id: String) { previewIsApplied = false; selectedScreen = id; loadPreview(id) }
     func loadPreview(_ id: String) {
@@ -403,7 +462,7 @@ final class MacWorkbenchModel: ObservableObject {
         run({ service in
             let sources = try ids.map { try service.getDashboard(dashboardId: $0, revision: nil) }
             let prepared = try sources.map { source in
-                do { return try ScreenPackagePreparation.prepare(source, for: device.device.profile, orientation: orientation, root: service.store.root) }
+                do { return try service.prepareDashboardForDevice(dashboardId: source.manifest.dashboardId, revision: source.manifest.revision, device: device.device.profile, orientation: orientation) }
                 catch { throw ControllerError.validationFailed(detail: "\(source.manifest.name): \((error as? ControllerError)?.detail ?? error.localizedDescription) No screens have been changed on the device.") }
             }
             let receipt = try service.shipSet(records: prepared, deviceId: device.id, selectedDashboardId: visible)

@@ -304,6 +304,48 @@
       "url": "screenpunk://package/index.html",
       "isMainFrame": true,
       "expect": "denyFilePath"
+    },
+    {
+      "id": "media-local",
+      "kind": "media",
+      "url": "screenpunk://package/sounds/tone.wav",
+      "isMainFrame": true,
+      "expect": "allowLocalAsset"
+    },
+    {
+      "id": "media-remote",
+      "kind": "media",
+      "url": "https://example.invalid/tone.wav",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "media-other-package",
+      "kind": "media",
+      "url": "screenpunk://other/tone.wav",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "media-data",
+      "kind": "media",
+      "url": "data:audio/wav;base64,AAAA",
+      "isMainFrame": true,
+      "expect": "denyDirectEgress"
+    },
+    {
+      "id": "media-file",
+      "kind": "media",
+      "url": "file:///tmp/tone.wav",
+      "isMainFrame": true,
+      "expect": "denyFilePath"
+    },
+    {
+      "id": "media-traversal",
+      "kind": "media",
+      "url": "screenpunk://package/../tone.wav",
+      "isMainFrame": true,
+      "expect": "denyTraversal"
     }
   ]
 }

@@ -67,6 +67,9 @@ function createDashboardClient(options = {}) {
     const statusListeners = new Set();
     let seq = 0;
     let disposed = false;
+    const rasterURLs = new Map();
+    const publicRequestIDs = new Set();
+    const cameraStops = new Set();
     const unsubscribeTransport = transport.onMessage((message) => {
         if (message.kind === "event") {
             if (message.method === "runtime.onStatus") {
@@ -152,7 +155,131 @@ function createDashboardClient(options = {}) {
         transport.send(message);
     }
     return {
+        cameras: {
+            mount(element, source, onStatus = () => { }, presentation = {}) {
+                if (source.kind !== "homeAssistant" || source.connection !== "home" ||
+                    !/^camera\.[a-z0-9_]+$/.test(source.entityId))
+                    throw new BridgeClientError("validation_failed");
+                const cameraId = `camera-${nowId()}`;
+                const encodedSource = JSON.stringify({ kind: source.kind, connection: source.connection, entityId: source.entityId });
+                let stopped = false, busy = false, active = false;
+                const close = () => {
+                    if (!active)
+                        return;
+                    active = false;
+                    void sendRequest("connections.request", { alias: "home", operation: "cameraClose", parameters: { id: cameraId } }).catch(() => { });
+                };
+                const update = async () => {
+                    if (stopped || busy)
+                        return;
+                    const rect = element.getBoundingClientRect();
+                    const visible = element.isConnected && !document.hidden && rect.width > 0 && rect.height > 0 &&
+                        rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1 &&
+                        getComputedStyle(element).visibility !== "hidden";
+                    if (!visible) {
+                        close();
+                        onStatus({ state: "stopped" });
+                        return;
+                    }
+                    busy = true;
+                    active = true;
+                    try {
+                        const response = await sendRequest("connections.request", { alias: "home", operation: "cameraPresent", parameters: {
+                                id: cameraId, source: encodedSource,
+                                controls: presentation.controls === "gallery" ? "gallery" : "", label: (presentation.label ?? "Camera").slice(0, 80), order: String(presentation.order ?? 0),
+                                rect: JSON.stringify({ x: rect.x, y: rect.y, width: rect.width, height: rect.height, viewportWidth: innerWidth })
+                            } });
+                        if (!stopped)
+                            onStatus(response.value);
+                    }
+                    catch (error) {
+                        if (!stopped)
+                            onStatus({ state: "failed", code: error instanceof BridgeClientError ? error.code : "device_offline" });
+                    }
+                    finally {
+                        busy = false;
+                    }
+                };
+                const timer = setInterval(() => { void update(); }, 750);
+                const onVisibility = () => { if (document.hidden)
+                    close();
+                else
+                    void update(); };
+                document.addEventListener("visibilitychange", onVisibility);
+                const stop = () => {
+                    if (stopped)
+                        return;
+                    stopped = true;
+                    clearInterval(timer);
+                    close();
+                    document.removeEventListener("visibilitychange", onVisibility);
+                    cameraStops.delete(stop);
+                };
+                cameraStops.add(stop);
+                void update();
+                return { stop, retry() { close(); void update(); } };
+            }
+        },
+        homeAssistant: {
+            async callService(call) {
+                assertServiceData(call.serviceData);
+                const encoded = JSON.stringify(call);
+                if (new TextEncoder().encode(encoded).length > 32 * 1024)
+                    throw new BridgeClientError("size_limit");
+                const response = await sendRequest("connections.request", { alias: "home", operation: "callService", parameters: { call: encoded } });
+                return { value: response.value, stale: response.stale === true };
+            }
+        },
         connections: {
+            async read(alias, operation, parameters = {}, options = {}) {
+                if (options.signal?.aborted)
+                    throw new DOMException("Aborted", "AbortError");
+                const id = nowId();
+                const abort = () => {
+                    fire("connections.cancel", { parameters: { requestId: id } });
+                    const waiter = pending.get(id);
+                    if (waiter) {
+                        clearTimeout(waiter.timer);
+                        pending.delete(id);
+                        waiter.reject(new DOMException("Aborted", "AbortError"));
+                    }
+                };
+                publicRequestIDs.add(id);
+                options.signal?.addEventListener("abort", abort, { once: true });
+                try {
+                    const response = await sendRequest("connections.request", { alias, operation, parameters, id });
+                    const result = response.value;
+                    if (!result || !["fresh", "stale", "unavailable", "error"].includes(result.state))
+                        throw new BridgeClientError("unsupported_version");
+                    if (result.resourceURL) {
+                        if (!/^screenpunk:\/\/package\/__native-raster\/[a-z0-9-]+$/.test(result.resourceURL))
+                            throw new BridgeClientError("validation_failed");
+                        rasterURLs.set(result.resourceURL, (rasterURLs.get(result.resourceURL) ?? 0) + 1);
+                    }
+                    return result;
+                }
+                catch (error) {
+                    if (error instanceof BridgeClientError && error.code === "permission_required") {
+                        const status = await sendRequest("runtime.onStatus");
+                        if (status.value?.publicReadHTTP !== 1) {
+                            throw new BridgeClientError("unsupported_version", "Update Screenpunk to read public data.");
+                        }
+                    }
+                    throw error;
+                }
+                finally {
+                    options.signal?.removeEventListener("abort", abort);
+                    publicRequestIDs.delete(id);
+                }
+            },
+            release(resourceURL) {
+                const count = rasterURLs.get(resourceURL) ?? 0;
+                if (count > 1)
+                    rasterURLs.set(resourceURL, count - 1);
+                else
+                    rasterURLs.delete(resourceURL);
+                fire("connections.release", { parameters: { resourceURL } });
+            },
             async request(alias, operation, parameters = {}) {
                 const response = await sendRequest("connections.request", { alias, operation, parameters });
                 return { value: response.value, stale: response.stale === true };
@@ -219,6 +346,15 @@ function createDashboardClient(options = {}) {
             }
         },
         dispose() {
+            for (const id of publicRequestIDs)
+                fire("connections.cancel", { parameters: { requestId: id } });
+            for (const [resourceURL, count] of rasterURLs)
+                for (let i = 0; i < count; i++)
+                    fire("connections.release", { parameters: { resourceURL } });
+            publicRequestIDs.clear();
+            rasterURLs.clear();
+            for (const stop of cameraStops)
+                stop();
             disposed = true;
             unsubscribeTransport();
             for (const waiter of pending.values()) {
@@ -279,6 +415,40 @@ function stable(value) {
         .sort()
         .map((k) => `${JSON.stringify(k)}:${stable(obj[k])}`)
         .join(",")}}`;
+}
+function assertServiceData(data) {
+    let nodes = 0;
+    const visit = (value, depth) => {
+        if (++nodes > 2048 || depth > 12)
+            throw new BridgeClientError("size_limit");
+        if (value === null || typeof value === "boolean")
+            return;
+        if (typeof value === "number" && Number.isFinite(value))
+            return;
+        if (typeof value === "string") {
+            if (new TextEncoder().encode(value).length > 8192)
+                throw new BridgeClientError("size_limit");
+            return;
+        }
+        if (Array.isArray(value)) {
+            for (const item of value)
+                visit(item, depth + 1);
+            return;
+        }
+        if (typeof value === "object" && value !== null &&
+            (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
+            for (const [key, item] of Object.entries(value)) {
+                if (new TextEncoder().encode(key).length > 128)
+                    throw new BridgeClientError("size_limit");
+                visit(item, depth + 1);
+            }
+            return;
+        }
+        throw new BridgeClientError("validation_failed");
+    };
+    if (!data || typeof data !== "object" || Array.isArray(data))
+        throw new BridgeClientError("validation_failed");
+    visit(data, 0);
 }
 
   var api = {

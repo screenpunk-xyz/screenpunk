@@ -5,7 +5,14 @@ import CryptoKit
 
 public enum LANProtocolLimits: Sendable {
     public static let version = 1
-    public static let maxMessageBytes = 2 * 1024 * 1024
+    public static let legacyMessageBytes = 2 * 1024 * 1024
+    public static let maxMessageBytes = 32 * 1024 * 1024
+    public static let transferTimeoutSeconds: TimeInterval = 60
+
+    public static func transferLimit(advertised: Int?) -> Int {
+        guard let advertised, advertised > 0 else { return legacyMessageBytes }
+        return min(advertised, maxMessageBytes)
+    }
 }
 
 public enum LANMethod: String, Sendable, Codable, Equatable {
@@ -56,6 +63,7 @@ public struct LANHello: Sendable, Equatable, Codable {
     /// Owner-facing device name. Optional so peers without it still decode.
     public var name: String?
     public var capabilities: [String]?
+    public var maxTransferBytes: Int?
     public var profile: DeviceProfile?
 
     public init(
@@ -65,9 +73,11 @@ public struct LANHello: Sendable, Equatable, Codable {
         protocolMajor: Int = DiscoveryService.protocolMajor,
         name: String? = nil,
         capabilities: [String]? = nil,
+        maxTransferBytes: Int? = nil,
         profile: DeviceProfile? = nil
     ) {
         self.capabilities = capabilities
+        self.maxTransferBytes = maxTransferBytes
         self.role = role
         self.deviceId = deviceId
         self.pinHex = pinHex
@@ -160,7 +170,7 @@ public enum LANCodec {
         return Data(header) + message
     }
 
-    public static func messageLength(fromHeader header: Data) throws -> Int {
+    public static func messageLength(fromHeader header: Data, maximumBytes: Int = LANProtocolLimits.maxMessageBytes) throws -> Int {
         guard header.count == 4 else { throw TransferFailure.validationFailed }
         let bytes = [UInt8](header)
         let length = Int(
@@ -169,7 +179,7 @@ public enum LANCodec {
                 | (UInt32(bytes[2]) << 8)
                 | UInt32(bytes[3])
         )
-        if length <= 0 || length > LANProtocolLimits.maxMessageBytes {
+        if length <= 0 || length > min(maximumBytes, LANProtocolLimits.maxMessageBytes) {
             throw TransferFailure.validationFailed
         }
         return length

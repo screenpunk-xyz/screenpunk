@@ -2,6 +2,8 @@ import { HTTP_RESPONSE_BYTES, HTTP_TIMEOUT_SECONDS, MAX_BRIDGE_MESSAGE_BYTES, WE
 
 export const BRIDGE_METHODS = [
   "connections.request",
+  "connections.cancel",
+  "connections.release",
   "connections.subscribe",
   "connections.unsubscribe",
   "state.get",

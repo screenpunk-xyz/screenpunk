@@ -171,3 +171,30 @@ test("manual page navigation and status use native bridge", async () => {
   assert.deepEqual(await sdk.navigation.get(), { pageId: "front-door", activeRuleId: "doorbell" });
   sdk.dispose();
 });
+
+test("general Home Assistant call preserves nested values and propagates errors without replay", async () => {
+  const call = { domain: "light", service: "turn_on", target: { entity_id: ["light.a"] },
+    serviceData: { rgb_color: [255, 0, 128], transition: 1.5, future: { enabled: true, unset: null } } };
+  const host = createLoopback({ onRequest(message, reply) {
+    assert.equal(message.alias, "home");
+    assert.equal(message.operation, "callService");
+    assert.deepEqual(JSON.parse(message.parameters!.call as string), call);
+    reply({ kind: "error", code: "permission_required", message: "permission_required" });
+  }});
+  const sdk = createDashboardClient({ transport: host.page });
+  await assert.rejects(sdk.homeAssistant.callService(call), { code: "permission_required" });
+  assert.equal(host.sent.length, 1);
+  await assert.rejects(sdk.homeAssistant.callService({ ...call, serviceData: { value: "x".repeat(32768) } }), { code: "size_limit" });
+  assert.equal(host.sent.length, 1);
+  sdk.dispose();
+});
+
+test("service data rejects non-JSON values before native dispatch", async () => {
+  const host = createLoopback({ onRequest(_message, reply) { reply({ kind: "response", value: null }); } });
+  const sdk = createDashboardClient({ transport: host.page });
+  for (const value of [NaN, Infinity, undefined, () => 1, new Date()]) {
+    await assert.rejects(sdk.homeAssistant.callService({domain:'test',service:'call',serviceData:{value: value as never}}), {code:'validation_failed'});
+  }
+  assert.equal(host.sent.length, 0);
+  sdk.dispose();
+});

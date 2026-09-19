@@ -53,6 +53,18 @@ public final class DeviceLANServer: @unchecked Sendable {
         guard let scope = genericConnectionScope() else { throw ConnectionFailure.permissionRequired }
         return try await genericConnectionVault.makeRuntime(scope: scope, currentScope: { [weak self] in self?.genericConnectionScope() })
     }
+    private var publicSession: (scope: HomeAssistantDeviceRuntime.Scope, session: PublicReadSession)?
+    public func publicReadSession() -> PublicReadSession? {
+        guard let scope = homeAssistantScope(), let generation = scope.grantSet else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        if let existing = publicSession, existing.scope == scope { return existing.session }
+        publicSession?.session.cancel(); publicSession = nil
+        guard let config = try? homeAssistantVault.publicConfiguration(owner: scope.owner, dashboardId: scope.dashboardId,
+            revision: scope.revision, generation: generation),
+              let session = try? PublicReadSession(provisioning: config, isCurrent: { [weak self] in self?.homeAssistantScope() == scope }) else { return nil }
+        publicSession = (scope, session); return session
+    }
+    private func clearPublicSession() { publicSession?.session.cancel(); publicSession = nil }
 
     private func homeAssistantScope() -> HomeAssistantDeviceRuntime.Scope? {
         lock.lock(); defer { lock.unlock() }
@@ -63,7 +75,9 @@ public final class DeviceLANServer: @unchecked Sendable {
     private var pairingExpiry: DispatchWorkItem?
     private var pinnedController: [UInt8]?
     private var activeStoredRevision: StoredRevision?
-    private var listener: NWListener?
+    // Internal visibility allows transport-failure regression tests to cancel it.
+    private(set) var listener: NWListener?
+    private let listenerLock = NSLock()
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.device")
     private let clock: PairingClock
     private let lock = NSLock()
@@ -78,7 +92,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         store: DeviceStateStore? = nil,
         homeAssistantVault: HomeAssistantDeviceVault = HomeAssistantDeviceVault(),
         genericConnectionVault: GenericConnectionDeviceVault = GenericConnectionDeviceVault(),
-        requestBodyTimeout: TimeInterval = 15
+        requestBodyTimeout: TimeInterval = LANProtocolLimits.transferTimeoutSeconds
     ) {
         self.genericConnectionVault = genericConnectionVault
         self.homeAssistantVault = homeAssistantVault
@@ -101,8 +115,19 @@ public final class DeviceLANServer: @unchecked Sendable {
         }
     }
 
+    /// Recreate a failed listener without touching pairing or installed content.
+    /// May block during startup; callers should use a worker queue.
     public func start() throws {
-        if listener != nil, port != 0 { return }
+        listenerLock.lock()
+        defer { listenerLock.unlock() }
+        if let listener {
+            switch listener.state {
+            case .ready, .setup: return
+            default: listener.cancel()
+            }
+        }
+        listener = nil
+        port = 0
         let parameters = try LANChannel.tlsParameters(
             identity: identity,
             pinnedPeer: { [weak self] in self?.ownerPin() },
@@ -110,13 +135,11 @@ public final class DeviceLANServer: @unchecked Sendable {
         )
         let listener = try NWListener(using: parameters, on: .any)
         let ready = DispatchSemaphore(value: 0)
-        var startError: Error?
         listener.stateUpdateHandler = { state in
             switch state {
             case .ready:
                 ready.signal()
-            case .failed(let error):
-                startError = error
+            case .failed, .cancelled:
                 ready.signal()
             default:
                 break
@@ -132,9 +155,13 @@ public final class DeviceLANServer: @unchecked Sendable {
             listener.cancel()
             throw TransferFailure.interrupted
         }
-        if let startError {
+        if case .failed(let error) = listener.state {
             listener.cancel()
-            throw startError
+            throw error
+        }
+        guard case .ready = listener.state else {
+            listener.cancel()
+            throw TransferFailure.interrupted
         }
         guard let port = listener.port?.rawValue else {
             listener.cancel()
@@ -211,7 +238,9 @@ public final class DeviceLANServer: @unchecked Sendable {
         lock.lock()
         try? genericConnectionVault.revoke()
         genericConnectionGeneration = UUID()
+        clearPublicSession()
         try? homeAssistantVault.revoke()
+        try? homeAssistantVault.revokePublic()
         let homeAssistantRuntime = self.homeAssistantRuntime
         Task { await homeAssistantRuntime.cancelPending() }
         clearPendingPairingLocked()
@@ -230,6 +259,8 @@ public final class DeviceLANServer: @unchecked Sendable {
     }
 
     public func stop() {
+        listenerLock.lock()
+        defer { listenerLock.unlock() }
         listener?.cancel()
         listener = nil
         port = 0
@@ -412,7 +443,10 @@ public final class DeviceLANServer: @unchecked Sendable {
         defer { link.cancel() }
         while true {
             do {
-                let request = try link.receiveRequest(bodyTimeout: requestBodyTimeout)
+                let owner = ownerPin()
+                let trusted = owner != nil && peerPin == owner
+                let request = try link.receiveRequest(bodyTimeout: trusted ? requestBodyTimeout : min(requestBodyTimeout, 15),
+                    maximumBytes: trusted ? LANProtocolLimits.maxMessageBytes : LANProtocolLimits.legacyMessageBytes)
                 let reply = handle(request, peerPin: peerPin)
                 try link.send(reply)
             } catch {
@@ -438,7 +472,8 @@ public final class DeviceLANServer: @unchecked Sendable {
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
                     name: runtime.profile.name,
-                    capabilities: ["home-assistant-http-v1", "screen-set-v1", "device-settings-v1", "generic-connections-v1"],
+                    capabilities: ["home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "device-settings-v1", "generic-connections-v1"],
+                    maxTransferBytes: LANProtocolLimits.maxMessageBytes,
                     profile: runtime.profile
                 )
                 return ok(request, payload: hello)
@@ -523,7 +558,9 @@ public final class DeviceLANServer: @unchecked Sendable {
                     // Exact-revision binding denies superseded grants immediately.
                     // Retire their secrets as well; a failed deployment never reaches here.
                     if before.activeRevision != runtime.activeRevision || activeStoredRevision?.dashboardId != body.revision.dashboardId {
-                        try? homeAssistantVault.revoke()
+                        clearPublicSession()
+        try? homeAssistantVault.revoke()
+        try? homeAssistantVault.revokePublic()
                         let service = homeAssistantRuntime
                         Task { await service.cancelPending() }
                     }
@@ -619,6 +656,7 @@ public final class DeviceLANServer: @unchecked Sendable {
             try store.save(state)
         }
         screenSet = next
+        clearPublicSession()
         activateSelectionLocked(dashboardId)
         let service = homeAssistantRuntime
         Task { await service.cancelPending() }
@@ -664,6 +702,7 @@ public final class DeviceLANServer: @unchecked Sendable {
             if !committed {
                 for directory in directories { store?.discardStaged(directory) }
                 try? homeAssistantVault.removeGeneration(generation)
+                try? homeAssistantVault.prunePublic(removing: generation)
             }
         }
         for item in body.screens {
@@ -673,6 +712,14 @@ public final class DeviceLANServer: @unchecked Sendable {
             guard outcome.phase == .active else { throw TransferFailure.targetMismatch }
             let assets = try stageFiles(item.deployment.files)
             guard assets["index.html"] != nil else { throw TransferFailure.validationFailed }
+            if let reads = item.publicReads {
+                guard let manifestData = assets["manifest.json"]?.data else { throw TransferFailure.validationFailed }
+                let manifest = try JSONDecoder().decode(DashboardManifest.self, from: manifestData)
+                try PackageValidator.validate(manifest)
+                let expected = try PublicReadProvisioning(manifest: manifest)
+                guard reads.dashboardId == expected.dashboardId, reads.revision == expected.revision,
+                      reads.connections.allSatisfy({ expected.connections.contains($0) }) else { throw TransferFailure.validationFailed }
+            }
             let files = assets.values.map { (path: $0.path, data: $0.data) }
             let directory = try store?.stagePackage(files)
             if let directory { directories.append(directory) }
@@ -681,6 +728,7 @@ public final class DeviceLANServer: @unchecked Sendable {
             packages[item.deployment.revision.dashboardId] = PackageAssetStore(assets: assets)
         }
         try homeAssistantVault.stage(body.screens.compactMap(\.homeAssistant), owner: owner, generation: generation)
+        try homeAssistantVault.stagePublic(body.screens.compactMap(\.publicReads), owner: owner, generation: generation)
         let installed = DeviceInstalledScreenSet(deploymentId: body.deploymentId, contentDigest: digest,
             grantSet: generation, screens: screens, selectedDashboardId: body.selectedDashboardId)
         guard let selected = screens.first(where: { $0.revision.dashboardId == body.selectedDashboardId }) else {
@@ -692,6 +740,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         state.settings = settings
         try store?.save(state)
         committed = true
+        clearPublicSession()
         screenSet = installed
         screenPackages = packages
         activateSelectionLocked(body.selectedDashboardId)
@@ -699,6 +748,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         Task { await service.cancelPending() }
         // Cleanup after the commit cannot invalidate the newly selected generation.
         try? homeAssistantVault.retainGeneration(generation)
+        try? homeAssistantVault.prunePublic(keeping: generation)
         store?.prunePackageGenerations(keeping: Set(screens.map(\.packageDirectory)))
         onChange?()
         return .init(deploymentId: body.deploymentId, deviceId: body.deviceId,

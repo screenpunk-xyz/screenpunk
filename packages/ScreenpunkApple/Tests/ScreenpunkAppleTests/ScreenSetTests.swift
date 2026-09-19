@@ -81,6 +81,91 @@ final class ScreenSetTests: XCTestCase {
         XCTAssertFalse(store.hasState)
     }
 
+    func testPublicReadsTransferAlongsideHomeAssistantAndInvalidateHandlesOnSelection() throws {
+        let device = try TLSIdentity.make(role: .device, commonName: "public-set-device")
+        let owner = try TLSIdentity.make(role: .controller, commonName: "public-set-owner")
+        let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? store.erase() }
+        let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
+        let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test phone"),
+            advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
+        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        try server.start(); defer { server.stop() }
+        let client = ControllerLANClient(identity: owner); defer { client.cancel() }
+        try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
+        XCTAssertTrue(try client.hello().capabilities?.contains("public-read-http-v1") == true)
+        var body = try makeBody()
+        let id = UUID().uuidString.lowercased(), revisionId = UUID().uuidString.lowercased()
+        var item = body.screens[0]
+        item.homeAssistant = nil
+        item.deployment.revision.dashboardId = id; item.deployment.revision.revision = revisionId
+        item.deployment.deployment.dashboardId = id; item.deployment.deployment.revision = revisionId
+        var connection = ManifestConnection(alias: "publicData", required: true)
+        connection.publicHTTP = .init(origin: "https://data.example.org", operations: [.init(name: "timeline", path: "/timeline", response: "json")])
+        let html = Data("<html>public fixture</html>".utf8)
+        let target = ManifestTarget(profileId: "fixture-phone", width: item.deployment.revision.width, height: item.deployment.revision.height,
+            scale: 1, orientation: "portrait")
+        let manifest = DashboardManifest(schemaVersion: 1, dashboardId: id, name: "Public fixture", revision: revisionId,
+            entrypoint: "index.html", sdkVersion: "1", target: target, connections: [connection],
+            files: [.init(path: "index.html", bytes: html.count, sha256: PeerPin.hex(PeerPin.sha256(html)))])
+        try PackageValidator.validate(manifest)
+        let manifestData = try JSONEncoder().encode(manifest)
+        item.deployment.files = [("index.html", html), ("manifest.json", manifestData)].map {
+            .init(path: $0.0, sha256: PeerPin.hex(PeerPin.sha256($0.1)), dataBase64: $0.1.base64EncodedString())
+        }
+        item.publicReads = try PublicReadProvisioning(manifest: manifest)
+        body.screens[0] = item; body.selectedDashboardId = id
+        _ = try client.deployScreenSet(body)
+        let session = try XCTUnwrap(server.publicReadSession())
+        let png = try PublicReadRuntimeTests().raster()
+        let handle = try session.resources.put(.init(state: "fresh", body: png, mime: "image/png", status: 200))
+        let generation = try XCTUnwrap(server.screenSet?.grantSet)
+        XCTAssertEqual(try vault.record(owner: PeerPin.hex(owner.pin), revision: "second-revision", grantSet: generation).configuration.token, "second-token")
+        try server.selectScreen("second")
+        XCTAssertNil(server.publicReadSession())
+        XCTAssertThrowsError(try session.resources.asset(url: handle))
+        try server.selectScreen(id)
+        let newSession = try XCTUnwrap(server.publicReadSession())
+        XCTAssertThrowsError(try newSession.resources.asset(url: handle))
+        let restored = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        XCTAssertNotNil(restored.publicReadSession())
+        var invalid = body; invalid.deploymentId = "mismatched-public-grant"
+        invalid.screens[0].publicReads?.connections[0].publicHTTP?.origin = "https://unapproved.example.org"
+        XCTAssertThrowsError(try client.deployScreenSet(invalid))
+        XCTAssertEqual(server.screenSet?.grantSet, generation)
+        server.unlink()
+        XCTAssertThrowsError(try vault.publicConfiguration(owner: PeerPin.hex(owner.pin), dashboardId: id, revision: revisionId, generation: generation))
+    }
+
+    func testPairedTLSDeployAcceptsAssetsBeyondLegacyLimit() throws {
+        let device = try TLSIdentity.make(role: .device, commonName: "large-device")
+        let owner = try TLSIdentity.make(role: .controller, commonName: "large-owner")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = DeviceStateStore(root: root)
+        defer { try? store.erase() }
+        let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test"),
+            advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised),
+            pairing: .init(owner: owner.pairingIdentity))
+        let server = DeviceLANServer(runtime: runtime, identity: device, store: store,
+            homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
+        try server.start(); defer { server.stop() }
+        let client = ControllerLANClient(identity: owner)
+        defer { client.cancel() }
+        try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
+        XCTAssertEqual(try client.hello().maxTransferBytes, 32 * 1024 * 1024)
+        var body = try makeBody()
+        let asset = Data(repeating: 0x55, count: 3 * 1024 * 1024)
+        body.screens[0].deployment.files.append(.init(path: "generic.bin", sha256: PeerPin.hex(PeerPin.sha256(asset)), dataBase64: asset.base64EncodedString()))
+        let encoded = try LANCodec.encodePayload(body)
+        XCTAssertGreaterThan(encoded.utf8.count, LANProtocolLimits.legacyMessageBytes)
+        let receipt = try client.deployScreenSet(body)
+        XCTAssertEqual(receipt.screens.count, 2)
+        XCTAssertEqual(server.activePackage?.assets["generic.bin"]?.data, asset)
+        let restored = DeviceLANServer(runtime: runtime, identity: device, store: store,
+            homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
+        XCTAssertEqual(restored.activePackage?.assets["generic.bin"]?.data, asset)
+    }
+
     func testCircularNavigationWrapsInBothDirections() {
         XCTAssertEqual(ScreenCarousel.index(from: 0, offset: -1, count: 2), 1)
         XCTAssertEqual(ScreenCarousel.index(from: 0, offset: 1, count: 2), 1)

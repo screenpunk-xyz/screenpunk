@@ -136,7 +136,7 @@
     {
       "name": "preview_dashboard",
       "group": "preview",
-      "description": "Render an exact dashboard revision on the hidden Screenpunk helper and return PNG image content plus metadata. Live preview — actions control your devices. Preview is live by default. The workbench does not need to be open. Never returns only a local path. Failed captures are errors, not placeholder images.",
+      "description": "Render an exact dashboard revision on the hidden Screenpunk helper and return PNG image content plus metadata. Live preview \u2014 actions control your devices. Preview is live by default. The workbench does not need to be open. Never returns only a local path. Failed captures are errors, not placeholder images.",
       "readOnlyHint": false,
       "destructiveHint": false,
       "openWorldHint": false
@@ -196,6 +196,22 @@
       "group": "diagnostics",
       "description": "Troubleshooting help. Topic unlink explains the five-second two-finger device menu gesture and confirmed Disconnect.",
       "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "inspect_public_connections",
+      "group": "connections",
+      "description": "Inspect revision-bound public HTTPS origins, operations, parameter bounds and owner approval state. No network requests.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "approve_public_connections",
+      "group": "connections",
+      "description": "Record owner approval of all public HTTPS read declarations in one exact revision. Call inspect_public_connections and obtain owner approval first.",
+      "readOnlyHint": false,
       "destructiveHint": false,
       "openWorldHint": false
     }

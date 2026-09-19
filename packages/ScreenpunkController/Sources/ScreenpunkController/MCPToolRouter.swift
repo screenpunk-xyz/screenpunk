@@ -150,6 +150,20 @@ public struct MCPToolRouter: Sendable {
                 "revision": manifest.revision,
                 "digest": manifest.digest ?? ""
             ])
+        case "approve_public_connections":
+            let aliases: [String]?
+            if let value = arguments["aliases"] {
+                guard let items = value.array, !items.isEmpty, items.allSatisfy({ $0.string != nil }) else {
+                    throw ControllerError.validationFailed(detail: "aliases must be a nonempty array of strings")
+                }
+                aliases = items.compactMap(\.string)
+            } else { aliases = nil }
+            let result = try service.approvePublicConnections(dashboardId: requireString(arguments, "dashboardId"),
+                revision: requireString(arguments, "revision"), approved: arguments["approved"]?.bool == true, aliases: aliases)
+            return .text(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
+        case "inspect_public_connections":
+            return .text(String(decoding: try service.inspectPublicConnections(dashboardId: requireString(arguments, "dashboardId"),
+                revision: arguments["revision"]?.string), as: UTF8.self))
         case "list_connections", "describe_connection":
             if let alias = arguments["alias"]?.string, alias != "home" {
                 throw ControllerError.validationFailed(detail: "Unknown connection alias. Call list_connections.")

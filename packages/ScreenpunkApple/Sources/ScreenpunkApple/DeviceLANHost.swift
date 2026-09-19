@@ -16,6 +16,9 @@ public final class DeviceLANHost: ObservableObject {
     @Published public var settingsSnapshot: DeviceSettingsSnapshot?
     @Published public var genericConnectionGeneration = UUID()
     public let server: DeviceLANServer?
+    private let recoveryQueue = DispatchQueue(label: "xyz.screenpunk.lan.recovery")
+    private var recoveryTimer: DispatchSourceTimer?
+    private var listenerError: String?
 
     /// `store` defaults to the per-user device home so pairing and the active
     /// package survive a relaunch. Tests pass a temporary store.
@@ -44,13 +47,44 @@ public final class DeviceLANHost: ObservableObject {
     }
 
     public func start() {
-        do {
-            try server?.start()
-            port = server?.port ?? 0
-            refresh()
-        } catch {
-            errorMessage = String(describing: error)
+        guard recoveryTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: recoveryQueue)
+        timer.schedule(deadline: .now(), repeating: 5)
+        timer.setEventHandler { [weak self] in self?.ensureListener() }
+        recoveryTimer = timer
+        timer.resume()
+    }
+
+    /// iOS may suspend network services in the background. Re-advertise on
+    /// foreground entry even when the old listener still claims to be ready.
+    public func resume() {
+        start()
+        recoveryQueue.async { [weak self] in
+            self?.server?.stop()
+            self?.ensureListener()
         }
+    }
+
+    private func ensureListener() {
+        guard let server else { return }
+        let result = Result { try server.start() }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            switch result {
+            case .success:
+                if self.errorMessage == self.listenerError { self.errorMessage = nil }
+                self.listenerError = nil
+            case .failure(let error):
+                self.listenerError = String(describing: error)
+                self.errorMessage = self.listenerError
+            }
+            self.refresh()
+        }
+    }
+
+    deinit {
+        recoveryTimer?.cancel()
+        server?.stop()
     }
 
     public func confirm() {

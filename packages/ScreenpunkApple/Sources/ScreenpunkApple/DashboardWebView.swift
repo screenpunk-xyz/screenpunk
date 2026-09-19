@@ -15,6 +15,8 @@ public struct DashboardWebView: UIViewRepresentable {
     public var onReady: () -> Void
     public var onUnlinkHold: () -> Void
     public var homeAssistant: HomeAssistantDeviceRuntime?
+    public var publicReads: PublicReadRuntime?
+    public var rasterResources: PublicRasterResources?
     public var revision: String
     public var connections: ConnectionRuntime?
     public var settings: DeviceSettings
@@ -22,9 +24,10 @@ public struct DashboardWebView: UIViewRepresentable {
     public var onSettingsApplied: (Bool) -> Void
     public var onConnectionHealth: (Bool) -> Void
 
-    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
         self.store = store
         self.homeAssistant = homeAssistant
+        self.publicReads = publicReads; self.rasterResources = rasterResources
         self.revision = revision
         self.connections = connections; self.settings = settings; self.active = active; self.onSettingsApplied = onSettingsApplied
         self.onConnectionHealth = onConnectionHealth
@@ -33,7 +36,7 @@ public struct DashboardWebView: UIViewRepresentable {
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeUIView(context: Context) -> WKWebView {
@@ -54,6 +57,8 @@ public struct DashboardWebView: NSViewRepresentable {
     public var onReady: () -> Void
     public var onUnlinkHold: () -> Void
     public var homeAssistant: HomeAssistantDeviceRuntime?
+    public var publicReads: PublicReadRuntime?
+    public var rasterResources: PublicRasterResources?
     public var revision: String
     public var connections: ConnectionRuntime?
     public var settings: DeviceSettings
@@ -61,9 +66,10 @@ public struct DashboardWebView: NSViewRepresentable {
     public var onSettingsApplied: (Bool) -> Void
     public var onConnectionHealth: (Bool) -> Void
 
-    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
         self.store = store
         self.homeAssistant = homeAssistant
+        self.publicReads = publicReads; self.rasterResources = rasterResources
         self.revision = revision
         self.connections = connections; self.settings = settings; self.active = active; self.onSettingsApplied = onSettingsApplied
         self.onConnectionHealth = onConnectionHealth
@@ -72,7 +78,7 @@ public struct DashboardWebView: NSViewRepresentable {
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -103,8 +109,8 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     private var onSettingsApplied: (Bool) -> Void
     private var settingsValid = true
 
-    init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
-        self.handler = PackageSchemeHandler(store: store)
+    init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+        self.handler = PackageSchemeHandler(store: store, rasterResources: rasterResources)
         self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold
         self.active = active; self.onSettingsApplied = onSettingsApplied
@@ -117,7 +123,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
             } catch { settingsValid = false }
         }
         self.bridge = HomeAssistantWebBridge(runtime: homeAssistant, connections: connections, navigation: events,
-                                              revision: revision, onHealth: onConnectionHealth)
+                                              revision: revision, publicReads: publicReads, resources: rasterResources, onHealth: onConnectionHealth)
         super.init()
         events?.onPage = { [weak self] page in self?.load(path: page.path) }
         events?.onStatus = { [weak self] status in self?.bridge?.status(status) }
@@ -143,8 +149,12 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         webView?.load(URLRequest(url: url))
     }
 
+    deinit { let bridge = bridge; Task { @MainActor in bridge?.cancel() } }
+
     func makeWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        BundledAudio.configure(config)
         config.setURLSchemeHandler(handler, forURLScheme: IsolationPolicy.customScheme)
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         if let bridge {

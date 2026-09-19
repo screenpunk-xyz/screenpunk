@@ -11,25 +11,36 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private let connections: ConnectionRuntime?
     private let navigation: DashboardEventRuntime?
     private let revision: String
+    private let cameras: CameraPlaybackController?
+    private let publicReads: PublicReadRuntime?
+    private let resources: PublicRasterResources?
+    private var publicTasks: [String: Task<Void, Never>] = [:]
     private let onHealth: (Bool) -> Void
     private var tasks: [String: Task<Void, Never>] = [:]
     private var documentGeneration = UUID()
 
-    init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime?, navigation: DashboardEventRuntime?,
-         revision: String, onHealth: @escaping (Bool) -> Void) {
+    init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime? = nil, navigation: DashboardEventRuntime? = nil,
+         revision: String, publicReads: PublicReadRuntime? = nil, resources: PublicRasterResources? = nil, onHealth: @escaping (Bool) -> Void) {
+        self.cameras = runtime.map { CameraPlaybackController(resolver: $0, revision: revision) }
+        self.publicReads = publicReads; self.resources = resources
         self.runtime = runtime; self.connections = connections; self.navigation = navigation
         self.revision = revision; self.onHealth = onHealth
     }
-    func attach(to webView: WKWebView) { self.webView = webView }
+    func attach(to webView: WKWebView) { self.webView = webView; cameras?.attach(webView) }
     func cancel() {
         documentGeneration = UUID()
+        for task in publicTasks.values { task.cancel() }; publicTasks.removeAll(); resources?.clear()
+        let reads = publicReads; Task { await reads?.cancel() }
+        cameras?.stopAll()
         for task in tasks.values { task.cancel() }; tasks.removeAll()
     }
 
     func status(_ value: [String: Any]) {
         dispatch(["protocolVersion": 1, "id": "runtime-status", "kind": "event", "method": "runtime.onStatus",
-                  "value": ["navigation": value, "homeAssistantTransport": "websocket-with-http", "macIsRuntimeProxy": false]])
+                  "value": ["navigation": value, "homeAssistantTransport": "websocket-with-http", "homeAssistantServiceCalls": 1, "cameraPlayback": 1, "publicReadHTTP": 1, "macIsRuntimeProxy": false]])
     }
+
+    deinit { let cameras = cameras; Task { @MainActor in cameras?.cancel() } }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame,
@@ -55,6 +66,12 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
             // Acknowledge in this document before starting its replacement load.
             reply(id: id, value: NSNull()); _ = navigation.open(pageId: page)
         case "state.get": reply(id: id, value: NSNull())
+        case "connections.cancel":
+            if let target = (body["parameters"] as? [String: String])?["requestId"] { publicTasks.removeValue(forKey: target)?.cancel() }
+            reply(id: id, value: NSNull())
+        case "connections.release":
+            if let url = (body["parameters"] as? [String: String])?["resourceURL"] { resources?.release(url: url) }
+            reply(id: id, value: NSNull())
         case "connections.unsubscribe":
             guard let parameters = body["parameters"] as? [String: String], let subscription = parameters["subscriptionId"] else {
                 reply(id: id, error: "validation_failed"); return
@@ -67,6 +84,38 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
             }
             let subscribe = body["method"] as? String == "connections.subscribe"
             let generation = documentGeneration
+            if !subscribe, let publicReads, publicReads.aliases.contains(alias) {
+                guard publicTasks.count < 16, publicTasks[id] == nil else { reply(id: id, error: "size_limit"); return }
+                publicTasks[id] = Task { @MainActor [weak self] in
+                    defer { if self?.documentGeneration == generation { self?.publicTasks.removeValue(forKey: id) } }
+                    do {
+                        let result = try await publicReads.request(alias: alias, operation: operation, parameters: parameters)
+                        guard let self, self.current(generation) else { return }
+                        var value: [String: Any] = ["state": result.state, "status": result.status]
+                        if let date = result.fetchedAt { value["fetchedAt"] = ISO8601DateFormatter().string(from: date) }
+                        if let valid = result.lastModified { value["lastModified"] = valid }
+                        if let retry = result.retryAfter { value["retryAfterSeconds"] = retry }
+                        if let code = result.code { value["code"] = code }
+                        if let data = result.body {
+                            if result.mime == "image/png" || result.mime == "image/jpeg" {
+                                value["resourceURL"] = try self.resources?.put(result)
+                            } else { value["data"] = try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) }
+                        }
+                        self.onHealth(result.state == "fresh" || result.state == "unavailable")
+                        self.reply(id: id, value: value, stale: result.state == "stale")
+                    } catch {
+                        guard self?.current(generation) == true else { return }
+                        self?.reply(id: id, error: (error as? ConnectionFailure)?.rawValue ?? "device_offline")
+                    }
+                }
+                return
+            }
+            if !subscribe && alias == "home" && (operation == "cameraPresent" || operation == "cameraClose") {
+                guard alias == "home", let cameras else { reply(id: id, error: "permission_required"); return }
+                do { reply(id: id, value: try cameras.request(operation: operation, parameters: parameters)) }
+                catch { reply(id: id, error: (error as? ConnectionFailure)?.rawValue ?? "device_offline") }
+                return
+            }
             tasks[id] = Task { [weak self] in
                 guard let self else { return }
                 defer { if self.documentGeneration == generation { self.tasks.removeValue(forKey: id) } }

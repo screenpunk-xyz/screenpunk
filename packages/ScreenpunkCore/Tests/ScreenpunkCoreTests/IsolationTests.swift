@@ -100,10 +100,10 @@ final class IsolationTests: XCTestCase {
         let directives = IsolationPolicy.contentSecurityPolicy
             .split(separator: ";")
             .map { $0.trimmingCharacters(in: .whitespaces) }
-        for name in ["default-src", "connect-src", "frame-src", "child-src", "worker-src", "object-src", "base-uri", "form-action", "media-src"] {
+        for name in ["default-src", "connect-src", "frame-src", "child-src", "worker-src", "object-src", "base-uri", "form-action"] {
             XCTAssertTrue(directives.contains("\(name) 'none'"), "\(name) must be 'none'")
         }
-        for name in ["script-src", "style-src", "img-src", "font-src"] {
+        for name in ["script-src", "style-src", "img-src", "font-src", "media-src"] {
             XCTAssertTrue(directives.contains("\(name) 'self'"), "\(name) must be 'self' only")
         }
         XCTAssertFalse(IsolationPolicy.contentSecurityPolicy.contains("unsafe-inline"))

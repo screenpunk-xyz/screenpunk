@@ -18,6 +18,19 @@ final class LANProtocolTests: XCTestCase {
         XCTAssertThrowsError(try LANCodec.messageLength(fromHeader: Data([0x7F, 0xFF, 0xFF, 0xFF])))
     }
 
+    func testTransferLimitNegotiationAndHeaderBounds() throws {
+        XCTAssertEqual(LANProtocolLimits.transferLimit(advertised: nil), 2 * 1024 * 1024)
+        XCTAssertEqual(LANProtocolLimits.transferLimit(advertised: -1), 2 * 1024 * 1024)
+        XCTAssertEqual(LANProtocolLimits.transferLimit(advertised: 32 * 1024 * 1024), 32 * 1024 * 1024)
+        XCTAssertEqual(LANProtocolLimits.transferLimit(advertised: Int.max), 32 * 1024 * 1024)
+        XCTAssertEqual(try LANCodec.messageLength(fromHeader: Data([2, 0, 0, 0])), 32 * 1024 * 1024)
+        XCTAssertThrowsError(try LANCodec.messageLength(fromHeader: Data([2, 0, 0, 1])))
+        XCTAssertThrowsError(try LANCodec.messageLength(fromHeader: Data([0, 32, 0, 1]), maximumBytes: LANProtocolLimits.legacyMessageBytes))
+        let legacy = "{\"role\":\"device\",\"deviceId\":\"old\",\"pinHex\":\"00\",\"protocolMajor\":1}"
+        let hello = try LANCodec.decodePayload(LANHello.self, json: legacy)
+        XCTAssertNil(hello.maxTransferBytes)
+    }
+
     func testPinMismatchIsIdentityChanged() {
         let pinned = PairingIdentityFactory.make(role: .device, bytes: [UInt8](repeating: 0x11, count: 32))
         let other = PairingIdentityFactory.make(role: .device, bytes: [UInt8](repeating: 0x22, count: 32))

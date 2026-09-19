@@ -1,3 +1,4 @@
+import type { DashboardClient } from "./client.js";
 export {
   CONTENT_PROCESS_TERMINATED,
   CONTENT_SECURITY_POLICY,
@@ -73,11 +74,17 @@ export {
   installScreenpunk
 } from "./client.js";
 export type {
+  CameraSource, CameraPresentation,
+  CameraPlaybackStatus,
+  CameraMount,
   BridgeTransport,
   ClientOptions,
   ConnectionResult,
   DashboardClient,
   NavigationStatus,
+  HomeAssistantServiceCall,
+  ServiceData,
+  ServiceValue,
   StatusListener,
   SubscribeListener
 } from "./client.js";
@@ -93,6 +100,8 @@ export interface ConnectionRequest {
 /** Typed surface from PROTOCOL_AND_MCP. Native host implements these. */
 export interface DashboardSDK {
   navigation: { open(pageId: string): Promise<void>; get(): Promise<import("./client.js").NavigationStatus> };
+  cameras: DashboardClient["cameras"];
+  homeAssistant: DashboardClient["homeAssistant"];
   connections: {
     request(
       alias: string,
@@ -116,3 +125,6 @@ export interface DashboardSDK {
     onStatus(listener: (status: unknown) => void): () => void;
   };
 }
+
+export type { PublicReadResult } from "./client.js";
+export type { PublicReadDeclaration, PublicReadParameter } from "./package.js";

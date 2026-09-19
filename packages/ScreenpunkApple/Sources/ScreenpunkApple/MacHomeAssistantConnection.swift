@@ -34,27 +34,44 @@ public enum MacHomeAssistantConnection {
     public static func descriptor() throws -> Data {
         let connections: [[String: Any]] = settings().map { _ in [[
             "alias": "home", "type": "home-assistant", "permissionMode": "homeAssistantUser",
-            "operations": ["getStates"] + HomeAssistantProvisioning.services.keys.sorted(),
+            "cameraPlaybackContract": ["version": 1, "manifestField": "connections[].cameraEntities", "sdkMethod": "cameras.mount", "sources": ["homeAssistant"], "maxVisiblePlayers": 3] as [String: Any],
+            "operations": ["getStates", "callService", "cameraPresent", "cameraClose"] + HomeAssistantProvisioning.services.keys.sorted(),
             "transport": "http", "phoneIndependent": true,
-            "instructions": "Declare manifest connection home with HTTP operations. Use screenpunk.connections.request('home', 'getStates', {}), then read result.value. Actions require an explicit entity_id. Poll states before enabling actions, and disable actions when stale or unavailable. Entity and action permissions are enforced by Home Assistant. Never put a token or server URL in screen code. Apply installs this connection on the paired phone."
+            "serviceCallContract": ["version": 1, "manifestField": "connections[].serviceCalls", "maxCallBytes": 32768,
+                                    "maxDepth": 12, "maxNodes": 2048, "maxStringBytes": 8192,
+                                    "targets": ["entity_id"], "requiresFreshStates": true, "replaysWrites": false] as [String: Any],
+            "instructions": "Declare home serviceCalls with domain, service, entityIds; optionally allowUntargeted for explicitly authorized targetless services. Call screenpunk.homeAssistant.callService({domain, service, target:{entity_id:'light.example'}, serviceData:{rgb_color:[255,0,0]}}). Service data accepts bounded nested JSON. Poll connections.request('home','getStates',{}) first; disable actions when stale or unavailable. Home Assistant enforces its authenticated user's permissions. Declarations authorize the whole service including downstream script effects. No wildcards, areas or devices; target keys belong in target, not serviceData. Legacy screens retain named operations; screens with serviceCalls also constrain legacy actions to those declarations. Never put tokens or server URLs in screen code. New declarations require updated native hosts; apply binds grants to the screen revision. Inspect query services: lists the live service catalog; services:light filters a domain. See docs/home-assistant-services.md."
         ]]} ?? []
         return try JSONSerialization.data(withJSONObject: ["connections": connections])
     }
-    public static func previewRuntime(dashboardId: String, revision: String) throws -> HomeAssistantDeviceRuntime {
+    public static func previewRuntime(dashboardId: String, revision: String, manifest: DashboardManifest? = nil) throws -> HomeAssistantDeviceRuntime {
         let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
-        let configuration = try provisioning(dashboardId: dashboardId, revision: revision, provisioningId: UUID().uuidString)
+        var configuration = try provisioning(dashboardId: dashboardId, revision: revision, provisioningId: UUID().uuidString)
+        if let manifest { configuration = try configuration.scoped(to: manifest) }
         try vault.provision(configuration, owner: "mac-preview")
         return HomeAssistantDeviceRuntime(vault: vault, scope: { .init(owner: "mac-preview", revision: revision, dashboardId: dashboardId) })
     }
     /// A bounded read-only snapshot; parameters and attributes cannot change the destination.
     public static func inspect(query: String?) async throws -> Data {
         let configuration = try provisioning(dashboardId: "inspection", revision: "inspection", provisioningId: "inspection")
+        let services = query?.hasPrefix("services:") == true
+        let path = services ? "/api/services" : "/api/states"
+        let destination = try ConnectionPolicy.authorize(grant: configuration.connectionGrant(path: path, write: false),
+            operationName: "request", parameters: [:],
+            resolvedAddresses: LiteralOrResolvedDestinationResolver().addresses(for: ConnectionPolicy.originHost(configuration.origin)),
+            binding: .init(authRef: "home-device", placement: .bearer))
         let transport = HomeAssistantHTTPTransport()
-        let response = try await transport.send(.init(url: URL(string: configuration.origin + "/api/states")!, method: "GET",
+        let response = try await transport.send(.init(url: destination.url, method: "GET",
             headers: ["Authorization": "Bearer " + configuration.token], body: nil, timeout: 10, maxBytes: 1024 * 1024))
         guard response.status != 401 && response.status != 403 else { throw ConnectionFailure.permissionRequired }
         guard response.status == 200, let states = try JSONSerialization.jsonObject(with: response.body) as? [[String: Any]] else {
             throw ConnectionFailure.deviceOffline
+        }
+        if services {
+            let domain = String((query ?? "").dropFirst("services:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let matches = states.filter { domain.isEmpty || ($0["domain"] as? String) == domain }
+            return try JSONSerialization.data(withJSONObject: ["alias": "home", "services": matches,
+                "permissionMode": "homeAssistantUser", "instructions": "Discovery is descriptive, not an authorization grant. Declare the needed service and explicit targets in the screen manifest."])
         }
         let needle = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let entities = states.compactMap { state -> [String: Any]? in
@@ -62,7 +79,7 @@ public enum MacHomeAssistantConnection {
             let attributes = state["attributes"] as? [String: Any] ?? [:]
             let name = attributes["friendly_name"] as? String ?? id
             guard needle.isEmpty || id.localizedCaseInsensitiveContains(needle) || name.localizedCaseInsensitiveContains(needle) else { return nil }
-            let allowedAttributes = ["brightness", "unit_of_measurement", "device_class", "supported_features", "source_list", "source", "volume_level"]
+            let allowedAttributes = ["brightness", "unit_of_measurement", "device_class", "supported_features", "source_list", "source", "volume_level", "supported_color_modes", "color_mode", "rgb_color", "rgbw_color", "rgbww_color", "hs_color", "color_temp_kelvin", "min_color_temp_kelvin", "max_color_temp_kelvin", "media_title", "media_artist", "media_album_name", "app_id", "app_name", "media_content_id", "media_content_type", "media_duration", "media_position", "media_position_updated_at", "shuffle", "repeat", "is_volume_muted"]
             return ["entity_id": id, "name": name, "state": state["state"] ?? NSNull(),
                     "attributes": attributes.filter { allowedAttributes.contains($0.key) }]
         }

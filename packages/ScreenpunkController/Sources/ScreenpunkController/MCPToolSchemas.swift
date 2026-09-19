@@ -4,6 +4,13 @@ import Foundation
 public enum MCPToolSchemas {
     public static func inputSchema(for name: String) -> JSONValue {
         switch name {
+        case "approve_public_connections":
+            return object(required: ["dashboardId", "revision", "approved"], properties: [
+                "dashboardId": string(), "revision": string("Exact immutable revision whose declarations the owner reviewed."),
+                "aliases": .object(["type": .string("array"), "items": string(), "description": .string("Optional aliases to approve; omit to approve every public declaration. JSON and raster can use separate aliases.")]),
+                "approved": .object(["type": .string("boolean"), "description": .string("True only after owner approval of these public HTTPS reads.")])])
+        case "inspect_public_connections":
+            return object(required: ["dashboardId"], properties: ["dashboardId": string(), "revision": string()])
         case "update_dashboard":
             return object(
                 required: ["name", "files"],
@@ -40,13 +47,13 @@ public enum MCPToolSchemas {
         case "describe_connection", "inspect_connection":
             return object(required: ["alias"], properties: [
                 "alias": string("Use home for Home Assistant."),
-                "query": string("Optional case-insensitive entity ID or friendly-name filter. Reads only; returns at most 200 matching entities.")
+                "query": string("Optional entity ID or name filter (up to 200 entities). Use services: for the live Home Assistant service catalog, or services:light for one domain. Read-only.")
             ])
         case "get_help":
             return object(
                 required: [],
                 properties: [
-                    "topic": string("unlink, preview, pairing, deploy, or onboarding")
+                    "topic": string("home-assistant, unlink, preview, pairing, deploy, or onboarding")
                 ]
             )
         case "discover_services":

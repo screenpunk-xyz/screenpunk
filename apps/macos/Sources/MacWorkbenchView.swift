@@ -131,18 +131,33 @@ struct MacWorkbenchView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 12) {
                 Divider()
-                sidebarNavigationItem("Connections", symbol: "point.3.connected.trianglepath.dotted", selected: connectionsSelected) {
+                sidebarNavigationItem("Connections", symbol: "point.3.connected.trianglepath.dotted", selected: connectionsSelected, count: activeConnectionCount) {
                     connectionsSelected = true
                 }
             }.padding(16)
         }
     }
 
-    private func sidebarNavigationItem(_ title: String, symbol: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    private var activeConnectionCount: Int {
+        let activeAgentTypes = Set(model.agents.map { AgentSetupProfile.connectionName($0.name) })
+        return activeAgentTypes.count + (connectionsStore.homeAssistantIsVerified ? 1 : 0)
+    }
+
+    private func sidebarCount(_ count: Int) -> some View {
+        Text("\(count)").font(.caption.monospacedDigit())
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background(.quaternary, in: .rect(cornerRadius: 5))
+    }
+
+    private func sidebarNavigationItem(_ title: String, symbol: String, selected: Bool, count: Int? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: symbol).font(.system(size: 16, weight: .regular)).frame(width: 20)
                 Text(title).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                if let count {
+                    Spacer(minLength: 10)
+                    sidebarCount(count).accessibilityLabel("\(count) active connections")
+                }
             }.frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .padding(.horizontal, 12).padding(.vertical, 6).contentShape(Rectangle())
         }.buttonStyle(.plain)
@@ -190,7 +205,7 @@ struct MacWorkbenchView: View {
     private func sectionHeader<Actions: View>(_ label: String, count: Int, @ViewBuilder actions: () -> Actions) -> some View {
         HStack(spacing: 7) {
             Text(label.uppercased()).font(.system(size: 12, weight: .semibold)).tracking(1.2)
-            Text("\(count)").font(.caption.monospacedDigit()).padding(.horizontal, 5).padding(.vertical, 2).background(.quaternary, in: .rect(cornerRadius: 5))
+            sidebarCount(count)
             Spacer(minLength: 4)
             actions()
         }.foregroundStyle(.secondary).padding(.top, 5).padding(.bottom, 12)
@@ -358,7 +373,9 @@ struct MacWorkbenchView: View {
         else if model.detected != nil && model.section == "Devices" { pairingState }
         else if let store = model.preview {
             VStack(spacing: 0) {
-                ScreenCanvas(store: store, size: model.previewSize, deviceFrame: model.section == "Devices", dashboardId: model.previewDashboardId, revision: model.previewRevision, usesHomeAssistant: model.previewUsesHomeAssistant).id(model.previewKey)
+                ScreenCanvas(store: store, size: model.previewSize, deviceFrame: model.section == "Devices", dashboardId: model.previewDashboardId, revision: model.previewRevision, usesHomeAssistant: model.previewUsesHomeAssistant, manifest: model.previewManifest, publicConnectionController: model.service,
+                             previous: previewNeighbor(-1), next: previewNeighbor(1),
+                             carouselPosition: previewPosition, onBrowse: model.browseScreen).id(model.previewKey)
             }
         } else if model.device != nil {
             ContentUnavailableView {
@@ -383,6 +400,24 @@ struct MacWorkbenchView: View {
             }
         }
     }
+    private var previewPosition: String? {
+        guard model.section == "Devices", model.deviceScreens.multiple, model.deviceScreens.ids.count > 1,
+              let id = model.selectedScreen, let index = model.deviceScreens.ids.firstIndex(of: id) else { return nil }
+        return "\(model.screenName) · \(index + 1) of \(model.deviceScreens.ids.count)"
+    }
+    private func previewNeighbor(_ offset: Int) -> ScreenPreviewCard? {
+        guard model.section == "Devices",
+              let id = model.deviceScreens.previewNeighbor(of: model.selectedScreen, offset: offset) else { return nil }
+        let name = model.screens.first { $0.dashboardId == id }?.name
+            ?? model.device?.screenSet?.first { $0.dashboardId == id }?.name ?? "Screen"
+        let revision = model.screens.first { $0.dashboardId == id }?.draftRevision ?? ""
+        let size = model.previewSize
+        return ScreenPreviewCard(name: name, symbol: model.symbol(for: id),
+            thumbnailKey: "\(id):\(revision):\(size.width)x\(size.height)",
+            cachedThumbnail: model.cachedPreviewThumbnail(id, revision: revision, size: size),
+            loadThumbnail: { await model.previewThumbnail(id, revision: revision, size: size) })
+    }
+
     private var pairingState: some View {
         VStack(spacing: 22) {
             Image(systemName: model.deviceSymbol(model.pairing?.deviceName ?? model.detected?.title ?? "iPhone")).font(.system(size: 72, weight: .ultraLight)).foregroundStyle(.secondary)
@@ -412,10 +447,23 @@ struct ScreenCanvas: View {
     var dashboardId = ""
     var revision = ""
     var usesHomeAssistant = false
+    var manifest: DashboardManifest?
+    var publicConnectionController: ControllerService?
+    @State private var publicSession: PublicReadSession?
+    @State private var publicApprovalNeeded = false
+    @State private var publicReadError: String?
+    var previous: ScreenPreviewCard?
+    var next: ScreenPreviewCard?
+    var carouselPosition: String?
+    var onBrowse: (Int) -> Void = { _ in }
     @State private var homeAssistant: HomeAssistantDeviceRuntime?
     var body: some View {
         GeometryReader { geometry in
-            let scale = max(0.1, min((geometry.size.width - 72) / size.width, (geometry.size.height - 64) / size.height))
+            let carousel = carouselPosition != nil
+            let scale = max(0.1, min((geometry.size.width - (carousel ? 208 : 72)) / size.width, (geometry.size.height - (carousel ? 96 : 64)) / size.height))
+            let width = size.width * scale
+            let height = size.height * scale
+            let spread = min(96, width * 0.18 + 28)
             ZStack {
                 Canvas { context, canvas in
                     for x in stride(from: 12.0, to: canvas.width, by: 24) {
@@ -424,21 +472,132 @@ struct ScreenCanvas: View {
                         }
                     }
                 }
-                DashboardWebView(store: store, homeAssistant: homeAssistant, revision: revision, onUnlinkHold: {}).id(homeAssistant == nil ? "loading" : "live")
+                if carousel {
+                    if let previous {
+                        NeighborScreenCard(card: previous, side: -1)
+                            .frame(width: width * 0.9, height: height * 0.9)
+                            .offset(x: -spread).allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                    if let next {
+                        NeighborScreenCard(card: next, side: 1)
+                            .frame(width: width * 0.9, height: height * 0.9)
+                            .offset(x: spread).allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
+                DashboardWebView(store: store, homeAssistant: homeAssistant, publicReads: publicSession?.runtime, rasterResources: publicSession?.resources, revision: revision, onUnlinkHold: {}).id((homeAssistant == nil ? "loading" : "live") + (publicSession == nil ? "" : "public"))
                     .frame(width: size.width, height: size.height)
                     .clipShape(.rect(cornerRadius: deviceFrame ? 28 : 0))
                     .overlay { if deviceFrame { RoundedRectangle(cornerRadius: 28).stroke(.primary.opacity(0.2), lineWidth: 5) } }
                     .scaleEffect(scale)
                     .frame(width: size.width * scale, height: size.height * scale)
                     .shadow(color: .black.opacity(0.16), radius: 20, y: 8)
+                if let carouselPosition {
+                    HStack {
+                        browseButton(-1, card: previous)
+                        Spacer(minLength: 0)
+                        browseButton(1, card: next)
+                    }.frame(width: min(geometry.size.width - 24, width + spread * 2 + 72))
+                    Text(carouselPosition).font(.callout).foregroundStyle(.secondary)
+                        .lineLimit(1).padding(.horizontal, 16)
+                        .offset(y: height / 2 + 26)
+                        .accessibilityLabel("Preview: " + carouselPosition)
+                }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task {
-            guard usesHomeAssistant else { return }
-            let id = dashboardId, rev = revision
-            homeAssistant = try? await Task.detached { try MacHomeAssistantConnection.previewRuntime(dashboardId: id, revision: rev) }.value
+        .overlay(alignment: .bottom) {
+            if publicApprovalNeeded, let manifest {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Allow this screen to read public data?").font(.headline)
+                    ScrollView {
+                        Text(manifest.connections.compactMap { connection in
+                            connection.publicHTTP.map { declaration in
+                                connection.alias + " · " + declaration.origin + "\n" + declaration.operations.map { operation in
+                                    operation.name + " GET " + operation.path + " (" + operation.response + ")\n" +
+                                    operation.parameters.keys.sorted().map { key in
+                                        let rule = operation.parameters[key]!
+                                        return key + ": " + (rule.values?.joined(separator: ", ") ?? "\(rule.minimum ?? 0)…\(rule.maximum ?? 0)")
+                                    }.joined(separator: "; ")
+                                }.joined(separator: "\n")
+                            }
+                        }.joined(separator: "\n\n")).font(.caption.monospaced())
+                    }.frame(maxHeight: 160)
+                    if let publicReadError { Text(publicReadError).foregroundStyle(.red) }
+                    Button("Allow reads for this revision") {
+                        do {
+                            guard let controller = publicConnectionController else { return }
+                            let config = try controller.approvePublicConnections(dashboardId: manifest.dashboardId, revision: manifest.revision, approved: true)
+                            publicSession = try PublicReadSession(provisioning: config); publicApprovalNeeded = false
+                        } catch { publicReadError = error.localizedDescription }
+                    }
+                }.padding().background(.regularMaterial).padding()
+            }
         }
-        .onDisappear { if let homeAssistant { Task { await homeAssistant.cancelPending() } } }
+        .task {
+            if let manifest, manifest.connections.contains(where: { $0.publicHTTP != nil }) {
+                do {
+                    guard let config = try publicConnectionController?.approvedPublicConnections(manifest) else { throw ConnectionFailure.permissionRequired }
+                    publicSession = try PublicReadSession(provisioning: config)
+                } catch { publicApprovalNeeded = true }
+            }
+            guard usesHomeAssistant else { return }
+            let id = dashboardId, rev = revision, manifest = manifest
+            homeAssistant = try? await Task.detached { try MacHomeAssistantConnection.previewRuntime(dashboardId: id, revision: rev, manifest: manifest) }.value
+        }
+        .onDisappear { publicSession?.cancel(); if let homeAssistant { Task { await homeAssistant.cancelPending() } } }
+    }
+    private func browseButton(_ offset: Int, card: ScreenPreviewCard?) -> some View {
+        Button { onBrowse(offset) } label: {
+            Image(systemName: offset < 0 ? "chevron.left" : "chevron.right")
+                .font(.system(size: 16, weight: .semibold)).frame(width: 24, height: 24)
+        }.workbenchButton(circular: true).disabled(card == nil)
+            .help(card.map { "Preview " + $0.name } ?? "No more screens")
+            .accessibilityLabel(offset < 0 ? "Previous screen preview" : "Next screen preview")
+    }
+
+}
+
+struct ScreenPreviewCard {
+    let name: String
+    let symbol: String
+    let thumbnailKey: String
+    let cachedThumbnail: NSImage?
+    let loadThumbnail: () async -> NSImage?
+}
+
+/// Static snapshot cards keep neighboring screens lightweight; only the front screen runs live.
+private struct NeighborScreenCard: View {
+    let card: ScreenPreviewCard
+    let side: Int
+    @State private var thumbnail: NSImage?
+    @State private var loadedKey = ""
+    @State private var loading = true
+    private var displayedThumbnail: NSImage? {
+        (loadedKey == card.thumbnailKey ? thumbnail : nil) ?? card.cachedThumbnail
+    }
+    var body: some View {
+        ZStack(alignment: side < 0 ? .leading : .trailing) {
+            RoundedRectangle(cornerRadius: 24).fill(.regularMaterial)
+            if let thumbnail = displayedThumbnail {
+                Image(nsImage: thumbnail).resizable().scaledToFit()
+                    .clipShape(.rect(cornerRadius: 24)).opacity(0.8)
+            } else {
+            VStack(spacing: 10) {
+                Image(systemName: card.symbol).font(.system(size: 22, weight: .light))
+                Text(card.name).font(.caption.weight(.medium)).multilineTextAlignment(.center).lineLimit(3)
+                if loading { ProgressView().controlSize(.small) }
+                Text(loading ? "Loading preview" : "Preview unavailable")
+                    .font(.caption2).multilineTextAlignment(.center)
+            }.foregroundStyle(.secondary).frame(width: 64).padding(.horizontal, 8)
+            }
+            RoundedRectangle(cornerRadius: 24).stroke(.primary.opacity(0.14), lineWidth: 3)
+        }.shadow(color: .black.opacity(0.12), radius: 12, y: 6)
+            .task(id: card.thumbnailKey) {
+                loading = true
+                let image = await card.loadThumbnail()
+                guard !Task.isCancelled else { return }
+                if let image { thumbnail = image; loadedKey = card.thumbnailKey }
+                loading = false
+            }
     }
 }
 

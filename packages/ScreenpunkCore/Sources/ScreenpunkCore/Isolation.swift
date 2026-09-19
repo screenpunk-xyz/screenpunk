@@ -23,7 +23,7 @@ public enum IsolationPolicy: Sendable {
         "object-src 'none'",
         "base-uri 'none'",
         "form-action 'none'",
-        "media-src 'none'"
+        "media-src 'self'"
     ].joined(separator: "; ")
 
     public static let contentRuleListJSON = """
@@ -51,6 +51,7 @@ public enum IsolationRequestKind: String, Sendable, Codable, CaseIterable {
     case script
     case stylesheet
     case image
+    case media
     case iframe
     case form
     case navigation
