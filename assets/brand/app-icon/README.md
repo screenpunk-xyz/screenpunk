@@ -5,7 +5,7 @@ iOS/iPadOS. Both XcodeGen app targets compile it as one resource and select
 `Screenpunk` as their app icon name. Do not import its internal PNG/JSON as
 separate resources or replace it with a masked preview PNG.
 
-Build with Xcode 26 or newer. Xcode generates legacy flat icons for the existing
+Build on macOS 26+ with Xcode 26 or newer. Xcode generates legacy flat icons for the existing
 iOS/iPadOS 16+ and macOS 14+ deployment targets; these minimums are unchanged.
 On supported systems the icon uses native Liquid Glass rendering.
 

@@ -18,7 +18,7 @@ built the app; Gatekeeper reports it as unverified.
 1. GitHub → Actions → **Mac Unsigned DMG** → **Run workflow**. Pick the
    branch, normally `main` at a SHA whose `required-checks` is green. Leave
    `developer_dir` empty unless you need a specific Xcode.
-2. The job runs `./scripts/build-unsigned-dmg.sh` on `macos-15`. The
+2. The job runs `./scripts/build-unsigned-dmg.sh` on `macos-26`. The
    script uses the newest installed Xcode that ships a macOS 26 SDK (the
    image's default Xcode 16.4 does not). If no such Xcode exists the job
    fails with `MACOS_26_SDK_UNAVAILABLE`; it never lowers the deployment
@@ -89,4 +89,4 @@ Do not do it for a DMG from anywhere else.
   with the ad-hoc identity, `codesign --verify`, DMG, mount check, SHA-256,
   `BUILD-INFO.txt`.
 - `.github/workflows/macos-unsigned-dmg.yml` — `workflow_dispatch` only,
-  `macos-15`, no environment, no secrets, artifact upload.
+  `macos-26`, no environment, no secrets, artifact upload.

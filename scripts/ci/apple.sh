@@ -8,6 +8,9 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+# Validate the icon build host and select one toolchain before tests or builds.
+source "$ROOT/scripts/select-icon-xcode.sh"
+
 echo "=== runner ==="
 uname -a
 sw_vers || true
@@ -32,11 +35,6 @@ fi
 # Match the release workflow: the pinned MCP dependency requires Swift 5 mode
 # on Xcode 26; app and package tests above retain their normal settings.
 (cd tools/screenpunk-mcp && swift build -Xswiftc -swift-version -Xswiftc 5)
-
-# Icon Composer resources require Xcode 26 or newer.
-source "$ROOT/scripts/select-icon-xcode.sh"
-
-xcodebuild -version
 
 ios_proj="$ROOT/apps/ios/ScreenpunkiOS.xcodeproj"
 if [[ ! -d "$ios_proj" ]]; then

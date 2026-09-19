@@ -6,6 +6,7 @@ executed Apple evidence.
 
 | Tool | Pin | Notes |
 | --- | --- | --- |
+| Build host | macOS 26+ | Required for native Mac Icon Composer rendering; app minimum deployment versions are unchanged. |
 | Xcode | 26+ | Required to compile the shared Icon Composer app icon; does not raise deployment targets. Apple CI/release builds select a compatible installed Xcode through `scripts/select-icon-xcode.sh`. |
 | XcodeGen | 2.46.0 | Generate app projects from `project.yml`. CI installs the GitHub release zip (`sha256:4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806`) via `scripts/ci/install-xcodegen.sh`. Do not commit `.xcodeproj`. |
 | Node.js | 22 | SDK and Linux contract jobs |
@@ -17,7 +18,8 @@ executed Apple evidence.
 | Bundle IDs | `xyz.screenpunk.*` | Operator-chosen: `xyz.screenpunk.ios`, `xyz.screenpunk.macos`, `xyz.screenpunk.preview-host`. Apple Developer portal registration is a later signing step |
 | GitHub Linux | `ubuntu-24.04` | `contracts-and-sdk`, `core-linux`, `security-and-hygiene`, `required-checks` |
 | Swift on Linux | 6.1.3 (`swift:6.1.3-noble@sha256:ed778a717c778240aa72f50e6c58e002d993fd445bc2516b484ba99c480dc25b`) | `core-linux` runs `./scripts/ci/core-linux.sh` (ScreenpunkCore `swift test`) in the official image. CryptoKit-only tests compile out here and run in `apple-build-and-unit`. Not Apple UI evidence |
-| GitHub macOS | `macos-15` | Candidate image; availability and Xcode version unverified until CI runs |
+| GitHub app builds | `macos-26` | CI app builds and signed/unsigned packaging use a Tahoe host for the Mac icon renderer. |
+| GitHub preview probe | `macos-15` | The hidden WKWebView probe retains older-host coverage and does not compile the app icon. |
 
 ## Actions (SHA-pinned)
 
@@ -28,11 +30,14 @@ executed Apple evidence.
 | actions/upload-artifact | v7.0.1 | `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` |
 | swift-actions/setup-swift | v2.4.0 | `7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a` |
 
-`macos-latest` is not used. The `macos-15` image's default Xcode may be
-older than 26. `scripts/ci/apple.sh` and the signed archive helpers source
+`macos-latest` is not used. App compilation and packaging run on `macos-26`.
+The Mac Icon Composer renderer crashed on the macOS 15 CI host with Xcode
+26.0.1 (`AssetCatalogAgent-AssetRuntime`, missing CoreMedia symbols). Installing
+a newer SDK alone did not provide a compatible host runtime. `scripts/ci/apple.sh` and the signed archive helpers source
 `scripts/select-icon-xcode.sh`: they honor an explicit compatible
 `DEVELOPER_DIR`, use the selected Xcode when compatible, or select an installed
-Xcode 26+ for that process. They fail clearly when none is available.
+Xcode 26+ for that process. They fail clearly on a host older than macOS 26 or when no compatible Xcode
+is available. CI selects the toolchain before package tests and app builds.
 The system-wide `xcode-select` setting is never changed.
 
 The unsigned DMG script already selects a macOS 26+ SDK through
