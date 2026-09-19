@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: xyz.screenpunk
   deploymentTarget:
     macOS: "14.0"
-  xcodeVersion: "16.0"
+  xcodeVersion: "26.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -33,6 +33,9 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: ../../assets/brand/app-icon/Screenpunk.icon
+        type: file
+        buildPhase: resources
     dependencies:
       - package: ScreenpunkCore
       - package: ScreenpunkApple
@@ -41,5 +44,6 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Screenpunk
+        ASSETCATALOG_COMPILER_APPICON_NAME: Screenpunk
         INFOPLIST_KEY_CFBundleDisplayName: Screenpunk
         INFOPLIST_KEY_NSHumanReadableCopyright: Copyright 2026 Screenpunk, Inc.

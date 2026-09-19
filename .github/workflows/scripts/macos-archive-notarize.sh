@@ -5,6 +5,9 @@ set -euo pipefail
 # shellcheck source=apple-signing-common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/apple-signing-common.sh"
 
+# Icon Composer resources require Xcode 26 or newer.
+source "$ROOT/scripts/select-icon-xcode.sh"
+
 require_env APPLE_TEAM_ID
 require_macos_26_sdk
 import_p12 MAC_SIGNING_CERT_P12_BASE64 MAC_SIGNING_CERT_PASSWORD

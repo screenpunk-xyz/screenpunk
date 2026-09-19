@@ -75,7 +75,7 @@ Workflow changes for automated naming are separate implementation work.
 | `contracts-and-sdk` | `ubuntu-24.04` | Schema fixtures, TypeScript SDK tests, package validator, HTTP/WS adapter vectors (`./scripts/ci/linux.sh`) |
 | `core-linux` | `ubuntu-24.04` with pinned Swift container | ScreenpunkCore tests on Linux (`./scripts/ci/core-linux.sh`) |
 | `security-and-hygiene` | `ubuntu-24.04` | LICENSE/NOTICE, brand provenance, bundle IDs, fixture presence, credential-like strings |
-| `apple-build-and-unit` | `macos-15` | Swift package tests, Mac build when the macOS 26 SDK is present, iOS 16 compile (`./scripts/ci/apple.sh`) |
+| `apple-build-and-unit` | `macos-26` | Swift package tests, Mac app/icon build, iOS 16 compile (`./scripts/ci/apple.sh`) |
 | `apple-ui-and-preview` | `macos-15` | Hidden WKWebView snapshot probe; uploads a real PNG only (`./scripts/ci/preview.sh`) |
 | `required-checks` | `ubuntu-24.04` | Passes only when all five above succeeded |
 

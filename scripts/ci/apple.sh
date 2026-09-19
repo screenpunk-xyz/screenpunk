@@ -8,6 +8,9 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+# Validate the icon build host and select one toolchain before tests or builds.
+source "$ROOT/scripts/select-icon-xcode.sh"
+
 echo "=== runner ==="
 uname -a
 sw_vers || true

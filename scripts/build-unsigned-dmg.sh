@@ -94,6 +94,9 @@ if ! select_developer_dir; then
   exit 1
 fi
 
+# Fail clearly on hosts that cannot run the native Mac icon renderer.
+source "$ROOT/scripts/select-icon-xcode.sh"
+
 echo "=== toolchain ==="
 sw_vers || true
 uname -m
