@@ -53,9 +53,13 @@ private struct CameraOverlay: View {
                 .accessibilityAction(named: "Expand camera") { model.action("expand") }
                 .accessibilityAction(named: "Next camera") { model.action("next") }
                 .accessibilityAction(named: "Previous camera") { model.action("previous") }
+            #if compiler(>=6.2)
             if #available(iOS 26, macOS 26, *) {
                 GlassEffectContainer { controls }
             } else { controls }
+            #else
+            controls
+            #endif
         }.preferredColorScheme(.dark)
     }
     private var controls: some View {
@@ -77,6 +81,7 @@ private struct CameraOverlay: View {
         }.padding(16)
     }
     @ViewBuilder private func glassButton(_ symbol: String, label: String, action: String) -> some View {
+        #if compiler(>=6.2)
         if #available(iOS 26, macOS 26, *) {
             Button { model.action(action) } label: {
                 Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
@@ -84,13 +89,19 @@ private struct CameraOverlay: View {
                 .glassEffect(.regular.tint(.black.opacity(0.45)).interactive(), in: Circle())
                 .accessibilityLabel(label)
         } else {
-            Button { model.action(action) } label: {
-                Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 0.5))
-                    .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
-            }.buttonStyle(.plain).foregroundStyle(.white).accessibilityLabel(label)
+            materialButton(symbol, label: label, action: action)
         }
+        #else
+        materialButton(symbol, label: label, action: action)
+        #endif
+    }
+    private func materialButton(_ symbol: String, label: String, action: String) -> some View {
+        Button { model.action(action) } label: {
+            Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+        }.buttonStyle(.plain).foregroundStyle(.white).accessibilityLabel(label)
     }
 }
 
