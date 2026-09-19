@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 public enum JSONValue: Sendable, Equatable {
     case null
@@ -66,10 +67,8 @@ public enum JSONValue: Sendable, Equatable {
         switch any {
         case is NSNull:
             return .null
-        case let value as Bool:
-            return .bool(value)
-        case let value as Int:
-            return .int(value)
+        // Foundation numbers 0 and 1 also cast to Bool. Inspect NSNumber's
+        // actual CF type before any permissive Swift scalar cast.
         case let value as NSNumber:
             if CFGetTypeID(value) == CFBooleanGetTypeID() {
                 return .bool(value.boolValue)

@@ -21,6 +21,13 @@ public struct PackageAssetStore: Sendable, Equatable {
     }
 
     public static func mime(for path: String) -> String {
+        let path = path.lowercased()
+        if path.hasSuffix(".wav") { return "audio/wav" }
+        if path.hasSuffix(".mp3") { return "audio/mpeg" }
+        if path.hasSuffix(".m4a") { return "audio/mp4" }
+        if path.hasSuffix(".aac") { return "audio/aac" }
+        if path.hasSuffix(".aif") || path.hasSuffix(".aiff") { return "audio/aiff" }
+        if path.hasSuffix(".caf") { return "audio/x-caf" }
         if path.hasSuffix(".html") { return "text/html" }
         if path.hasSuffix(".js") { return "text/javascript" }
         if path.hasSuffix(".css") { return "text/css" }

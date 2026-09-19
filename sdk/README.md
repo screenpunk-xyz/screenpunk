@@ -31,3 +31,16 @@ Pinned methods: `connections.request` / `subscribe`, `state.get` / `set` /
 npm test                 # typecheck, bundle, Node tests
 npm run sync-examples    # refresh example screenpunk.js, lockup assets, manifests
 ```
+
+## Home Assistant services
+
+Use `screenpunk.homeAssistant.callService({domain, service, target, serviceData})` with service declarations in the screen manifest. See [the contract and migration guide](../docs/home-assistant-services.md) and [runnable controls](../examples/home-assistant-services/).
+
+## Public HTTPS JSON and raster frames
+
+Native hosts advertising `public-read-http-v1` support revision-approved
+`connections[].publicHTTP` declarations, `connections.read(alias, operation,
+parameters, {signal})`, and `connections.release(resourceURL)`. The result includes
+explicit fresh/stale/unavailable/error state and either parsed JSON or an opaque
+local raster handle. See [the contract and approval workflow](../docs/public-read-connections.md)
+and [the synthetic animation example](../examples/public-read-animation).

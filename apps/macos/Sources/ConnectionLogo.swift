@@ -18,9 +18,11 @@ struct ConnectionLogo: View {
         Group {
             if let resource, let url = Bundle.main.url(forResource: resource.0, withExtension: resource.1), let image = NSImage(contentsOf: url) {
                 Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
+                    // App icons include a 10% canvas inset; the Home Assistant favicon does not.
+                    .padding(resource.0 == "connection-home-assistant" ? size * 0.1 : 0)
             } else {
                 Image(systemName: "sparkles").font(.system(size: size * 0.52, weight: .regular))
-                    .frame(width: size, height: size).background(.quaternary, in: .rect(cornerRadius: size / 4))
+                    .frame(width: size * 0.8, height: size * 0.8).background(.quaternary, in: .rect(cornerRadius: size / 5))
             }
         }.frame(width: size, height: size).accessibilityHidden(true)
     }

@@ -55,11 +55,15 @@ public struct ManifestConnection: Codable, Sendable, Equatable {
     public var alias: String
     public var required: Bool
     public var operations: [ManifestOperation]?
+    public var serviceCalls: [HomeAssistantServiceGrant]?
+    public var cameraEntities: [String]?
+    public var publicHTTP: PublicReadDeclaration?
 
-    public init(alias: String, required: Bool, operations: [ManifestOperation]? = nil) {
+    public init(alias: String, required: Bool, operations: [ManifestOperation]? = nil, serviceCalls: [HomeAssistantServiceGrant]? = nil) {
         self.alias = alias
         self.required = required
         self.operations = operations
+        self.serviceCalls = serviceCalls
     }
 }
 

@@ -665,6 +665,7 @@ final class PairingDeployTests: XCTestCase {
 
     func testEscapedEnvelopeSizeIsRejectedBeforeSending() throws {
         let device = FakeLANDevice(deviceId: "size-phone", name: "Phone")
+        device.maxTransferBytes = nil // Legacy peers retain the 2 MiB wire limit.
         let harness = try makeHarness(device: device)
         try pair(harness.router, device: device, deviceId: "size-phone")
         let screen = try createDashboard(harness.service, marker: "SMALL")
@@ -677,7 +678,10 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertLessThan(try LANCodec.encodePayload(body).utf8.count + 512, LANProtocolLimits.maxMessageBytes,
             "The old estimate would have accepted this escaped payload")
         XCTAssertThrowsError(try harness.service.devices.deployScreenSet(body)) { error in
-            XCTAssertTrue((error as? ControllerError)?.detail.contains("transfer limit") == true)
+            let detail = (error as? ControllerError)?.detail ?? ""
+            XCTAssertTrue(detail.contains("transfer limit"))
+            XCTAssertTrue(detail.contains("2097152 bytes"))
+            XCTAssertTrue(detail.contains("Update Screenpunk"))
         }
         XCTAssertEqual(device.deployAttempts, 0)
         XCTAssertNil(device.installedSet)
@@ -796,4 +800,58 @@ private final class MultipleDevicesLink: DeviceLink {
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord { try connected!.deploy(body) }
     func queryActive() throws -> String? { try connected!.queryActive() }
     func cancel() { connected?.cancel(); connected = nil }
+}
+
+extension PairingDeployTests {
+    func testGeneralServiceDeclarationsSurviveAuthoringAndRejectOlderDevice() throws {
+        let device = FakeLANDevice(deviceId: "services-phone", name: "Services")
+        device.supportsHomeAssistant = true
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "services-phone")
+        let record = try harness.service.updateDashboard(arguments: .object([
+            "name": .string("General service control"),
+            "connections": .array([.object(["alias": .string("home"), "required": .bool(true),
+                "serviceCalls": .array([.object(["domain": .string("climate"), "service": .string("set_temperature"),
+                    "entityIds": .array([.string("climate.room")])])])])]),
+            "files": .array([.object(["path": .string("index.html"), "text": .string("<p>Thermostat</p>")])])]))
+        XCTAssertEqual(record.manifest.connections.first?.serviceCalls?.first?.service, "set_temperature")
+        harness.service.homeAssistantConfiguration = { dashboard, revision, id in
+            HomeAssistantProvisioning(dashboardId: dashboard, connectionId: "connection", provisioningId: id,
+                revision: revision, origin: "https://ha.example", token: "test-token")
+        }
+        XCTAssertThrowsError(try harness.service.ship(record: record, deviceId: "services-phone", deploymentId: "general-1"))
+        XCTAssertEqual(device.deployAttempts, 0)
+        XCTAssertNil(device.installedHomeAssistant)
+        device.supportsGeneralServices = true
+        let outcome = try harness.service.ship(record: record, deviceId: "services-phone", deploymentId: "general-1")
+        XCTAssertEqual(device.installedHomeAssistant?.schemaVersion, 2)
+        XCTAssertEqual(device.installedHomeAssistant?.revision, outcome.revision)
+        XCTAssertEqual(device.installedHomeAssistant?.serviceCalls, record.manifest.connections.first?.serviceCalls)
+    }
+}
+
+
+extension PairingDeployTests {
+    func testCameraDeclarationsSurviveAuthoringAndProvisioningScope() throws {
+        let device = FakeLANDevice(deviceId: "camera-phone", name: "Cameras")
+        let harness = try makeHarness(device: device)
+        let args: JSONValue = .object([
+            "name": .string("Cameras"),
+            "connections": .array([.object(["alias": .string("home"), "required": .bool(true),
+                "cameraEntities": .array([.string("camera.deck")])])]),
+            "files": .array([.object(["path": .string("index.html"), "text": .string("<p>Cameras</p>")])])])
+        let record = try harness.service.updateDashboard(arguments: args)
+        let stored = try harness.service.getDashboard(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision)
+        XCTAssertEqual(stored.manifest.connections.first?.cameraEntities, ["camera.deck"])
+        let configuration = try HomeAssistantProvisioning(dashboardId: stored.manifest.dashboardId,
+            connectionId: "home", provisioningId: "fixture", revision: stored.manifest.revision,
+            origin: "https://ha.example", token: "test-token").scoped(to: stored.manifest)
+        XCTAssertEqual(configuration.schemaVersion, 3)
+        XCTAssertEqual(configuration.cameraEntities, ["camera.deck"])
+        try configuration.validate()
+        var invalid = args.object!
+        invalid["connections"] = .array([.object(["alias": .string("home"),
+            "cameraEntities": .array([.string("camera.*")])])])
+        XCTAssertThrowsError(try harness.service.updateDashboard(arguments: .object(invalid)))
+    }
 }

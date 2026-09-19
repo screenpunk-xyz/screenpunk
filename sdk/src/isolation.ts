@@ -16,7 +16,7 @@ export const CONTENT_SECURITY_POLICY = [
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
-  "media-src 'none'"
+  "media-src 'self'"
 ].join("; ");
 
 export const CONTENT_PROCESS_TERMINATED = "content-process-terminated";
@@ -28,6 +28,7 @@ export type IsolationRequestKind =
   | "script"
   | "stylesheet"
   | "image"
+  | "media"
   | "iframe"
   | "form"
   | "navigation"

@@ -100,17 +100,17 @@ final class LANLink {
     /// (compare codes, tap Confirm, press Deploy), so the header wait has no
     /// deadline; it ends when a frame arrives or the connection fails. The
     /// body must still follow its header within `bodyTimeout`.
-    func receiveRequest(bodyTimeout: TimeInterval = 15) throws -> LANEnvelope {
-        try receive(headerTimeout: nil, bodyTimeout: bodyTimeout)
+    func receiveRequest(bodyTimeout: TimeInterval = 15, maximumBytes: Int = LANProtocolLimits.maxMessageBytes) throws -> LANEnvelope {
+        try receive(headerTimeout: nil, bodyTimeout: bodyTimeout, maximumBytes: maximumBytes)
     }
 
     func cancel() {
         connection.cancel()
     }
 
-    private func receive(headerTimeout: TimeInterval?, bodyTimeout: TimeInterval) throws -> LANEnvelope {
+    private func receive(headerTimeout: TimeInterval?, bodyTimeout: TimeInterval, maximumBytes: Int = LANProtocolLimits.maxMessageBytes) throws -> LANEnvelope {
         let header = try receiveExact(4, timeout: headerTimeout)
-        let length = try LANCodec.messageLength(fromHeader: header)
+        let length = try LANCodec.messageLength(fromHeader: header, maximumBytes: maximumBytes)
         let body = try receiveExact(length, timeout: bodyTimeout)
         return try LANCodec.decode(body)
     }

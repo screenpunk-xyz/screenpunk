@@ -104,3 +104,29 @@ for (const example of examples) {
   writeFileSync(join(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   process.stdout.write(`synced ${example.dir} ${manifest.digest}\n`);
 }
+
+// General Home Assistant controls use only local scripts and native credentials.
+const servicesDir = join(root, "examples/home-assistant-services");
+cpSync(bundle, join(servicesDir, "screenpunk.js"));
+const servicesManifest: DashboardManifest = {
+  schemaVersion: 1,
+  dashboardId: "66666666-6666-4666-8666-666666666666",
+  revision: "66666666-6666-4666-9666-666666666667",
+  name: "Home Assistant services",
+  entrypoint: "index.html",
+  sdkVersion: "1",
+  target: { profileId: "fixture-phone", width: 390, height: 844, scale: 3, orientation: "portrait" },
+  connections: [{ alias: "home", required: true,
+    operations: [{name: "getStates", kind: "http"}, {name: "callService", kind: "http"}],
+    serviceCalls: [
+      { domain: "light", service: "turn_on", entityIds: ["light.example"] },
+      { domain: "climate", service: "set_temperature", entityIds: ["climate.example"] }
+    ] }],
+  files: ["index.html", "app.js", "screenpunk.js"].map(path => {
+    const bytes = readFileSync(join(servicesDir, path));
+    return {path, bytes: bytes.length, sha256: sha256Bytes(bytes)};
+  })
+};
+servicesManifest.digest = deploymentDigest(servicesManifest);
+validateManifest(servicesManifest);
+writeFileSync(join(servicesDir, "manifest.json"), `${JSON.stringify(servicesManifest, null, 2)}\n`);

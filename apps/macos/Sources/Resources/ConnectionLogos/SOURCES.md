@@ -8,4 +8,4 @@ Used to identify the corresponding third-party connection. These marks remain th
 - Home Assistant: https://www.home-assistant.io/images/favicon-192x192-full.png, fetched September 13, 2026.
 - Generic / Local Models: native SF Symbols `sparkles`, no third-party logo.
 
-Original proportions and artwork are preserved, rendered with aspect-fit in a shared icon slot.
+Original proportions and artwork are preserved, rendered with aspect-fit in a shared 48-point icon slot. The app icons have approximately 10% transparent inset on each edge; the full-canvas Home Assistant favicon receives that same inset at presentation time. The generic sparkle tile uses the matching 80% visual footprint.

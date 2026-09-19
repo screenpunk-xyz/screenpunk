@@ -43,6 +43,7 @@ verification evidence and current limitations.
 | [docs/release-workflow.md](docs/release-workflow.md) | Focused PRs, independent app releases, CI gates, signing, and download publishing |
 | [docs/macos-unsigned-dmg.md](docs/macos-unsigned-dmg.md) | Unsigned alpha Mac DMG from Actions: build, download, first launch via Open Anyway |
 | [docs/help/](docs/help/README.md) | Text returned by MCP `get_help` and shown in-app |
+| [docs/bundled-audio.md](docs/bundled-audio.md) | Package-local sound effects, playback errors, mute behavior, and native test instructions |
 | [docs/contracts.md](docs/contracts.md), [docs/toolchain.md](docs/toolchain.md) | Wire contracts; pinned tools and runners |
 | [docs/brand-policy.md](docs/brand-policy.md), [docs/apple-review-position.md](docs/apple-review-position.md) | Brand terms; App Review position |
 

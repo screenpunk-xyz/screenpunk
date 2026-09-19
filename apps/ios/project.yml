@@ -40,3 +40,27 @@ targets:
       base:
         PRODUCT_NAME: Screenpunk
         INFOPLIST_KEY_NSHumanReadableCopyright: Copyright 2026 Screenpunk, Inc.
+  ScreenpunkAudioTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ../../packages/ScreenpunkApple/Tests/ScreenpunkAppleTests/BundledAudioTests.swift
+    dependencies:
+      - target: ScreenpunkiOS
+      - package: ScreenpunkApple
+      - package: ScreenpunkCore
+    settings:
+      base:
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Screenpunk.app/Screenpunk"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.screenpunk.ios.audio-tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  ScreenpunkiOS:
+    build:
+      targets:
+        ScreenpunkiOS: all
+        ScreenpunkAudioTests: [test]
+    test:
+      targets:
+        - ScreenpunkAudioTests
