@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "dashboardId": "77777777-7777-4777-8777-777777777777",
+  "revision": "77777777-7777-4777-9777-777777777778",
+  "name": "Cameras",
+  "entrypoint": "index.html",
+  "sdkVersion": "1",
+  "target": {
+    "profileId": "camera-tablet",
+    "width": 1194,
+    "height": 834,
+    "scale": 2,
+    "orientation": "landscape"
+  },
+  "connections": [
+    {
+      "alias": "home",
+      "required": true,
+      "operations": [
+        {
+          "name": "cameraPresent",
+          "kind": "http"
+        },
+        {
+          "name": "cameraClose",
+          "kind": "http"
+        }
+      ],
+      "cameraEntities": [
+        "camera.example_one",
+        "camera.example_two",
+        "camera.example_three"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "index.html",
+      "bytes": 313,
+      "sha256": "5267e07dbd8cec2219b7d21bf43e8ab573c8d8b5e69c9a564b333e26a712c5b4"
+    },
+    {
+      "path": "styles.css",
+      "bytes": 272,
+      "sha256": "8eada467edc5cc1e2042d78f84afdefe5a8303d3a435267bd10037f06e48f447"
+    },
+    {
+      "path": "app.js",
+      "bytes": 581,
+      "sha256": "cd3d5f60faed7e7dfb5afae19179a6738a3e6f171f641a1c820668d26cfe6282"
+    },
+    {
+      "path": "screenpunk.js",
+      "bytes": 10149,
+      "sha256": "ecbcaab2a8db3247c1ee0ae74dec64699733dd83e55b6cdcaac4ee7a5c18f498"
+    }
+  ],
+  "digest": "2b8efa90e92244d96b3b96d37ab74e80d67ac0ab95de0a0574833cd728265e62"
+}

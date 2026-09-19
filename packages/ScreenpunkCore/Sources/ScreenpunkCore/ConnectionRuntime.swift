@@ -45,6 +45,25 @@ public actor ConnectionRuntime {
         bindings[grant.alias] = binding
     }
 
+    /// Raw bounded read path shared by native public JSON and raster runtimes. No page headers.
+    public func publicRead(grant: ConnectionGrant, parameters: [String: String], userAgent: String, accept: String, maxBytes: Int) async throws -> HTTPTransportResponse {
+        guard grant.transport == .http, !grant.lan, !grant.allowInsecureHTTP, grant.origin.hasPrefix("https://"),
+              grant.authRef == "public-no-auth", grant.operations.count == 1,
+              let operation = grant.operations.first, operation.method == .GET, !operation.write else { throw ConnectionFailure.permissionRequired }
+        let destination = try ConnectionPolicy.authorize(grant: grant, operationName: operation.name, parameters: parameters,
+            resolvedAddresses: resolver.addresses(for: ConnectionPolicy.originHost(grant.origin)),
+            binding: .init(authRef: "public-no-auth", placement: .none))
+        let url = try ConnectionPolicy.mergeQueryParameters(url: destination.url, parameters: destination.queryParameters)
+        let startedIn = epoch
+        let response = try await http.send(.init(url: url, method: "GET", headers: ["User-Agent": userAgent, "Accept": accept],
+            body: nil, timeout: 10, maxBytes: maxBytes))
+        try Task.checkCancellation()
+        guard startedIn == epoch else { throw ConnectionFailure.permissionRequired }
+        guard !(300...399).contains(response.status) else { throw ConnectionFailure.deniedEgress }
+        guard response.body.count <= maxBytes else { throw ConnectionFailure.sizeLimit }
+        return response
+    }
+
     public func request(
         alias: String,
         operation: String,

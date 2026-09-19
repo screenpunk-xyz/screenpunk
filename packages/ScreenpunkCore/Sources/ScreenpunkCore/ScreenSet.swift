@@ -4,7 +4,9 @@ public struct LANScreenSetItem: Codable, Equatable, Sendable {
     public var name: String
     public var deployment: LANDeployBody
     public var homeAssistant: HomeAssistantProvisioning?
-    public init(name: String, deployment: LANDeployBody, homeAssistant: HomeAssistantProvisioning? = nil) {
+    public var publicReads: PublicReadProvisioning?
+    public init(name: String, deployment: LANDeployBody, homeAssistant: HomeAssistantProvisioning? = nil, publicReads: PublicReadProvisioning? = nil) {
+        self.publicReads = publicReads
         self.name = name; self.deployment = deployment; self.homeAssistant = homeAssistant
     }
 }
@@ -41,6 +43,10 @@ public struct LANScreenSetDeployBody: Codable, Equatable, Sendable {
                   body.deployment.deviceId == deviceId,
                   body.deployment.revision == body.revision.revision,
                   body.deployment.dashboardId == body.revision.dashboardId else { throw TransferFailure.validationFailed }
+            if let config = screen.publicReads {
+                try config.validate()
+                guard config.dashboardId == body.revision.dashboardId, config.revision == body.revision.revision else { throw TransferFailure.validationFailed }
+            }
             if let config = screen.homeAssistant {
                 try config.validate()
                 guard config.dashboardId == body.revision.dashboardId, config.revision == body.revision.revision else {

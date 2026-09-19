@@ -107,14 +107,14 @@ public final class ControllerLANClient: @unchecked Sendable {
     }
 
     public func deploy(_ body: LANDeployBody) throws -> DeploymentRecord {
-        let reply = try request(method: .deploy, payload: body, timeout: 30)
+        let reply = try request(method: .deploy, payload: body, timeout: LANProtocolLimits.transferTimeoutSeconds)
         return try LANCodec.decodePayload(DeploymentRecord.self, json: reply.payloadJSON)
     }
 
     public func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
         try body.validate()
         guard lastHello?.capabilities?.contains("screen-set-v1") == true else { throw TransferFailure.validationFailed }
-        let reply = try request(method: .deploySet, payload: body, timeout: 30)
+        let reply = try request(method: .deploySet, payload: body, timeout: LANProtocolLimits.transferTimeoutSeconds)
         return try LANCodec.decodePayload(LANScreenSetReceipt.self, json: reply.payloadJSON)
     }
 
@@ -184,6 +184,11 @@ public final class ControllerLANClient: @unchecked Sendable {
             method: method.rawValue,
             payloadJSON: try LANCodec.encodePayload(payload)
         )
+        if method == .deploy || method == .deploySet {
+            guard try LANCodec.encode(envelope).count <= LANProtocolLimits.transferLimit(advertised: lastHello?.maxTransferBytes) else {
+                throw TransferFailure.validationFailed
+            }
+        }
         try link.send(envelope, timeout: timeout)
         let reply = try link.receive(timeout: timeout)
         if reply.requestId != envelope.requestId {

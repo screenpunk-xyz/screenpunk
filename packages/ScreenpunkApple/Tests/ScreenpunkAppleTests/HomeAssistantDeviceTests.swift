@@ -1,5 +1,6 @@
 import XCTest
 import ScreenpunkCore
+import WebKit
 @testable import ScreenpunkApple
 
 final class HomeAssistantDeviceTests: XCTestCase {
@@ -38,6 +39,23 @@ final class HomeAssistantDeviceTests: XCTestCase {
             XCTAssertThrowsError(try config.authorize(operation: operation, parameters: ["entity_id": entity, "area_id": "basement"]))
             XCTAssertThrowsError(try config.authorize(operation: operation, parameters: ["entity_id": entity + "," + entity]))
         }
+    }
+
+    func testMediaPowerAndRGBControlsAreBounded() throws {
+        let config = configuration()
+        XCTAssertEqual(try config.authorize(operation: "mediaOn", parameters: ["entity_id": "media_player.denon"]).path, "/api/services/media_player/turn_on")
+        XCTAssertEqual(try config.authorize(operation: "mediaOff", parameters: ["entity_id": "media_player.denon"]).path, "/api/services/media_player/turn_off")
+        XCTAssertThrowsError(try config.authorize(operation: "mediaOn", parameters: ["entity_id": "switch.denon"]))
+        XCTAssertThrowsError(try config.authorize(operation: "mediaOff", parameters: ["entity_id": "media_player.denon", "area_id": "all"]))
+        let action = try config.authorize(operation: "lightOn", parameters: ["entity_id": "light.window", "rgb_color": "[255,0,128]", "brightness": "100"])
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: action.body!) as? [String: Any])
+        XCTAssertEqual(body["rgb_color"] as? [Int], [255, 0, 128])
+        XCTAssertEqual(body["brightness"] as? Int, 100)
+        for invalid in ["[256,0,0]", "[-1,0,0]", "[1,2]", "[1,2,3,4]", "[true,0,0]", "[1.5,0,0]", "null", "{\"r\":255}", "[\"255\",0,0]"] {
+            XCTAssertThrowsError(try config.authorize(operation: "lightOn", parameters: ["entity_id": "light.window", "rgb_color": invalid]))
+        }
+        XCTAssertThrowsError(try config.authorize(operation: "lightOff", parameters: ["entity_id": "light.window", "rgb_color": "[1,2,3]"]))
+        XCTAssertThrowsError(try config.authorize(operation: "switchOn", parameters: ["entity_id": "switch.fan", "rgb_color": "[1,2,3]"]))
     }
 
     func testVaultIsBoundIdempotentAndRejectsInvalidReplacement() throws {
@@ -154,5 +172,86 @@ extension HomeAssistantDeviceTests {
         try client.provisionHomeAssistant(config)
         server.unlink()
         XCTAssertThrowsError(try vault.record(owner: PeerPin.hex(ownerIdentity.pin), revision: config.revision))
+    }
+}
+
+extension HomeAssistantDeviceTests {
+    func testGeneralServicesFreshnessPermissionDenialAndNoReplay() async throws {
+        let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
+        var config = configuration(); config.schemaVersion = 2
+        config.serviceCalls = [.init(domain: "light", service: "turn_on", entityIds: ["light.a"])]
+        try vault.provision(config, owner: "owner")
+        let transport = FixtureHTTP()
+        let runtime = HomeAssistantDeviceRuntime(vault: vault, scope: { .init(owner: "owner", revision: "revision", dashboardId: "screen") },
+            transport: transport, resolver: FixedResolver(["192.168.1.9"]))
+        let parameters = ["call": "{\"domain\":\"light\",\"service\":\"turn_on\",\"target\":{\"entity_id\":\"light.a\"},\"serviceData\":{\"rgb_color\":[10,20,30],\"transition\":1.5}}"]
+        do {
+            _ = try await runtime.request(revision: "revision", alias: "home", operation: "callService", parameters: parameters)
+            XCTFail("No fresh states")
+        } catch { XCTAssertEqual(error as? ConnectionFailure, .deviceOffline) }
+        let before = await transport.requests.count; XCTAssertEqual(before, 0)
+        _ = try await runtime.request(revision: "revision", alias: "home", operation: "getStates", parameters: [:])
+        let result = try await runtime.request(revision: "revision", alias: "home", operation: "callService", parameters: parameters)
+        XCTAssertEqual(result.body, Data("null".utf8))
+        let sent = await transport.requests
+        XCTAssertEqual(sent[1].url.path, "/api/services/light/turn_on")
+        XCTAssertEqual(sent[1].method, "POST")
+        XCTAssertEqual(sent[1].headers["Authorization"], "Bearer fixture-credential")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent[1].body!) as? [String: Any])
+        XCTAssertEqual(body["rgb_color"] as? [Int], [10,20,30])
+        await transport.setStatus(403)
+        do {
+            _ = try await runtime.request(revision: "revision", alias: "home", operation: "callService", parameters: parameters)
+            XCTFail("HA permission denial")
+        } catch { XCTAssertEqual(error as? ConnectionFailure, .permissionRequired) }
+        await transport.setStatus(200)
+        do {
+            _ = try await runtime.request(revision: "revision", alias: "home", operation: "callService", parameters: parameters)
+            XCTFail("Denied call must invalidate fresh state")
+        } catch { XCTAssertEqual(error as? ConnectionFailure, .deviceOffline) }
+        let after = await transport.requests.count; XCTAssertEqual(after, 3, "No automatic retry or replay")
+    }
+}
+
+
+extension HomeAssistantDeviceTests {
+    @MainActor
+    func testBundledSDKCallsNativeServiceFromLocalPackage() async throws {
+        let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
+        var config = configuration(); config.schemaVersion = 2
+        config.serviceCalls = [.init(domain: "light", service: "turn_on", entityIds: ["light.a"])]
+        try vault.provision(config, owner: "owner")
+        let transport = FixtureHTTP()
+        let runtime = HomeAssistantDeviceRuntime(vault: vault, scope: { .init(owner: "owner", revision: "revision", dashboardId: "screen") },
+            transport: transport, resolver: FixedResolver(["203.0.113.10"]))
+        let html = Data("<!doctype html><html><body>Bridge fixture</body></html>".utf8)
+        let store = PackageAssetStore(assets: ["index.html": PackageAsset(path: "index.html", data: html, mime: "text/html")])
+        let loaded = expectation(description: "Local package loaded")
+        let coordinator = DashboardWebCoordinator(store: store, homeAssistant: runtime, revision: "revision", onReady: { loaded.fulfill() }, onUnlinkHold: {})
+        let view = coordinator.makeWebView()
+        await fulfillment(of: [loaded], timeout: 15)
+        let script = """
+        await screenpunk.connections.request('home', 'getStates', {});
+        const result = await screenpunk.homeAssistant.callService({domain:'light',service:'turn_on',target:{entity_id:'light.a'},serviceData:{rgb_color:[2,4,8],transition:0.5}});
+        let denied = false;
+        try { await screenpunk.homeAssistant.callService({domain:'light',service:'turn_off',target:{entity_id:'light.a'},serviceData:{}}); }
+        catch (error) { denied = error.code === 'permission_required'; }
+        return JSON.stringify({result, denied, containsCredential: JSON.stringify(screenpunk).includes('fixture-credential')});
+        """
+        let raw: Any = try await withCheckedThrowingContinuation { continuation in
+            view.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { result in
+                continuation.resume(with: result)
+            }
+        }
+        let text = try XCTUnwrap(raw as? String)
+        let reply = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        XCTAssertEqual(reply["denied"] as? Bool, true)
+        XCTAssertEqual(reply["containsCredential"] as? Bool, false)
+        let sent = await transport.requests
+        XCTAssertEqual(sent.count, 2)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent[1].body!) as? [String: Any])
+        XCTAssertEqual(body["rgb_color"] as? [Int], [2,4,8])
+        view.stopLoading()
+        withExtendedLifetime(coordinator) {}
     }
 }

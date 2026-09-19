@@ -397,11 +397,9 @@ public final class DeviceCoordinator: @unchecked Sendable {
         )
         let body = LANDeployBody(deployment: queued, revision: revision, files: files)
         let encoded = try LANCodec.encodePayload(body)
-        if encoded.utf8.count + 512 > LANProtocolLimits.maxMessageBytes {
-            throw ControllerError.validationFailed(
-                detail: "package is \(encoded.utf8.count) bytes encoded; LAN transfer accepts at most \(LANProtocolLimits.maxMessageBytes) bytes per deployment"
-            )
-        }
+        let envelope = LANEnvelope(requestId: UUID().uuidString, method: LANMethod.deploy.rawValue, payloadJSON: encoded)
+        let hello = try withLink(record) { try $0.hello() }
+        try checkTransferSize(try LANCodec.encode(envelope).count, advertised: hello.maxTransferBytes)
 
         let outcome: DeploymentRecord
         do {
@@ -429,25 +427,44 @@ public final class DeviceCoordinator: @unchecked Sendable {
         return outcome
     }
 
+    private func checkTransferSize(_ bytes: Int, advertised: Int?) throws {
+        let limit = LANProtocolLimits.transferLimit(advertised: advertised)
+        guard bytes <= limit else {
+            let size = String(format: "%.2f", Double(bytes) / 1_048_576)
+            let maximum = String(format: "%.2f", Double(limit) / 1_048_576)
+            let action = limit < LANProtocolLimits.maxMessageBytes
+                ? "Update Screenpunk on this device to allow transfers up to 32 MiB."
+                : "Choose fewer screens or reduce their assets."
+            throw ControllerError.validationFailed(detail: "Selected screens need \(size) MiB encoded (\(bytes) bytes); the transfer limit is \(maximum) MiB (\(limit) bytes). \(action) The device's current screens have been kept.")
+        }
+    }
+
     /// No package or credential is sent until the current peer advertises atomic sets.
-    public func requireScreenSetSupport(deviceId: String) throws {
+    @discardableResult
+    public func requireScreenSetSupport(deviceId: String, serviceCalls: Bool = false, cameras: Bool = false, publicReads: Bool = false) throws -> LANHello {
         let record = try ownedRecord(deviceId)
         let hello: LANHello
         do { hello = try withLink(record) { try $0.hello() } }
         catch { throw mapTransfer(error) }
-        guard hello.deviceId == deviceId, hello.capabilities?.contains("screen-set-v1") == true else {
+        guard hello.deviceId == deviceId, hello.capabilities?.contains("screen-set-v1") == true,
+              (!serviceCalls || hello.capabilities?.contains("home-assistant-services-v1") == true),
+              (!cameras || hello.capabilities?.contains("camera-playback-v1") == true),
+              (!publicReads || hello.capabilities?.contains("public-read-http-v1") == true) else {
             throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device before applying screens. Its current screens have been kept.")
         }
+        return hello
     }
 
     public func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
         let record = try ownedRecord(body.deviceId)
         try body.validate()
+        let hello = try requireScreenSetSupport(deviceId: body.deviceId,
+            serviceCalls: body.screens.contains { ($0.homeAssistant?.schemaVersion ?? 1) >= 2 },
+            cameras: body.screens.contains { $0.homeAssistant?.cameraEntities != nil },
+            publicReads: body.screens.contains { $0.publicReads != nil })
         let encoded = try LANCodec.encodePayload(body)
         let envelope = LANEnvelope(requestId: UUID().uuidString, method: LANMethod.deploySet.rawValue, payloadJSON: encoded)
-        guard try LANCodec.encode(envelope).count <= LANProtocolLimits.maxMessageBytes else {
-            throw ControllerError.validationFailed(detail: "The selected screens exceed the transfer limit. Choose fewer screens or reduce their assets.")
-        }
+        try checkTransferSize(try LANCodec.encode(envelope).count, advertised: hello.maxTransferBytes)
         let receipt: LANScreenSetReceipt
         do { receipt = try withLink(record) { try $0.deployScreenSet(body) } }
         catch {

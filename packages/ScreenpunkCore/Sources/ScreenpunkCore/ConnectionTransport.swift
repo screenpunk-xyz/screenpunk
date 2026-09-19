@@ -27,9 +27,11 @@ public struct AuthorizedHTTPRequest: Sendable, Equatable {
 
 public struct HTTPTransportResponse: Sendable, Equatable {
     public var status: Int
+    public var headers: [String: String]
     public var body: Data
 
-    public init(status: Int, body: Data) {
+    public init(status: Int, body: Data, headers: [String: String] = [:]) {
+        self.headers = headers
         self.status = status
         self.body = body
     }

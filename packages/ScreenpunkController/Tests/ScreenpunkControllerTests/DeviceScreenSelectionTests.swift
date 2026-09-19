@@ -28,6 +28,21 @@ final class DeviceScreenSelectionTests: XCTestCase {
         selection.choose("new")
         XCTAssertEqual(selection.ids, ["new"])
     }
+    func testPreviewNavigationUsesOrderWithoutChangingSelection() {
+        var selection = DeviceScreenSelection(ids: ["lights", "clock", "weather"], multiple: true)
+        let original = selection
+        XCTAssertEqual(selection.previewNeighbor(of: "clock", offset: -1), "lights")
+        XCTAssertEqual(selection.previewNeighbor(of: "clock", offset: 1), "weather")
+        XCTAssertNil(selection.previewNeighbor(of: "lights", offset: -1))
+        XCTAssertNil(selection.previewNeighbor(of: "weather", offset: 1))
+        XCTAssertEqual(selection, original)
+        selection.choose("clock")
+        XCTAssertNil(selection.previewNeighbor(of: "clock", offset: 1))
+        XCTAssertEqual(selection.previewNeighbor(of: "lights", offset: 1), "weather")
+        selection.setMultiple(false, preferred: "weather")
+        XCTAssertNil(selection.previewNeighbor(of: "weather", offset: -1))
+        XCTAssertNil(selection.previewNeighbor(of: nil, offset: 1))
+    }
     func testFindAsYouTypeMatchesAllTermsIgnoringCaseAndDiacritics() {
         XCTAssertTrue(DeviceScreenSelection.matches(name: "Café Game Lights", query: "LIGHT cafe"))
         XCTAssertTrue(DeviceScreenSelection.matches(name: "Clock", query: "  "))

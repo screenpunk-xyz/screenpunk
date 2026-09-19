@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "dashboardId": "66666666-6666-4666-8666-666666666666",
+  "revision": "66666666-6666-4666-9666-666666666667",
+  "name": "Home Assistant services",
+  "entrypoint": "index.html",
+  "sdkVersion": "1",
+  "target": {
+    "profileId": "fixture-phone",
+    "width": 390,
+    "height": 844,
+    "scale": 3,
+    "orientation": "portrait"
+  },
+  "connections": [
+    {
+      "alias": "home",
+      "required": true,
+      "operations": [
+        {
+          "name": "getStates",
+          "kind": "http"
+        },
+        {
+          "name": "callService",
+          "kind": "http"
+        }
+      ],
+      "serviceCalls": [
+        {
+          "domain": "light",
+          "service": "turn_on",
+          "entityIds": [
+            "light.example"
+          ]
+        },
+        {
+          "domain": "climate",
+          "service": "set_temperature",
+          "entityIds": [
+            "climate.example"
+          ]
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "index.html",
+      "bytes": 714,
+      "sha256": "df6e969a699c70152a09463747027f7afaacb62a087e790b84d2b74502d553c9"
+    },
+    {
+      "path": "app.js",
+      "bytes": 2265,
+      "sha256": "98399aa62b351843eb755147a35a164b5ade98d8be03d054ed7c1becaa36933d"
+    },
+    {
+      "path": "screenpunk.js",
+      "bytes": 18729,
+      "sha256": "a8ff85e76001f3928d2273fe48d32e43cc2b2cfdf8582414f70f7933d1270dc4"
+    }
+  ],
+  "digest": "1ea197346aa5290cf17b57a9983cfabb690109ed1ab9700782a00c03a9a01d08"
+}

@@ -7,6 +7,7 @@ public final class HomeAssistantDeviceVault: @unchecked Sendable {
     private let store: any CredentialStore
     private let account = "provisioning-v1"
     private let setsAccount = "screen-set-grants-v1"
+    private let publicAccount = "public-read-grants-v1"
     public init(store: any CredentialStore = KeychainCredentialStore(service: "xyz.screenpunk.device.home-assistant")) {
         self.store = store
     }
@@ -64,6 +65,31 @@ public final class HomeAssistantDeviceVault: @unchecked Sendable {
         try store.put(JSONEncoder().encode(sets.filter { $0.key == generation }), for: setsAccount)
         try store.delete(account)
     }
+    private struct PublicRecord: Codable { var owner: String; var configuration: PublicReadProvisioning }
+    private func publicSets() throws -> [String: [PublicRecord]] {
+        guard let data = try store.secret(for: publicAccount) else { return [:] }
+        return try JSONDecoder().decode([String: [PublicRecord]].self, from: data)
+    }
+    func revokePublic() throws {
+        lock.lock(); defer { lock.unlock() }
+        try store.delete(publicAccount)
+    }
+    func stagePublic(_ configs: [PublicReadProvisioning], owner: String, generation: String) throws {
+        for config in configs { try config.validate() }
+        lock.lock(); defer { lock.unlock() }
+        var sets = try publicSets(); sets[generation] = configs.map { PublicRecord(owner: owner, configuration: $0) }
+        try store.put(JSONEncoder().encode(sets), for: publicAccount)
+    }
+    func publicConfiguration(owner: String, dashboardId: String, revision: String, generation: String) throws -> PublicReadProvisioning {
+        lock.lock(); defer { lock.unlock() }
+        guard let config = try publicSets()[generation]?.first(where: { $0.owner == owner && $0.configuration.dashboardId == dashboardId && $0.configuration.revision == revision })?.configuration else { throw ConnectionFailure.permissionRequired }
+        try config.validate(); return config
+    }
+    func prunePublic(keeping generation: String? = nil, removing: String? = nil) throws {
+        lock.lock(); defer { lock.unlock() }
+        let sets = try publicSets().filter { (generation == nil || $0.key == generation) && $0.key != removing }
+        try store.put(JSONEncoder().encode(sets), for: publicAccount)
+    }
     private func grantSets() throws -> [String: [Record]] {
         guard let data = try store.secret(for: setsAccount) else { return [:] }
         return try JSONDecoder().decode([String: [Record]].self, from: data)
@@ -87,7 +113,7 @@ public final class HomeAssistantDeviceVault: @unchecked Sendable {
 }
 
 /// HTTP polling is the initial live-state transport. No commands are retried or queued.
-public actor HomeAssistantDeviceRuntime {
+public actor HomeAssistantDeviceRuntime: CameraStreamResolver {
     public struct Scope: Sendable, Equatable {
         public var owner: String
         public var revision: String
@@ -146,6 +172,7 @@ public actor HomeAssistantDeviceRuntime {
                 cached = nil
                 throw ConnectionFailure.permissionRequired
             }
+            if write && [400, 404, 422].contains(response.status) { throw ConnectionFailure.validationFailed }
             guard (200...299).contains(response.status) else { throw ConnectionFailure.deviceOffline }
             guard response.body.count <= 1024 * 1024 else { throw ConnectionFailure.sizeLimit }
             // Service responses can include unrelated changed entities; never return them to the page.
@@ -168,6 +195,28 @@ public actor HomeAssistantDeviceRuntime {
             }
             throw (error as? ConnectionFailure) ?? ConnectionFailure.deviceOffline
         }
+    }
+
+    public func resolveCamera(_ source: CameraSource, revision: String) async throws -> CameraStream {
+        guard source.kind == "homeAssistant", source.connection == "home",
+              let current = scope(), current.revision == revision else { throw ConnectionFailure.permissionRequired }
+        let record = try vault.record(owner: current.owner, revision: revision, grantSet: current.grantSet)
+        let config = record.configuration
+        guard config.dashboardId == current.dashboardId, config.schemaVersion == 3,
+              config.cameraEntities?.contains(source.entityId) == true else { throw ConnectionFailure.permissionRequired }
+        _ = try ConnectionPolicy.authorize(grant: config.connectionGrant(path: "/api/websocket", write: false),
+            operationName: "request", parameters: [:],
+            resolvedAddresses: resolver.addresses(for: ConnectionPolicy.originHost(config.origin)),
+            binding: .init(authRef: "home-device", placement: .bearer))
+        let url = try await HomeAssistantCameraHandshake.resolve(origin: config.origin, token: config.token, entityId: source.entityId)
+        try requireCurrent(record, current)
+        return CameraStream(url: url, isAuthorized: { [weak self] in
+            guard let self else { return false }
+            return await self.cameraLeaseIsCurrent(record, current)
+        })
+    }
+    private func cameraLeaseIsCurrent(_ record: HomeAssistantDeviceVault.Record, _ current: Scope) -> Bool {
+        (try? requireCurrent(record, current)) != nil
     }
 
     private func requireCurrent(_ record: HomeAssistantDeviceVault.Record, _ expected: Scope) throws {
@@ -205,6 +254,8 @@ public final class HomeAssistantHTTPTransport: HTTPTransport, @unchecked Sendabl
             guard data.count < request.maxBytes else { throw ConnectionFailure.sizeLimit }
             data.append(byte)
         }
-        return HTTPTransportResponse(status: response.statusCode, body: data)
+        return HTTPTransportResponse(status: response.statusCode, body: data, headers: response.allHeaderFields.reduce(into: [:]) { result, item in
+            if let key = item.key as? String, let value = item.value as? String { result[key.lowercased()] = value }
+        })
     }
 }

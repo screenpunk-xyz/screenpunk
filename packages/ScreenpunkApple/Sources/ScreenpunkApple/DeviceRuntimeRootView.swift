@@ -188,7 +188,7 @@ public struct DeviceRuntimeRootView: View {
         onUnlink: @escaping () -> Void
     ) -> some View {
         if let package {
-            DashboardRuntimeView(store: package, homeAssistant: homeAssistantRuntime, revision: revision,
+            DashboardRuntimeView(store: package, homeAssistant: homeAssistantRuntime, publicReads: host.server?.publicReadSession(), revision: revision,
                                  screenName: currentScreenName, onMenu: { showDeviceMenu = true }, onUnlink: onUnlink)
                 .ignoresSafeArea()
                 .id(revision)

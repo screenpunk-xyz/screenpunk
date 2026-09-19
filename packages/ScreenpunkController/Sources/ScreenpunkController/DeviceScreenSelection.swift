@@ -28,6 +28,14 @@ public struct DeviceScreenSelection: Codable, Equatable, Sendable {
         return true
     }
 
+    /// Preview navigation reads the draft order without changing membership or deploying.
+    public func previewNeighbor(of focused: String?, offset: Int) -> String? {
+        guard multiple, ids.count > 1, let focused, let index = ids.firstIndex(of: focused),
+              offset == -1 || offset == 1 else { return nil }
+        let next = index + offset
+        return ids.indices.contains(next) ? ids[next] : nil
+    }
+
     public static func matches(name: String, query: String) -> Bool {
         query.split(whereSeparator: { $0.isWhitespace }).allSatisfy {
             name.range(of: String($0), options: [.caseInsensitive, .diacriticInsensitive]) != nil

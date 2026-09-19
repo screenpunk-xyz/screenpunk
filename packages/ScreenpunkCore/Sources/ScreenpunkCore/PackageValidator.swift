@@ -52,6 +52,7 @@ public enum PackagePath {
 public enum PackageValidator {
     public static func validate(_ manifest: DashboardManifest) throws {
         var issues: [PackageIssue] = []
+        do { _ = try PublicReadProvisioning(manifest: manifest) } catch { issues.append(.validationFailed) }
         if manifest.schemaVersion != PackageLimits.schemaMajor {
             issues.append(.unsupportedVersion)
         }
@@ -61,6 +62,16 @@ public enum PackageValidator {
         if ["portrait", "landscape"].contains(manifest.target.orientation) == false {
             issues.append(.validationFailed)
         }
+
+        for connection in manifest.connections {
+            do {
+                if connection.serviceCalls != nil && connection.alias != "home" { throw ConnectionFailure.validationFailed }
+                try HomeAssistantServiceGrant.validate(connection.serviceCalls ?? [])
+                if connection.cameraEntities != nil && connection.alias != "home" { throw ConnectionFailure.validationFailed }
+                try CameraSource.validateEntities(connection.cameraEntities ?? [])
+            } catch { issues.append(.validationFailed) }
+        }
+        if Set(manifest.connections.map(\.alias)).count != manifest.connections.count { issues.append(.validationFailed) }
 
         let blob = "\(manifest.dashboardId)\(manifest.name)\(manifest.entrypoint)"
         if blob.range(of: "password|secret|token|api[_-]?key|bearer", options: .regularExpression) != nil {
