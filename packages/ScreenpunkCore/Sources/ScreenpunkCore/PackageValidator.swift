@@ -85,6 +85,7 @@ public enum PackageValidator {
         if let entry = try? PackagePath.normalize(manifest.entrypoint), !seen.contains(entry) {
             issues.append(.missingEntrypoint)
         }
+        do { try EventNavigationEngine.validateManifest(manifest) } catch { issues.append(.validationFailed) }
         if issues.isEmpty == false {
             throw PackageValidationError(issues: Array(Set(issues)))
         }

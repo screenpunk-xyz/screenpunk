@@ -13,7 +13,10 @@ public enum MCPToolSchemas {
                     "baseRevision": string(),
                     "files": .object(["type": .string("array")]),
                     "target": .object(["type": .string("object")]),
-                    "connections": .object(["type": .string("array")])
+                    "connections": .object(["type": .string("array")]),
+                    "pages": .object(["type": .string("array"), "description": .string("Approved pages inside this dashboard: objects with id, name and packaged HTML path. Omit to preserve existing pages; [] resets to the entrypoint. See docs/event-navigation.md.")]),
+                    "defaultPageId": string("Author starting page ID; device settings may select another approved page."),
+                    "eventRules": .object(["type": .string("array"), "description": .string("Author-declared approved connection sources, conditions, page targets, defaults and permitted overrides. Omit to preserve; [] removes all rules. Never grants connection permissions.")])
                 ]
             )
         case "preview_dashboard", "interact_preview":

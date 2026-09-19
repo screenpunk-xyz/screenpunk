@@ -103,8 +103,17 @@ public final class ControllerService: @unchecked Sendable {
             baseRevision: object["baseRevision"]?.string,
             target: target,
             connections: connections,
-            files: files
+            files: files,
+            pages: try parseNavigationField([DashboardPage].self, object["pages"], name: "pages"),
+            defaultPageId: object["defaultPageId"]?.string,
+            eventRules: try parseNavigationField([ManifestEventRule].self, object["eventRules"], name: "eventRules")
         )
+    }
+
+    private func parseNavigationField<T: Decodable>(_ type: T.Type, _ value: JSONValue?, name: String) throws -> T? {
+        guard let value else { return nil }
+        do { return try JSONDecoder().decode(type, from: value.data()) }
+        catch { throw ControllerError.validationFailed(detail: "Invalid \(name) declaration.") }
     }
 
     public func validateDashboard(dashboardId: String, revision: String?) throws -> DashboardManifest {

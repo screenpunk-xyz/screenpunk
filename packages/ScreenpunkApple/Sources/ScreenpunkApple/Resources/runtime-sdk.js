@@ -183,6 +183,15 @@ function createDashboardClient(options = {}) {
                 };
             }
         },
+        navigation: {
+            async open(pageId) {
+                await sendRequest("navigation.open", { parameters: { pageId } });
+            },
+            async get() {
+                const response = await sendRequest("navigation.get");
+                return response.value;
+            }
+        },
         state: {
             async get(key) {
                 const response = await sendRequest("state.get", { key });

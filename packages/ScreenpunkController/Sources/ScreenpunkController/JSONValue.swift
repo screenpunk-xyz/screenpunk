@@ -66,10 +66,6 @@ public enum JSONValue: Sendable, Equatable {
         switch any {
         case is NSNull:
             return .null
-        case let value as Bool:
-            return .bool(value)
-        case let value as Int:
-            return .int(value)
         case let value as NSNumber:
             if CFGetTypeID(value) == CFBooleanGetTypeID() {
                 return .bool(value.boolValue)

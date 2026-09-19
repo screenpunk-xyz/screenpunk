@@ -18,6 +18,9 @@ public protocol DeviceLink: AnyObject {
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord
     func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt
     func queryActiveState() throws -> LANActiveQuery
+    func getSettings() throws -> DeviceSettingsSnapshot
+    func updateSettings(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot
+    func provisionConnections(_ configuration: ConnectionProvisioning) throws -> ConnectionProvisioningReceipt
     func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt
     func revokeHomeAssistant() throws
     func queryActive() throws -> String?
@@ -25,6 +28,17 @@ public protocol DeviceLink: AnyObject {
 }
 
 public extension DeviceLink {
+    func provisionConnections(_ configuration: ConnectionProvisioning) throws -> ConnectionProvisioningReceipt {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to approve generic connections.")
+    }
+
+    func getSettings() throws -> DeviceSettingsSnapshot {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to manage its settings.")
+    }
+    func updateSettings(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to manage its settings.")
+    }
+
     func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
         throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to apply screens.")
     }
@@ -59,6 +73,7 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
     public var displayName: String?
     public var screenSet: [LANScreenSetEntry]?
     public var selectedDashboardId: String?
+    public var settingsSnapshot: DeviceSettingsSnapshot?
 
     public init(
         device: PairedDevice,

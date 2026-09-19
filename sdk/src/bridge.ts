@@ -8,7 +8,9 @@ export const BRIDGE_METHODS = [
   "state.set",
   "state.remove",
   "runtime.ready",
-  "runtime.onStatus"
+  "runtime.onStatus",
+  "navigation.open",
+  "navigation.get"
 ] as const;
 
 export type BridgeMethod = (typeof BRIDGE_METHODS)[number];

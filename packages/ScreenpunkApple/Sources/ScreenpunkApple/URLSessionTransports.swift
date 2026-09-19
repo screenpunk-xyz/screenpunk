@@ -49,23 +49,23 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
-        let data: Data
-        let response: URLResponse
+        var data = Data()
+        let http: HTTPURLResponse
         do {
-            (data, response) = try await session.data(for: urlRequest)
-        } catch {
-            if (error as? URLError)?.code == .timedOut {
-                throw ConnectionFailure.timeout
+            let (bytes, response) = try await session.bytes(for: urlRequest)
+            guard let response = response as? HTTPURLResponse else { throw ConnectionFailure.deviceOffline }
+            http = response
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                guard data.count < request.maxBytes else { throw ConnectionFailure.sizeLimit }
+                data.append(byte)
             }
+        } catch {
+            if let failure = error as? ConnectionFailure { throw failure }
+            if (error as? URLError)?.code == .timedOut { throw ConnectionFailure.timeout }
             throw ConnectionFailure.deviceOffline
         }
 
-        guard let http = response as? HTTPURLResponse else {
-            throw ConnectionFailure.deviceOffline
-        }
-        if data.count > request.maxBytes {
-            throw ConnectionFailure.sizeLimit
-        }
         return HTTPTransportResponse(status: http.statusCode, body: data)
     }
 }
@@ -105,6 +105,8 @@ final class URLSessionWebSocketSession: WebSocketSession, @unchecked Sendable {
         try await task.send(.data(data))
     }
 
+    func sendText(_ text: String) async throws { try await task.send(.string(text)) }
+
     func close() async {
         task.cancel(with: .normalClosure, reason: nil)
     }
@@ -134,6 +136,7 @@ public final class URLSessionWebSocketTransport: WebSocketTransport, @unchecked 
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
         let task = session.webSocketTask(with: urlRequest)
+        task.maximumMessageSize = request.maxMessageBytes
         task.resume()
         return URLSessionWebSocketSession(task: task, maxBytes: request.maxMessageBytes)
     }

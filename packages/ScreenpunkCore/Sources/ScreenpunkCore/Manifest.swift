@@ -86,6 +86,9 @@ public struct DashboardManifest: Codable, Sendable, Equatable {
     public var target: ManifestTarget
     public var connections: [ManifestConnection]
     public var files: [ManifestFile]
+    public var pages: [DashboardPage]?
+    public var defaultPageId: String?
+    public var eventRules: [ManifestEventRule]?
 
     public init(
         schemaVersion: Int,
@@ -97,7 +100,10 @@ public struct DashboardManifest: Codable, Sendable, Equatable {
         digest: String? = nil,
         target: ManifestTarget,
         connections: [ManifestConnection],
-        files: [ManifestFile]
+        files: [ManifestFile],
+        pages: [DashboardPage]? = nil,
+        defaultPageId: String? = nil,
+        eventRules: [ManifestEventRule]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.dashboardId = dashboardId
@@ -109,5 +115,8 @@ public struct DashboardManifest: Codable, Sendable, Equatable {
         self.target = target
         self.connections = connections
         self.files = files
+        self.pages = pages
+        self.defaultPageId = defaultPageId
+        self.eventRules = eventRules
     }
 }

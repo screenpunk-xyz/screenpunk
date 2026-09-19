@@ -30,13 +30,28 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// transfer activates; a failed transfer leaves the current package in place.
     public private(set) var activePackage: PackageAssetStore?
     public private(set) var screenSet: DeviceInstalledScreenSet?
+    private var settings = DeviceSettingsSnapshot()
     private var screenPackages: [String: PackageAssetStore] = [:]
     public var onChange: (() -> Void)?
     public let identity: TLSIdentityMaterial
     public let store: DeviceStateStore?
+    public let genericConnectionVault: GenericConnectionDeviceVault
+    public private(set) var genericConnectionGeneration = UUID()
     public let homeAssistantVault: HomeAssistantDeviceVault
     public lazy var homeAssistantRuntime = HomeAssistantDeviceRuntime(vault: homeAssistantVault) { [weak self] in
         self?.homeAssistantScope()
+    }
+
+    private func genericConnectionScope() -> GenericConnectionDeviceVault.Scope? {
+        lock.lock(); defer { lock.unlock() }
+        guard let owner = runtime.pairing.owner, let revision = runtime.activeRevision,
+              let dashboardId = activeStoredRevision?.dashboardId else { return nil }
+        return .init(owner: PeerPin.hex(owner.publicKey), dashboardId: dashboardId, revision: revision)
+    }
+
+    public func makeGenericConnectionRuntime() async throws -> ConnectionRuntime {
+        guard let scope = genericConnectionScope() else { throw ConnectionFailure.permissionRequired }
+        return try await genericConnectionVault.makeRuntime(scope: scope, currentScope: { [weak self] in self?.genericConnectionScope() })
     }
 
     private func homeAssistantScope() -> HomeAssistantDeviceRuntime.Scope? {
@@ -62,8 +77,10 @@ public final class DeviceLANServer: @unchecked Sendable {
         clock: PairingClock = SystemClock(),
         store: DeviceStateStore? = nil,
         homeAssistantVault: HomeAssistantDeviceVault = HomeAssistantDeviceVault(),
+        genericConnectionVault: GenericConnectionDeviceVault = GenericConnectionDeviceVault(),
         requestBodyTimeout: TimeInterval = 15
     ) {
+        self.genericConnectionVault = genericConnectionVault
         self.homeAssistantVault = homeAssistantVault
         self.runtime = runtime
         self.identity = identity
@@ -192,12 +209,15 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Erases owner, active revision, package bytes, and everything on disk.
     public func unlink() {
         lock.lock()
+        try? genericConnectionVault.revoke()
+        genericConnectionGeneration = UUID()
         try? homeAssistantVault.revoke()
         let homeAssistantRuntime = self.homeAssistantRuntime
         Task { await homeAssistantRuntime.cancelPending() }
         clearPendingPairingLocked()
         runtime.unlink()
         screenSet = nil
+        settings = DeviceSettingsSnapshot()
         screenPackages = [:]
         activePackage = nil
         activeStoredRevision = nil
@@ -222,11 +242,91 @@ public final class DeviceLANServer: @unchecked Sendable {
         return value
     }
 
+    /// A snapshot is durable desired configuration. Runtime acknowledgement is
+    /// separate, so a sleeping renderer is never reported as already applied.
+    public var settingsSnapshot: DeviceSettingsSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        return settings
+    }
+
+    @discardableResult
+    public func updateSettingsLocally(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
+        lock.lock()
+        let saved: DeviceSettingsSnapshot
+        do { saved = try updateSettingsLocked(update) }
+        catch { lock.unlock(); throw error }
+        lock.unlock()
+        onChange?()
+        return saved
+    }
+
+    /// The UI/runtime calls this only after consuming this exact revision.
+    /// A late acknowledgement can never mark a newer edit as applied.
+    public func markSettingsApplied(revision: String) {
+        lock.lock()
+        guard settings.revision == revision, settings.appliedRevision != revision else { lock.unlock(); return }
+        settings.appliedRevision = revision
+        lock.unlock()
+        onChange?()
+    }
+
+    /// Suspension or runtime failure clears the live acknowledgement without
+    /// changing the persisted desired configuration or its conflict token.
+    public func markSettingsUnapplied(revision: String) {
+        lock.lock()
+        guard settings.revision == revision, settings.appliedRevision != nil else { lock.unlock(); return }
+        settings.appliedRevision = nil
+        lock.unlock()
+        onChange?()
+    }
+
+    private func updateSettingsLocked(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
+        let next = try settings.replacing(with: update)
+        try validateDashboardSettings(next.value)
+        if let store {
+            var state = DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision)
+            state.screenSet = screenSet
+            state.settings = next
+            do { try store.save(state) }
+            catch { throw DeviceSettingsFailure.persistenceFailed }
+        }
+        settings = next
+        return next
+    }
+
+    private func validateDashboardSettings(_ value: DeviceSettings) throws {
+        // Validate edits against installed author declarations. Unchanged dormant
+        // preferences may survive a dashboard revision that removed their target;
+        // runtime reconciliation ignores those values without blocking brightness edits.
+        let ids = Set(value.startingPageByDashboard.keys).union(value.eventRuleOverrides.keys)
+        for id in ids {
+            let changedPage = value.startingPageByDashboard[id] != settings.value.startingPageByDashboard[id]
+                ? value.startingPageByDashboard[id] : nil
+            let changedRules = (value.eventRuleOverrides[id] ?? [:]).filter {
+                settings.value.eventRuleOverrides[id]?[$0.key] != $0.value
+            }
+            guard changedPage != nil || !changedRules.isEmpty else { continue }
+            let package = screenPackages[id] ?? (activeStoredRevision?.dashboardId == id ? activePackage : nil)
+            guard let package, let data = package.assets["manifest.json"]?.data,
+                  let manifest = try? JSONDecoder().decode(DashboardManifest.self, from: data), manifest.dashboardId == id else {
+                throw DeviceSettingsFailure.invalidSettings
+            }
+            do {
+                try EventNavigationEngine.validate(manifest: manifest,
+                    startingPageId: changedPage, overrides: changedRules)
+            } catch { throw DeviceSettingsFailure.invalidSettings }
+        }
+    }
+
     // MARK: Persistence
 
     private func restoreFromStore() {
         guard let store, let state = store.load() else { return }
         runtime.restore(state)
+        if let saved = state.settings {
+            settings = saved
+            settings.appliedRevision = nil
+        }
         pinnedController = state.owner?.publicKey
         activeStoredRevision = state.activeStoredRevision
         if let installed = state.screenSet {
@@ -257,6 +357,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         guard let store else { return }
         var state = DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision)
         state.screenSet = screenSet
+        state.settings = settings
         try? store.save(state)
     }
 
@@ -337,10 +438,19 @@ public final class DeviceLANServer: @unchecked Sendable {
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
                     name: runtime.profile.name,
-                    capabilities: ["home-assistant-http-v1", "screen-set-v1"],
+                    capabilities: ["home-assistant-http-v1", "screen-set-v1", "device-settings-v1", "generic-connections-v1"],
                     profile: runtime.profile
                 )
                 return ok(request, payload: hello)
+            case .settingsGet:
+                try requireOwner(peerPin)
+                return ok(request, payload: settings)
+            case .settingsUpdate:
+                try requireOwner(peerPin)
+                let update = try LANCodec.decodePayload(DeviceSettingsUpdate.self, json: request.payloadJSON)
+                let saved = try updateSettingsLocked(update)
+                onChange?()
+                return ok(request, payload: saved)
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
                 let controllerPin = try authenticatedPeer(peerPin, claimedHex: body.controllerPinHex)
@@ -432,6 +542,22 @@ public final class DeviceLANServer: @unchecked Sendable {
                     persist()
                 }
                 return ok(request, payload: outcome)
+            case .connectionsProvision:
+                try requireOwner(peerPin)
+                let body = try LANCodec.decodePayload(ConnectionProvisioning.self, json: request.payloadJSON)
+                guard body.revision == runtime.activeRevision,
+                      body.dashboardId == activeStoredRevision?.dashboardId else { throw TransferFailure.validationFailed }
+                try genericConnectionVault.provision(body, owner: PeerPin.hex(peerPin!))
+                genericConnectionGeneration = UUID()
+                onChange?()
+                return ok(request, payload: ConnectionProvisioningReceipt(deviceId: runtime.profile.deviceId,
+                    dashboardId: body.dashboardId, revision: body.revision, provisioningId: body.provisioningId))
+            case .connectionsRevoke:
+                try requireOwner(peerPin)
+                try genericConnectionVault.revoke()
+                genericConnectionGeneration = UUID()
+                onChange?()
+                return ok(request, payload: ["revoked": true])
             case .homeAssistantProvision:
                 try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(HomeAssistantProvisioning.self, json: request.payloadJSON)
@@ -464,7 +590,8 @@ public final class DeviceLANServer: @unchecked Sendable {
                 requestId: request.requestId,
                 method: request.method,
                 ok: false,
-                error: (error as? PairingFailure)?.rawValue
+                error: (error as? DeviceSettingsFailure)?.rawValue
+                    ?? (error as? PairingFailure)?.rawValue
                     ?? (error as? TransferFailure)?.rawValue
                     ?? (error as? ConnectionFailure)?.rawValue
                     ?? (error is DeviceStateStoreError ? TransferFailure.interrupted.rawValue : nil)
@@ -483,6 +610,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         if let store {
             var state = DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision)
             state.screenSet = next
+            state.settings = settings
             if let screen = next.screens.first(where: { $0.revision.dashboardId == dashboardId }) {
                 state.activeRevision = screen.revision.revision
                 state.activeStoredRevision = screen.revision
@@ -561,6 +689,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         var state = DevicePersistedState(owner: runtime.pairing.owner, activeRevision: selected.revision.revision,
             activeStoredRevision: selected.revision, lastDeployment: selected.deployment)
         state.screenSet = installed
+        state.settings = settings
         try store?.save(state)
         committed = true
         screenSet = installed

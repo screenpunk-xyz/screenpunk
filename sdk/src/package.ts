@@ -39,6 +39,29 @@ export interface ManifestFile {
   sha256: string;
 }
 
+export interface DashboardPage { id: string; name: string; path: string }
+export type EventReturnBehavior = "stay" | "timeout" | "conditionClear";
+export type EventScalar = string | number | boolean | null;
+export interface EventCondition { field: string[]; equals: EventScalar }
+export interface EventPayloadFields {
+  pageId?: string[]; returnBehavior?: string[]; timeoutSeconds?: string[];
+  eventId?: string[]; correlationId?: string[]; occurredAt?: string[];
+}
+export interface EventRuleDefaults {
+  enabled: boolean; pageId: string; returnBehavior: EventReturnBehavior;
+  timeoutSeconds: number; allowPayloadOverrides: boolean;
+}
+export interface EventSource {
+  mode: "live" | "poll"; alias: string; operation: string;
+  parameters: Record<string, EventScalar>; pollIntervalSeconds?: number; refreshOperation?: string; refreshAlias?: string;
+}
+export interface ManifestEventRule {
+  id: string; name: string; source: EventSource; filter?: EventCondition; condition?: EventCondition;
+  defaults: EventRuleDefaults; priority: number; userConfigurable: boolean;
+  allowedPageIds: string[]; allowedReturnBehaviors: EventReturnBehavior[];
+  allowTimeoutOverride: boolean; payload?: EventPayloadFields;
+}
+
 export interface DashboardManifest {
   schemaVersion: number;
   dashboardId: string;
@@ -50,6 +73,9 @@ export interface DashboardManifest {
   target: ManifestTarget;
   connections: ManifestConnection[];
   files: ManifestFile[];
+  pages?: DashboardPage[];
+  defaultPageId?: string;
+  eventRules?: ManifestEventRule[];
 }
 
 export type PackageIssueCode =
@@ -169,12 +195,51 @@ export function validateManifest(manifest: unknown): DashboardManifest {
   }
   if (entry && !seen.has(entry)) issues.push("missing_entrypoint");
 
+  try { validateNavigation(typed); } catch { issues.push("validation_failed"); }
+
   if (typed.digest && typed.digest !== deploymentDigest(typed)) {
     issues.push("digest_mismatch");
   }
 
   if (issues.length) throw new PackageValidationError([...new Set(issues)]);
   return typed;
+}
+
+/** Mirrors native EventNavigationEngine validation; payloads never introduce capabilities. */
+export function validateNavigation(manifest: DashboardManifest): void {
+  const invalid = () => { throw new PackageValidationError(["validation_failed"]); };
+  if (manifest.pages === undefined && manifest.defaultPageId === undefined && manifest.eventRules === undefined) return;
+  const pages = manifest.pages ?? [{ id: "default", name: manifest.name, path: manifest.entrypoint }];
+  const id = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v);
+  const field = (v: unknown): boolean => Array.isArray(v) && v.length > 0 && v.length <= 16 && v.every(k => typeof k === "string" && k.length > 0 && k.length <= 128 && !["__proto__", "prototype", "constructor"].includes(k));
+  const scalar = (v: unknown): boolean => v === null || typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
+  const condition = (v: unknown): boolean => isObject(v) && field(v.field) && scalar(v.equals);
+  const behaviors = ["stay", "timeout", "conditionClear"];
+  if (!Array.isArray(pages) || !pages.length || pages.length > 64) invalid();
+  const ids = new Set(pages.map(p => p.id));
+  if (ids.size !== pages.length || !ids.has(manifest.defaultPageId ?? pages[0].id)) invalid();
+  for (const p of pages) if (!id(p.id) || !p.name || p.name.length > 128 || !REL_HTML.test(p.path) || !manifest.files.some(f => f.path === p.path)) invalid();
+  const rules = manifest.eventRules ?? [];
+  if (!Array.isArray(rules) || rules.length > 64 || new Set(rules.map(r => r.id)).size !== rules.length) invalid();
+  for (const r of rules) {
+    const d = r.defaults; const source = r.source;
+    if (!id(r.id) || !r.name || r.name.length > 128 || !Number.isInteger(r.priority) || r.priority < -100 || r.priority > 100 ||
+        !d || !ids.has(d.pageId) || typeof d.enabled !== "boolean" || typeof d.allowPayloadOverrides !== "boolean" ||
+        !behaviors.includes(d.returnBehavior) || !Number.isInteger(d.timeoutSeconds) || d.timeoutSeconds < 1 || d.timeoutSeconds > 3600 ||
+        typeof r.userConfigurable !== "boolean" || typeof r.allowTimeoutOverride !== "boolean" ||
+        !Array.isArray(r.allowedPageIds) || r.allowedPageIds.some(p => !ids.has(p)) || new Set(r.allowedPageIds).size !== r.allowedPageIds.length ||
+        !Array.isArray(r.allowedReturnBehaviors) || r.allowedReturnBehaviors.some(b => !behaviors.includes(b)) || new Set(r.allowedReturnBehaviors).size !== r.allowedReturnBehaviors.length ||
+        (r.condition !== undefined && !condition(r.condition)) || (r.filter !== undefined && !condition(r.filter)) ||
+        ((d.returnBehavior === "conditionClear" || r.allowedReturnBehaviors.includes("conditionClear")) && !r.condition) ||
+        !source || !["live", "poll"].includes(source.mode) || !isObject(source.parameters) || Object.keys(source.parameters).length > 32 ||
+        Object.entries(source.parameters).some(([k, v]) => !k.length || k.length > 128 || ["authorization", "x-api-key", "token", "password"].includes(k.toLowerCase()) || !scalar(v))) invalid();
+    const connection = manifest.connections.find(c => c.alias === source.alias);
+    if (!connection?.operations?.some(o => o.name === source.operation && o.kind === (source.mode === "live" ? "ws" : "http"))) invalid();
+    if (source.refreshOperation !== undefined && !manifest.connections.find(c => c.alias === (source.refreshAlias ?? source.alias))?.operations?.some(o => o.name === source.refreshOperation && o.kind === "http")) invalid();
+    if (source.mode === "poll" && (!r.condition || !Number.isInteger(source.pollIntervalSeconds ?? 30) || (source.pollIntervalSeconds ?? 30) < 15 || (source.pollIntervalSeconds ?? 30) > 86400)) invalid();
+    if (!r.condition && !r.payload?.occurredAt) invalid();
+    if (r.payload !== undefined && (!isObject(r.payload) || Object.values(r.payload).some(v => !field(v)))) invalid();
+  }
 }
 
 export interface LoadedAsset {

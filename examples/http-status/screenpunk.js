@@ -152,6 +152,10 @@ function createDashboardClient(options = {}) {
         transport.send(message);
     }
     return {
+        navigation: {
+            async open(pageId) { await sendRequest("navigation.open", { parameters: { pageId } }); },
+            async get() { const response = await sendRequest("navigation.get"); return response.value; }
+        },
         connections: {
             async request(alias, operation, parameters = {}) {
                 const response = await sendRequest("connections.request", { alias, operation, parameters });

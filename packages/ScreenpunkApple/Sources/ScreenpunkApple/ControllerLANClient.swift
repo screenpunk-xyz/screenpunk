@@ -118,9 +118,34 @@ public final class ControllerLANClient: @unchecked Sendable {
         return try LANCodec.decodePayload(LANScreenSetReceipt.self, json: reply.payloadJSON)
     }
 
+    public func getSettings() throws -> DeviceSettingsSnapshot {
+        guard lastHello?.capabilities?.contains("device-settings-v1") == true else { throw TransferFailure.validationFailed }
+        let reply = try request(method: .settingsGet, payload: [String: String]())
+        return try LANCodec.decodePayload(DeviceSettingsSnapshot.self, json: reply.payloadJSON)
+    }
+
+    public func updateSettings(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
+        try update.value.validate()
+        guard lastHello?.capabilities?.contains("device-settings-v1") == true else { throw TransferFailure.validationFailed }
+        let reply = try request(method: .settingsUpdate, payload: update)
+        return try LANCodec.decodePayload(DeviceSettingsSnapshot.self, json: reply.payloadJSON)
+    }
+
     public func queryActiveState() throws -> LANActiveQuery {
         let reply = try request(method: .queryActive, payload: LANActiveQuery())
         return try LANCodec.decodePayload(LANActiveQuery.self, json: reply.payloadJSON)
+    }
+
+    /// Called after explicit native review/approval, never from dashboard JavaScript.
+    public func provisionConnections(_ configuration: ConnectionProvisioning) throws -> ConnectionProvisioningReceipt {
+        try configuration.validate()
+        guard lastHello?.capabilities?.contains("generic-connections-v1") == true else { throw ConnectionFailure.validationFailed }
+        let reply = try request(method: .connectionsProvision, payload: configuration)
+        return try LANCodec.decodePayload(ConnectionProvisioningReceipt.self, json: reply.payloadJSON)
+    }
+
+    public func revokeConnections() throws {
+        _ = try request(method: .connectionsRevoke, payload: [String: String]())
     }
 
     public func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
@@ -193,6 +218,7 @@ public final class ControllerLANClient: @unchecked Sendable {
             if reply.error == PairingFailure.secondOwner.rawValue { throw PairingFailure.secondOwner }
             if reply.error == PairingFailure.identityChanged.rawValue { throw PairingFailure.identityChanged }
             if reply.error == PairingFailure.codeMismatch.rawValue { throw PairingFailure.codeMismatch }
+            if let raw = reply.error, let failure = DeviceSettingsFailure(rawValue: raw) { throw failure }
             if let raw = reply.error, let failure = TransferFailure(rawValue: raw) { throw failure }
             throw TransferFailure.interrupted
         }

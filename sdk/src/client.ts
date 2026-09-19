@@ -37,7 +37,10 @@ export interface ClientOptions {
   nowId?: () => string;
 }
 
+export interface NavigationStatus { pageId: string; activeRuleId?: string; returnAt?: number }
+
 export interface DashboardClient {
+  navigation: { open(pageId: string): Promise<void>; get(): Promise<NavigationStatus> };
   connections: {
     request(
       alias: string,
@@ -203,6 +206,10 @@ export function createDashboardClient(options: ClientOptions = {}): DashboardCli
   }
 
   return {
+    navigation: {
+      async open(pageId) { await sendRequest("navigation.open", { parameters: { pageId } }); },
+      async get() { const response = await sendRequest("navigation.get"); return response.value as NavigationStatus; }
+    },
     connections: {
       async request(alias, operation, parameters = {}) {
         const response = await sendRequest("connections.request", { alias, operation, parameters });

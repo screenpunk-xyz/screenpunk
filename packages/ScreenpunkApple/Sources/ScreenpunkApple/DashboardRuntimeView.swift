@@ -10,6 +10,10 @@ public struct DashboardRuntimeView: View {
 
     public var homeAssistant: HomeAssistantDeviceRuntime?
     public var revision: String
+    public var connections: ConnectionRuntime?
+    public var settings: DeviceSettings
+    public var onSettingsApplied: (Bool) -> Void
+    @Environment(\.scenePhase) private var scenePhase
     @State private var connectionUnhealthy = false
     @State private var showUnlink = false
     @State private var loaded = false
@@ -20,6 +24,9 @@ public struct DashboardRuntimeView: View {
         store: PackageAssetStore,
         homeAssistant: HomeAssistantDeviceRuntime? = nil,
         revision: String = "",
+        connections: ConnectionRuntime? = nil,
+        settings: DeviceSettings = .init(),
+        onSettingsApplied: @escaping (Bool) -> Void = { _ in },
         connectionCount: Int = 0,
         requiredFailedOrStale: Bool = false,
         screenName: String = "Screen",
@@ -30,6 +37,7 @@ public struct DashboardRuntimeView: View {
         self.screenName = screenName
         self.homeAssistant = homeAssistant
         self.revision = revision
+        self.connections = connections; self.settings = settings; self.onSettingsApplied = onSettingsApplied
         self.store = store
         self.connectionCount = connectionCount
         self.requiredFailedOrStale = requiredFailedOrStale
@@ -52,6 +60,7 @@ public struct DashboardRuntimeView: View {
         ZStack {
 #if canImport(WebKit)
             DashboardWebView(store: store, homeAssistant: homeAssistant, revision: revision,
+                             connections: connections, settings: settings, active: scenePhase == .active, onSettingsApplied: onSettingsApplied,
                              onConnectionHealth: { connectionUnhealthy = !$0 },
                              onReady: { loaded = true }, onUnlinkHold: openMenu)
 #else

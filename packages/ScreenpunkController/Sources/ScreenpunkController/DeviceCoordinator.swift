@@ -502,6 +502,20 @@ public final class DeviceCoordinator: @unchecked Sendable {
         }
     }
 
+    /// Explicit native approval only. A changed active dashboard/revision is rejected by the device.
+    /// No durable queue: a transport retry uses the same idempotent provisioning identifier.
+    public func provisionConnections(deviceId: String, configuration: ConnectionProvisioning) throws -> ConnectionProvisioningReceipt {
+        let record = try ownedRecord(deviceId)
+        try configuration.validate()
+        let receipt = try withLink(record) { try $0.provisionConnections(configuration) }
+        guard receipt.installed, receipt.deviceId == record.id,
+              receipt.dashboardId == configuration.dashboardId, receipt.revision == configuration.revision,
+              receipt.provisioningId == configuration.provisioningId else {
+            throw ControllerError.validationFailed(detail: "The device returned an invalid connection installation receipt.")
+        }
+        return receipt
+    }
+
     public func provisionHomeAssistant(deviceId: String, configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
         let record = try ownedRecord(deviceId)
         try configuration.validate()
@@ -517,6 +531,28 @@ public final class DeviceCoordinator: @unchecked Sendable {
     public func revokeHomeAssistant(deviceId: String) throws {
         let record = try ownedRecord(deviceId)
         try withLink(record) { try $0.revokeHomeAssistant() }
+    }
+
+    public func fetchDeviceSettings(deviceId: String) throws -> DeviceSettingsSnapshot {
+        let record = try ownedRecord(deviceId)
+        let snapshot = try withLink(record) { try $0.getSettings() }
+        try snapshot.value.validate()
+        guard !snapshot.revision.isEmpty else { throw DeviceSettingsFailure.invalidSettings }
+        _ = try directory.update(deviceId) { $0.settingsSnapshot = snapshot }
+        return snapshot
+    }
+
+    /// Explicit apply only. No queued/reconnect replay, and a conflict must be
+    /// resolved from a fresh snapshot rather than silently overwriting the device.
+    public func updateDeviceSettings(deviceId: String, update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
+        let record = try ownedRecord(deviceId)
+        try update.value.validate()
+        let snapshot = try withLink(record) { try $0.updateSettings(update) }
+        guard !snapshot.revision.isEmpty, snapshot.revision != update.expectedRevision, snapshot.value == update.value else {
+            throw DeviceSettingsFailure.invalidSettings
+        }
+        _ = try directory.update(deviceId) { $0.settingsSnapshot = snapshot }
+        return snapshot
     }
 
     private func ownedRecord(_ deviceId: String) throws -> PairedDeviceRecord {
@@ -633,7 +669,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
 
     /// Replies the device made on purpose. Reconnecting would not change them.
     private func isDeviceVerdict(_ error: Error) -> Bool {
-        if error is PairingFailure { return true }
+        if error is PairingFailure || error is DeviceSettingsFailure { return true }
         if let transfer = error as? TransferFailure {
             return [.validationFailed, .notPaired, .targetMismatch].contains(transfer)
         }

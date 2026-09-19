@@ -56,7 +56,12 @@ public protocol HTTPTransport: Sendable {
 public protocol WebSocketSession: Sendable {
     func receive() async throws -> Data
     func send(_ data: Data) async throws
+    func sendText(_ text: String) async throws
     func close() async
+}
+
+public extension WebSocketSession {
+    func sendText(_ text: String) async throws { try await send(Data(text.utf8)) }
 }
 
 public protocol WebSocketTransport: Sendable {

@@ -10,6 +10,8 @@ final class FakeLANDevice: @unchecked Sendable {
     let identityPin: [UInt8]
     var host = "192.168.4.20"
     var port: UInt16 = 7843
+    var settingsSnapshot = DeviceSettingsSnapshot()
+    var settingsUpdateAttempts = 0
     var online = true
     var supportsHomeAssistant = false
     var supportsScreenSets = true
@@ -126,12 +128,21 @@ final class FakeLANDevice: @unchecked Sendable {
                     receivedFiles = staged
                 }
                 return ok(request, payload: outcome)
+            case .settingsGet:
+                guard ownerPin == peerPin else { throw TransferFailure.notPaired }
+                return ok(request, payload: settingsSnapshot)
+            case .settingsUpdate:
+                guard ownerPin == peerPin else { throw TransferFailure.notPaired }
+                settingsUpdateAttempts += 1
+                let update = try LANCodec.decodePayload(DeviceSettingsUpdate.self, json: request.payloadJSON)
+                settingsSnapshot = try settingsSnapshot.replacing(with: update)
+                return ok(request, payload: settingsSnapshot)
             case .queryActive:
                 guard let owner = runtime.pairing.owner?.publicKey, owner == peerPin else {
                     throw TransferFailure.notPaired
                 }
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
-            case .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
+            case .connectionsProvision, .connectionsRevoke, .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
                 throw TransferFailure.validationFailed
             }
         } catch {
@@ -139,7 +150,7 @@ final class FakeLANDevice: @unchecked Sendable {
                 requestId: request.requestId,
                 method: request.method,
                 ok: false,
-                error: (error as? PairingFailure)?.rawValue ?? (error as? TransferFailure)?.rawValue ?? "failed"
+                error: (error as? DeviceSettingsFailure)?.rawValue ?? (error as? PairingFailure)?.rawValue ?? (error as? TransferFailure)?.rawValue ?? "failed"
             )
         }
     }
@@ -245,6 +256,14 @@ final class FakeLANLink: DeviceLink {
     func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
         try device.installSet(body, controllerPin: controllerPin)
     }
+    func getSettings() throws -> DeviceSettingsSnapshot {
+        let reply = try request(.settingsGet, [String:String]())
+        return try LANCodec.decodePayload(DeviceSettingsSnapshot.self, json: reply.payloadJSON)
+    }
+    func updateSettings(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
+        let reply = try request(.settingsUpdate, update)
+        return try LANCodec.decodePayload(DeviceSettingsSnapshot.self, json: reply.payloadJSON)
+    }
     func queryActiveState() throws -> LANActiveQuery {
         LANActiveQuery(revision: try queryActive(), screens: device.installedSet, selectedDashboardId: device.selectedDashboardId)
     }
@@ -275,6 +294,7 @@ final class FakeLANLink: DeviceLink {
         let reply = device.handle(try LANCodec.decode(Data(framed.suffix(length))), peerPin: controllerPin)
         guard reply.requestId == envelope.requestId else { throw TransferFailure.validationFailed }
         if reply.ok != true {
+            if let failure = DeviceSettingsFailure(rawValue: reply.error ?? "") { throw failure }
             if let failure = PairingFailure(rawValue: reply.error ?? "") { throw failure }
             if let failure = TransferFailure(rawValue: reply.error ?? "") { throw failure }
             throw TransferFailure.interrupted
