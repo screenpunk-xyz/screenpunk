@@ -9,10 +9,13 @@ public struct PreviewRequest: Sendable, Equatable {
     public var width: Int
     public var height: Int
     public var live: Bool
+    /// Strict runtime readiness remains the default for review/deployment previews.
+    public var waitsForRuntimeReady: Bool
     public var timeoutSeconds: TimeInterval
     public var interaction: PreviewInteraction?
     /// Native process input only; never logged, put in an environment variable, or returned by MCP.
     public var nativeHomeAssistant: HomeAssistantProvisioning?
+    public var nativePublicReads: PublicReadProvisioning?
 
     public init(
         dashboardId: String,
@@ -22,9 +25,11 @@ public struct PreviewRequest: Sendable, Equatable {
         width: Int,
         height: Int,
         live: Bool = true,
+        waitsForRuntimeReady: Bool = true,
         timeoutSeconds: TimeInterval = TimeInterval(RuntimeBounds.readyTimeoutSeconds),
         interaction: PreviewInteraction? = nil,
-        nativeHomeAssistant: HomeAssistantProvisioning? = nil
+        nativeHomeAssistant: HomeAssistantProvisioning? = nil,
+        nativePublicReads: PublicReadProvisioning? = nil
     ) {
         self.dashboardId = dashboardId
         self.revision = revision
@@ -33,9 +38,11 @@ public struct PreviewRequest: Sendable, Equatable {
         self.width = width
         self.height = height
         self.live = live
+        self.waitsForRuntimeReady = waitsForRuntimeReady
         self.timeoutSeconds = timeoutSeconds
         self.interaction = interaction
         self.nativeHomeAssistant = nativeHomeAssistant
+        self.nativePublicReads = nativePublicReads
     }
 }
 
@@ -144,6 +151,7 @@ public struct ProcessPreviewRenderer: PreviewRenderer {
         environment["SCREENPUNK_SNAPSHOT_OUT"] = out.path
         environment["SCREENPUNK_READY_TIMEOUT"] = String(Int(request.timeoutSeconds))
         environment["SCREENPUNK_PREVIEW_LIVE"] = request.live ? "1" : "0"
+        environment["SCREENPUNK_DOCUMENT_THUMBNAIL"] = !request.live && !request.waitsForRuntimeReady ? "1" : "0"
         environment["SCREENPUNK_VIEWPORT_WIDTH"] = String(request.width)
         environment["SCREENPUNK_VIEWPORT_HEIGHT"] = String(request.height)
         if let interaction = request.interaction {
@@ -163,8 +171,8 @@ public struct ProcessPreviewRenderer: PreviewRenderer {
 
         do {
             try process.run()
-            if request.live, let connection = request.nativeHomeAssistant {
-                try nativeInput.fileHandleForWriting.write(contentsOf: JSONEncoder().encode(connection))
+            if request.live {
+                try nativeInput.fileHandleForWriting.write(contentsOf: JSONEncoder().encode(NativePreviewConnections(homeAssistant: request.nativeHomeAssistant, publicReads: request.nativePublicReads)))
             }
             try nativeInput.fileHandleForWriting.close()
         } catch {

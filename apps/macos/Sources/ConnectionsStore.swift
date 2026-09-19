@@ -9,6 +9,7 @@ final class ConnectionsStore: ObservableObject {
     @Published private(set) var installedAgents: [String]
     @Published private(set) var homeAssistant: HomeAssistantSettings?
     @Published private(set) var homeAssistantStatus = "Configured · not checked"
+    var homeAssistantIsVerified: Bool { homeAssistant != nil && homeAssistantStatus == "Verified on this Mac" }
     private let defaults: UserDefaults
     private let credentials = KeychainCredentialStore(service: "xyz.screenpunk.home-assistant")
 

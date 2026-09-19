@@ -29,7 +29,9 @@ fi
 (cd packages/ScreenpunkCore && swift test)
 (cd packages/ScreenpunkApple && swift test)
 (cd packages/ScreenpunkController && swift test)
-(cd tools/screenpunk-mcp && swift build)
+# Match the release workflow: the pinned MCP dependency requires Swift 5 mode
+# on Xcode 26; app and package tests above retain their normal settings.
+(cd tools/screenpunk-mcp && swift build -Xswiftc -swift-version -Xswiftc 5)
 
 # Icon Composer resources require Xcode 26 or newer.
 source "$ROOT/scripts/select-icon-xcode.sh"

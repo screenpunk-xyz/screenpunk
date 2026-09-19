@@ -23,8 +23,10 @@ public enum WebIsolation: Sendable {
 #if canImport(WebKit)
 public final class PackageSchemeHandler: NSObject, WKURLSchemeHandler {
     public let store: PackageAssetStore
+    public let rasterResources: PublicRasterResources?
 
-    public init(store: PackageAssetStore) {
+    public init(store: PackageAssetStore, rasterResources: PublicRasterResources? = nil) {
+        self.rasterResources = rasterResources
         self.store = store
     }
 
@@ -32,23 +34,32 @@ public final class PackageSchemeHandler: NSObject, WKURLSchemeHandler {
         let url = urlSchemeTask.request.url
         let absolute = url?.absoluteString ?? ""
         do {
-            let asset = try store.asset(forSchemeURL: absolute)
+            let asset: PackageAsset
+            if absolute.hasPrefix("screenpunk://package/__native-raster/") {
+                guard let rasterResources else { throw PackageAssetError.denied }
+                asset = try rasterResources.asset(url: absolute)
+            } else { asset = try store.asset(forSchemeURL: absolute) }
             guard let url else { throw PackageAssetError.denied }
+            let media = PackageMediaResponse(asset: asset,
+                range: urlSchemeTask.request.value(forHTTPHeaderField: "Range"),
+                method: urlSchemeTask.request.httpMethod ?? "GET")
+            var headers = media.headers
+            headers["Content-Security-Policy"] = IsolationPolicy.contentSecurityPolicy
+            headers["Cache-Control"] = "no-store"
+            headers["X-Content-Type-Options"] = "nosniff"
             let response = HTTPURLResponse(
                 url: url,
-                statusCode: 200,
+                statusCode: media.status,
                 httpVersion: "HTTP/1.1",
-                headerFields: [
-                    "Content-Type": asset.mime,
-                    "Content-Security-Policy": IsolationPolicy.contentSecurityPolicy,
-                    "Cache-Control": "no-store"
-                ]
+                headerFields: headers
             )!
             urlSchemeTask.didReceive(response)
-            urlSchemeTask.didReceive(asset.data)
+            urlSchemeTask.didReceive(media.data)
             urlSchemeTask.didFinish()
         } catch {
-            urlSchemeTask.didFailWithError(URLError(.cannotOpenFile))
+            let code: URLError.Code = (error as? PackageAssetError) == .missingFile
+                ? .fileDoesNotExist : .noPermissionsToReadFile
+            urlSchemeTask.didFailWithError(URLError(code))
         }
     }
 

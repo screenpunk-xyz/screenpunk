@@ -127,7 +127,7 @@ public final class ControllerService: @unchecked Sendable {
         }
         let nativeConnection: HomeAssistantProvisioning?
         if live, record.manifest.connections.contains(where: { $0.alias == "home" }), let provider = homeAssistantConfiguration {
-            nativeConnection = try provider(record.manifest.dashboardId, record.manifest.revision, UUID().uuidString)
+            nativeConnection = try provider(record.manifest.dashboardId, record.manifest.revision, UUID().uuidString).scoped(to: record.manifest)
         } else { nativeConnection = nil }
         let request = PreviewRequest(
             dashboardId: record.manifest.dashboardId,
@@ -138,7 +138,8 @@ public final class ControllerService: @unchecked Sendable {
             height: record.manifest.target.height,
             live: live,
             interaction: interaction,
-            nativeHomeAssistant: nativeConnection
+            nativeHomeAssistant: nativeConnection,
+            nativePublicReads: live ? try approvedPublicConnections(record.manifest) : nil
         )
         let capture = try renderer.render(request)
         guard PNGMagic.isPNG(capture.png) else {
@@ -265,7 +266,9 @@ public final class ControllerService: @unchecked Sendable {
                 revision: revision.revision, dashboardId: revision.dashboardId, deviceId: deviceId, phase: .queued),
                 revision: revision, files: try transferBlobs(for: record))
         }
-        try devices.requireScreenSetSupport(deviceId: deviceId)
+        try devices.requireScreenSetSupport(deviceId: deviceId, serviceCalls: records.contains { $0.manifest.connections.contains { $0.serviceCalls != nil } },
+            cameras: records.contains { $0.manifest.connections.contains { $0.cameraEntities != nil } },
+            publicReads: records.contains { $0.manifest.connections.contains { $0.publicHTTP != nil } })
         let items = try zip(records, packages).map { record, package -> LANScreenSetItem in
             let configuration: HomeAssistantProvisioning?
             if record.manifest.connections.contains(where: { $0.alias == "home" }) {
@@ -273,13 +276,18 @@ public final class ControllerService: @unchecked Sendable {
                     throw ControllerError.permissionRequired("Set up Home Assistant in Connections before applying these screens. The device has not been changed.")
                 }
                 do {
-                    configuration = try provider(record.manifest.dashboardId, record.manifest.revision, package.deployment.deploymentId)
+                    configuration = try provider(record.manifest.dashboardId, record.manifest.revision, package.deployment.deploymentId).scoped(to: record.manifest)
                     try configuration?.validate()
                 } catch {
                     throw ControllerError.permissionRequired("Check the saved Home Assistant connection before applying these screens. The device has not been changed.")
                 }
             } else { configuration = nil }
-            return LANScreenSetItem(name: record.manifest.name, deployment: package, homeAssistant: configuration)
+            let reads = try approvedPublicConnections(record.manifest)
+            let required = record.manifest.connections.filter { $0.publicHTTP != nil && $0.required }
+            guard required.allSatisfy({ reads?.connections.contains($0) == true }) else {
+                throw ControllerError.permissionRequired("Approve every required public connection before deployment.")
+            }
+            return LANScreenSetItem(name: record.manifest.name, deployment: package, homeAssistant: configuration, publicReads: reads)
         }
         return try devices.deployScreenSet(LANScreenSetDeployBody(schemaVersion: 1, deploymentId: id, deviceId: deviceId,
             screens: items, selectedDashboardId: selectedDashboardId))
@@ -318,7 +326,28 @@ public final class ControllerService: @unchecked Sendable {
                 }
                 return ManifestOperation(name: name, kind: kind, maxAgeSeconds: operation["maxAgeSeconds"]?.int)
             }
-            return ManifestConnection(alias: alias, required: item["required"]?.bool ?? false, operations: operations)
+            let grants: [HomeAssistantServiceGrant]?
+            if let declarations = item["serviceCalls"] {
+                do {
+                    grants = try JSONDecoder().decode([HomeAssistantServiceGrant].self, from: declarations.data())
+                    guard alias == "home" else { throw ConnectionFailure.validationFailed }
+                    try HomeAssistantServiceGrant.validate(grants ?? [])
+                } catch { throw ControllerError.validationFailed(detail: "Invalid Home Assistant serviceCalls declarations.") }
+            } else { grants = nil }
+            var connection = ManifestConnection(alias: alias, required: item["required"]?.bool ?? false, operations: operations, serviceCalls: grants)
+            if let declarations = item["cameraEntities"] {
+                do {
+                    let entities = try JSONDecoder().decode([String].self, from: declarations.data())
+                    guard alias == "home" else { throw ConnectionFailure.validationFailed }
+                    try CameraSource.validateEntities(entities)
+                    connection.cameraEntities = entities
+                } catch { throw ControllerError.validationFailed(detail: "Invalid Home Assistant cameraEntities declarations.") }
+            }
+            if let declaration = item["publicHTTP"] {
+                connection.publicHTTP = try JSONDecoder().decode(PublicReadDeclaration.self, from: declaration.data())
+                try connection.publicHTTP?.validate(alias: alias)
+            }
+            return connection
         }
     }
 }

@@ -1,4 +1,5 @@
 import XCTest
+import ScreenpunkCore
 @testable import ScreenpunkController
 
 final class PreviewPathTests: XCTestCase {
@@ -165,4 +166,35 @@ private func sampleCapture() -> PreviewCapture {
         connectionHealth: "none",
         diagnostics: ["injected"]
     )
+}
+
+private struct ServiceScopePreviewRenderer: PreviewRenderer {
+    func render(_ request: PreviewRequest) throws -> PreviewCapture {
+        if request.live {
+            let config = try XCTUnwrap(request.nativeHomeAssistant)
+            XCTAssertEqual(config.schemaVersion, 2)
+            XCTAssertEqual(config.dashboardId, request.dashboardId)
+            XCTAssertEqual(config.revision, request.revision)
+            XCTAssertEqual(config.serviceCalls?.first?.entityIds, ["light.fixture"])
+        } else { XCTAssertNil(request.nativeHomeAssistant) }
+        return sampleCapture()
+    }
+}
+
+extension PreviewPathTests {
+    func testNativePreviewReceivesRevisionBoundServiceDeclarations() throws {
+        let service = try makeService(renderer: ServiceScopePreviewRenderer())
+        service.homeAssistantConfiguration = { dashboard, revision, id in
+            HomeAssistantProvisioning(dashboardId: dashboard, connectionId: "home", provisioningId: id,
+                revision: revision, origin: "https://ha.example", token: "fixture")
+        }
+        let record = try service.updateDashboard(arguments: .object([
+            "name": .string("Service preview"),
+            "connections": .array([.object(["alias": .string("home"), "required": .bool(true),
+                "serviceCalls": .array([.object(["domain": .string("light"), "service": .string("turn_on"),
+                    "entityIds": .array([.string("light.fixture")])])])])]),
+            "files": .array([.object(["path": .string("index.html"), "text": .string("<p>Fixture</p>")])])]))
+        _ = try service.previewDashboard(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision, live: true)
+        _ = try service.previewDashboard(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision, live: false)
+    }
 }

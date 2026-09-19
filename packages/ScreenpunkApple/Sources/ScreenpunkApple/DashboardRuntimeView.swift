@@ -8,6 +8,7 @@ public struct DashboardRuntimeView: View {
     public var requiredFailedOrStale: Bool
     public var onUnlink: () -> Void
 
+    public var publicReads: PublicReadSession?
     public var homeAssistant: HomeAssistantDeviceRuntime?
     public var revision: String
     @State private var connectionUnhealthy = false
@@ -19,6 +20,7 @@ public struct DashboardRuntimeView: View {
     public init(
         store: PackageAssetStore,
         homeAssistant: HomeAssistantDeviceRuntime? = nil,
+        publicReads: PublicReadSession? = nil,
         revision: String = "",
         connectionCount: Int = 0,
         requiredFailedOrStale: Bool = false,
@@ -29,6 +31,7 @@ public struct DashboardRuntimeView: View {
         self.onMenu = onMenu
         self.screenName = screenName
         self.homeAssistant = homeAssistant
+        self.publicReads = publicReads
         self.revision = revision
         self.store = store
         self.connectionCount = connectionCount
@@ -51,7 +54,7 @@ public struct DashboardRuntimeView: View {
     public var body: some View {
         ZStack {
 #if canImport(WebKit)
-            DashboardWebView(store: store, homeAssistant: homeAssistant, revision: revision,
+            DashboardWebView(store: store, homeAssistant: homeAssistant, publicReads: publicReads?.runtime, rasterResources: publicReads?.resources, revision: revision,
                              onConnectionHealth: { connectionUnhealthy = !$0 },
                              onReady: { loaded = true }, onUnlinkHold: openMenu)
 #else

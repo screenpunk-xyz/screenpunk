@@ -124,19 +124,18 @@ public enum AddressClassifier {
     }
 
     private static func classifyIPv6(_ host: String) -> AddressClass {
-        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        if h == "::1" { return .loopback }
-        if h == "fd00:ec2::254" || h.hasPrefix("fd00:ec2::") { return .metadata }
-        if h.hasPrefix("fe80:") || h.hasPrefix("fe8") || h.hasPrefix("fe9")
-            || h.hasPrefix("fea") || h.hasPrefix("feb") {
-            return .linkLocal
-        }
-        if h.hasPrefix("fc") || h.hasPrefix("fd") { return .privateLAN }
-        if h.hasPrefix("::ffff:") {
-            let mapped = String(h.dropFirst("::ffff:".count))
-            if let ip = parseIPv4(mapped) {
-                return classifyIPv4(ip)
-            }
+        let text = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        var address = in6_addr()
+        guard text.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return .invalid }
+        let bytes = withUnsafeBytes(of: &address) { Array($0) }
+        if bytes.allSatisfy({ $0 == 0 }) { return .invalid }
+        if bytes.dropLast().allSatisfy({ $0 == 0 }), bytes.last == 1 { return .loopback }
+        if bytes[0] == 0xff { return .invalid }
+        if bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80 { return .linkLocal }
+        if bytes[0] == 0xfd, bytes[1] == 0, bytes[2] == 0x0e, bytes[3] == 0xc2 { return .metadata }
+        if bytes[0] & 0xfe == 0xfc { return .privateLAN }
+        if bytes.prefix(10).allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff {
+            return classifyIPv4(bytes.suffix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) })
         }
         return .publicUnicast
     }

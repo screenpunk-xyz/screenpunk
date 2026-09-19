@@ -10,6 +10,8 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     private let hub: LoopbackDiscovery
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.browse")
     private var browser: NWBrowser?
+    private var recoveryTimer: DispatchSourceTimer?
+    private var resolutions: [String: NWConnection] = [:]
     private var activeIDs = Set<String>()
 
     public init(hub: LoopbackDiscovery) {
@@ -17,25 +19,61 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     }
 
     public func start() {
-        if browser != nil { return }
-        let parameters = NWParameters()
-        parameters.includePeerToPeer = true
-        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: DiscoveryService.type, domain: nil), using: parameters)
-        browser.browseResultsChangedHandler = { [weak self] results, _ in
-            self?.publish(results)
+        queue.async { [weak self] in
+            guard let self, self.recoveryTimer == nil else { return }
+            self.startBrowser()
+            let timer = DispatchSource.makeTimerSource(queue: self.queue)
+            timer.schedule(deadline: .now() + 5, repeating: 5)
+            timer.setEventHandler { [weak self] in
+                guard let self else { return }
+                if let browser = self.browser, case .ready = browser.state {
+                    // Retry address resolution even if Bonjour's results haven't changed.
+                    self.publish(browser.browseResults)
+                } else {
+                    self.clearBrowser()
+                    self.startBrowser()
+                }
+            }
+            self.recoveryTimer = timer
+            timer.resume()
         }
-        browser.start(queue: queue)
-        self.browser = browser
     }
 
     public func stop() {
-        browser?.cancel()
-        browser = nil
         queue.async { [weak self] in
             guard let self else { return }
-            for id in self.activeIDs { self.hub.withdraw(id) }
-            self.activeIDs.removeAll()
+            self.recoveryTimer?.cancel()
+            self.recoveryTimer = nil
+            self.clearBrowser()
         }
+    }
+
+    private func startBrowser() {
+        let parameters = NWParameters()
+        parameters.includePeerToPeer = true
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: DiscoveryService.type, domain: nil), using: parameters)
+        self.browser = browser
+        browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
+            guard let self, let browser, self.browser === browser else { return }
+            self.publish(results)
+        }
+        browser.start(queue: queue)
+    }
+
+    private func clearBrowser() {
+        browser?.cancel()
+        browser = nil
+        for connection in resolutions.values { connection.cancel() }
+        resolutions.removeAll()
+        for id in activeIDs { hub.withdraw(id) }
+        activeIDs.removeAll()
+    }
+
+    deinit {
+        recoveryTimer?.cancel()
+        browser?.cancel()
+        for connection in resolutions.values { connection.cancel() }
+        for id in activeIDs { hub.withdraw(id) }
     }
 
     private struct TXTFields {
@@ -46,7 +84,10 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
 
     private func publish(_ results: Set<NWBrowser.Result>) {
         let current = Set(results.map { txtFields($0).id })
-        for id in activeIDs.subtracting(current) { hub.withdraw(id) }
+        for id in activeIDs.subtracting(current) {
+            hub.withdraw(id)
+            resolutions.removeValue(forKey: id)?.cancel()
+        }
         activeIDs = current
         for result in results {
             let meta = txtFields(result)
@@ -60,21 +101,31 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     }
 
     private func resolve(_ result: NWBrowser.Result, meta: TXTFields) {
+        guard resolutions[meta.id] == nil else { return }
         let connection = NWConnection(to: result.endpoint, using: .tcp)
-        connection.stateUpdateHandler = { [weak self] state in
+        resolutions[meta.id] = connection
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            guard let self, let connection, self.resolutions[meta.id] === connection else { return }
             switch state {
             case .ready:
                 if case .hostPort(let host, let port) = connection.currentPath?.remoteEndpoint {
-                    self?.advertise(meta, host: "\(host)", port: Int(port.rawValue))
+                    self.advertise(meta, host: "\(host)", port: Int(port.rawValue))
                 }
+                self.resolutions[meta.id] = nil
                 connection.cancel()
-            case .failed:
+            case .failed, .cancelled:
+                self.resolutions[meta.id] = nil
                 connection.cancel()
             default:
                 break
             }
         }
         connection.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + 5) { [weak self, weak connection] in
+            guard let self, let connection, self.resolutions[meta.id] === connection else { return }
+            self.resolutions[meta.id] = nil
+            connection.cancel()
+        }
     }
 
     private func advertise(_ meta: TXTFields, host: String, port: Int) {

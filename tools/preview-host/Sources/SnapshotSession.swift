@@ -20,6 +20,11 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
     private var homeAssistantBridge: HomeAssistantPreviewBridge?
     private var finished = false
     private var waitingForReady = false
+    // Read-only carousel imagery can capture a loaded page even without a runtime.ready call.
+    private var documentThumbnail: Bool {
+        ProcessInfo.processInfo.environment["SCREENPUNK_DOCUMENT_THUMBNAIL"] == "1"
+            && ProcessInfo.processInfo.environment["SCREENPUNK_PREVIEW_LIVE"] != "1"
+    }
     var onComplete: (() -> Void)?
 
     init(mode: SnapshotMode, output: String, timeout: TimeInterval, width: Int, height: Int) {
@@ -44,22 +49,49 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         window.orderBack(nil)
 
         let config = WKWebViewConfiguration()
+        BundledAudio.configure(config)
         config.websiteDataStore = .nonPersistent()
         if case .package(let directory) = mode {
             do {
                 let store = try PackageAssetStore.load(directory: directory)
-                config.setURLSchemeHandler(PackageSchemeHandler(store: store), forURLScheme: IsolationPolicy.customScheme)
-                if ProcessInfo.processInfo.environment["SCREENPUNK_PREVIEW_LIVE"] == "1",
-                   let data = try? Data(contentsOf: directory.appendingPathComponent("manifest.json")),
-                   let manifest = try? JSONDecoder().decode(DashboardManifest.self, from: data),
-                   manifest.connections.contains(where: { $0.alias == "home" }) {
-                    let input = FileHandle.standardInput.readData(ofLength: 16 * 1024)
-                    if !input.isEmpty, input.count < 16 * 1024,
-                       let provisioning = try? JSONDecoder().decode(HomeAssistantProvisioning.self, from: input),
-                       provisioning.dashboardId == manifest.dashboardId, provisioning.revision == manifest.revision {
-                        homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, provisioning: provisioning)
+                if ProcessInfo.processInfo.environment["SCREENPUNK_PREVIEW_LIVE"] == "1" {
+                    let data = try Data(contentsOf: directory.appendingPathComponent("manifest.json"))
+                    let manifest = try JSONDecoder().decode(DashboardManifest.self, from: data)
+                    // Bounded pipe input; provisioning never enters page assets or environment variables.
+                    var input = Data()
+                    while true {
+                        let chunk = FileHandle.standardInput.readData(ofLength: 8192)
+                        if chunk.isEmpty { break }
+                        input.append(chunk)
+                        guard input.count < 256 * 1024 else { throw ConnectionFailure.sizeLimit }
+                    }
+                    if !input.isEmpty {
+                        let connections: NativePreviewConnections
+                        if let envelope = try? JSONDecoder().decode(NativePreviewConnections.self, from: input),
+                           envelope.homeAssistant != nil || envelope.publicReads != nil { connections = envelope }
+                        else if let legacy = try? JSONDecoder().decode(HomeAssistantProvisioning.self, from: input) { connections = .init(homeAssistant: legacy) }
+                        else { connections = .init() }
+                        if let home = connections.homeAssistant {
+                            guard home.dashboardId == manifest.dashboardId, home.revision == manifest.revision else { throw ConnectionFailure.permissionRequired }
+                        }
+                        if let publicReads = connections.publicReads {
+                            let expected = try PublicReadProvisioning(manifest: manifest)
+                            guard publicReads.dashboardId == expected.dashboardId, publicReads.revision == expected.revision,
+                                  publicReads.connections.allSatisfy({ expected.connections.contains($0) }) else { throw ConnectionFailure.permissionRequired }
+                        }
+                        #if DEBUG
+                        if ProcessInfo.processInfo.environment["SCREENPUNK_PUBLIC_READ_FIXTURE"] == "1" {
+                            homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision,
+                                publicTransport: SyntheticPublicReadTransport(), publicResolver: FixedResolver(["203.0.113.10"]))
+                        } else {
+                            homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision)
+                        }
+#else
+                        homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision)
+#endif
                     }
                 }
+                config.setURLSchemeHandler(PackageSchemeHandler(store: store, rasterResources: homeAssistantBridge?.rasterResources), forURLScheme: IsolationPolicy.customScheme)
             } catch {
                 fail("package_load_failed: \(error)")
                 return
@@ -94,7 +126,7 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         case .package(let directory):
             let entry = Self.entrypoint(in: directory)
             if let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/\(entry)") {
-                waitingForReady = true
+                waitingForReady = !documentThumbnail
                 webView.load(URLRequest(url: url))
             } else {
                 fail("missing_entrypoint")
@@ -142,7 +174,11 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         if waitingForReady {
             pollReady(webView: webView, remaining: Int(timeout * 10))
         } else {
-            capture(webView)
+            // Navigation completion includes local scripts/styles; allow a paint before capture.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak webView] in
+                guard let self, let webView, !self.finished else { return }
+                self.capture(webView)
+            }
         }
     }
 
