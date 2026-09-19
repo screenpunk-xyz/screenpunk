@@ -6,12 +6,13 @@ executed Apple evidence.
 
 | Tool | Pin | Notes |
 | --- | --- | --- |
+| Xcode | 26+ | Required to compile the shared Icon Composer app icon; does not raise deployment targets. Apple CI/release builds select a compatible installed Xcode through `scripts/select-icon-xcode.sh`. |
 | XcodeGen | 2.46.0 | Generate app projects from `project.yml`. CI installs the GitHub release zip (`sha256:4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806`) via `scripts/ci/install-xcodegen.sh`. Do not commit `.xcodeproj`. |
 | Node.js | 22 | SDK and Linux contract jobs |
 | TypeScript | 5.9.2 | SDK compile |
 | Swift (packages) | 5.9+ tools, Swift 6 language mode where hosts allow | ScreenpunkCore is Linux-testable |
 | iOS deployment | 16.0 | Universal iPhone/iPad |
-| macOS deployment | 26.0 | Apple silicon only |
+| macOS deployment | 14.0 | Apple silicon only; built with Xcode 26+ |
 | Copyright owner | Screenpunk, Inc. | NOTICE, LICENSE appendix, XcodeGen `NSHumanReadableCopyright` |
 | Bundle IDs | `xyz.screenpunk.*` | Operator-chosen: `xyz.screenpunk.ios`, `xyz.screenpunk.macos`, `xyz.screenpunk.preview-host`. Apple Developer portal registration is a later signing step |
 | GitHub Linux | `ubuntu-24.04` | `contracts-and-sdk`, `core-linux`, `security-and-hygiene`, `required-checks` |
@@ -27,11 +28,16 @@ executed Apple evidence.
 | actions/upload-artifact | v7.0.1 | `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` |
 | swift-actions/setup-swift | v2.4.0 | `7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a` |
 
-`macos-latest` is not used. If `macos-15` cannot compile the macOS 26
-deployment target, `apple-build-and-unit` records `MACOS_26_SDK_UNAVAILABLE`
-and still compiles iOS 16 plus Swift packages. The image's default Xcode
-(16.4) lacks that SDK, but the image also installs Xcode 26.x;
-`scripts/build-unsigned-dmg.sh` selects one through `DEVELOPER_DIR` and
-fails with the same marker when none is present. The preview helper deploys to
-macOS 14 so the hidden WKWebView probe can compile on that image. A failed
+`macos-latest` is not used. The `macos-15` image's default Xcode may be
+older than 26. `scripts/ci/apple.sh` and the signed archive helpers source
+`scripts/select-icon-xcode.sh`: they honor an explicit compatible
+`DEVELOPER_DIR`, use the selected Xcode when compatible, or select an installed
+Xcode 26+ for that process. They fail clearly when none is available.
+The system-wide `xcode-select` setting is never changed.
+
+The unsigned DMG script already selects a macOS 26+ SDK through
+`DEVELOPER_DIR`. Both product apps compile the shared
+`assets/brand/app-icon/Screenpunk.icon`; Xcode generates legacy flat icons for
+iOS/iPadOS 16+ and macOS 14+, while supported systems use Liquid Glass.
+The preview helper deploys to macOS 14 and does not use this app icon. A failed
 snapshot is `SNAPSHOT_UNAVAILABLE`, not a placeholder PNG.

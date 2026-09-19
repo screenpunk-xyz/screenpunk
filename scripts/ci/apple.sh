@@ -31,6 +31,11 @@ fi
 (cd packages/ScreenpunkController && swift test)
 (cd tools/screenpunk-mcp && swift build)
 
+# Icon Composer resources require Xcode 26 or newer.
+source "$ROOT/scripts/select-icon-xcode.sh"
+
+xcodebuild -version
+
 ios_proj="$ROOT/apps/ios/ScreenpunkiOS.xcodeproj"
 if [[ ! -d "$ios_proj" ]]; then
   echo "missing generated iOS project: $ios_proj"
