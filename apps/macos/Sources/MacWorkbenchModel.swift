@@ -46,6 +46,7 @@ final class MacWorkbenchModel: ObservableObject {
     @Published var pairing: PairingRequestResult?
     /// A reachability probe of saved devices is running on the workbench queue.
     @Published private(set) var checkingDevices = false
+    @Published private(set) var manuallyRefreshingDevices = false
     /// At least one probe has finished since launch. Until then the saved
     /// `reachable` flag is last session's answer, not this network's.
     @Published private(set) var devicesChecked = false
@@ -65,6 +66,7 @@ final class MacWorkbenchModel: ObservableObject {
     private var pairingPollInFlight = false
     private var refreshing = false
     private var pendingProbe = false
+    private var pendingManualProbe = false
     private var ticks = 0
     private var appliedScreens: [String: String] = [:]
     private var appliedOrientations: [String: String] = [:]
@@ -159,7 +161,7 @@ final class MacWorkbenchModel: ObservableObject {
             }
             refresh(probe: true)
             timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-                Task { @MainActor in guard let self else { return }; self.ticks += 1; self.refresh(probe: self.ticks % 5 == 0) }
+                Task { @MainActor in guard let self else { return }; self.ticks += 1; self.refresh(probe: self.ticks % 5 == 0, periodic: true) }
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -178,12 +180,15 @@ final class MacWorkbenchModel: ObservableObject {
             }
         }
     }
-    func refresh(probe: Bool = false) {
+    func refresh(probe: Bool = false, manual: Bool = false, periodic: Bool = false) {
+        if manual { manuallyRefreshingDevices = true; pendingManualProbe = true }
         // A wake, foreground, or manual probe that arrives while a refresh or
         // operation holds the queue is deferred, not dropped.
-        if probe, refreshing || busy || pairing != nil { pendingProbe = true }
+        if probe, !periodic, refreshing || busy || pairing != nil { pendingProbe = true }
         guard let service, !refreshing, !busy, pairing == nil else { return }
-        let probe = probe || pendingProbe
+        let probe = probe || pendingProbe || pendingManualProbe
+        let manualProbe = pendingManualProbe
+        pendingManualProbe = false
         pendingProbe = false
         refreshing = true
         if probe { checkingDevices = true }
@@ -199,6 +204,7 @@ final class MacWorkbenchModel: ObservableObject {
                 let hadDraft = self.hasUnappliedScreen
                 self.refreshing = false; self.devices = devices; self.nearby = nearby; self.agents = agents
                 if probe { self.checkingDevices = false; self.devicesChecked = true }
+                if manualProbe { self.manuallyRefreshingDevices = self.pendingManualProbe }
                 if self.section == "Devices", let previousDevice,
                    let current = devices.first(where: { $0.devicePin == previousDevice.devicePin }), current.id != previousDevice.id {
                     self.select(current.id)

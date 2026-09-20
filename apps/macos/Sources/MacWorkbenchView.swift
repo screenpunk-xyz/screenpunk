@@ -214,16 +214,16 @@ struct MacWorkbenchView: View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 16, weight: .regular)).frame(width: 24, height: 24) }
             .workbenchButton(circular: true).help(label).accessibilityLabel(label)
     }
-    /// Same footprint as `circle`; the glyph becomes a spinner while a probe runs.
+    /// Same footprint as `circle`; the glyph becomes a spinner during a manual refresh.
     private var refreshDevicesButton: some View {
-        let label = model.checkingDevices ? "Checking devices" : "Refresh Devices"
-        return Button { model.refresh(probe: true) } label: {
+        let label = model.manuallyRefreshingDevices ? "Checking devices" : "Refresh Devices"
+        return Button { model.refresh(probe: true, manual: true) } label: {
             ZStack {
-                if model.checkingDevices { ProgressView().controlSize(.small) }
+                if model.manuallyRefreshingDevices { ProgressView().controlSize(.small) }
                 else { Image(systemName: "arrow.clockwise").font(.system(size: 16, weight: .regular)) }
             }.frame(width: 24, height: 24)
         }
-        .workbenchButton(circular: true).disabled(model.checkingDevices)
+        .workbenchButton(circular: true).disabled(model.manuallyRefreshingDevices)
         .help(label).accessibilityLabel(label)
     }
 
