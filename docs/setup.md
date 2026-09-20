@@ -6,17 +6,17 @@ Screenpunk account, sign-in, cloud service, or telemetry, and the product is
 useful without any of them: the Mac authors and deploys, the device runs
 the dashboard on its own afterwards.
 
-Status: the alpha is built milestone by milestone. This guide describes the
-complete alpha flow. Sections whose implementation has not merged yet open
-with a *Pending* line naming the owning milestone;
-[implementation-status.md](implementation-status.md) records what is on
-`main` today.
+Screenpunk is an alpha. Local Mac builds include the MCP runtime and preview
+helper; pairing, screen authoring, and deployment are implemented. Signed
+distribution and TestFlight remain separate release work.
+[implementation-status.md](implementation-status.md) contains dated implementation
+and historical milestone evidence, rather than a current release checklist.
 
 ## What you need
 
 | Item | Requirement |
 | --- | --- |
-| Mac | Apple silicon, macOS 26 or newer. Awake and logged in while you author, preview, and deploy; not needed afterwards |
+| Mac | Apple silicon, macOS 14 or newer. Awake and logged in while you author, preview, and deploy; not needed afterwards |
 | iPhone or iPad | iOS/iPadOS 16 or newer. One universal app; iPad runs full-screen |
 | Network | Both machines on the same local network. Bonjour (mDNS) discovery is preferred; manual host and port works without it. Screenpunk never scans the network |
 | Agent client | Codex, Claude Desktop, or Cursor on the same Mac, connected over local MCP; see [mcp-install.md](mcp-install.md) |
@@ -57,20 +57,31 @@ Privacy & Security → **Open Anyway**. Steps and limits:
 
 ### From source
 
-Requirements: Xcode with the macOS 26 SDK; Node 22 only if you also run the
-Linux checks. Pinned versions are in [toolchain.md](toolchain.md).
+Build requirements: macOS 26 or newer and Xcode 26 or newer for the native
+app icon renderer; Python 3 for packaged MCP verification; Node 22 if you
+also run the SDK and Linux contract checks. These build-host requirements
+do not raise the app's macOS 14 minimum. Pinned versions are in
+[toolchain.md](toolchain.md).
 
 ```sh
 git clone https://github.com/screenpunk-xyz/screenpunk.git
 cd screenpunk
-./scripts/generate-xcode.sh          # installs pinned XcodeGen 2.46.0, writes .xcodeproj
-open apps/macos/ScreenpunkMac.xcodeproj
+./scripts/build-unsigned-dmg.sh      # generates projects and builds the complete app
 ```
 
-Build and run the `ScreenpunkMac` scheme. Generated projects set
-`CODE_SIGNING_ALLOWED: NO` so CI builds stay unsigned; an unsigned local
-build runs on your own Mac. Do not commit `.xcodeproj` files: edit
-`project.yml` and regenerate.
+The result is `dist/macos-unsigned/Screenpunk-unsigned.dmg`, with a checksum
+and `BUILD-INFO.txt`. The script embeds MCP and its preview helper, verifies
+the ad-hoc signature, and requires a successful MCP/native-preview smoke
+check before making the DMG. Run on an awake Mac logged into your account
+so the native preview can render. This path needs no Developer ID or Apple
+publishing credentials. Install the app from the DMG into Applications,
+then copy the agent configuration from the installed app.
+
+For GUI development, run `./scripts/generate-xcode.sh` and open
+`apps/macos/ScreenpunkMac.xcodeproj`. The `ScreenpunkMac` scheme builds the
+GUI without embedding MCP or its helper. Generated projects set
+`CODE_SIGNING_ALLOWED: NO`; edit `project.yml` and regenerate rather than
+committing `.xcodeproj` files.
 
 ## Install the iPhone/iPad app
 
@@ -111,8 +122,6 @@ deployment all happen on the Mac.
 
 ## Pair
 
-*Pending: Milestone 3.*
-
 1. Keep Screenpunk foreground on the device. It advertises
    `_screenpunk._tcp` only while on screen, and the advertisement carries
    only a protocol version, an opaque device ID, and the device's display
@@ -137,12 +146,11 @@ management of the device; it grants no access to any service.
 
 ## Connections
 
-*Pending: Milestones 2 and 4.*
-
 Connections hold the credentials and permitted operations that dashboards
-may use. Configure them on the Mac under Screenpunk > Connections. An agent
-can propose one (`propose_connection`), but only you approve it, in the
-native dialog.
+may use. Configure supported services in the Mac app's Connections page.
+The MCP `propose_connection` tool currently returns `permission_required`;
+it does not queue a proposal or open an approval dialog. Agents cannot
+create or expand their own connection permissions.
 
 - Enter a token once. It is stored in the Mac Keychain and never shown
   again. Only the credentials a deployed dashboard needs are provisioned to
@@ -161,8 +169,6 @@ native dialog.
 
 ## Author and preview
 
-*Pending: Milestone 2.*
-
 Install the MCP server in your agent client
 ([mcp-install.md](mcp-install.md)) and ask the agent for a dashboard. The
 agent writes a package, validates it, and calls `preview_dashboard`; the
@@ -175,8 +181,6 @@ Home Assistant control in a preview toggles the real entity. Taking a
 screenshot clicks nothing.
 
 ## Deploy
-
-*Pending: Milestone 3.*
 
 Approve the previewed revision in chat and let the agent call
 `deploy_dashboard`, or press **Deploy** in the device page on the Mac.

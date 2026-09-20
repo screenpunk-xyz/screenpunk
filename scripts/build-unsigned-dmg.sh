@@ -25,7 +25,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "build-unsigned-dmg.sh requires macOS"
   exit 1
 fi
-for tool in xcodebuild xcode-select codesign hdiutil ditto shasum /usr/libexec/PlistBuddy; do
+for tool in xcodebuild xcode-select codesign hdiutil ditto shasum python3 /usr/libexec/PlistBuddy; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "missing required tool: $tool"
     exit 1
@@ -189,6 +189,9 @@ if spctl --assess --type execute --verbose=4 "$app" 2>&1; then
 else
   echo "STATE: gatekeeper-rejected (expected for the unsigned alpha; first launch needs Open Anyway)"
 fi
+
+echo "=== packaged MCP and native preview acceptance ==="
+python3 "$ROOT/scripts/check-packaged-mcp.py" "$app"
 
 echo "=== DMG ==="
 mkdir -p "$stage"

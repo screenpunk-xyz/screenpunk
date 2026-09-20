@@ -148,6 +148,35 @@ final class LANTransferTests: XCTestCase {
             // TLS pin may reject the second controller before pair.begin.
         }
 
+        // A Mac relaunch creates a new client while the device stays running.
+        client.cancel()
+        let reopenedMac = ControllerLANClient(identity: controllerIdentity)
+        try reopenedMac.connect(host: "127.0.0.1", port: server.port, pinnedDevice: deviceIdentity.pin)
+        _ = try reopenedMac.hello()
+        XCTAssertEqual(try reopenedMac.queryActive(), StoredRevision.offlineFixture.revision)
+        reopenedMac.cancel()
+
+        // Simulate a terminal network listener while its saved port is still set.
+        // The recovery tick calls start(), which used to incorrectly return early.
+        let oldListener = try XCTUnwrap(server.listener)
+        oldListener.cancel()
+        let cancelled = expectation(description: "listener cancelled")
+        DispatchQueue.global().async {
+            for _ in 0..<100 {
+                if case .cancelled = oldListener.state { cancelled.fulfill(); return }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        wait(for: [cancelled], timeout: 2)
+        try server.start()
+        XCTAssertFalse(server.listener === oldListener)
+        XCTAssertTrue(server.runtime.isPaired)
+        XCTAssertEqual(server.activePackage?.assets.keys.sorted(), delivered.assets.keys.sorted())
+        try reopenedMac.connect(host: "127.0.0.1", port: server.port, pinnedDevice: deviceIdentity.pin)
+        _ = try reopenedMac.hello()
+        XCTAssertEqual(try reopenedMac.queryActive(), StoredRevision.offlineFixture.revision)
+        reopenedMac.cancel()
+
         // Relaunch: a fresh server over the same store comes back paired and rendering.
         client.cancel()
         server.stop()

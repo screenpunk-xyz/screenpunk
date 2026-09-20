@@ -88,3 +88,16 @@ on the Mac, deploy again so the device receives the new grant.
 - Revoking Home Assistant or API tokens upstream.
 - Restoring a pairing after a fresh install of the device app.
 - Re-launching Screenpunk after a reboot.
+
+## Automatic connection recovery
+
+The Mac checks paired devices when it launches, becomes active, or wakes, and
+continues checking while running. Bonjour discovery retries failed browsing and
+address resolution every five seconds. Saved pairing identities are still
+verified when reconnecting, including after a device's address or port changes.
+
+The device checks its listener every five seconds while running and recreates
+it after a failure. Returning to the foreground restarts its listener and Bonjour
+advertisement. Recovery preserves pairing, installed screens, and credentials;
+it does not require force-quitting or re-pairing. iOS can suspend the app in the
+background, so keep Screenpunk visible when using the device as a display.
