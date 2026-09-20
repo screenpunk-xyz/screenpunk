@@ -155,6 +155,10 @@ function createDashboardClient(options = {}) {
         transport.send(message);
     }
     return {
+        navigation: {
+            async open(pageId) { await sendRequest("navigation.open", { parameters: { pageId } }); },
+            async get() { const response = await sendRequest("navigation.get"); return response.value; }
+        },
         cameras: {
             mount(element, source, onStatus = () => { }, presentation = {}) {
                 if (source.kind !== "homeAssistant" || source.connection !== "home" ||

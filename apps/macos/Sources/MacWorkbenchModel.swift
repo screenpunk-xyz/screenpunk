@@ -15,7 +15,7 @@ struct ScreenDraft: Codable, Identifiable {
     var connections: [ManifestConnection] = []
 }
 
-enum WorkbenchSheet: String, Identifiable { case manual, editor, agents, homeAssistant, rename, renameScreen, screenIcon; var id: String { rawValue } }
+enum WorkbenchSheet: String, Identifiable { case manual, editor, agents, homeAssistant, rename, renameScreen, screenIcon, deviceSettings, deviceConnections; var id: String { rawValue } }
 
 @MainActor
 final class MacWorkbenchModel: ObservableObject {
@@ -48,6 +48,8 @@ final class MacWorkbenchModel: ObservableObject {
     @Published var error: String?
     @Published var notice: String?
     @Published var sheet: WorkbenchSheet?
+    @Published var connectionsDeviceID: String?
+    @Published var settingsEditor: MacDeviceSettingsModel?
     @Published var draft: ScreenDraft?
     @Published var symbols: [String: String] = [:]
     private(set) var service: ControllerService?
@@ -378,6 +380,13 @@ final class MacWorkbenchModel: ObservableObject {
         let ad = service?.devices.addManual(host: host, port: port)
         sheet = nil; refresh(); if let ad { selection = ad.deviceId }
     }
+    func openDeviceSettings(_ id: String) {
+        guard let target = devices.first(where: { $0.id == id }), let service else { return }
+        let installedPackage = selection == id && previewIsApplied ? preview : nil
+        settingsEditor = MacDeviceSettingsModel(device: target, service: service, package: installedPackage)
+        sheet = .deviceSettings
+    }
+
     func renameDevice(_ raw: String) {
         guard let device, let name = DeviceDisplayName.sanitize(raw) else { return }
         run({ try $0.devices.directory.update(device.id) { $0.displayName = name; $0.device.profile.name = name } }) { record in

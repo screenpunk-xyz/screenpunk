@@ -63,7 +63,7 @@ export {
   shouldRetry
 } from "./bridge.js";
 export type { BridgeErrorCode, BridgeMessage, RenderState } from "./bridge.js";
-export type { DashboardManifest } from "./package.js";
+export type { DashboardManifest, DashboardPage, EventReturnBehavior, EventCondition, EventPayloadFields, EventRuleDefaults, EventSource, ManifestEventRule } from "./package.js";
 export {
   BRIDGE_MESSAGE_BYTES,
   BRIDGE_TIMEOUT_MS,
@@ -81,6 +81,7 @@ export type {
   ClientOptions,
   ConnectionResult,
   DashboardClient,
+  NavigationStatus,
   HomeAssistantServiceCall,
   ServiceData,
   ServiceValue,
@@ -98,6 +99,7 @@ export interface ConnectionRequest {
 
 /** Typed surface from PROTOCOL_AND_MCP. Native host implements these. */
 export interface DashboardSDK {
+  navigation: { open(pageId: string): Promise<void>; get(): Promise<import("./client.js").NavigationStatus> };
   cameras: DashboardClient["cameras"];
   homeAssistant: DashboardClient["homeAssistant"];
   connections: {

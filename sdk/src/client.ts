@@ -49,6 +49,8 @@ export interface ClientOptions {
   nowId?: () => string;
 }
 
+export interface NavigationStatus { pageId: string; activeRuleId?: string; returnAt?: number }
+
 export type ServiceData = { [key: string]: null | boolean | number | string | ServiceData | ServiceValue[] };
 export type ServiceValue = null | boolean | number | string | ServiceData | ServiceValue[];
 export interface HomeAssistantServiceCall {
@@ -64,6 +66,7 @@ export interface CameraPresentation { controls?: "gallery"; label?: string; orde
 export interface CameraMount { stop(): void; retry(): void }
 
 export interface DashboardClient {
+  navigation: { open(pageId: string): Promise<void>; get(): Promise<NavigationStatus> };
   cameras: { mount(element: HTMLElement, source: CameraSource, onStatus?: (status: CameraPlaybackStatus) => void, presentation?: CameraPresentation): CameraMount };
 
   homeAssistant: { callService(call: HomeAssistantServiceCall): Promise<ConnectionResult> };
@@ -237,6 +240,10 @@ export function createDashboardClient(options: ClientOptions = {}): DashboardCli
   }
 
   return {
+    navigation: {
+      async open(pageId) { await sendRequest("navigation.open", { parameters: { pageId } }); },
+      async get() { const response = await sendRequest("navigation.get"); return response.value as NavigationStatus; }
+    },
     cameras: {
       mount(element, source, onStatus = () => {}, presentation = {}) {
         if (source.kind !== "homeAssistant" || source.connection !== "home" ||

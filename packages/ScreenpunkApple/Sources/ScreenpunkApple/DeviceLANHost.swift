@@ -13,6 +13,8 @@ public final class DeviceLANHost: ObservableObject {
     @Published public var errorMessage: String?
     @Published public var activePackage: PackageAssetStore?
     @Published public var screenSet: DeviceInstalledScreenSet?
+    @Published public var settingsSnapshot: DeviceSettingsSnapshot?
+    @Published public var genericConnectionGeneration = UUID()
     public let server: DeviceLANServer?
     private let recoveryQueue = DispatchQueue(label: "xyz.screenpunk.lan.recovery")
     private var recoveryTimer: DispatchSourceTimer?
@@ -32,6 +34,7 @@ public final class DeviceLANHost: ObservableObject {
             self.runtime = server.runtime
             self.activePackage = server.activePackage
             self.screenSet = server.screenSet
+            self.settingsSnapshot = server.settingsSnapshot
             self.server = server
             server.onChange = { [weak self] in
                 DispatchQueue.main.async { self?.refresh() }
@@ -116,6 +119,25 @@ public final class DeviceLANHost: ObservableObject {
         }
     }
 
+    @discardableResult public func saveSettings(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
+        guard let server else { throw DeviceSettingsFailure.persistenceFailed }
+        let snapshot = try server.updateSettingsLocally(update)
+        refresh()
+        return snapshot
+    }
+
+    public func markSettingsApplied(revision: String) {
+        guard settingsSnapshot?.revision == revision, settingsSnapshot?.isApplied == false else { return }
+        server?.markSettingsApplied(revision: revision)
+        refresh()
+    }
+
+    public func markSettingsUnapplied(revision: String) {
+        guard settingsSnapshot?.revision == revision, settingsSnapshot?.isApplied == true else { return }
+        server?.markSettingsUnapplied(revision: revision)
+        refresh()
+    }
+
     public func unlink() {
         server?.unlink()
         refresh()
@@ -131,6 +153,8 @@ public final class DeviceLANHost: ObservableObject {
             port = server.port
             activePackage = server.activePackage
             screenSet = server.screenSet
+            settingsSnapshot = server.settingsSnapshot
+            genericConnectionGeneration = server.genericConnectionGeneration
         }
     }
 }

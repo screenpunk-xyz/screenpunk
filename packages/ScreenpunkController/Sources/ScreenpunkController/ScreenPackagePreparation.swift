@@ -13,6 +13,6 @@ public enum ScreenPackagePreparation {
         let target = ManifestTarget(profileId: device.deviceId, width: profile.width, height: profile.height, scale: source.manifest.target.scale, orientation: orientation.rawValue, safeArea: source.manifest.target.safeArea)
         let directory = root.appendingPathComponent("device-packages/\(UUID().uuidString.lowercased())")
         let store = try DashboardPackageStore(root: directory)
-        return try store.putDashboard(dashboardId: source.manifest.dashboardId, name: source.manifest.name, baseRevision: nil, target: target, connections: source.manifest.connections, files: source.files.map { DashboardFileInput(path: $0.key, base64: $0.value.base64EncodedString()) })
+        return try store.putDashboard(dashboardId: source.manifest.dashboardId, name: source.manifest.name, baseRevision: nil, target: target, connections: source.manifest.connections, files: source.files.map { DashboardFileInput(path: $0.key, base64: $0.value.base64EncodedString()) }, pages: source.manifest.pages, defaultPageId: source.manifest.defaultPageId, eventRules: source.manifest.eventRules)
     }
 }

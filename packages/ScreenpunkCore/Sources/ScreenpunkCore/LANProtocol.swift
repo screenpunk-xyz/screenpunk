@@ -17,11 +17,15 @@ public enum LANProtocolLimits: Sendable {
 
 public enum LANMethod: String, Sendable, Codable, Equatable {
     case hello
+    case settingsGet = "settings.get"
+    case settingsUpdate = "settings.update"
     case pairBegin = "pair.begin"
     case pairConfirm = "pair.confirm"
     case deploy
     case deploySet = "deploy.set"
     case queryActive = "query.active"
+    case connectionsProvision = "connections.provision"
+    case connectionsRevoke = "connections.revoke"
     case homeAssistantProvision = "homeAssistant.provision"
     case homeAssistantRevoke = "homeAssistant.revoke"
 }

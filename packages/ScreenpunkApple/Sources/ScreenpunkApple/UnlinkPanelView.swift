@@ -12,11 +12,14 @@ public struct UnlinkPanelView: View {
     public var screens: [LANScreenSetEntry]
     public var selectedDashboardId: String?
     public var onSelect: (String) -> Void
+    public var onSettings: (() -> Void)?
 
     public init(onUnlink: @escaping () -> Void, onDismiss: @escaping () -> Void,
                 screens: [LANScreenSetEntry] = [], selectedDashboardId: String? = nil,
+                onSettings: (() -> Void)? = nil,
                 onSelect: @escaping (String) -> Void = { _ in }) {
         self.onUnlink = onUnlink; self.onDismiss = onDismiss
+        self.onSettings = onSettings
         self.screens = screens; self.selectedDashboardId = selectedDashboardId; self.onSelect = onSelect
     }
 
@@ -40,6 +43,10 @@ public struct UnlinkPanelView: View {
                                 label: .white))
                     }
                 } else {
+                    if let onSettings {
+                        Button(action: onSettings) { Label("Settings", systemImage: "gearshape") }
+                            .buttonStyle(UnlinkActionButtonStyle(fill: DeviceMenuColors.secondaryButton, label: .primary))
+                    }
                     if screens.count > 1 {
                         Text("Choose a screen").font(.subheadline).foregroundStyle(.secondary)
                         ScrollView {

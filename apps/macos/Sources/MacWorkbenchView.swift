@@ -45,6 +45,10 @@ struct MacWorkbenchView: View {
             case .rename: RenameDeviceSheet(model: model)
             case .renameScreen: RenameScreenSheet(model: model)
             case .screenIcon: ScreenIconSheet(model: model)
+            case .deviceConnections:
+                if let id = model.connectionsDeviceID { GenericConnectionsSheet(model: model, deviceID: id) }
+            case .deviceSettings:
+                if let editor = model.settingsEditor { MacDeviceSettingsSheet(editor: editor) { model.sheet = nil } }
             }
         }
         .alert("Screenpunk", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
@@ -81,7 +85,7 @@ struct MacWorkbenchView: View {
                                         subtitle: device.device.reachable ? "Connected" : "Offline",
                                         symbol: model.deviceSymbol(device.device.profile.name, landscape: device.device.profile.orientation == .landscape)) {
                                 EmptyView()
-                            }
+                            }.contextMenu { deviceActions(device.id) }
                         }
                         if model.devices.isEmpty { Text("Your paired devices appear here.").font(.callout).foregroundStyle(.secondary).padding(.vertical, 8) }
                     } else {
@@ -211,11 +215,26 @@ struct MacWorkbenchView: View {
             .workbenchButton(circular: true).help(label).accessibilityLabel(label)
     }
 
+    /// Both entry points use the same action builder and the clicked device ID.
+    @ViewBuilder private func deviceActions(_ deviceID: String) -> some View {
+        Button("Settings…", systemImage: "gearshape") { model.openDeviceSettings(deviceID) }
+        Button("Connections…", systemImage: "network") { model.connectionsDeviceID = deviceID; model.sheet = .deviceConnections }
+        Button("Rename Device…", systemImage: "pencil") {
+            connectionsSelected = false
+            model.select(deviceID)
+            model.sheet = .rename
+        }
+        Divider()
+        Button("Forget Device…", systemImage: "trash", role: .destructive) {
+            connectionsSelected = false
+            model.select(deviceID)
+            confirmForget = true
+        }
+    }
+
     private var deviceOptions: some View {
         Menu {
-            Button("Rename Device…", systemImage: "pencil") { model.sheet = .rename }
-            Divider()
-            Button("Forget Device…", systemImage: "trash", role: .destructive) { confirmForget = true }
+            if let id = model.device?.id { deviceActions(id) }
         } label: {
             Image(systemName: "ellipsis").fontWeight(.medium).foregroundStyle(windowIsActive ? Color.primary : Color.secondary).frame(width: 24, height: 24)
         }

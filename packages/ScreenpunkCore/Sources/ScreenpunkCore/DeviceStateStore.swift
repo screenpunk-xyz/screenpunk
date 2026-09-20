@@ -15,6 +15,7 @@ public struct DevicePersistedState: Sendable, Equatable, Codable {
     public var activeStoredRevision: StoredRevision?
     public var lastDeployment: DeploymentRecord?
     public var screenSet: DeviceInstalledScreenSet?
+    public var settings: DeviceSettingsSnapshot?
     public var savedAt: Date
 
     public init(

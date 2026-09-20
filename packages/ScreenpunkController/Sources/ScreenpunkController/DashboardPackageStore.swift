@@ -84,7 +84,10 @@ public final class DashboardPackageStore: @unchecked Sendable {
         baseRevision: String?,
         target: ManifestTarget,
         connections: [ManifestConnection],
-        files: [DashboardFileInput]
+        files: [DashboardFileInput],
+        pages: [DashboardPage]? = nil,
+        defaultPageId: String? = nil,
+        eventRules: [ManifestEventRule]? = nil
     ) throws -> DashboardRevisionRecord {
         try withLock {
             if files.isEmpty {
@@ -92,6 +95,7 @@ public final class DashboardPackageStore: @unchecked Sendable {
             }
             let id = dashboardId ?? UUID().uuidString.lowercased()
             var preservedSettings: Data?
+            var previousManifest: DashboardManifest?
             if let existing = try? readHead(dashboardId: id) {
                 if let baseRevision, baseRevision != existing.draftRevision {
                     throw ControllerError.revisionConflict(
@@ -104,6 +108,7 @@ public final class DashboardPackageStore: @unchecked Sendable {
             }
 
             if let existing = try? readHead(dashboardId: id) {
+                previousManifest = try decodeManifest(at: revisionDir(dashboardId: id, revision: existing.draftRevision).appendingPathComponent("manifest.json"))
                 preservedSettings = try? Data(contentsOf: revisionDir(dashboardId: id, revision: existing.draftRevision).appendingPathComponent(ScreenDesignSettings.path))
             }
             var inputs = files
@@ -145,7 +150,10 @@ public final class DashboardPackageStore: @unchecked Sendable {
                 digest: nil,
                 target: target,
                 connections: connections,
-                files: inventory.sorted { $0.path < $1.path }
+                files: inventory.sorted { $0.path < $1.path },
+                pages: pages?.isEmpty == true ? nil : (pages ?? previousManifest?.pages),
+                defaultPageId: pages?.isEmpty == true ? nil : (defaultPageId ?? previousManifest?.defaultPageId),
+                eventRules: eventRules ?? previousManifest?.eventRules
             )
             try PackageValidator.validate(manifest)
             manifest.digest = try DeploymentDigest.digest(for: manifest)

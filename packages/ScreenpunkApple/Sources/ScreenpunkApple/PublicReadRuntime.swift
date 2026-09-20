@@ -17,6 +17,7 @@ public struct PublicReadResult: Sendable {
 /// a bounded memory cache; there is no disk cache, cookie jar, credential lookup or URL cache.
 public actor PublicReadRuntime {
     public static let cacheBytes = 24 * 1024 * 1024
+    public nonisolated let aliases: Set<String>
     private let provisioning: PublicReadProvisioning
     private let runtime: ConnectionRuntime
     private let isCurrent: @Sendable () -> Bool
@@ -31,6 +32,7 @@ public actor PublicReadRuntime {
     public init(provisioning: PublicReadProvisioning, transport: any HTTPTransport = HomeAssistantHTTPTransport(),
                 resolver: any DestinationResolver = LiteralOrResolvedDestinationResolver(), clock: any PairingClock = SystemClock(), isCurrent: @escaping @Sendable () -> Bool = { true }) throws {
         try provisioning.validate()
+        self.aliases = Set(provisioning.connections.map(\.alias))
         self.provisioning = provisioning; self.isCurrent = isCurrent; self.clock = clock
         runtime = ConnectionRuntime(dashboardId: provisioning.dashboardId, store: MemoryCredentialStore(), http: transport,
                                     webSocket: PublicReadNoSocket(), resolver: resolver)

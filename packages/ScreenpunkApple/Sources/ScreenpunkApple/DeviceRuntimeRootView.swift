@@ -5,10 +5,18 @@ import UIKit
 #endif
 
 /// iOS device: advertise over TLS 1.3, pair with one owner, then show the deployed dashboard.
+@MainActor
 public struct DeviceRuntimeRootView: View {
     @State private var fallback: DeviceRuntime
     @State private var confirmError: String?
     @State private var showDeviceMenu = false
+    @State private var showSettings = false
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var brightness = DeviceBrightnessController()
+    @State private var renderedSettingsRevision: String?
+    @State private var brightnessSettingsRevision: String?
+    @State private var genericConnections: ConnectionRuntime?
+    @State private var genericRuntimeID = UUID()
 #if canImport(Network) && canImport(Security)
     @StateObject private var host: DeviceLANHost
 #endif
@@ -56,7 +64,28 @@ public struct DeviceRuntimeRootView: View {
         Group {
 #if canImport(Network) && canImport(Security)
             lanBody
-                .onAppear { host.start() }
+                .onAppear { host.start(); applyBrightness() }
+                .onChange(of: host.settingsSnapshot?.revision) { _ in applyBrightness() }
+                .onChange(of: host.runtime.isPaired) { _ in applyBrightness() }
+                .onChange(of: scenePhase) { _ in applyBrightness() }
+                .onReceive(brightness.$isApplied) { _ in
+                    Task { @MainActor in acknowledgeSettings() }
+                }
+                .onDisappear { brightness.stop() }
+                .sheet(isPresented: $showSettings) { DeviceLocalSettingsSheet(host: host) }
+                .task(id: "\(host.runtime.activeRevision ?? "none"):\(host.genericConnectionGeneration.uuidString)") {
+                    if let genericConnections { try? await genericConnections.clearCredentials() }
+                    genericConnections = nil
+                    genericRuntimeID = UUID()
+                    guard let server = host.server, host.runtime.isPaired else { return }
+                    let runtime = try? await server.makeGenericConnectionRuntime()
+                    guard !Task.isCancelled else {
+                        if let runtime { try? await runtime.clearCredentials() }
+                        return
+                    }
+                    genericConnections = runtime
+                    genericRuntimeID = UUID()
+                }
 #else
             localBody
 #endif
@@ -82,7 +111,7 @@ public struct DeviceRuntimeRootView: View {
                 }.ignoresSafeArea().background(.black)
                     .deviceScreenSwipes(screens: host.screenSet?.screens.map(\.entry) ?? [],
                                         selectedID: host.screenSet?.selectedDashboardId,
-                                        enabled: !showDeviceMenu && host.pairingCode == nil) { offset in
+                                        enabled: !showDeviceMenu && !showSettings && host.pairingCode == nil) { offset in
                         host.advanceScreen(by: offset)
                     }
                     .ignoresSafeArea()
@@ -101,7 +130,8 @@ public struct DeviceRuntimeRootView: View {
             if showDeviceMenu {
                 UnlinkPanelView(onUnlink: { showDeviceMenu = false; host.unlink() },
                     onDismiss: { showDeviceMenu = false }, screens: host.screenSet?.screens.map(\.entry) ?? [],
-                    selectedDashboardId: host.screenSet?.selectedDashboardId) { dashboardId in
+                    selectedDashboardId: host.screenSet?.selectedDashboardId,
+                    onSettings: { showDeviceMenu = false; showSettings = true }) { dashboardId in
                         host.selectScreen(dashboardId)
                         if host.errorMessage == nil { showDeviceMenu = false }
                     }
@@ -163,6 +193,46 @@ public struct DeviceRuntimeRootView: View {
         }
     }
 
+    private var currentSettings: DeviceSettings {
+#if canImport(Network) && canImport(Security)
+        host.settingsSnapshot?.value ?? .init()
+#else
+        .init()
+#endif
+    }
+
+    private var settingsAppliedCallback: (Bool) -> Void {
+#if canImport(Network) && canImport(Security)
+        let revision = host.settingsSnapshot?.revision
+        return { accepted in
+            guard revision == host.settingsSnapshot?.revision else { return }
+            renderedSettingsRevision = accepted ? revision : nil
+            acknowledgeSettings()
+        }
+#else
+        return { _ in }
+#endif
+    }
+
+#if canImport(Network) && canImport(Security)
+    private func applyBrightness() {
+        brightness.setActive(scenePhase == .active && host.runtime.isPaired)
+        brightness.update(settings: currentSettings.brightness)
+        brightnessSettingsRevision = host.settingsSnapshot?.revision
+        acknowledgeSettings()
+    }
+
+    private func acknowledgeSettings() {
+        guard let snapshot = host.settingsSnapshot else { return }
+        let rendererAccepted = host.runtime.activeRevision == nil || renderedSettingsRevision == snapshot.revision
+        if scenePhase == .active && brightness.isApplied && brightnessSettingsRevision == snapshot.revision && rendererAccepted {
+            host.markSettingsApplied(revision: snapshot.revision)
+        } else {
+            host.markSettingsUnapplied(revision: snapshot.revision)
+        }
+    }
+#endif
+
     private var currentScreenName: String {
 #if canImport(Network) && canImport(Security)
         host.screenSet?.screens.first(where: { $0.revision.dashboardId == host.screenSet?.selectedDashboardId })?.name ?? "Screen"
@@ -179,7 +249,7 @@ public struct DeviceRuntimeRootView: View {
 #endif
     }
 
-    /// Renders the package delivered over the LAN for `revision`. `.id(revision)`
+    /// Renders the package delivered over the LAN for `revision`. `.id("\(revision):\(genericRuntimeID.uuidString)")`
     /// rebuilds the web view when a new revision activates.
     @ViewBuilder
     private func deployedDashboard(
@@ -189,15 +259,19 @@ public struct DeviceRuntimeRootView: View {
     ) -> some View {
         if let package {
             DashboardRuntimeView(store: package, homeAssistant: homeAssistantRuntime, publicReads: host.server?.publicReadSession(), revision: revision,
-                                 screenName: currentScreenName, onMenu: { showDeviceMenu = true }, onUnlink: onUnlink)
+                                 connections: genericConnections, settings: currentSettings,
+                                 onSettingsApplied: settingsAppliedCallback, screenName: currentScreenName,
+                                 onMenu: { showDeviceMenu = true }, onUnlink: onUnlink)
                 .ignoresSafeArea()
-                .id(revision)
+                .id("\(revision):\(genericRuntimeID.uuidString)")
         } else if revision == StoredRevision.offlineFixture.revision,
                   let store = try? PackageAssetStore.bundledOfflineFixture()
         {
-            DashboardRuntimeView(store: store, screenName: currentScreenName, onMenu: { showDeviceMenu = true }, onUnlink: onUnlink)
+            DashboardRuntimeView(store: store, settings: currentSettings,
+                                 onSettingsApplied: settingsAppliedCallback, screenName: currentScreenName,
+                                 onMenu: { showDeviceMenu = true }, onUnlink: onUnlink)
                 .ignoresSafeArea()
-                .id(revision)
+                .id("\(revision):\(genericRuntimeID.uuidString)")
         } else {
             UnpairedHostView(detail: "Deployed revision \(revision.prefix(8)) has no package on this device. Deploy again from the Mac.")
         }

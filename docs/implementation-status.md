@@ -1,5 +1,20 @@
 # Implementation status
 
+## September 19 — per-device settings and event navigation
+
+- Base: `main` at `38323488690b6fc94b2a8c0ff2d05a36ac739755`; branch `asher/codex/device-settings-events`. Implementation is ready for PR review; not merged or released.
+- Implemented: device-owned persistent settings with optimistic revision CAS, native Mac/device editors, shared overflow/right-click actions, explicit offline Mac drafts, starting pages within the current dashboard, foreground fixed/scheduled brightness, generic live/polled event navigation, native HA WebSocket authentication and current-state baseline, author-bound payload options, correlated clears, priority/deduplication, manual interruption and obsolete-timer protection.
+- End-to-end paths: MCP authoring and ordinary revisions preserve page/rule declarations through device-size preparation; generic grants use explicit native approval and owner/revision-scoped Keychain provisioning. Existing installed-dashboard switching is preserved. Brightness-only edits preserve navigation timers; incompatible saved page/rule preferences fall back safely and remain visibly unapplied until reviewed.
+- Local validation: SDK/contracts script passed **133 tests** across four groups (100 + 11 + 18 + 4); brand/resource checks and TypeScript typecheck passed. `ScreenpunkApple` (including Core) and `ScreenpunkController` built with macOS CLI Swift 6.3.3. All Mac app sources type-checked for the repository's current macOS 14 deployment target.
+- Additional local execution: **49 committed Swift test methods** passed through a temporary standalone assertion harness linked against the built modules. Coverage includes settings persistence/CAS/disk failures, paired TLS ownership, provisioning/revocation, HA auth/snapshot filtering, generic live+HTTP baseline, stale transient rejection, brightness/DST, navigation replacement and authoring round trips. This is execution evidence, **not an XCTest runner result**.
+- Environment limits: full Xcode, XCTest and iOS simulator SDK are unavailable locally. iOS/UIKit compilation, native rendered UI review, physical Auto-Brightness interaction and iPhone/iPad acceptance remain pending. Do not infer physical brightness or suspended execution from local tests.
+- Existing adapter limitation: destination DNS classification precedes URLSession's connection and is not peer-bound; this does not guarantee protection from DNS rebinding. HTTP streaming and WS message size bounds are enforced. No claim of a completed exhaustive security audit.
+- CI: left to the PR workflow; intentionally not watched or polled, per operator request. No merge/release authorization.
+- Specification: [Planning-Files PR #2](https://github.com/screenpunk-xyz/Planning-Files/pull/2). Operator guide and exact runtime limitations: [device settings and event navigation](event-navigation.md), [brightness](device-brightness.md).
+- Next action: review PR/CI independently, then run the documented native UI and physical-device procedure before release. Implementation worktree: `/private/tmp/screenpunk-device-settings`.
+
+## Historical milestone checkpoint
+
 Last updated: 2026-09-12 by worker `bc-8cefc708-ec93-5316-aaa7-e09f4bd9ba49`.
 
 | Field | Value |

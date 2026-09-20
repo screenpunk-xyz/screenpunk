@@ -159,6 +159,19 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+test("manual page navigation and status use native bridge", async () => {
+  const host = createLoopback({ onRequest(message, reply) {
+    if (message.method === "navigation.open") {
+      assert.deepEqual(message.parameters, { pageId: "front-door" });
+      reply({ kind: "response", ok: true });
+    } else reply({ kind: "response", value: { pageId: "front-door", activeRuleId: "doorbell" } });
+  } });
+  const sdk = createDashboardClient({ transport: host.page });
+  await sdk.navigation.open("front-door");
+  assert.deepEqual(await sdk.navigation.get(), { pageId: "front-door", activeRuleId: "doorbell" });
+  sdk.dispose();
+});
+
 test("general Home Assistant call preserves nested values and propagates errors without replay", async () => {
   const call = { domain: "light", service: "turn_on", target: { entity_id: ["light.a"] },
     serviceData: { rgb_color: [255, 0, 128], transition: 1.5, future: { enabled: true, unset: null } } };

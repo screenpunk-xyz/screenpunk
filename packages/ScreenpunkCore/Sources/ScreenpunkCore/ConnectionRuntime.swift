@@ -12,11 +12,13 @@ public actor ConnectionRuntime {
     private let resolver: any DestinationResolver
     private var dashboardStore: DashboardStore
     private var subscriptions: [String: SubscriptionRecord] = [:]
+    private var subscriptionAttempts: [String: UUID] = [:]
     /// Bumped by `clearCredentials`. Work that was in flight across an unlink
     /// must not write to the store or register sockets when it resumes.
     private var epoch = 0
     private let clock: any PairingClock
     private let httpBounds: HTTPAdapterBounds
+    private let authorizeScope: @Sendable () throws -> Void
 
     public init(
         dashboardId: String,
@@ -25,7 +27,8 @@ public actor ConnectionRuntime {
         webSocket: any WebSocketTransport,
         resolver: any DestinationResolver = LiteralOrResolvedDestinationResolver(),
         clock: any PairingClock = SystemClock(),
-        httpBounds: HTTPAdapterBounds = .production
+        httpBounds: HTTPAdapterBounds = .production,
+        authorizeScope: @escaping @Sendable () throws -> Void = {}
     ) {
         self.store = store
         self.http = http
@@ -34,6 +37,7 @@ public actor ConnectionRuntime {
         self.dashboardStore = DashboardStore(dashboardId: dashboardId)
         self.clock = clock
         self.httpBounds = httpBounds
+        self.authorizeScope = authorizeScope
     }
 
     public func install(grant: ConnectionGrant, binding: ConnectionAuthBinding) throws {
@@ -43,6 +47,16 @@ public actor ConnectionRuntime {
         }
         grants[grant.alias] = grant
         bindings[grant.alias] = binding
+    }
+
+    /// Event polling may only invoke approved side-effect-free GET operations.
+    public func requestRead(alias: String, operation: String, parameters: [String: String]) async throws -> ConnectionHTTPResult {
+        let context = try context(alias: alias)
+        guard let spec = context.grant.operations.first(where: { $0.name == operation }),
+              spec.kind == .http, spec.method == .GET, !spec.write, spec.idempotent else {
+            throw ConnectionFailure.permissionRequired
+        }
+        return try await request(alias: alias, operation: operation, parameters: parameters)
     }
 
     /// Raw bounded read path shared by native public JSON and raster runtimes. No page headers.
@@ -73,6 +87,7 @@ public actor ConnectionRuntime {
         let startedIn = epoch
         do {
             let response = try await http.send(prepared.request)
+            try authorizeScope()
             guard startedIn == epoch else {
                 throw ConnectionFailure.permissionRequired
             }
@@ -107,6 +122,7 @@ public actor ConnectionRuntime {
                 )
             )
         } catch {
+            try authorizeScope()
             guard startedIn == epoch else {
                 throw ConnectionFailure.permissionRequired
             }
@@ -139,15 +155,32 @@ public actor ConnectionRuntime {
     public func subscribe(
         alias: String,
         operation: String,
-        parameters: [String: String]
+        parameters: [String: String],
+        consumer: String = "dashboard"
     ) async throws -> SubscriptionID {
-        let prepared = try prepareWebSocket(alias: alias, operation: operation, parameters: parameters)
+        var prepared = try prepareWebSocket(alias: alias, operation: operation, parameters: parameters)
+        guard consumer.utf8.count <= 8192 else { throw ConnectionFailure.sizeLimit }
+        if consumer != "dashboard" { prepared.cacheKey = consumer + "\u{1f}" + prepared.cacheKey }
+        let keys = Set(subscriptions.keys).union(subscriptionAttempts.keys)
+        guard keys.contains(prepared.cacheKey) || keys.count < 64 else { throw ConnectionFailure.sizeLimit }
         let startedIn = epoch
+        let attempt = UUID()
+        subscriptionAttempts[prepared.cacheKey] = attempt
+        defer {
+            if subscriptionAttempts[prepared.cacheKey] == attempt {
+                subscriptionAttempts.removeValue(forKey: prepared.cacheKey)
+            }
+        }
         if let existing = subscriptions.removeValue(forKey: prepared.cacheKey) {
             await existing.session.close()
         }
+        guard startedIn == epoch, subscriptionAttempts[prepared.cacheKey] == attempt else {
+            throw ConnectionFailure.permissionRequired
+        }
+        try authorizeScope()
         let session = try await webSocket.connect(prepared.request)
-        guard startedIn == epoch else {
+        do { try authorizeScope() } catch { await session.close(); throw error }
+        guard startedIn == epoch, subscriptionAttempts[prepared.cacheKey] == attempt else {
             await session.close()
             throw ConnectionFailure.permissionRequired
         }
@@ -164,10 +197,12 @@ public actor ConnectionRuntime {
     }
 
     public func receive(id: SubscriptionID) async throws -> Data {
+        try authorizeScope()
         guard let record = subscriptions.values.first(where: { $0.id == id }) else {
             throw ConnectionFailure.permissionRequired
         }
         let data = try await record.session.receive()
+        try authorizeScope()
         guard subscriptions[record.key]?.id == id else {
             // Unsubscribed, replaced, or unlinked while the read was pending.
             throw ConnectionFailure.permissionRequired
@@ -185,12 +220,13 @@ public actor ConnectionRuntime {
 
     public func unsubscribe(id: SubscriptionID) async {
         guard let match = subscriptions.first(where: { $0.value.id == id }) else { return }
-        await match.value.session.close()
         subscriptions.removeValue(forKey: match.key)
+        await match.value.session.close()
     }
 
     public func lastRead(alias: String, operation: String, parameters: [String: String]) -> CacheRecord? {
-        dashboardStore.cachedRead(
+        guard (try? authorizeScope()) != nil else { return nil }
+        return dashboardStore.cachedRead(
             cacheKey: DashboardStore.cacheKey(
                 alias: alias,
                 operation: operation,
@@ -209,6 +245,7 @@ public actor ConnectionRuntime {
         bindings.removeAll()
         let open = subscriptions.values.map(\.session)
         subscriptions.removeAll()
+        subscriptionAttempts.removeAll()
         dashboardStore.clear()
         let deletion = Result { try store.deleteAll() }
         for session in open {
@@ -251,6 +288,7 @@ public actor ConnectionRuntime {
         parameters: [String: String]
     ) throws -> PreparedHTTP {
         let context = try context(alias: alias)
+        guard context.grant.transport == .http else { throw ConnectionFailure.permissionRequired }
         let host = try ConnectionPolicy.originHost(context.grant.origin)
         let resolved = try resolver.addresses(for: host)
         let destination = try ConnectionPolicy.authorize(
@@ -302,6 +340,7 @@ public actor ConnectionRuntime {
         parameters: [String: String]
     ) throws -> PreparedWebSocket {
         let context = try context(alias: alias)
+        guard context.grant.transport == .ws else { throw ConnectionFailure.permissionRequired }
         let host = try ConnectionPolicy.originHost(context.grant.origin)
         let resolved = try resolver.addresses(for: host)
         let destination = try ConnectionPolicy.authorize(
@@ -319,6 +358,7 @@ public actor ConnectionRuntime {
             headers: &headers,
             url: &url
         )
+        url = try ConnectionPolicy.mergeQueryParameters(url: url, parameters: destination.queryParameters)
         return PreparedWebSocket(
             request: AuthorizedWebSocketRequest(
                 url: url,
@@ -337,6 +377,7 @@ public actor ConnectionRuntime {
     }
 
     private func context(alias: String) throws -> (grant: ConnectionGrant, binding: ConnectionAuthBinding) {
+        try authorizeScope()
         guard let grant = grants[alias], let binding = bindings[alias] else {
             throw ConnectionFailure.permissionRequired
         }
