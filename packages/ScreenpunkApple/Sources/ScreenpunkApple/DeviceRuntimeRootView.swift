@@ -67,7 +67,10 @@ public struct DeviceRuntimeRootView: View {
                 .onAppear { host.start(); applyBrightness() }
                 .onChange(of: host.settingsSnapshot?.revision) { _ in applyBrightness() }
                 .onChange(of: host.runtime.isPaired) { _ in applyBrightness() }
-                .onChange(of: scenePhase) { _ in applyBrightness() }
+                .onChange(of: scenePhase) { phase in
+                    if phase == .active { host.resume() }
+                    applyBrightness()
+                }
                 .onReceive(brightness.$isApplied) { _ in
                     Task { @MainActor in acknowledgeSettings() }
                 }

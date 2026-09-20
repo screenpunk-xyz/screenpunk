@@ -10,12 +10,10 @@ Supported clients: Codex (the CLI, IDE extension, and ChatGPT desktop app
 share one configuration), Claude Desktop, and Cursor. Any MCP client that
 can launch a local stdio command works the same way.
 
-Status: `tools/screenpunk-mcp` on `main` is still the Milestone 0
-bootstrap. It prints a banner to stderr and exits, so a client configured
-today will report that the server disconnected. Configure clients once the
-Milestone 2 MCP runtime has merged
-([implementation-status.md](implementation-status.md)). The configuration
-below is what that runtime is built to satisfy.
+The Mac alpha bundle includes the working MCP runtime and native preview
+helper. Use the complete app produced by `scripts/build-unsigned-dmg.sh`;
+building only the Mac Xcode target does not embed those executables. See
+[setup.md](setup.md#from-source) for the local build prerequisites.
 
 ## 1. Find the executable
 
@@ -40,12 +38,20 @@ first-open verification. If the app lives somewhere else (a second copy, a
 build in Xcode's DerivedData), use that absolute path. Do not point a
 client at a mounted DMG; the path disappears when the DMG is ejected.
 
-Source build, for development only:
+For a complete source build, follow [setup.md](setup.md#from-source), install
+the resulting app in Applications, and use the bundled executable above.
+For MCP-only development, compile with the pinned dependency's compatibility
+flags and provide the helper from a matching complete app build:
 
 ```sh
-cd tools/screenpunk-mcp && swift build -c release
+cd tools/screenpunk-mcp && swift build -c release -Xswiftc -swift-version -Xswiftc 5
 echo "$(pwd)/.build/release/screenpunk-mcp"     # absolute path for the client
 ```
+
+Set `SCREENPUNK_PREVIEW_HOST` in the development client's environment to
+that app's `Contents/Helpers/ScreenpunkPreviewHost.app/Contents/MacOS/ScreenpunkPreviewHost`.
+Use `SCREENPUNK_CONTROLLER_HOME` with a temporary directory when testing
+without your normal screens and device records.
 
 ### If you move or rename the app
 
@@ -196,7 +202,7 @@ device on the Mac does not erase the device.
 | Symptom | Check |
 | --- | --- |
 | Client reports the command was not found or failed to spawn | `ls -l` the path. The app moved, was renamed, or is on an ejected DMG |
-| Server starts, then disconnects immediately | Run the path from Terminal and read stderr. On `main` today this is the bootstrap banner |
+| Server starts, then disconnects immediately | Verify the configured path points to the installed complete app, then inspect the client's MCP stderr log for the startup error |
 | Tools do not appear | Restart the client fully. Claude Desktop reads its config only at startup |
 | First call times out | Cold start of controller and preview helper. Retry; in Codex raise `startup_timeout_sec` |
 | macOS asks about Local Network | Allow it. Discovery and pairing need it |
