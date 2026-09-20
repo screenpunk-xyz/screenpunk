@@ -44,6 +44,11 @@ final class MacWorkbenchModel: ObservableObject {
     }
     @Published var orientation: DeviceOrientation = .portrait
     @Published var pairing: PairingRequestResult?
+    /// A reachability probe of saved devices is running on the workbench queue.
+    @Published private(set) var checkingDevices = false
+    /// At least one probe has finished since launch. Until then the saved
+    /// `reachable` flag is last session's answer, not this network's.
+    @Published private(set) var devicesChecked = false
     @Published var busy = false
     @Published var error: String?
     @Published var notice: String?
@@ -59,6 +64,7 @@ final class MacWorkbenchModel: ObservableObject {
     private var pairingTimer: Timer?
     private var pairingPollInFlight = false
     private var refreshing = false
+    private var pendingProbe = false
     private var ticks = 0
     private var appliedScreens: [String: String] = [:]
     private var appliedOrientations: [String: String] = [:]
@@ -120,6 +126,10 @@ final class MacWorkbenchModel: ObservableObject {
         return DeviceScreenSelection(ids: ids, multiple: ids.count > 1)
     }
     func symbol(for id: String) -> String { symbols[id] ?? "star" }
+    func deviceStatus(_ device: PairedDeviceRecord) -> String {
+        guard devicesChecked else { return "Checking…" }
+        return device.device.reachable ? "Connected" : "Offline"
+    }
     func deviceSymbol(_ name: String, landscape: Bool = false) -> String {
         name.localizedCaseInsensitiveContains("ipad") ? (landscape ? "ipad.landscape" : "ipad") : (landscape ? "iphone.gen3.landscape" : "iphone.gen3")
     }
@@ -169,8 +179,14 @@ final class MacWorkbenchModel: ObservableObject {
         }
     }
     func refresh(probe: Bool = false) {
+        // A wake, foreground, or manual probe that arrives while a refresh or
+        // operation holds the queue is deferred, not dropped.
+        if probe, refreshing || busy || pairing != nil { pendingProbe = true }
         guard let service, !refreshing, !busy, pairing == nil else { return }
+        let probe = probe || pendingProbe
+        pendingProbe = false
         refreshing = true
+        if probe { checkingDevices = true }
         queue.async {
             let advertisements = service.devices.discover()
             if probe { for device in service.devices.listDevices() { _ = try? service.devices.device(device.id, probe: true) } }
@@ -182,6 +198,7 @@ final class MacWorkbenchModel: ObservableObject {
                 let previousDevice = self.device
                 let hadDraft = self.hasUnappliedScreen
                 self.refreshing = false; self.devices = devices; self.nearby = nearby; self.agents = agents
+                if probe { self.checkingDevices = false; self.devicesChecked = true }
                 if self.section == "Devices", let previousDevice,
                    let current = devices.first(where: { $0.devicePin == previousDevice.devicePin }), current.id != previousDevice.id {
                     self.select(current.id)
@@ -198,6 +215,7 @@ final class MacWorkbenchModel: ObservableObject {
                     if changed, !self.previewIsApplied, let selected = self.selectedScreen, value.contains(where: { $0.dashboardId == selected }) { self.loadPreview(selected) }
                 }
                 if self.selection == nil { self.select(self.section == "Devices" ? devices.first?.id ?? nearby.first?.id : self.screens.first?.dashboardId) }
+                if self.pendingProbe { self.refresh(probe: true) }
             }
         }
     }

@@ -77,12 +77,12 @@ struct MacWorkbenchView: View {
                             }
                         }
                         sectionHeader("Devices", count: model.devices.count) {
-                            circle("Refresh Devices", symbol: "arrow.clockwise") { model.refresh(probe: true) }
+                            refreshDevicesButton
                             circle("Add Device", symbol: "plus") { model.sheet = .manual }
                         }.padding(.top, model.nearby.isEmpty ? 0 : 12)
                         ForEach(model.devices) { device in
                             sidebarItem(id: device.id, title: device.displayName ?? device.device.profile.name,
-                                        subtitle: device.device.reachable ? "Connected" : "Offline",
+                                        subtitle: model.deviceStatus(device),
                                         symbol: model.deviceSymbol(device.device.profile.name, landscape: device.device.profile.orientation == .landscape)) {
                                 EmptyView()
                             }.contextMenu { deviceActions(device.id) }
@@ -213,6 +213,18 @@ struct MacWorkbenchView: View {
     private func circle(_ label: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 16, weight: .regular)).frame(width: 24, height: 24) }
             .workbenchButton(circular: true).help(label).accessibilityLabel(label)
+    }
+    /// Same footprint as `circle`; the glyph becomes a spinner while a probe runs.
+    private var refreshDevicesButton: some View {
+        let label = model.checkingDevices ? "Checking devices" : "Refresh Devices"
+        return Button { model.refresh(probe: true) } label: {
+            ZStack {
+                if model.checkingDevices { ProgressView().controlSize(.small) }
+                else { Image(systemName: "arrow.clockwise").font(.system(size: 16, weight: .regular)) }
+            }.frame(width: 24, height: 24)
+        }
+        .workbenchButton(circular: true).disabled(model.checkingDevices)
+        .help(label).accessibilityLabel(label)
     }
 
     /// Both entry points use the same action builder and the clicked device ID.
