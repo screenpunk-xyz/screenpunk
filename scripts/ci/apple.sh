@@ -27,7 +27,14 @@ if ! command -v swift >/dev/null 2>&1; then
 fi
 
 (cd packages/ScreenpunkCore && swift test)
-(cd packages/ScreenpunkApple && swift test)
+# SwiftPM buffers XCTest output until the process exits. Run the built XCTest
+# bundle directly so a stalled test is visible and bounded on hosted runners.
+(
+  cd packages/ScreenpunkApple
+  swift build --build-tests
+  test_bundle="$(swift build --show-bin-path)/ScreenpunkApplePackageTests.xctest"
+  python3 "$ROOT/scripts/ci/run-xctest.py" "$test_bundle"
+)
 (cd packages/ScreenpunkController && swift test)
 # Match the release workflow: the pinned MCP dependency requires Swift 5 mode
 # on Xcode 26; app and package tests above retain their normal settings.
