@@ -137,6 +137,16 @@ final class MacWorkbenchModel: ObservableObject {
             appliedOrientations = UserDefaults.standard.dictionary(forKey: "appliedOrientations") as? [String:String] ?? [:]
             if let saved = UserDefaults.standard.string(forKey: "screenPreviewProfile"), let profile = ScreenPreviewProfile.all.first(where: { $0.id == saved }) { screenPreviewProfile = profile }
             draft = try? JSONDecoder().decode(ScreenDraft.self, from: Data(contentsOf: draftURL))
+            // Populate the workbench from disk before discovery or offline-device
+            // timeouts. Selecting now also queues the saved preview ahead of probes.
+            if let service {
+                devices = service.devices.listDevices()
+                screens = (try? service.listDashboards()) ?? []
+                agents = AgentPresence.active(in: service.store.root)
+                if selection == nil {
+                    select(section == "Devices" ? devices.first?.id : screens.first?.dashboardId)
+                }
+            }
             refresh(probe: true)
             timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
                 Task { @MainActor in guard let self else { return }; self.ticks += 1; self.refresh(probe: self.ticks % 5 == 0) }
