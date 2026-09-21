@@ -69,9 +69,23 @@ if [[ -z "$app" ]]; then
   exit 1
 fi
 
+# Match the local distribution: authoring requires the bundled MCP and native preview.
+swift build --package-path "$ROOT/tools/screenpunk-mcp" -c release -Xswiftc -swift-version -Xswiftc 5
+mcp_bin="$(swift build --package-path "$ROOT/tools/screenpunk-mcp" -c release --show-bin-path)"
+ditto "$mcp_bin/screenpunk-mcp" "$app/Contents/MacOS/screenpunk-mcp"
+for resource in "$mcp_bin"/*.bundle; do
+  [[ -d "$resource" ]] || continue
+  ditto "$resource" "$app/Contents/Resources/$(basename "$resource")"
+done
+xcodebuild -project "$ROOT/tools/preview-host/ScreenpunkPreviewHost.xcodeproj" \
+  -scheme ScreenpunkPreviewHost -configuration Release -destination 'generic/platform=macOS' \
+  -derivedDataPath "$RELEASE_DIR/preview-derived" ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build
+mkdir -p "$app/Contents/Helpers"
+ditto "$RELEASE_DIR/preview-derived/Build/Products/Release/ScreenpunkPreviewHost.app" "$app/Contents/Helpers/ScreenpunkPreviewHost.app"
+"$ROOT/scripts/bundle-authoring.sh" "$app"
+
 echo "=== nested Mach-O signing (inside-out; no --deep) ==="
-# Product apps do not yet embed MCP, controller, or preview-host. Sign any
-# nested Mach-O that appears later, then the wrapper app.
+# Sign nested executables before their enclosing helper and product app.
 while IFS= read -r bin; do
   [[ -z "$bin" ]] && continue
   if [[ "$bin" == "$app/Contents/MacOS/Screenpunk" ]]; then
@@ -98,6 +112,7 @@ else
   echo "STATE: nested-helpers-absent (controller / preview-host not embedded yet)"
 fi
 
+codesign --force --options runtime --timestamp --sign "Developer ID Application" "$app/Contents/Helpers/ScreenpunkPreviewHost.app"
 codesign --force --options runtime --timestamp --sign "Developer ID Application" "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 echo "=== entitlements on exported app (no extra hardened-runtime exceptions applied here) ==="

@@ -4,6 +4,14 @@ import Foundation
 public enum MCPToolSchemas {
     public static func inputSchema(for name: String) -> JSONValue {
         switch name {
+        case "create_screen_project":
+            return object(required: ["starter"], properties: ["starter": string("earthquakes or gallery"), "catalogVersion": string("Exact installed kit version; omitted selects bundled version")])
+        case "get_screen_project":
+            return object(required: ["projectId"], properties: ["projectId": string(), "paths": .object(["type": .string("array"), "items": string()])])
+        case "update_screen_project":
+            return object(required: ["projectId", "sourceVersion", "files"], properties: ["projectId": string(), "sourceVersion": string("Version returned by get_screen_project"), "files": .object(["type": .string("array"), "items": object(required: ["path"], properties: ["path": string(), "text": string(), "base64": string(), "delete": .object(["type": .string("boolean")])])])])
+        case "build_screen_project":
+            return object(required: ["projectId", "sourceVersion"], properties: ["projectId": string(), "sourceVersion": string(), "baseRevision": string("Required after the first build; current dashboard draft revision")])
         case "approve_public_connections":
             return object(required: ["dashboardId", "revision", "approved"], properties: [
                 "dashboardId": string(), "revision": string("Exact immutable revision whose declarations the owner reviewed."),

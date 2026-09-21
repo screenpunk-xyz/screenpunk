@@ -57,6 +57,11 @@ if [[ -z "$app" || ! -x "$app/Contents/MacOS/ScreenpunkPreviewHost" ]]; then
   exit 0
 fi
 
+# React gallery checks use the same native package scheme and content policy.
+npm --prefix "$ROOT/authoring" ci --ignore-scripts
+npm --prefix "$ROOT/authoring" run gallery
+python3 "$ROOT/scripts/check-react-preview.py" "$app/Contents/MacOS/ScreenpunkPreviewHost"
+
 out="$ROOT/tests/feasibility/preview/last-snapshot.png"
 rm -f "$out"
 mkdir -p "$(dirname "$out")"

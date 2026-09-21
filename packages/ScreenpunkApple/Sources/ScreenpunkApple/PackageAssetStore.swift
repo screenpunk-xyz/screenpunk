@@ -34,6 +34,10 @@ public struct PackageAssetStore: Sendable, Equatable {
         if path.hasSuffix(".json") { return "application/json" }
         if path.hasSuffix(".svg") { return "image/svg+xml" }
         if path.hasSuffix(".png") { return "image/png" }
+        if path.hasSuffix(".jpg") || path.hasSuffix(".jpeg") { return "image/jpeg" }
+        if path.hasSuffix(".woff") { return "font/woff" }
+        if path.hasSuffix(".woff2") { return "font/woff2" }
+        if path.hasSuffix(".txt") { return "text/plain" }
         return "application/octet-stream"
     }
 

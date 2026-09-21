@@ -18,6 +18,12 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private let onHealth: (Bool) -> Void
     private var tasks: [String: Task<Void, Never>] = [:]
     private var documentGeneration = UUID()
+    private var active = true
+    func setActive(_ value: Bool) {
+        guard active != value else { return }
+        active = value
+        status(navigation?.status ?? [:])
+    }
 
     init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime? = nil, navigation: DashboardEventRuntime? = nil,
          revision: String, publicReads: PublicReadRuntime? = nil, resources: PublicRasterResources? = nil, onHealth: @escaping (Bool) -> Void) {
@@ -37,7 +43,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
 
     func status(_ value: [String: Any]) {
         dispatch(["protocolVersion": 1, "id": "runtime-status", "kind": "event", "method": "runtime.onStatus",
-                  "value": ["navigation": value, "homeAssistantTransport": "websocket-with-http", "homeAssistantServiceCalls": 1, "cameraPlayback": 1, "publicReadHTTP": 1, "macIsRuntimeProxy": false]])
+                  "value": ["active": active, "navigation": value, "homeAssistantTransport": "websocket-with-http", "homeAssistantServiceCalls": 1, "cameraPlayback": 1, "publicReadHTTP": 1, "macIsRuntimeProxy": false]])
     }
 
     deinit { let cameras = cameras; Task { @MainActor in cameras?.cancel() } }

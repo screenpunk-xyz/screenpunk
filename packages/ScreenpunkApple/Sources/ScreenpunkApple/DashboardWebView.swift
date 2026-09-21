@@ -135,13 +135,14 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         events?.update(settings: settings)
         if let events { settingsValid = events.settingsApplied }
         self.active = active
+        bridge?.setActive(active)
         if active { events?.start() } else { events?.stop(); bridge?.cancel() }
         // Defer callback to avoid publishing SwiftUI state during view update.
         let valid = settingsValid
         DispatchQueue.main.async { onSettingsApplied(valid) }
     }
 
-    func stop() { events?.stop(); bridge?.cancel() }
+    func stop() { bridge?.setActive(false); events?.stop(); bridge?.cancel() }
 
     private func load(path: String) {
         guard let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/\(path)") else { return }
@@ -167,6 +168,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         let webView = WKWebView(frame: .zero, configuration: config)
         self.webView = webView
         bridge?.attach(to: webView)
+        bridge?.setActive(active)
         webView.navigationDelegate = self
         webView.uiDelegate = self
 #if os(iOS)

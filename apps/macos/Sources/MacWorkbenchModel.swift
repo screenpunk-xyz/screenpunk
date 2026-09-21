@@ -37,6 +37,7 @@ final class MacWorkbenchModel: ObservableObject {
     private var thumbnailRequests: [String: Task<NSImage?, Never>] = [:]
     private let thumbnailQueue = DispatchQueue(label: "xyz.screenpunk.thumbnail", qos: .utility)
     private var previewRequest = UUID()
+    @Published var isReactProject = false
     @Published var preview: PackageAssetStore?
     @Published var previewKey = UUID()
     @Published var screenPreviewProfile: ScreenPreviewProfile = .defaultProfile {
@@ -343,6 +344,53 @@ final class MacWorkbenchModel: ObservableObject {
         return await request.value
     }
 
+    func createReactScreen(starter: String) {
+        guard let service, !busy else { return }
+        busy = true
+        queue.async {
+            let result = Result { () -> JSONValue in
+                let project = try service.authoring.create(starter: starter)
+                return try service.authoring.build(id: project["projectId"]!.string!, expected: project["sourceVersion"]!.string!, baseRevision: nil, service: service)
+            }
+            Task { @MainActor in
+                self.busy = false
+                switch result {
+                case .success(let build):
+                    self.section = "Screens"; self.screens = (try? service.listDashboards()) ?? []
+                    if let id = build["dashboardId"]?.string { self.select(id) }
+                case .failure(let failure): self.error = (failure as? ControllerError)?.detail ?? failure.localizedDescription
+                }
+            }
+        }
+    }
+    func revealReactSource(_ dashboardId: String) {
+        guard let service else { return }
+        do {
+            guard let project = try service.authoring.project(for: dashboardId), let location = project["sourceLocation"]?.string else {
+                notice = "This screen has no managed React source project."; return
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: location)])
+        } catch { self.error = (error as? ControllerError)?.detail ?? error.localizedDescription }
+    }
+    func rebuildReactScreen(_ dashboardId: String) {
+        guard let service, !busy else { return }
+        busy = true
+        queue.async {
+            let result = Result { () -> Void in
+                guard let project = try service.authoring.project(for: dashboardId) else { throw ControllerError.validationFailed(detail: "This screen has no managed React source project.") }
+                let current = try service.getDashboard(dashboardId: dashboardId, revision: nil)
+                _ = try service.authoring.build(id: project["projectId"]!.string!, expected: project["sourceVersion"]!.string!, baseRevision: current.manifest.revision, service: service)
+            }
+            Task { @MainActor in
+                self.busy = false
+                switch result {
+                case .success: self.screens = (try? service.listDashboards()) ?? []; self.loadPreview(dashboardId)
+                case .failure(let failure): self.error = (failure as? ControllerError)?.detail ?? failure.localizedDescription
+                }
+            }
+        }
+    }
+
     func browseScreen(_ offset: Int) {
         guard section == "Devices", device != nil, !busy,
               let id = deviceScreens.previewNeighbor(of: selectedScreen, offset: offset) else { return }
@@ -353,16 +401,17 @@ final class MacWorkbenchModel: ObservableObject {
         guard let service else { return }
         let request = UUID(); previewRequest = request
         queue.async {
-            let result = Result { () -> (DashboardRevisionRecord, PackageAssetStore) in
+            let result = Result { () -> (DashboardRevisionRecord, PackageAssetStore, Bool) in
                 let record = try service.getDashboard(dashboardId: id, revision: nil)
                 var assets = try PackageAssetStore.load(directory: record.packageDirectory)
                 if let entry = assets.assets[record.manifest.entrypoint] { assets.assets["index.html"] = entry }
-                return (record, assets)
+                return (record, assets, try service.authoring.project(for: id) != nil)
             }
             Task { @MainActor in
                 guard self.previewRequest == request, self.selectedScreen == id else { return }
                 switch result {
-                case .success(let (record, assets)):
+                case .success(let (record, assets, managed)):
+                    self.isReactProject = managed
                     self.record = record; self.preview = assets; self.previewKey = UUID()
                     if !self.supports(self.orientation) { self.orientation = self.screenSupport == .landscape ? .landscape : .portrait }
                     if self.section == "Screens" { self.orientation = DeviceOrientation(rawValue: record.manifest.target.orientation) ?? .portrait }
@@ -533,6 +582,7 @@ final class MacWorkbenchModel: ObservableObject {
     }
     func editScreen() {
         guard let record else { return }
+        if isReactProject { revealReactSource(record.manifest.dashboardId); return }
         if draft != nil { sheet = .editor; return }
         draft = ScreenDraft(dashboardId: record.manifest.dashboardId, baseRevision: record.manifest.revision, name: record.manifest.name, symbol: symbol(for: record.manifest.dashboardId), files: record.files, target: record.manifest.target, connections: record.manifest.connections)
         sheet = .editor

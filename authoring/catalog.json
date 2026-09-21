@@ -1,0 +1,217 @@
+{
+  "version": "1.0.0",
+  "platforms": [
+    "iPadOS 16.0+",
+    "macOS 14+"
+  ],
+  "entries": [
+    {
+      "id": "shadcn/ui",
+      "purpose": "Card, Button",
+      "version": "98a1fe67b439324ddc857f47fbdce056600a4329",
+      "license": "MIT",
+      "importPath": "@screenpunk/ui",
+      "exports": [
+        "Card",
+        "Button",
+        "Input"
+      ],
+      "example": "<Card>Content</Card>",
+      "requiredCapabilities": [],
+      "status": "mac-webkit-verified-device-pending",
+      "expectedSizeBytes": 14837,
+      "compatibility": "Native WKWebView macOS 26.6.2: portrait/dark and landscape/light interaction probes pass with zero CSP violations. iPadOS 16 build target; physical baseline and touch acceptance pending.",
+      "provenance": "ui/NOTICE.txt",
+      "sizeMethod": "Standalone production import including React, emitted CSS and dependency notices; not additive across modules."
+    },
+    {
+      "id": "@radix-ui/react-dialog",
+      "purpose": "Dialogs, tabs, select",
+      "version": "1.1.23",
+      "license": "MIT",
+      "importPath": "@screenpunk/ui",
+      "exports": [
+        "InfoDialog",
+        "TabGroup",
+        "Choice"
+      ],
+      "example": "<InfoDialog title=\"Details\">Content</InfoDialog>",
+      "requiredCapabilities": [],
+      "status": "mac-webkit-verified-device-pending",
+      "expectedSizeBytes": 168353,
+      "compatibility": "Native WKWebView macOS 26.6.2: portrait/dark and landscape/light interaction probes pass with zero CSP violations. iPadOS 16 build target; physical baseline and touch acceptance pending.",
+      "provenance": "package-lock.json",
+      "sizeMethod": "Standalone production import including React, emitted CSS and dependency notices; not additive across modules.",
+      "versions": {
+        "@radix-ui/react-dialog": "1.1.23",
+        "@radix-ui/react-select": "2.3.7",
+        "@radix-ui/react-tabs": "1.1.21"
+      },
+      "adaptations": [
+        "Select viewport stylesheet extracted to packaged CSS",
+        "Scrollbar helper uses DOM style properties; original event isolation retained"
+      ]
+    },
+    {
+      "id": "lucide-react",
+      "purpose": "Local icons",
+      "version": "1.47.0",
+      "license": "ISC",
+      "importPath": "@screenpunk/ui",
+      "exports": [
+        "Activity"
+      ],
+      "example": "<Activity aria-hidden />",
+      "requiredCapabilities": [],
+      "status": "mac-webkit-verified-device-pending",
+      "expectedSizeBytes": 21141,
+      "compatibility": "Native WKWebView macOS 26.6.2: portrait/dark and landscape/light interaction probes pass with zero CSP violations. iPadOS 16 build target; physical baseline and touch acceptance pending.",
+      "provenance": "package-lock.json",
+      "sizeMethod": "Standalone production import including React, emitted CSS and dependency notices; not additive across modules."
+    },
+    {
+      "id": "recharts",
+      "purpose": "Responsive charts",
+      "version": "3.10.1",
+      "license": "MIT",
+      "importPath": "@screenpunk/ui",
+      "exports": [
+        "TrendChart"
+      ],
+      "example": "<TrendChart label=\"Trend\" data={[{name:\"A\",value:1}]} />",
+      "requiredCapabilities": [],
+      "status": "mac-webkit-verified-device-pending",
+      "expectedSizeBytes": 412569,
+      "compatibility": "Native WKWebView macOS 26.6.2: portrait/dark and landscape/light interaction probes pass with zero CSP violations. iPadOS 16 build target; physical baseline and touch acceptance pending.",
+      "provenance": "package-lock.json",
+      "sizeMethod": "Standalone production import including React, emitted CSS and dependency notices; not additive across modules."
+    },
+    {
+      "id": "@tanstack/react-table",
+      "purpose": "Sort/filter tables",
+      "version": "8.21.3",
+      "license": "MIT",
+      "importPath": "@screenpunk/ui",
+      "exports": [
+        "DataTable"
+      ],
+      "example": "<DataTable data={rows} columns={columns} />",
+      "requiredCapabilities": [],
+      "status": "mac-webkit-verified-device-pending",
+      "expectedSizeBytes": 70955,
+      "compatibility": "Native WKWebView macOS 26.6.2: portrait/dark and landscape/light interaction probes pass with zero CSP violations. iPadOS 16 build target; physical baseline and touch acceptance pending.",
+      "provenance": "package-lock.json",
+      "sizeMethod": "Standalone production import including React, emitted CSS and dependency notices; not additive across modules."
+    },
+    {
+      "id": "embla-carousel-react",
+      "purpose": "Touch carousel",
+      "version": "8.6.0",
+      "license": "MIT",
+      "importPath": "@screenpunk/ui",
+      "exports": [
+        "Carousel"
+      ],
+      "example": "<Carousel>{[<p key=\"1\">One</p>,<p key=\"2\">Two</p>]}</Carousel>",
+      "requiredCapabilities": [],
+      "status": "mac-webkit-verified-device-pending",
+      "expectedSizeBytes": 45118,
+      "compatibility": "Native WKWebView macOS 26.6.2: portrait/dark and landscape/light interaction probes pass with zero CSP violations. iPadOS 16 build target; physical baseline and touch acceptance pending.",
+      "provenance": "package-lock.json",
+      "sizeMethod": "Standalone production import including React, emitted CSS and dependency notices; not additive across modules."
+    },
+    {
+      "id": "motion",
+      "purpose": "Reduced-motion transitions",
+      "version": "13.4.0",
+      "license": "MIT",
+      "importPath": "@screenpunk/ui",
+      "exports": [
+        "Reveal"
+      ],
+      "example": "<Reveal>Content</Reveal>",
+      "requiredCapabilities": [],
+      "status": "mac-webkit-verified-device-pending",
+      "expectedSizeBytes": 145714,
+      "compatibility": "Native WKWebView macOS 26.6.2: portrait/dark and landscape/light interaction probes pass with zero CSP violations. iPadOS 16 build target; physical baseline and touch acceptance pending.",
+      "provenance": "package-lock.json",
+      "sizeMethod": "Standalone production import including React, emitted CSS and dependency notices; not additive across modules."
+    }
+  ],
+  "icons": [
+    {
+      "name": "Activity",
+      "keywords": [
+        "activity"
+      ],
+      "reactImport": "Activity",
+      "svg": "icons/activity.svg",
+      "license": "ISC; see icons/LICENSE.txt"
+    },
+    {
+      "name": "ChartLine",
+      "keywords": [
+        "chart",
+        "line"
+      ],
+      "reactImport": "ChartLine",
+      "svg": "icons/chart-line.svg",
+      "license": "ISC; see icons/LICENSE.txt"
+    },
+    {
+      "name": "Globe",
+      "keywords": [
+        "globe"
+      ],
+      "reactImport": "Globe",
+      "svg": "icons/globe.svg",
+      "license": "ISC; see icons/LICENSE.txt"
+    },
+    {
+      "name": "RefreshCw",
+      "keywords": [
+        "refresh",
+        "cw"
+      ],
+      "reactImport": "RefreshCw",
+      "svg": "icons/refresh-cw.svg",
+      "license": "ISC; see icons/LICENSE.txt"
+    },
+    {
+      "name": "Layers",
+      "keywords": [
+        "layers"
+      ],
+      "reactImport": "Layers",
+      "svg": "icons/layers.svg",
+      "license": "ISC; see icons/LICENSE.txt"
+    },
+    {
+      "name": "Search",
+      "keywords": [
+        "search"
+      ],
+      "reactImport": "Search",
+      "svg": "icons/search.svg",
+      "license": "ISC; see icons/LICENSE.txt"
+    },
+    {
+      "name": "Sun",
+      "keywords": [
+        "sun"
+      ],
+      "reactImport": "Sun",
+      "svg": "icons/sun.svg",
+      "license": "ISC; see icons/LICENSE.txt"
+    },
+    {
+      "name": "Moon",
+      "keywords": [
+        "moon"
+      ],
+      "reactImport": "Moon",
+      "svg": "icons/moon.svg",
+      "license": "ISC; see icons/LICENSE.txt"
+    }
+  ]
+}

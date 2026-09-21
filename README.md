@@ -73,3 +73,8 @@ The helper starts automatically; preview is live by default.
 
 Apache 2.0 for software. Copyright 2026 Screenpunk, Inc. Brand artwork is separate — see
 [docs/brand-policy.md](docs/brand-policy.md).
+
+## React screen authoring
+
+The optional [React authoring kit](authoring/README.md) builds ordinary offline web packages.
+See [verification status](docs/react-authoring-verification.md) for tested platforms and remaining device checks.

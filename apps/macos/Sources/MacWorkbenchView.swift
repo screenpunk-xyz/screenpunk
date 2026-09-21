@@ -90,13 +90,21 @@ struct MacWorkbenchView: View {
                         if model.devices.isEmpty { Text("Your paired devices appear here.").font(.callout).foregroundStyle(.secondary).padding(.vertical, 8) }
                     } else {
                         sectionHeader("Screens", count: model.screens.count) {
-                            circle("New Screen", symbol: "plus") { model.newScreen() }
+                            Menu {
+                                Button("HTML Screen") { model.newScreen() }
+                                Button("React Screen") { connectionsSelected = false; model.createReactScreen(starter: "earthquakes") }
+                                Button("Component Gallery") { connectionsSelected = false; model.createReactScreen(starter: "gallery") }
+                            } label: { Image(systemName: "plus").frame(width: 24, height: 24) }
+                            .menuStyle(.borderlessButton).help("New screen").disabled(model.busy)
                         }
                         ForEach(model.screens, id: \.dashboardId) { screen in
                             sidebarNavigationItem(screen.name, symbol: model.symbol(for: screen.dashboardId), selected: !connectionsSelected && model.selection == screen.dashboardId) {
                                 connectionsSelected = false
                                 if model.selection != screen.dashboardId { model.select(screen.dashboardId) }
-                            }.id(screen.dashboardId)
+                            }.id(screen.dashboardId).contextMenu {
+                                Button("Reveal React Source") { model.revealReactSource(screen.dashboardId) }
+                                Button("Rebuild React Screen") { model.rebuildReactScreen(screen.dashboardId) }.disabled(model.busy)
+                            }
                         }
                         if model.screens.isEmpty { Text("Save a screen, then use it on any device.").font(.callout).foregroundStyle(.secondary).padding(.vertical, 8) }
                     }
@@ -262,7 +270,10 @@ struct MacWorkbenchView: View {
         Menu {
             Button("Rename Screen…", systemImage: "pencil") { model.sheet = .renameScreen }
             Button("Change Icon…", systemImage: "square.grid.2x2") { model.sheet = .screenIcon }
-            Button("Edit Code…", systemImage: "curlybraces") { model.editScreen() }
+            Button(model.isReactProject ? "Reveal Source…" : "Edit Code…", systemImage: "curlybraces") { model.editScreen() }
+            if model.isReactProject, let id = model.selectedScreen {
+                Button("Rebuild Screen", systemImage: "hammer") { model.rebuildReactScreen(id) }.disabled(model.busy)
+            }
             Button("Duplicate Screen…", systemImage: "plus.square.on.square") { model.duplicateScreen() }
             Divider()
             Button("Delete Screen…", systemImage: "trash", role: .destructive) { confirmDelete = true }

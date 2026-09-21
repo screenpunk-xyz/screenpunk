@@ -28,6 +28,14 @@ public struct MCPToolRouter: Sendable {
 
     private func dispatch(name: String, arguments: JSONValue) throws -> MCPToolResult {
         switch name {
+        case "create_screen_project":
+            return json(try service.authoring.create(starter: arguments["starter"]?.string ?? "earthquakes", catalogVersion: arguments["catalogVersion"]?.string).object?.mapValues { $0.jsonObject() } ?? [:])
+        case "get_screen_project":
+            return json(try service.authoring.get(id: arguments["projectId"]?.string ?? "", paths: arguments["paths"]?.array?.compactMap { $0.string } ?? []).object?.mapValues { $0.jsonObject() } ?? [:])
+        case "update_screen_project":
+            return json(try service.authoring.update(id: arguments["projectId"]?.string ?? "", expected: arguments["sourceVersion"]?.string ?? "", edits: arguments["files"]?.array ?? []).object?.mapValues { $0.jsonObject() } ?? [:])
+        case "build_screen_project":
+            return json(try service.authoring.build(id: arguments["projectId"]?.string ?? "", expected: arguments["sourceVersion"]?.string ?? "", baseRevision: arguments["baseRevision"]?.string, service: service).object?.mapValues { $0.jsonObject() } ?? [:])
         case "list_devices":
             let devices = service.devices.listDevices().map(deviceObject)
             let pending = service.devices.pendingPairings().map { entry -> [String: Any] in
