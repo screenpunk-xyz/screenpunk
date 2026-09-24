@@ -11,6 +11,11 @@ public struct DeviceRuntimeRootView: View {
     @State private var confirmError: String?
     @State private var showDeviceMenu = false
     @State private var showSettings = false
+#if os(iOS)
+    @AppStorage("screenpunk.welcomeShown") private var welcomeShown = false
+    @State private var initialSetupPage: DeviceSetupPage?
+    @State private var connectorRevision = UUID()
+#endif
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var brightness = DeviceBrightnessController()
     @State private var renderedSettingsRevision: String?
@@ -75,6 +80,22 @@ public struct DeviceRuntimeRootView: View {
                     Task { @MainActor in acknowledgeSettings() }
                 }
                 .onDisappear { brightness.stop() }
+#if os(iOS)
+                .sheet(isPresented: $showDeviceMenu) {
+                    if #available(iOS 18, *) {
+                        DeviceSetupMenu(host: host, initialPage: initialSetupPage) { connectorRevision = UUID() }
+                            .onDisappear { initialSetupPage = nil; connectorRevision = UUID() }
+                    } else { DeviceLocalSettingsSheet(host: host) }
+                }
+                .onAppear {
+                    if !welcomeShown { welcomeShown = true; showDeviceMenu = true }
+                    // Existing paired devices adopt the simplified capability model without re-pairing.
+                    var basic = GoogleTVConfiguration.load()
+                    if basic.pin.count == 32 { basic.automaticScreenAccess = true; try? basic.save() }
+                    var developer = GoogleTVADBConfiguration.load()
+                    if developer.serverPin.count == 32 { developer.automaticScreenAccess = true; try? developer.save() }
+                }
+#endif
                 .sheet(isPresented: $showSettings) { DeviceLocalSettingsSheet(host: host) }
                 .task(id: "\(host.runtime.activeRevision ?? "none"):\(host.genericConnectionGeneration.uuidString)") {
                     if let genericConnections { try? await genericConnections.clearCredentials() }
@@ -129,6 +150,7 @@ public struct DeviceRuntimeRootView: View {
         }
         .allowsHitTesting(host.pairingCode == nil && !showDeviceMenu)
         .accessibilityHidden(host.pairingCode != nil || showDeviceMenu)
+#if !os(iOS)
         .overlay {
             if showDeviceMenu {
                 UnlinkPanelView(onUnlink: { showDeviceMenu = false; host.unlink() },
@@ -140,6 +162,13 @@ public struct DeviceRuntimeRootView: View {
                     }
             }
         }
+#else
+        .overlay {
+            if !showDeviceMenu, host.pairingCode == nil, let missing = missingConnector {
+                connectorGate(missing)
+            }
+        }
+#endif
         .overlay {
             if let code = host.pairingCode {
                 ZStack {
@@ -160,6 +189,29 @@ public struct DeviceRuntimeRootView: View {
         }
     }
 
+#endif
+
+#if os(iOS)
+    private var missingConnector: DeviceSetupPage? {
+        _ = connectorRevision
+        return DeviceConnectorCatalog(manifests: host.server?.installedManifests ?? []).missing(for: host.screenSet?.selectedDashboardId ?? host.server?.installedManifests.first?.dashboardId)
+    }
+    private func connectorGate(_ page: DeviceSetupPage) -> some View {
+        DeviceMenuHold(content: ZStack {
+            Color.black.opacity(0.34).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 20) {
+                Image(systemName: "slider.horizontal.3").font(.largeTitle).foregroundStyle(.blue)
+                Text(page == .googleTV ? "Set up Google TV" : "Set up Google Calendar").font(.title2.bold())
+                Text("A few things need to be connected before you can use this screen.").foregroundStyle(.secondary)
+                if #available(iOS 26, *) {
+                    Button("Open settings") { initialSetupPage = page; showDeviceMenu = true }.buttonStyle(.glass).controlSize(.large)
+                } else { Button("Open settings") { initialSetupPage = page; showDeviceMenu = true }.buttonStyle(.bordered).controlSize(.large) }
+                Divider()
+                Text("You can swipe with two fingers to another screen, or hold two fingers for five seconds to open the Screenpunk menu.").font(.footnote).foregroundStyle(.secondary)
+            }.padding(30).frame(maxWidth: 490).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26)).padding(24)
+        }, open: { initialSetupPage = nil; showDeviceMenu = true })
+        .deviceScreenSwipes(screens: host.screenSet?.screens.map(\.entry) ?? [], selectedID: host.screenSet?.selectedDashboardId, enabled: true) { host.advanceScreen(by: $0) }
+    }
 #endif
 
     private var localBody: some View {

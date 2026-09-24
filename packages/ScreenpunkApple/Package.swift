@@ -19,7 +19,8 @@ let package = Package(
             dependencies: ["ScreenpunkCore"],
             resources: [
                 .copy("Resources/offline-fixture"),
-                .copy("Resources/runtime-sdk.js")
+                .copy("Resources/runtime-sdk.js"),
+                .copy("Resources/ADB-LICENSE.txt")
             ]
         ),
         .testTarget(

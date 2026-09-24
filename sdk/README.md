@@ -44,3 +44,24 @@ parameters, {signal})`, and `connections.release(resourceURL)`. The result inclu
 explicit fresh/stale/unavailable/error state and either parsed JSON or an opaque
 local raster handle. See [the contract and approval workflow](../docs/public-read-connections.md)
 and [the synthetic animation example](../examples/public-read-animation).
+
+### Native Google TV synthesized voice
+
+Native builds advertising `googleTVVoice: 1` accept
+`connections.request('googleTV', 'voice', { text: 'Watch CNBC on YouTube TV' })`
+directly inside an explicit click handler. Native settings must approve the screen
+ID and exact phrase. Do not send on load, poll, or retry. The response
+`{ sent: true, effectVerified: false }` confirms delivery only. Voice allows 45
+seconds; timeout sends native cancellation. Update privately bundled SDKs.
+See [permissions and hardware testing](../docs/connections/google-tv.md).
+
+Voice delivery diagnostics include `audioSeconds` (speech PCM),
+`streamedPCMSeconds` (including final padding), `streamSeconds` (elapsed sending),
+and `audioPackets`. Build 2026092104 adds `pcmPeak`, `pcmRMS`, and
+`pcmNonzeroFrames`, and restores reference unpaced prerecorded delivery after
+2026092103 regressed on hardware. These are transport diagnostics, not evidence
+of recognized words or channel playback. No SDK or screen update is required.
+
+Build2026092105 adds experimental `endHoldSeconds`: after the unchanged burst
+writes, native keeps the voice session open for the transmitted PCM duration
+before end. Recognition and playback still require hardware observation.

@@ -11,7 +11,7 @@ const manifest: DashboardManifest = {
   target: {profileId: 'fixture-tablet', width: 640, height: 640, scale: 1, orientation: 'portrait'},
   connections: [{alias: 'publicData', required: true, publicHTTP: {origin: 'https://data.example.org', userAgent: 'Screenpunk/1 (synthetic fixture)', operations: [
     {name:'timeline',path:'/timeline',response:'json',parameters:{},maxAgeSeconds:1,staleSeconds:3600},
-    {name:'frame',path:'/frames/{timestamp}.png',response:'raster',parameters:{timestamp:{location:'path',minimum:1000,maximum:2000}},maxAgeSeconds:3600,staleSeconds:3600}
+    {name:'frame',path:'/frames/{filename}',response:'raster',parameters:{filename:{location:'path',pathSegment:{maxLength:128}}},maxAgeSeconds:3600,staleSeconds:3600}
   ]}}],
   files: ['app.js','index.html','styles.css','screenpunk.js'].map(path => { const data = readFileSync(join(directory,path)); return {path,bytes:data.length,sha256:sha256Bytes(data)}; })
 };

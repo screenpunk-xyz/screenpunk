@@ -155,6 +155,10 @@ function createDashboardClient(options = {}) {
         transport.send(message);
     }
     return {
+        navigation: {
+            async open(pageId) { await sendRequest("navigation.open", { parameters: { pageId } }); },
+            async get() { const response = await sendRequest("navigation.get"); return response.value; }
+        },
         cameras: {
             mount(element, source, onStatus = () => { }, presentation = {}) {
                 if (source.kind !== "homeAssistant" || source.connection !== "home" ||
@@ -257,6 +261,15 @@ function createDashboardClient(options = {}) {
                         rasterURLs.set(result.resourceURL, (rasterURLs.get(result.resourceURL) ?? 0) + 1);
                     }
                     return result;
+                }
+                catch (error) {
+                    if (error instanceof BridgeClientError && error.code === "permission_required") {
+                        const status = await sendRequest("runtime.onStatus");
+                        if (status.value?.publicReadHTTP !== 1) {
+                            throw new BridgeClientError("unsupported_version", "Update Screenpunk to read public data.");
+                        }
+                    }
+                    throw error;
                 }
                 finally {
                     options.signal?.removeEventListener("abort", abort);

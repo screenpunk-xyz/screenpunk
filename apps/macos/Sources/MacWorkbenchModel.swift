@@ -15,7 +15,7 @@ struct ScreenDraft: Codable, Identifiable {
     var connections: [ManifestConnection] = []
 }
 
-enum WorkbenchSheet: String, Identifiable { case manual, editor, agents, homeAssistant, rename, renameScreen, screenIcon, deviceSettings, deviceConnections; var id: String { rawValue } }
+enum WorkbenchSheet: String, Identifiable { case manual, editor, agents, homeAssistant, googleTV, rename, renameScreen, screenIcon, deviceSettings, deviceConnections; var id: String { rawValue } }
 
 @MainActor
 final class MacWorkbenchModel: ObservableObject {
@@ -37,6 +37,7 @@ final class MacWorkbenchModel: ObservableObject {
     private var thumbnailRequests: [String: Task<NSImage?, Never>] = [:]
     private let thumbnailQueue = DispatchQueue(label: "xyz.screenpunk.thumbnail", qos: .utility)
     private var previewRequest = UUID()
+    @Published var isReactProject = false
     @Published var preview: PackageAssetStore?
     @Published var previewKey = UUID()
     @Published var screenPreviewProfile: ScreenPreviewProfile = .defaultProfile {
@@ -46,6 +47,7 @@ final class MacWorkbenchModel: ObservableObject {
     @Published var pairing: PairingRequestResult?
     /// A reachability probe of saved devices is running on the workbench queue.
     @Published private(set) var checkingDevices = false
+    @Published private(set) var manuallyRefreshingDevices = false
     /// At least one probe has finished since launch. Until then the saved
     /// `reachable` flag is last session's answer, not this network's.
     @Published private(set) var devicesChecked = false
@@ -65,6 +67,7 @@ final class MacWorkbenchModel: ObservableObject {
     private var pairingPollInFlight = false
     private var refreshing = false
     private var pendingProbe = false
+    private var pendingManualProbe = false
     private var ticks = 0
     private var appliedScreens: [String: String] = [:]
     private var appliedOrientations: [String: String] = [:]
@@ -159,7 +162,7 @@ final class MacWorkbenchModel: ObservableObject {
             }
             refresh(probe: true)
             timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-                Task { @MainActor in guard let self else { return }; self.ticks += 1; self.refresh(probe: self.ticks % 5 == 0) }
+                Task { @MainActor in guard let self else { return }; self.ticks += 1; self.refresh(probe: self.ticks % 5 == 0, periodic: true) }
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -178,12 +181,15 @@ final class MacWorkbenchModel: ObservableObject {
             }
         }
     }
-    func refresh(probe: Bool = false) {
+    func refresh(probe: Bool = false, manual: Bool = false, periodic: Bool = false) {
+        if manual { manuallyRefreshingDevices = true; pendingManualProbe = true }
         // A wake, foreground, or manual probe that arrives while a refresh or
         // operation holds the queue is deferred, not dropped.
-        if probe, refreshing || busy || pairing != nil { pendingProbe = true }
+        if probe, !periodic, refreshing || busy || pairing != nil { pendingProbe = true }
         guard let service, !refreshing, !busy, pairing == nil else { return }
-        let probe = probe || pendingProbe
+        let probe = probe || pendingProbe || pendingManualProbe
+        let manualProbe = pendingManualProbe
+        pendingManualProbe = false
         pendingProbe = false
         refreshing = true
         if probe { checkingDevices = true }
@@ -199,6 +205,7 @@ final class MacWorkbenchModel: ObservableObject {
                 let hadDraft = self.hasUnappliedScreen
                 self.refreshing = false; self.devices = devices; self.nearby = nearby; self.agents = agents
                 if probe { self.checkingDevices = false; self.devicesChecked = true }
+                if manualProbe { self.manuallyRefreshingDevices = self.pendingManualProbe }
                 if self.section == "Devices", let previousDevice,
                    let current = devices.first(where: { $0.devicePin == previousDevice.devicePin }), current.id != previousDevice.id {
                     self.select(current.id)
@@ -337,6 +344,53 @@ final class MacWorkbenchModel: ObservableObject {
         return await request.value
     }
 
+    func createReactScreen(starter: String) {
+        guard let service, !busy else { return }
+        busy = true
+        queue.async {
+            let result = Result { () -> JSONValue in
+                let project = try service.authoring.create(starter: starter)
+                return try service.authoring.build(id: project["projectId"]!.string!, expected: project["sourceVersion"]!.string!, baseRevision: nil, service: service)
+            }
+            Task { @MainActor in
+                self.busy = false
+                switch result {
+                case .success(let build):
+                    self.section = "Screens"; self.screens = (try? service.listDashboards()) ?? []
+                    if let id = build["dashboardId"]?.string { self.select(id) }
+                case .failure(let failure): self.error = (failure as? ControllerError)?.detail ?? failure.localizedDescription
+                }
+            }
+        }
+    }
+    func revealReactSource(_ dashboardId: String) {
+        guard let service else { return }
+        do {
+            guard let project = try service.authoring.project(for: dashboardId), let location = project["sourceLocation"]?.string else {
+                notice = "This screen has no managed React source project."; return
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: location)])
+        } catch { self.error = (error as? ControllerError)?.detail ?? error.localizedDescription }
+    }
+    func rebuildReactScreen(_ dashboardId: String) {
+        guard let service, !busy else { return }
+        busy = true
+        queue.async {
+            let result = Result { () -> Void in
+                guard let project = try service.authoring.project(for: dashboardId) else { throw ControllerError.validationFailed(detail: "This screen has no managed React source project.") }
+                let current = try service.getDashboard(dashboardId: dashboardId, revision: nil)
+                _ = try service.authoring.build(id: project["projectId"]!.string!, expected: project["sourceVersion"]!.string!, baseRevision: current.manifest.revision, service: service)
+            }
+            Task { @MainActor in
+                self.busy = false
+                switch result {
+                case .success: self.screens = (try? service.listDashboards()) ?? []; self.loadPreview(dashboardId)
+                case .failure(let failure): self.error = (failure as? ControllerError)?.detail ?? failure.localizedDescription
+                }
+            }
+        }
+    }
+
     func browseScreen(_ offset: Int) {
         guard section == "Devices", device != nil, !busy,
               let id = deviceScreens.previewNeighbor(of: selectedScreen, offset: offset) else { return }
@@ -347,16 +401,17 @@ final class MacWorkbenchModel: ObservableObject {
         guard let service else { return }
         let request = UUID(); previewRequest = request
         queue.async {
-            let result = Result { () -> (DashboardRevisionRecord, PackageAssetStore) in
+            let result = Result { () -> (DashboardRevisionRecord, PackageAssetStore, Bool) in
                 let record = try service.getDashboard(dashboardId: id, revision: nil)
                 var assets = try PackageAssetStore.load(directory: record.packageDirectory)
                 if let entry = assets.assets[record.manifest.entrypoint] { assets.assets["index.html"] = entry }
-                return (record, assets)
+                return (record, assets, try service.authoring.project(for: id) != nil)
             }
             Task { @MainActor in
                 guard self.previewRequest == request, self.selectedScreen == id else { return }
                 switch result {
-                case .success(let (record, assets)):
+                case .success(let (record, assets, managed)):
+                    self.isReactProject = managed
                     self.record = record; self.preview = assets; self.previewKey = UUID()
                     if !self.supports(self.orientation) { self.orientation = self.screenSupport == .landscape ? .landscape : .portrait }
                     if self.section == "Screens" { self.orientation = DeviceOrientation(rawValue: record.manifest.target.orientation) ?? .portrait }
@@ -417,7 +472,11 @@ final class MacWorkbenchModel: ObservableObject {
 
     func renameDevice(_ raw: String) {
         guard let device, let name = DeviceDisplayName.sanitize(raw) else { return }
-        run({ try $0.devices.directory.update(device.id) { $0.displayName = name; $0.device.profile.name = name } }) { record in
+        run({ service in
+            let record = try service.devices.directory.update(device.id) { $0.displayName = name; $0.device.profile.name = name }
+            try service.devices.syncDeviceDisplayName(deviceId: device.id)
+            return record
+        }) { record in
             if let record, let index = self.devices.firstIndex(where: { $0.id == record.id }) { self.devices[index] = record }
             self.sheet = nil
         }
@@ -527,6 +586,7 @@ final class MacWorkbenchModel: ObservableObject {
     }
     func editScreen() {
         guard let record else { return }
+        if isReactProject { revealReactSource(record.manifest.dashboardId); return }
         if draft != nil { sheet = .editor; return }
         draft = ScreenDraft(dashboardId: record.manifest.dashboardId, baseRevision: record.manifest.revision, name: record.manifest.name, symbol: symbol(for: record.manifest.dashboardId), files: record.files, target: record.manifest.target, connections: record.manifest.connections)
         sheet = .editor

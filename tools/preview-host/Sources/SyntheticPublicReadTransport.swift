@@ -13,13 +13,13 @@ actor SyntheticPublicReadTransport: HTTPTransport {
         if request.url.path == "/timeline" {
             timelineReads += 1
             if timelineReads > 1 { return .init(status: 503, body: Data(), headers: ["retry-after": "10"]) }
-            return .init(status: 200, body: Data("{\"frames\":[1000,2000],\"validTimes\":[\"synthetic A\",\"synthetic B\"]}".utf8), headers: ["content-type": "application/json"])
+            return .init(status: 200, body: Data("{\"frames\":[\"daily-one~orig.png\",\"daily-two.png\"],\"validTimes\":[\"synthetic A\",\"synthetic B\"]}".utf8), headers: ["content-type": "application/json"])
         }
-        guard ["/frames/1000.png", "/frames/2000.png"].contains(request.url.path) else { return .init(status: 404, body: Data()) }
+        guard ["/frames/daily-one~orig.png", "/frames/daily-two.png"].contains(request.url.path) else { return .init(status: 404, body: Data()) }
         let context = CGContext(data: nil, width: 320, height: 200, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.setFillColor(CGColor(red: 0.1, green: 0.15, blue: 0.25, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 320, height: 200))
         context.setFillColor(CGColor(red: 0.1, green: 0.8, blue: 0.65, alpha: 1))
-        context.fillEllipse(in: CGRect(x: request.url.path.contains("1000") ? 40 : 180, y: 60, width: 80, height: 80))
+        context.fillEllipse(in: CGRect(x: request.url.path.contains("daily-one") ? 40 : 180, y: 60, width: 80, height: 80))
         let data = NSMutableData(); let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)!
         CGImageDestinationAddImage(destination, context.makeImage()!, nil)
         guard CGImageDestinationFinalize(destination) else { throw ConnectionFailure.validationFailed }

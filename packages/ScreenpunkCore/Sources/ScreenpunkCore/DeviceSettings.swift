@@ -33,18 +33,21 @@ public struct DeviceBrightnessSettings: Codable, Equatable, Sendable {
 /// Device-owned preferences survive dashboard deployments and Mac disconnection.
 /// Event overrides are grouped by dashboard, then by author-declared rule ID.
 public struct DeviceSettings: Codable, Equatable, Sendable {
+    public var displayName: String?
     public var startingPageByDashboard: [String: String]
     public var brightness: DeviceBrightnessSettings
     public var eventRuleOverrides: [String: [String: EventRuleDefaults]]
-    public init(startingPageByDashboard: [String: String] = [:],
+    public init(displayName: String? = nil, startingPageByDashboard: [String: String] = [:],
                 brightness: DeviceBrightnessSettings = .init(),
                 eventRuleOverrides: [String: [String: EventRuleDefaults]] = [:]) {
+        self.displayName = displayName
         self.startingPageByDashboard = startingPageByDashboard
         self.brightness = brightness
         self.eventRuleOverrides = eventRuleOverrides
     }
     public func validate() throws {
         try brightness.validate()
+        if let displayName, DeviceDisplayName.sanitize(displayName) != displayName { throw DeviceSettingsFailure.invalidSettings }
         guard startingPageByDashboard.count <= 128, eventRuleOverrides.count <= 128,
               startingPageByDashboard.allSatisfy({ Self.validID($0.key) && Self.validID($0.value) }),
               eventRuleOverrides.allSatisfy({ Self.validID($0.key) && $0.value.count <= 128 && $0.value.allSatisfy({

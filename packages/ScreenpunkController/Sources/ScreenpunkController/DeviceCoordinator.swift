@@ -441,7 +441,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
 
     /// No package or credential is sent until the current peer advertises atomic sets.
     @discardableResult
-    public func requireScreenSetSupport(deviceId: String, serviceCalls: Bool = false, cameras: Bool = false, publicReads: Bool = false) throws -> LANHello {
+    public func requireScreenSetSupport(deviceId: String, serviceCalls: Bool = false, cameras: Bool = false, publicReads: Bool = false, dynamicPublicPaths: Bool = false) throws -> LANHello {
         let record = try ownedRecord(deviceId)
         let hello: LANHello
         do { hello = try withLink(record) { try $0.hello() } }
@@ -449,7 +449,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
         guard hello.deviceId == deviceId, hello.capabilities?.contains("screen-set-v1") == true,
               (!serviceCalls || hello.capabilities?.contains("home-assistant-services-v1") == true),
               (!cameras || hello.capabilities?.contains("camera-playback-v1") == true),
-              (!publicReads || hello.capabilities?.contains("public-read-http-v1") == true) else {
+              (!publicReads || hello.capabilities?.contains("public-read-http-v1") == true),
+              (!dynamicPublicPaths || hello.capabilities?.contains("public-read-dynamic-path-v1") == true) else {
             throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device before applying screens. Its current screens have been kept.")
         }
         return hello
@@ -461,7 +462,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
         let hello = try requireScreenSetSupport(deviceId: body.deviceId,
             serviceCalls: body.screens.contains { ($0.homeAssistant?.schemaVersion ?? 1) >= 2 },
             cameras: body.screens.contains { $0.homeAssistant?.cameraEntities != nil },
-            publicReads: body.screens.contains { $0.publicReads != nil })
+            publicReads: body.screens.contains { $0.publicReads != nil },
+            dynamicPublicPaths: body.screens.contains { $0.publicReads?.requiresDynamicPaths == true })
         let encoded = try LANCodec.encodePayload(body)
         let envelope = LANEnvelope(requestId: UUID().uuidString, method: LANMethod.deploySet.rawValue, payloadJSON: encoded)
         try checkTransferSize(try LANCodec.encode(envelope).count, advertised: hello.maxTransferBytes)
@@ -548,6 +550,17 @@ public final class DeviceCoordinator: @unchecked Sendable {
     public func revokeHomeAssistant(deviceId: String) throws {
         let record = try ownedRecord(deviceId)
         try withLink(record) { try $0.revokeHomeAssistant() }
+    }
+
+    /// Synchronize the controller's user-assigned label without replacing other device settings.
+    @discardableResult
+    public func syncDeviceDisplayName(deviceId: String) throws -> DeviceSettingsSnapshot {
+        let record = try ownedRecord(deviceId)
+        let snapshot = try fetchDeviceSettings(deviceId: deviceId)
+        guard let name = record.displayName.flatMap(DeviceDisplayName.sanitize), snapshot.value.displayName != name else { return snapshot }
+        var value = snapshot.value
+        value.displayName = name
+        return try updateDeviceSettings(deviceId: deviceId, update: .init(expectedRevision: snapshot.revision, value: value))
     }
 
     public func fetchDeviceSettings(deviceId: String) throws -> DeviceSettingsSnapshot {

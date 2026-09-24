@@ -42,6 +42,7 @@ struct MacWorkbenchView: View {
             case .editor: ScreenEditorSheet(model: model)
             case .agents: AgentConnectionSheet(profile: agentProfile)
             case .homeAssistant: HomeAssistantConnectionSheet(store: connectionsStore)
+            case .googleTV: GoogleTVConnectionSheet()
             case .rename: RenameDeviceSheet(model: model)
             case .renameScreen: RenameScreenSheet(model: model)
             case .screenIcon: ScreenIconSheet(model: model)
@@ -90,13 +91,21 @@ struct MacWorkbenchView: View {
                         if model.devices.isEmpty { Text("Your paired devices appear here.").font(.callout).foregroundStyle(.secondary).padding(.vertical, 8) }
                     } else {
                         sectionHeader("Screens", count: model.screens.count) {
-                            circle("New Screen", symbol: "plus") { model.newScreen() }
+                            Menu {
+                                Button("HTML Screen") { model.newScreen() }
+                                Button("React Screen") { connectionsSelected = false; model.createReactScreen(starter: "earthquakes") }
+                                Button("Component Gallery") { connectionsSelected = false; model.createReactScreen(starter: "gallery") }
+                            } label: { Image(systemName: "plus").frame(width: 24, height: 24) }
+                            .menuStyle(.borderlessButton).help("New screen").disabled(model.busy)
                         }
                         ForEach(model.screens, id: \.dashboardId) { screen in
                             sidebarNavigationItem(screen.name, symbol: model.symbol(for: screen.dashboardId), selected: !connectionsSelected && model.selection == screen.dashboardId) {
                                 connectionsSelected = false
                                 if model.selection != screen.dashboardId { model.select(screen.dashboardId) }
-                            }.id(screen.dashboardId)
+                            }.id(screen.dashboardId).contextMenu {
+                                Button("Reveal React Source") { model.revealReactSource(screen.dashboardId) }
+                                Button("Rebuild React Screen") { model.rebuildReactScreen(screen.dashboardId) }.disabled(model.busy)
+                            }
                         }
                         if model.screens.isEmpty { Text("Save a screen, then use it on any device.").font(.callout).foregroundStyle(.secondary).padding(.vertical, 8) }
                     }
@@ -214,16 +223,16 @@ struct MacWorkbenchView: View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 16, weight: .regular)).frame(width: 24, height: 24) }
             .workbenchButton(circular: true).help(label).accessibilityLabel(label)
     }
-    /// Same footprint as `circle`; the glyph becomes a spinner while a probe runs.
+    /// Same footprint as `circle`; the glyph becomes a spinner during a manual refresh.
     private var refreshDevicesButton: some View {
-        let label = model.checkingDevices ? "Checking devices" : "Refresh Devices"
-        return Button { model.refresh(probe: true) } label: {
+        let label = model.manuallyRefreshingDevices ? "Checking devices" : "Refresh Devices"
+        return Button { model.refresh(probe: true, manual: true) } label: {
             ZStack {
-                if model.checkingDevices { ProgressView().controlSize(.small) }
+                if model.manuallyRefreshingDevices { ProgressView().controlSize(.small) }
                 else { Image(systemName: "arrow.clockwise").font(.system(size: 16, weight: .regular)) }
             }.frame(width: 24, height: 24)
         }
-        .workbenchButton(circular: true).disabled(model.checkingDevices)
+        .workbenchButton(circular: true).disabled(model.manuallyRefreshingDevices)
         .help(label).accessibilityLabel(label)
     }
 
@@ -262,7 +271,10 @@ struct MacWorkbenchView: View {
         Menu {
             Button("Rename Screen…", systemImage: "pencil") { model.sheet = .renameScreen }
             Button("Change Icon…", systemImage: "square.grid.2x2") { model.sheet = .screenIcon }
-            Button("Edit Code…", systemImage: "curlybraces") { model.editScreen() }
+            Button(model.isReactProject ? "Reveal Source…" : "Edit Code…", systemImage: "curlybraces") { model.editScreen() }
+            if model.isReactProject, let id = model.selectedScreen {
+                Button("Rebuild Screen", systemImage: "hammer") { model.rebuildReactScreen(id) }.disabled(model.busy)
+            }
             Button("Duplicate Screen…", systemImage: "plus.square.on.square") { model.duplicateScreen() }
             Divider()
             Button("Delete Screen…", systemImage: "trash", role: .destructive) { confirmDelete = true }
@@ -379,7 +391,7 @@ struct MacWorkbenchView: View {
             ConnectionsView(agents: model.agents, store: connectionsStore, openAgent: { profile in
                 agentProfile = profile
                 model.sheet = .agents
-            }, openHomeAssistant: { model.sheet = .homeAssistant }, search: $connectionSearch)
+            }, openHomeAssistant: { model.sheet = .homeAssistant }, openGoogleTV: { model.sheet = .googleTV }, search: $connectionSearch)
         }
         else if model.pairing != nil { pairingState }
         else if model.detected != nil && model.section == "Devices" { pairingState }
@@ -527,6 +539,7 @@ struct ScreenCanvas: View {
                                     operation.name + " GET " + operation.path + " (" + operation.response + ")\n" +
                                     operation.parameters.keys.sorted().map { key in
                                         let rule = operation.parameters[key]!
+                                        if let segment = rule.pathSegment { return key + ": single path segment, 1…\(segment.maxLength) ASCII characters" }
                                         return key + ": " + (rule.values?.joined(separator: ", ") ?? "\(rule.minimum ?? 0)…\(rule.maximum ?? 0)")
                                     }.joined(separator: "; ")
                                 }.joined(separator: "\n")

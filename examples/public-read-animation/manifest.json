@@ -30,13 +30,14 @@
           },
           {
             "name": "frame",
-            "path": "/frames/{timestamp}.png",
+            "path": "/frames/{filename}",
             "response": "raster",
             "parameters": {
-              "timestamp": {
+              "filename": {
                 "location": "path",
-                "minimum": 1000,
-                "maximum": 2000
+                "pathSegment": {
+                  "maxLength": 128
+                }
               }
             },
             "maxAgeSeconds": 3600,
@@ -49,8 +50,8 @@
   "files": [
     {
       "path": "app.js",
-      "bytes": 2413,
-      "sha256": "0ccafe24ec5ac681746661eccc051de39706ee7c6d9015fd207b68ec410fb797"
+      "bytes": 2391,
+      "sha256": "dbcc676f46d708f65cb8f550b4dbc9701cb7c0424bc4d9f4c73fe80fc9a74dce"
     },
     {
       "path": "index.html",
@@ -64,9 +65,9 @@
     },
     {
       "path": "screenpunk.js",
-      "bytes": 18230,
-      "sha256": "d2bdb067c9151f47ad63fbd6392d45eb6b8dc07cabd7a72725ba3580d93e86c4"
+      "bytes": 18969,
+      "sha256": "cd9fe46b0c6b40bd6245ea28b174ace387b47c240aed8fd1e218b2bd34a726b5"
     }
   ],
-  "digest": "7f2c47ef6c9bb81e9c5d50956cf53c6fc65de0e6ab7f1084932df76f64ca497a"
+  "digest": "b23c4acf922c884845c97c2a756ae5760ac98573005d6884e5db04d188be5665"
 }

@@ -50,3 +50,15 @@ test("connection grant schema", () => {
 test("pinned manifest schema id", () => {
   assert.equal(schema.$id, "https://screenpunk.xyz/schemas/dashboard-manifest/v1.json");
 });
+
+test('schema accepts bounded dynamic segments and rejects mixed parameter rules', () => {
+  const manifest = load('schemas/fixtures/valid/minimal.json');
+  manifest.connections = [{alias:'photos',required:true,publicHTTP:{origin:'https://images.example.org',userAgent:'Screenpunk/1',operations:[{
+    name:'photo',path:'/photos/{filename}',response:'raster',parameters:{filename:{location:'path',pathSegment:{maxLength:128}}},maxAgeSeconds:60,staleSeconds:3600
+  }]}}];
+  assert.equal(validate(manifest),true,ajv.errorsText(validate.errors));
+  for (const invalid of [{location:'query',pathSegment:{maxLength:128}}, {location:'path',pathSegment:{maxLength:0}}, {location:'path',pathSegment:{maxLength:257}}, {location:'path',pathSegment:{maxLength:128},values:['x']}, {location:'path',pathSegment:{maxLength:128},minimum:1,maximum:2}]) {
+    manifest.connections[0].publicHTTP.operations[0].parameters.filename = invalid;
+    assert.equal(validate(manifest),false);
+  }
+});

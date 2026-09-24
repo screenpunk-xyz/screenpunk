@@ -93,6 +93,13 @@ with tempfile.TemporaryDirectory(prefix="screenpunk-packaged-mcp-") as temporary
                 raise RuntimeError("Packaged preview did not return a PNG")
             (root / "preview.png").write_bytes(data)
             print(f"preview: PNG ({len(data)} bytes); packaged MCP check passed", flush=True)
+            project = json.loads(call(5, "create_screen_project", {"starter": "gallery"})["content"][0]["text"])
+            built = json.loads(call(6, "build_screen_project", {"projectId": project["projectId"], "sourceVersion": project["sourceVersion"]})["content"][0]["text"])
+            call(7, "validate_dashboard", {"dashboardId": built["dashboardId"], "revision": built["revision"]})
+            react_preview = call(8, "preview_dashboard", {"dashboardId": built["dashboardId"], "revision": built["revision"], "live": False})
+            if not any(item.get("type") == "image" for item in react_preview["content"]):
+                raise RuntimeError("React package did not produce a native preview")
+            print("React create/build/validate/preview: passed", flush=True)
         finally:
             p.stdin.close()
             try:

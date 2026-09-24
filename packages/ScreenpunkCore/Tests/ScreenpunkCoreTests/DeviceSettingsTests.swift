@@ -2,6 +2,20 @@ import XCTest
 @testable import ScreenpunkCore
 
 final class DeviceSettingsTests: XCTestCase {
+    func testDeviceNameIsOptionalForLegacySettingsAndPersistsWhenSet() throws {
+        let original = DeviceSettings(brightness: .init(mode: .fixed, fixedLevel: 0.4))
+        let legacy = try JSONEncoder().encode(original)
+        var decoded = try JSONDecoder().decode(DeviceSettings.self, from: legacy)
+        XCTAssertNil(decoded.displayName)
+        decoded.displayName = "Office iPad"
+        try decoded.validate()
+        let restored = try JSONDecoder().decode(DeviceSettings.self, from: JSONEncoder().encode(decoded))
+        XCTAssertEqual(restored.displayName, "Office iPad")
+        XCTAssertEqual(restored.brightness, original.brightness)
+        decoded.displayName = "   "
+        XCTAssertThrowsError(try decoded.validate())
+    }
+
     func testCompetingEditsRejectStaleRevisionWithoutTimeOrdering() throws {
         let original = DeviceSettingsSnapshot()
         var value = original.value

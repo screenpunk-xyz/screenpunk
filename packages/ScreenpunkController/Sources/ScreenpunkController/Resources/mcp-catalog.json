@@ -214,6 +214,38 @@
       "readOnlyHint": false,
       "destructiveHint": false,
       "openWorldHint": false
+    },
+    {
+      "name": "create_screen_project",
+      "group": "authoring",
+      "description": "Create a local React source project from the bundled offline kit. Does not deploy. Read screenpunk://authoring/instructions first.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "get_screen_project",
+      "group": "authoring",
+      "description": "Read source inventory, source version, and selected files (base64). Source is separate from deployable dashboard assets.",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "update_screen_project",
+      "group": "authoring",
+      "description": "Edit source files with optimistic sourceVersion conflict checks. Accepts text/base64 or delete. Does not build or deploy.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    {
+      "name": "build_screen_project",
+      "group": "authoring",
+      "description": "Type-check and build a fixed offline source snapshot into a validated dashboard revision. Supply sourceVersion and the current baseRevision after the first build. Then validate, preview, and obtain deployment approval normally.",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   ]
 }

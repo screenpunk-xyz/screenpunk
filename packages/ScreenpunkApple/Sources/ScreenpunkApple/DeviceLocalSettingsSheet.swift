@@ -10,8 +10,11 @@ struct DeviceLocalSettingsSheet: View {
     @State private var base: DeviceSettingsSnapshot?
     @State private var message: String?
     @State private var saveFailed = false
+    @State private var showGoogleTV = false
+    var embedded = false
 
-    init(host: DeviceLANHost) {
+    init(host: DeviceLANHost, embedded: Bool = false) {
+        self.embedded = embedded
         self.host = host
         _value = State(initialValue: host.settingsSnapshot?.value ?? .init())
         _base = State(initialValue: host.settingsSnapshot)
@@ -25,7 +28,9 @@ struct DeviceLocalSettingsSheet: View {
     private var valid: Bool { (try? value.validate()) != nil }
 
     var body: some View {
-        NavigationStack {
+        if embedded { editor } else { NavigationStack { editor } }
+    }
+    private var editor: some View {
             VStack(spacing: 0) {
                 if conflict {
                     VStack(alignment: .leading, spacing: 10) {
@@ -37,6 +42,7 @@ struct DeviceLocalSettingsSheet: View {
                         }
                     }.font(.callout).padding()
                 }
+                if !embedded { Button("Google TV Connection") { showGoogleTV = true }.padding() }
                 DeviceSettingsEditor(settings: $value, manifest: manifest).disabled(conflict)
                 if let message { Text(message).font(.callout).foregroundStyle(saveFailed ? Color.red : Color.secondary).padding() }
                 if let snapshot = host.settingsSnapshot {
@@ -44,12 +50,13 @@ struct DeviceLocalSettingsSheet: View {
                         .font(.caption).foregroundStyle(.secondary).padding(.horizontal).padding(.bottom)
                 }
             }
-            .navigationTitle("\(host.runtime.profile.name) Settings")
+            .sheet(isPresented: $showGoogleTV) { GoogleTVConnectionSheet() }
+            .navigationTitle(embedded ? "Display and behavior" : "\(host.runtime.profile.name) Settings")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { if !embedded { Button("Close") { dismiss() } } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         guard let base else { return }
@@ -65,7 +72,6 @@ struct DeviceLocalSettingsSheet: View {
                     }.disabled(base == nil || conflict || !valid)
                 }
             }
-        }
     }
 }
 #endif

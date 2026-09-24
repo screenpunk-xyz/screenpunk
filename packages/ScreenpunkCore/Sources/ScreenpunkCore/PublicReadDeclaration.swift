@@ -1,17 +1,31 @@
 import Foundation
 
+/// A bounded, unencoded single path segment; never a URL or relative path.
+public struct PublicReadPathSegment: Codable, Equatable, Sendable {
+    public var maxLength: Int
+    public init(maxLength: Int) { self.maxLength = maxLength }
+    func accepts(_ value: String) -> Bool {
+        (1...maxLength).contains(value.utf8.count) &&
+        value.range(of: "^[a-zA-Z0-9_][a-zA-Z0-9_.~-]*\\z", options: .regularExpression) != nil
+    }
+}
+
 /// Untrusted package declaration. Approval binds the complete declaration to an immutable revision.
 public struct PublicReadParameter: Codable, Equatable, Sendable {
     public var location: String // path or query
     public var minimum: Int?
     public var maximum: Int?
     public var values: [String]?
-    public init(location: String, minimum: Int? = nil, maximum: Int? = nil, values: [String]? = nil) {
-        self.location = location; self.minimum = minimum; self.maximum = maximum; self.values = values
+    public var pathSegment: PublicReadPathSegment?
+    public init(location: String, minimum: Int? = nil, maximum: Int? = nil, values: [String]? = nil, pathSegment: PublicReadPathSegment? = nil) {
+        self.location = location; self.minimum = minimum; self.maximum = maximum; self.values = values; self.pathSegment = pathSegment
     }
     func validate() throws {
         guard ["path", "query"].contains(location) else { throw ConnectionFailure.validationFailed }
-        if let values {
+        if let pathSegment {
+            guard location == "path", minimum == nil, maximum == nil, values == nil,
+                  (1...256).contains(pathSegment.maxLength) else { throw ConnectionFailure.validationFailed }
+        } else if let values {
             guard minimum == nil, maximum == nil, (1...64).contains(values.count), Set(values).count == values.count,
                   values.allSatisfy({ value in
                       (1...256).contains(value.utf8.count) && value.unicodeScalars.allSatisfy { (32...126).contains($0.value) }
@@ -23,6 +37,7 @@ public struct PublicReadParameter: Codable, Equatable, Sendable {
         }
     }
     func accepts(_ value: String) -> Bool {
+        if let pathSegment { return pathSegment.accepts(value) }
         if let values { return values.contains(value) }
         guard let n = Int(value), String(n) == value, let minimum, let maximum else { return false }
         return (minimum...maximum).contains(n)
@@ -48,7 +63,7 @@ public struct PublicReadOperation: Codable, Equatable, Sendable {
             if rule.location == "path" { resolved = resolved.replacingOccurrences(of: "{" + key + "}", with: value) }
             else { query[key] = value }
         }
-        guard PublicReadDeclaration.safePath(resolved) else { throw ConnectionFailure.deniedEgress }
+        guard resolved.utf8.count <= 512, PublicReadDeclaration.safePath(resolved) else { throw ConnectionFailure.deniedEgress }
         return (resolved, query)
     }
 }
@@ -60,6 +75,9 @@ public struct PublicReadDeclaration: Codable, Equatable, Sendable {
     public var operations: [PublicReadOperation]
     public init(origin: String, userAgent: String = "Screenpunk/1 (public data reader)", operations: [PublicReadOperation]) {
         self.origin = origin; self.userAgent = userAgent; self.operations = operations
+    }
+    public var requiresDynamicPaths: Bool {
+        operations.contains { $0.parameters.values.contains { $0.pathSegment != nil } }
     }
     public func validate(alias: String) throws {
         guard alias != "home", alias.range(of: "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$", options: .regularExpression) != nil,
@@ -74,13 +92,19 @@ public struct PublicReadDeclaration: Codable, Equatable, Sendable {
             guard Self.safeComponent(operation.name), ["json", "raster"].contains(operation.response),
                   (1...86400).contains(operation.maxAgeSeconds), (0...604800).contains(operation.staleSeconds),
                   operation.parameters.count <= 12, operation.path.utf8.count <= 512 else { throw ConnectionFailure.validationFailed }
+            if operation.parameters.values.contains(where: { $0.pathSegment != nil }) {
+                // Require an approved literal top-level directory and raster decoding.
+                let prefix = operation.path.split(separator: "/", omittingEmptySubsequences: false)
+                guard operation.response == "raster", prefix.count >= 3,
+                      Self.safePathComponent(String(prefix[1])) else { throw ConnectionFailure.validationFailed }
+            }
             var sample: [String: String] = [:]
             for (key, rule) in operation.parameters {
                 guard Self.safeComponent(key), !ConnectionAuthKeys.isOverride(key), !ConnectionAuthKeys.isDestination(key) else { throw ConnectionFailure.validationFailed }
                 try rule.validate()
                 let marker = "{" + key + "}"
                 guard (rule.location == "path") == operation.path.contains(marker) else { throw ConnectionFailure.validationFailed }
-                sample[key] = rule.values?.first ?? String(rule.minimum!)
+                sample[key] = rule.pathSegment != nil ? "x" : (rule.values?.first ?? String(rule.minimum!))
             }
             _ = try operation.resolve(sample)
         }
@@ -89,7 +113,7 @@ public struct PublicReadDeclaration: Codable, Equatable, Sendable {
         (1...128).contains(s.utf8.count) && s != "." && s != ".." && s.range(of: "^[a-zA-Z0-9_.-]+$", options: .regularExpression) != nil
     }
     static func safePathComponent(_ s: String) -> Bool {
-        (1...256).contains(s.utf8.count) && s != "." && s != ".." && s.range(of: "^[a-zA-Z0-9_.,-]+$", options: .regularExpression) != nil
+        (1...256).contains(s.utf8.count) && s != "." && s != ".." && s.range(of: "^[a-zA-Z0-9_.,~-]+\\z", options: .regularExpression) != nil
     }
     static func safePath(_ s: String) -> Bool {
         s.hasPrefix("/") && !s.hasPrefix("//") && s.split(separator: "/", omittingEmptySubsequences: false).dropFirst().allSatisfy { safePathComponent(String($0)) }
@@ -113,6 +137,7 @@ public struct PublicReadProvisioning: Codable, Equatable, Sendable {
         connections = manifest.connections.filter { $0.publicHTTP != nil }
         try validate()
     }
+    public var requiresDynamicPaths: Bool { connections.contains { $0.publicHTTP?.requiresDynamicPaths == true } }
     public func validate() throws {
         guard schemaVersion == 1, !dashboardId.isEmpty, !revision.isEmpty, connections.count <= 8,
               Set(connections.map(\.alias)).count == connections.count else { throw ConnectionFailure.validationFailed }

@@ -208,8 +208,11 @@ export function createDashboardClient(options: ClientOptions = {}): DashboardCli
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
+        if (fields.alias === "googleTV" && (fields.operation === "voice" || fields.operation === "launchChannel" || fields.operation === "togglePower")) {
+          try { transport.send({ protocolVersion: PROTOCOL_VERSION, kind: "request", id: nowId(), method: "connections.cancel", parameters: { requestId: id } }); } catch { /* Timeout still rejects if transport is already closed. */ }
+        }
         reject(new BridgeClientError("render_timeout", "bridge_timeout"));
-      }, timeoutMs);
+      }, fields.alias === "googleTV" && (fields.operation === "voice" || fields.operation === "launchChannel" || fields.operation === "togglePower") ? Math.max(timeoutMs, 45000) : timeoutMs);
       pending.set(id, { resolve, reject, timer });
       try {
         transport.send(message);

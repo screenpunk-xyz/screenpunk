@@ -16,7 +16,7 @@ settings:
     ONLY_ACTIVE_ARCH: YES
     SUPPORTED_PLATFORMS: macosx
     INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
-    INFOPLIST_KEY_NSLocalNetworkUsageDescription: Screenpunk discovers paired devices on your local network.
+    INFOPLIST_KEY_NSLocalNetworkUsageDescription: Screenpunk discovers paired devices and connects directly to approved local services such as Google TV.
     # NSBonjourServices is an array and has no INFOPLIST_KEY_ build setting, so it
     # lives in Info.plist; Xcode merges the generated keys into that file.
     INFOPLIST_FILE: Info.plist

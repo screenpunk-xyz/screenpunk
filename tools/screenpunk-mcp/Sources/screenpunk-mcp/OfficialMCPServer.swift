@@ -50,6 +50,8 @@ enum OfficialMCPServer {
         await server.withMethodHandler(ListResources.self) { _ in
             .init(
                 resources: [
+                    Resource(name: "Component catalog", uri: "screenpunk://authoring/catalog", description: "Versioned local component catalog and compatibility evidence"),
+                    Resource(name: "React authoring", uri: "screenpunk://authoring/instructions", description: "Offline source, build, preview and deployment workflow"),
                     Resource(name: "Onboarding", uri: "screenpunk://help/onboarding", description: "MCP setup and live preview"),
                     Resource(name: "Disconnect recovery", uri: "screenpunk://help/unlink", description: "Five-second two-finger device menu gesture and confirmed Disconnect"),
                     Resource(name: "Live preview", uri: "screenpunk://help/preview", description: HelpCatalog.livePreviewLabel),
@@ -63,9 +65,10 @@ enum OfficialMCPServer {
         await server.withMethodHandler(ReadResource.self) { params in
             let topicId = params.uri.split(separator: "/").last.map(String.init) ?? "onboarding"
             let topic = HelpCatalog.topic(id: topicId)
+            let authoringText = params.uri.hasPrefix("screenpunk://authoring/") ? try service.authoring.resource(topicId) : nil
             return .init(
                 contents: [
-                    Resource.Content.text("\(topic.title)\n\n\(topic.body)", uri: params.uri, mimeType: "text/plain")
+                    Resource.Content.text(authoringText ?? "\(topic.title)\n\n\(topic.body)", uri: params.uri, mimeType: params.uri == "screenpunk://authoring/catalog" ? "application/json" : "text/plain")
                 ]
             )
         }

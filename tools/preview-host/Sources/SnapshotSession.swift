@@ -102,6 +102,14 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
             window.__SCREENPUNK_READY = false;
             window.screenpunk = window.screenpunk || {};
             window.screenpunk.runtime = window.screenpunk.runtime || {};
+            // Offline previews have no native transport. The SDK preserves this
+            // preinstalled runtime, so supply status without advertising controls.
+            if (typeof window.screenpunk.runtime.onStatus !== 'function') {
+                window.screenpunk.runtime.onStatus = function (listener) {
+                    listener({active: false, preview: true, googleTVDirectChannels: 0});
+                    return function () {};
+                };
+            }
             const nativeReady = window.screenpunk.runtime.ready;
             window.screenpunk.runtime.ready = function () {
                 window.__SCREENPUNK_READY = true;
@@ -112,11 +120,21 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
             forMainFrameOnly: true
         )
         config.userContentController.addUserScript(readyScript)
+#if DEBUG
+        if ProcessInfo.processInfo.environment["SCREENPUNK_AUTHORING_PROBE"] == "1" {
+            config.userContentController.addUserScript(WKUserScript(source: "window.__authoringViolations=[];addEventListener('securitypolicyviolation',e=>window.__authoringViolations.push(e.violatedDirective));", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+#endif
 
         let webView = WKWebView(frame: rect, configuration: config)
         homeAssistantBridge?.attach(to: webView)
         webView.navigationDelegate = self
         window.contentView = webView
+#if DEBUG
+        if let appearance = ProcessInfo.processInfo.environment["SCREENPUNK_AUTHORING_APPEARANCE"] {
+            window.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
+        }
+#endif
         self.window = window
         self.webView = webView
 
@@ -186,6 +204,21 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         webView.evaluateJavaScript("window.__SCREENPUNK_READY === true") { [weak self] result, _ in
             guard let self, !self.finished else { return }
             if (result as? Bool) == true {
+#if DEBUG
+                if ProcessInfo.processInfo.environment["SCREENPUNK_PUBLIC_READ_FIXTURE"] == "1" {
+                    webView.evaluateJavaScript("document.body.dataset.loadedFrames === '2' && document.body.dataset.publicReadState === 'stale' && document.querySelector('#frame').naturalWidth > 0 && document.querySelector('#frame').src.startsWith('screenpunk://package/__native-raster/')") { [weak self] result, _ in
+                        guard let self else { return }
+                        guard (result as? Bool) == true else { self.fail("dynamic_raster_probe"); return }
+                        FileHandle.standardError.write(Data("DYNAMIC_RASTER_PROBE_OK\n".utf8))
+                        self.capture(webView)
+                    }
+                    return
+                }
+                if ProcessInfo.processInfo.environment["SCREENPUNK_AUTHORING_PROBE"] == "1" {
+                    self.probeAuthoring(webView)
+                    return
+                }
+#endif
                 self.capture(webView)
                 return
             }
@@ -198,6 +231,47 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
             }
         }
     }
+
+#if DEBUG
+    private func probeAuthoring(_ webView: WKWebView) {
+        let script = """
+        const readyMilliseconds=Math.round(performance.now());
+        const pause=()=>new Promise(r=>setTimeout(r,100));
+        await pause();
+        const failures=[]; const check=(ok,name)=>{if(!ok)failures.push(name)};
+        const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes(text));
+        check(!!document.querySelector('.recharts-surface'),'chart');
+        const counter=button('Count');counter?.click();await pause();check(button('Count')?.textContent.includes('1'),'button');
+        button('Details')?.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));await pause();check(document.body.textContent.includes('Arrow keys'),'tabs');
+        const trigger=button('Open dialog');trigger?.focus();trigger?.click();await pause();
+        check(!!document.querySelector('[role=dialog]'),'dialog');
+        check(document.querySelector('[role=dialog]')?.contains(document.activeElement),'dialog-focus');
+        document.querySelector('[aria-label="Close dialog"]')?.click();await pause();
+        check(!document.querySelector('[role=dialog]'),'dialog-close');
+        check(document.activeElement===trigger,'focus-restoration');
+        const select=document.querySelector('[role=combobox]');select?.focus();
+        select?.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));await pause();
+        check(!!document.querySelector('[role=listbox]'),'select');
+        document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await pause();
+        button('Value')?.click();await pause();
+        check(document.querySelector('th[aria-sort=ascending],th[aria-sort=descending]')!==null,'table-sort');
+        const beforeSlide=document.querySelector('.sp-slides')?.style.transform;
+        document.querySelector('[aria-label="Next slide"]')?.click();await pause();
+        check(document.querySelector('.sp-slides')?.style.transform!==beforeSlide,'carousel');
+        return {failures,violations:window.__authoringViolations,readyMilliseconds,probeFinishedMilliseconds:Math.round(performance.now()),width:innerWidth,height:innerHeight};
+        """
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let value = try await webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+                let data = (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])) ?? Data()
+                FileHandle.standardError.write(Data("AUTHORING_PROBE ".utf8) + data + Data("\n".utf8))
+                self.capture(webView)
+            } catch { self.fail("authoring_probe: \(error.localizedDescription)")
+            }
+        }
+    }
+#endif
 
     private func applyInteraction(on webView: WKWebView) {
         let env = ProcessInfo.processInfo.environment

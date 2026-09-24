@@ -36,7 +36,7 @@ export interface ManifestConnection {
   serviceCalls?: { domain: string; service: string; entityIds: string[]; allowUntargeted?: boolean }[];
 }
 
-export interface PublicReadParameter { location: "path" | "query"; minimum?: number; maximum?: number; values?: string[] }
+export interface PublicReadParameter { location: "path" | "query"; minimum?: number; maximum?: number; values?: string[]; pathSegment?: { maxLength: number } }
 export interface PublicReadDeclaration {
   origin: string;
   userAgent: string;
@@ -60,12 +60,19 @@ export function validatePublicRead(connection: ManifestConnection): void {
   if (typeof d.userAgent !== "string" || !/^[\x20-\x7e]{1,256}$/.test(d.userAgent) || !Array.isArray(d.operations) || !d.operations.length || d.operations.length > 16 || new Set(d.operations.map(o => o.name)).size !== d.operations.length) fail();
   for (const op of d.operations) {
     if (!component(op.name) || !["json", "raster"].includes(op.response) || !Number.isInteger(op.maxAgeSeconds) || op.maxAgeSeconds < 1 || op.maxAgeSeconds > 86400 || !Number.isInteger(op.staleSeconds) || op.staleSeconds < 0 || op.staleSeconds > 604800 || typeof op.path !== "string" || op.path.length > 512 || !op.parameters || Object.keys(op.parameters).length > 12) fail();
+    if (Object.values(op.parameters).some(rule => rule.pathSegment !== undefined)) {
+      const prefix = op.path.split("/");
+      if (op.response !== "raster" || prefix.length < 3 || !/^[a-zA-Z0-9_.,~-]{1,256}$/.test(prefix[1]) || [".", ".."].includes(prefix[1])) fail();
+    }
     let path = op.path;
     for (const [key, rule] of Object.entries(op.parameters)) {
       if (!component(key) || /^(authorization|x-api-key|token|password|access_token|api_key|apikey|secret|path|url|host|origin|method|headers|scheme|port)$/i.test(key) || !["path", "query"].includes(rule.location) || (rule.location === "path") !== path.includes(`{${key}}`)) fail();
       let value: string;
-      if (rule.values !== undefined) {
-        if (!Array.isArray(rule.values) || !rule.values.length || rule.values.length > 64 || rule.minimum !== undefined || rule.maximum !== undefined || new Set(rule.values).size !== rule.values.length || !rule.values.every(v => typeof v === "string" && /^[\x20-\x7e]{1,256}$/.test(v) && (rule.location === "query" || (/^[a-zA-Z0-9_.,-]+$/.test(v) && v !== "." && v !== "..")))) fail();
+      if (rule.pathSegment !== undefined) {
+        if (rule.location !== "path" || rule.values !== undefined || rule.minimum !== undefined || rule.maximum !== undefined || !rule.pathSegment || !Number.isInteger(rule.pathSegment.maxLength) || rule.pathSegment.maxLength < 1 || rule.pathSegment.maxLength > 256 || Object.keys(rule.pathSegment).some(k => k !== "maxLength")) fail();
+        value = "x";
+      } else if (rule.values !== undefined) {
+        if (!Array.isArray(rule.values) || !rule.values.length || rule.values.length > 64 || rule.minimum !== undefined || rule.maximum !== undefined || new Set(rule.values).size !== rule.values.length || !rule.values.every(v => typeof v === "string" && /^[\x20-\x7e]{1,256}$/.test(v) && (rule.location === "query" || (/^[a-zA-Z0-9_.,~-]+$/.test(v) && v !== "." && v !== "..")))) fail();
         value = rule.values[0];
       } else {
         if (!Number.isSafeInteger(rule.minimum) || !Number.isSafeInteger(rule.maximum) || rule.minimum! > rule.maximum!) fail();
@@ -73,7 +80,7 @@ export function validatePublicRead(connection: ManifestConnection): void {
       }
       if (rule.location === "path") path = path.replaceAll(`{${key}}`, value);
     }
-    if (!path.startsWith("/") || !path.slice(1).split("/").every(v => /^[a-zA-Z0-9_.,-]{1,256}$/.test(v) && v !== "." && v !== "..")) fail();
+    if (/[\r\n]/.test(path) || !path.startsWith("/") || !path.slice(1).split("/").every(v => /^[a-zA-Z0-9_.,~-]{1,256}$/.test(v) && v !== "." && v !== "..")) fail();
   }
 }
 

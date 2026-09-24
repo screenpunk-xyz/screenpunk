@@ -6,6 +6,7 @@ struct ConnectionsView: View {
     @ObservedObject var store: ConnectionsStore
     let openAgent: (AgentSetupProfile) -> Void
     let openHomeAssistant: () -> Void
+    let openGoogleTV: () -> Void
     @Binding var search: String
     private var installed: [String] { store.installedAgents.filter(matches) }
     private func matches(_ text: String) -> Bool { search.isEmpty || text.localizedCaseInsensitiveContains(search) }
@@ -42,6 +43,9 @@ struct ConnectionsView: View {
                     }
                 }
                 section("Services") {
+                    if matches("Google TV") {
+                        connectionRow("Google TV", subtitle: "Pair and test local TV control", symbol: "tv", color: .blue) { openGoogleTV() }
+                    }
                     if matches("Home Assistant") {
                         LazyVGrid(columns: columns, alignment: .leading) {
                             connectionRow("Home Assistant", subtitle: "Connect your home", symbol: "house.fill", color: .cyan) { openHomeAssistant() }

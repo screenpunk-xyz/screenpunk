@@ -1,0 +1,1 @@
+{"name":"Earth in motion","connections":[{"alias":"earthquakes","required":false,"publicHTTP":{"origin":"https://earthquake.usgs.gov","userAgent":"Screenpunk/1 (public data reader)","operations":[{"name":"day","path":"/earthquakes/feed/v1.0/summary/2.5_day.geojson","response":"json","parameters":{},"maxAgeSeconds":60,"staleSeconds":3600}]}}]}

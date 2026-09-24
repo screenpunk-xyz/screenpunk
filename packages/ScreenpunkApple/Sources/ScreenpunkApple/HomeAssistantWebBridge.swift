@@ -18,6 +18,26 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private let onHealth: (Bool) -> Void
     private var tasks: [String: Task<Void, Never>] = [:]
     private var documentGeneration = UUID()
+    private var active = true
+    private let googleTV = GoogleTVScreenConnection()
+    private let googleTVADB = GoogleTVADBScreenConnection()
+    private var voiceTapAt: TimeInterval?
+    fileprivate func recordVoiceTap() { if active { voiceTapAt = ProcessInfo.processInfo.systemUptime } }
+    func installVoiceTapGate(_ controller: WKUserContentController) {
+        let world = WKContentWorld.world(name: "ScreenpunkVoiceTap")
+        controller.add(GoogleTVTapHandler(self), contentWorld: world, name: "screenpunkVoiceTap")
+        controller.addUserScript(WKUserScript(source: """
+        document.addEventListener('click', function(event) {
+          if (event.isTrusted) window.webkit.messageHandlers.screenpunkVoiceTap.postMessage('tap');
+        }, true);
+        """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world))
+    }
+    func setActive(_ value: Bool) {
+        guard active != value else { return }
+        active = value
+        if !value { voiceTapAt = nil; googleTV.close(); googleTVADB.close() }
+        status(navigation?.status ?? [:])
+    }
 
     init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime? = nil, navigation: DashboardEventRuntime? = nil,
          revision: String, publicReads: PublicReadRuntime? = nil, resources: PublicRasterResources? = nil, onHealth: @escaping (Bool) -> Void) {
@@ -28,6 +48,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     }
     func attach(to webView: WKWebView) { self.webView = webView; cameras?.attach(webView) }
     func cancel() {
+        voiceTapAt = nil; googleTV.close(); googleTVADB.close()
         documentGeneration = UUID()
         for task in publicTasks.values { task.cancel() }; publicTasks.removeAll(); resources?.clear()
         let reads = publicReads; Task { await reads?.cancel() }
@@ -37,7 +58,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
 
     func status(_ value: [String: Any]) {
         dispatch(["protocolVersion": 1, "id": "runtime-status", "kind": "event", "method": "runtime.onStatus",
-                  "value": ["navigation": value, "homeAssistantTransport": "websocket-with-http", "homeAssistantServiceCalls": 1, "cameraPlayback": 1, "publicReadHTTP": 1, "macIsRuntimeProxy": false]])
+                  "value": ["active": active, "navigation": value, "homeAssistantTransport": "websocket-with-http", "homeAssistantServiceCalls": 1, "cameraPlayback": 1, "publicReadHTTP": 1, "googleTVRemote": 1, "googleTVVoice": 1, "googleTVDirectChannels": 1, "googleTVDirectPower": 1, "macIsRuntimeProxy": false]])
     }
 
     deinit { let cameras = cameras; Task { @MainActor in cameras?.cancel() } }
@@ -67,7 +88,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
             reply(id: id, value: NSNull()); _ = navigation.open(pageId: page)
         case "state.get": reply(id: id, value: NSNull())
         case "connections.cancel":
-            if let target = (body["parameters"] as? [String: String])?["requestId"] { publicTasks.removeValue(forKey: target)?.cancel() }
+            if let target = (body["parameters"] as? [String: String])?["requestId"] { publicTasks.removeValue(forKey: target)?.cancel(); tasks.removeValue(forKey: target)?.cancel() }
             reply(id: id, value: NSNull())
         case "connections.release":
             if let url = (body["parameters"] as? [String: String])?["resourceURL"] { resources?.release(url: url) }
@@ -84,6 +105,31 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
             }
             let subscribe = body["method"] as? String == "connections.subscribe"
             let generation = documentGeneration
+            if !subscribe && alias == "googleTV" {
+                guard active, let dashboardID = navigation?.manifest.dashboardId else { reply(id: id, error: "permission_required"); return }
+                if operation == "voice" || operation == "launchChannel" || operation == "togglePower" {
+                    let tap = voiceTapAt; voiceTapAt = nil
+                    guard let tap, ProcessInfo.processInfo.systemUptime - tap <= 1 else {
+                        reply(id: id, error: "Google TV voice, channel launch, and direct power require an explicit tap."); return
+                    }
+                }
+                tasks[id] = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    defer { if self.documentGeneration == generation { self.tasks.removeValue(forKey: id) } }
+                    do {
+                        let value: [String: Any]
+                        if operation == "launchChannel" { value = try await self.googleTVADB.launch(dashboard: dashboardID, parameters: parameters) }
+                        else if operation == "togglePower" { value = try await self.googleTVADB.togglePower(dashboard: dashboardID, parameters: parameters) }
+                        else { value = try await self.googleTV.request(dashboardID: dashboardID, operation: operation, parameters: parameters) }
+                        guard self.current(generation) else { return }
+                        self.reply(id: id, value: value)
+                    } catch {
+                        guard self.current(generation) else { return }
+                        self.reply(id: id, error: error.localizedDescription)
+                    }
+                }
+                return
+            }
             if !subscribe, let publicReads, publicReads.aliases.contains(alias) {
                 guard publicTasks.count < 16, publicTasks[id] == nil else { reply(id: id, error: "size_limit"); return }
                 publicTasks[id] = Task { @MainActor [weak self] in
@@ -190,5 +236,17 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
               let json = String(data: data, encoding: .utf8) else { return }
         webView?.callAsyncJavaScript("if (typeof globalThis.__screenpunkDispatch === 'function') globalThis.__screenpunkDispatch(JSON.parse(message));",
                                     arguments: ["message": json], in: nil, in: .page, completionHandler: { _ in })
+    }
+}
+
+/// Page JavaScript cannot invoke this handler in the isolated content world.
+@MainActor
+private final class GoogleTVTapHandler: NSObject, WKScriptMessageHandler {
+    weak var bridge: HomeAssistantWebBridge?
+    init(_ bridge: HomeAssistantWebBridge) { self.bridge = bridge }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let url = message.frameInfo.request.url?.absoluteString,
+              IsolationEvaluator.isLocalPackageURL(url) else { return }
+        bridge?.recordVoiceTap()
     }
 }
