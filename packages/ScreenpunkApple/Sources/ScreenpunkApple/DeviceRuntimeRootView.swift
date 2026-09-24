@@ -12,7 +12,9 @@ public struct DeviceRuntimeRootView: View {
     @State private var showDeviceMenu = false
     @State private var showSettings = false
 #if os(iOS)
-    @AppStorage("screenpunk.welcomeShown") private var welcomeShown = false
+    // The old flag was also set when older systems showed only display settings.
+    // Track the full menu separately so those devices see Welcome after upgrading.
+    @AppStorage("screenpunk.fullWelcomeShown") private var welcomeShown = false
     @State private var initialSetupPage: DeviceSetupPage?
     @State private var connectorRevision = UUID()
 #endif
@@ -82,10 +84,8 @@ public struct DeviceRuntimeRootView: View {
                 .onDisappear { brightness.stop() }
 #if os(iOS)
                 .sheet(isPresented: $showDeviceMenu) {
-                    if #available(iOS 18, *) {
-                        DeviceSetupMenu(host: host, initialPage: initialSetupPage) { connectorRevision = UUID() }
-                            .onDisappear { initialSetupPage = nil; connectorRevision = UUID() }
-                    } else { DeviceLocalSettingsSheet(host: host) }
+                    DeviceSetupMenu(host: host, initialPage: initialSetupPage) { connectorRevision = UUID() }
+                        .onDisappear { initialSetupPage = nil; connectorRevision = UUID() }
                 }
                 .onAppear {
                     if !welcomeShown { welcomeShown = true; showDeviceMenu = true }

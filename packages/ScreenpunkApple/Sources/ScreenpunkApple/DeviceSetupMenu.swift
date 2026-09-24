@@ -26,7 +26,6 @@ struct DeviceConnectorCatalog {
     }
 }
 
-@available(iOS 18, *)
 @MainActor
 struct DeviceSetupMenu: View {
     @ObservedObject var host: DeviceLANHost
@@ -63,7 +62,7 @@ struct DeviceSetupMenu: View {
         // container beyond the smaller proposal iPadOS may supply to a presented sheet.
         .frame(minWidth: 0, idealWidth: preferredWidth, maxWidth: preferredWidth,
                minHeight: 0, idealHeight: preferredHeight, maxHeight: preferredHeight)
-        .presentationSizing(.fitted.fitted(horizontal: true, vertical: true))
+        .modifier(DeviceMenuPresentation(height: preferredHeight))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.55), value: settingsOpen)
         .onAppear {
             updateSize()
@@ -130,7 +129,7 @@ struct DeviceSetupMenu: View {
                     }
                 }
                 Section("This device") { Label("Display and behavior", systemImage: "sun.max").tag(DeviceSetupPage.display) }
-            }.navigationTitle("Settings").toolbar(removing: .sidebarToggle).navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 320)
+            }.navigationTitle("Settings").modifier(DeviceMenuSidebarToolbar()).navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 320)
                 .toolbar { ToolbarItem(placement: .topBarLeading) {
                     if #available(iOS 26, *) { back.buttonStyle(.glass).buttonBorderShape(.circle).padding(.top, 8) } else { back }
                 } }
@@ -188,6 +187,29 @@ struct DeviceSetupMenu: View {
             if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
             if disclosure { Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+// The menu is available on every supported iPad. Only its presentation adopts
+// newer APIs; older systems must not fall back to the unrelated display form.
+private struct DeviceMenuPresentation: ViewModifier {
+    let height: CGFloat
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.presentationSizing(.fitted.fitted(horizontal: true, vertical: true))
+        } else {
+            content.presentationDetents([.height(height)])
+        }
+    }
+}
+
+private struct DeviceMenuSidebarToolbar: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 17, *) {
+            content.toolbar(removing: .sidebarToggle)
+        } else {
+            content
+        }
     }
 }
 #endif

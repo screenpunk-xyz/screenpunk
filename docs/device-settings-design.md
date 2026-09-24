@@ -4,6 +4,8 @@ Accepted design requirements — September 21, 2026.
 
 Status: the native Welcome and Settings menu is integrated with the device runtime. The separate interactive design preview uses fixture accounts; Google Calendar authorization remains unimplemented. Physical verification of the combined dynamic-path build is tracked separately from the earlier device builds below.
 
+The full menu supports iOS 16 and later. Only fitted sheet sizing is gated to iOS 18; iOS 16–17 use native sheet detents instead of substituting the old display-settings form. A separate first-presentation flag ensures users previously shown that fallback see the full Welcome menu after updating.
+
 ## Connections shown in Settings
 
 - Show one Connections section directly in the main Settings list, without an intermediate connector catalog page.
