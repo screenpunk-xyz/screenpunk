@@ -54,3 +54,25 @@ test('fixed comma queries and coordinate pairs stay bounded declarations', () =>
   const invalid = structuredClone(connection); invalid.publicHTTP!.userAgent = 'X\r\nAuthorization: Y';
   assert.throws(() => validatePublicRead(invalid));
 });
+
+test('dynamic raster path segments are bounded and mutually exclusive', () => {
+  const connection: ManifestConnection = {alias:'photos',required:true,publicHTTP:{origin:'https://images.example.org',userAgent:'Screenpunk/1',operations:[{
+    name:'photo',path:'/uploads/{filename}',response:'raster',parameters:{filename:{location:'path',pathSegment:{maxLength:128}}},maxAgeSeconds:3600,staleSeconds:86400
+  }]}};
+  validatePublicRead(connection);
+  for (const change of [
+    (op: any) => op.response = 'json',
+    (op: any) => op.path = '/{filename}',
+    (op: any) => op.path = '/{filename}/image.png',
+    (op: any) => op.parameters.filename.location = 'query',
+    (op: any) => op.parameters.filename.values = ['x'],
+    (op: any) => op.parameters.filename.minimum = 0,
+    (op: any) => op.parameters.filename.pathSegment.maxLength = 0,
+    (op: any) => op.parameters.filename.pathSegment.maxLength = 257,
+    (op: any) => op.parameters.filename.pathSegment.maxLength = 1.5,
+    (op: any) => op.parameters.filename.pathSegment.pattern = '.*',
+  ]) {
+    const copy = structuredClone(connection); change(copy.publicHTTP!.operations[0]);
+    assert.throws(() => validatePublicRead(copy));
+  }
+});

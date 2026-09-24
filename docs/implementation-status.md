@@ -1,5 +1,10 @@
 # Implementation status
 
+## September 21 — device settings design
+
+- Interactive native preview is in progress; not integrated into the shipping device app.
+- Accepted scope and pending acceptance checks: [Device settings redesign](device-settings-design.md). This includes screen-driven connector visibility, retained unused configured connections, Google TV, and service-specific Google Calendar with multiple accounts.
+
 ## September 19 — per-device settings and event navigation
 
 - Base: `main` at `38323488690b6fc94b2a8c0ff2d05a36ac739755`; branch `asher/codex/device-settings-events`. Implementation is ready for PR review; not merged or released.

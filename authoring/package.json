@@ -1,0 +1,35 @@
+{
+  "name": "@screenpunk/authoring",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.11.1 <25"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs templates/earthquakes dist/earthquakes",
+    "gallery": "node scripts/build.mjs templates/gallery dist/gallery",
+    "test": "tsc --noEmit --strict --skipLibCheck --jsx react-jsx --module ESNext --moduleResolution Bundler --target ES2022 test/sdk-contract.ts && node --import tsx --test test/*.test.*",
+    "kit": "node scripts/kit.mjs"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "1.1.23",
+    "@radix-ui/react-select": "2.3.7",
+    "@radix-ui/react-tabs": "1.1.21",
+    "@tanstack/react-table": "8.21.3",
+    "@types/node": "24.10.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/react-test-renderer": "19.3.0",
+    "embla-carousel-react": "8.6.0",
+    "esbuild": "0.28.2",
+    "lucide-react": "1.47.0",
+    "motion": "13.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-test-renderer": "19.3.0",
+    "recharts": "3.10.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

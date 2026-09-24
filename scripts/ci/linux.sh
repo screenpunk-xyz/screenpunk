@@ -10,6 +10,10 @@ test -f NOTICE
 ./scripts/verify-brand.mjs
 ./scripts/verify-offline-fixture-resource.sh
 
+npm --prefix "$ROOT/authoring" ci --ignore-scripts
+npm --prefix "$ROOT/authoring" test
+npm --prefix "$ROOT/authoring" run gallery
+
 cd "$ROOT/sdk"
 if [[ ! -d node_modules ]]; then
   npm ci

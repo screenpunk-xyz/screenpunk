@@ -198,3 +198,20 @@ test("service data rejects non-JSON values before native dispatch", async () => 
   assert.equal(host.sent.length, 0);
   sdk.dispose();
 });
+
+for (const operation of ["voice", "launchChannel", "togglePower"]) test(`Google TV ${operation} gets a bounded deadline and cancels native work without replay`, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const host = createLoopback({ onRequest() {} });
+  const sdk = createDashboardClient({ transport: host.page });
+  const pending = sdk.connections.request("googleTV", operation, operation === "voice" ? { text: "Watch CNBC" } : { channelID: "LXfrE81qMGA" });
+  const rejected = assert.rejects(pending, /bridge_timeout/);
+  t.mock.timers.tick(15000);
+  assert.equal(host.sent.filter(m => m.method === "connections.cancel").length, 0);
+  t.mock.timers.tick(30000);
+  await rejected;
+  const requests = host.sent.filter(m => m.method === "connections.request");
+  const cancel = host.sent.find(m => m.method === "connections.cancel");
+  assert.equal(requests.length, 1);
+  assert.equal(cancel?.parameters?.requestId, requests[0].id);
+  sdk.dispose();
+});

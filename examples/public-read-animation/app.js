@@ -14,13 +14,13 @@ document.querySelector('#play').onclick = () => {
   try {
     const timeline = await read('timeline');
     if (!timeline.data || !Array.isArray(timeline.data.frames)) throw new Error(timeline.code || 'Timeline unavailable');
-    for (const timestamp of timeline.data.frames.slice(0, 2)) {
+    for (const filename of timeline.data.frames.slice(0, 2)) {
       await delay(150); // Respect native throttling; handle retryAfterSeconds in real providers.
-      const result = await read('frame', { timestamp: String(timestamp) });
+      const result = await read('frame', { filename });
       if (result.state === 'unavailable') { status.textContent = 'No image coverage for this frame'; continue; }
       if (!result.resourceURL) throw new Error(result.code || 'Frame unavailable');
       const loaded = new Image(); loaded.src = result.resourceURL; await loaded.decode();
-      frames.push({ timestamp, result, loaded });
+      frames.push({ filename, result, loaded });
     }
     if (frames.length < 2) throw new Error('Two frames are required for this example');
     image.src = frames[0].result.resourceURL;

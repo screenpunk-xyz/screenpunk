@@ -197,7 +197,7 @@ and cancellation. Existing service and camera results retain their old shapes.
 ## Synthetic example and native preview verification
 
 [`examples/public-read-animation`](../examples/public-read-animation) uses only
-`data.example.org`, synthetic integer timestamps and generated circle frames.
+`data.example.org`, synthetic feed-discovered filenames and generated circle frames.
 It demonstrates JSON, two raster frames, local-handle playback, stale handling,
 abort and cleanup. It is not a weather dashboard or a real provider configuration.
 
@@ -219,3 +219,82 @@ needed for this check. Passing it is preview evidence, not physical-iPad evidenc
 ### Device-sized packages
 
 The Mac workbench prepares a new revision for a device viewport. The controller carries existing source approval to that revision only when it loads the exact saved source identity, creates the prepared package itself, and verifies identical file bytes and manifest fields except target, revision and digest. Only previously approved aliases carry forward. Edits, duplicate dashboard identities, altered declarations and independently prepared revisions require their own approval. Device deployment still checks all required aliases.
+
+## Dynamic raster filenames
+
+Updated hosts support `public-read-dynamic-path-v1` in addition to
+`public-read-http-v1`. A raster operation can opt into a bounded, single path
+segment whose value changes after a JSON feed is read:
+
+```json
+{
+  "name": "photo",
+  "path": "/uploads/{year}/{month}/{filename}",
+  "response": "raster",
+  "parameters": {
+    "year": {"location": "path", "minimum": 2020, "maximum": 2099},
+    "month": {"location": "path", "values": ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]},
+    "filename": {"location": "path", "pathSegment": {"maxLength": 128}}
+  },
+  "maxAgeSeconds": 3600,
+  "staleSeconds": 86400
+}
+```
+
+Put this operation in a `publicHTTP` declaration with one approved HTTPS origin.
+`pathSegment` is mutually exclusive with integer bounds and `values`, is allowed
+only in raster path parameters, and requires `maxLength` from 1 to 256 bytes.
+Values begin with an ASCII letter, digit or underscore; subsequent characters
+may also be period, tilde or hyphen. Whitespace, Unicode, percent encoding,
+slashes, backslashes, queries, fragments and dot segments are rejected. The
+resolved path is limited to 512 bytes, and the template must begin with a literal
+(non-parameterized) top-level directory. Every declared parameter remains required.
+For directories with dynamic names, use a separate bounded `pathSegment` parameter,
+for example `/image/{asset}/{filename}`. Use separate aliases and approvals for
+separate origins. There is no wildcard origin, arbitrary URL or recursive path rule.
+
+The approval covers all matching segment values under that template, not just the
+first observed filename. The runtime does not claim to verify that a filename
+actually appeared in a feed. Screens can validate/extract provider URLs, but native
+validation independently restricts each resulting request. Do not decode or pass a
+full URL into a segment; skip URLs that do not match the approved origin/template.
+For example, for an approved `https://images.example.org/uploads/...` connection:
+
+```js
+const raw = feedItem.imageURL;
+const match = /^https:\/\/images\.example\.org\/uploads\/(\d{4})\/(\d{2})\/([A-Za-z0-9_][A-Za-z0-9_.~-]*)$/.exec(raw);
+if (match) {
+  const result = await screenpunk.connections.read("photos", "photo", {
+    year: match[1], month: match[2], filename: match[3]
+  });
+  if (result.resourceURL) {
+    image.src = result.resourceURL;
+    // When this image is removed from use:
+    // screenpunk.connections.release(result.resourceURL);
+  }
+}
+```
+
+No per-filename package revision or reapproval is needed. Changing the origin,
+template, segment bound, or screen revision requires approval as before. Older
+devices are refused before transfer unless they advertise the new capability;
+existing integer and enum declarations continue to use only the original capability.
+Older Mac/preview builds reject the new rule rather than treating it as unrestricted.
+The SDK read/release API and native raster handles are unchanged. DNS restrictions,
+redirect denial, MIME/signature/ImageIO checks, byte/pixel/cache limits and
+cancellation all still apply. A newly discovered provider image above the existing
+4 MiB / 4096-per-side / 4,194,304-pixel limit is rejected; choose a provider-supplied
+smaller rendition within the same declared bounds when available.
+
+The synthetic `public-read-animation` example now reads two changing filenames
+from its fixture JSON feed. The debug native preview decodes both through native
+resource handles without allowing direct WebView networking.
+
+Run the rendering regression with a **Debug** preview helper:
+
+```sh
+python3 scripts/check-dynamic-raster-preview.py /path/to/ScreenpunkPreviewHost.app/Contents/MacOS/ScreenpunkPreviewHost
+```
+
+It verifies two decoded frames, a native raster image source, stale-cache replay,
+and a real PNG snapshot using only the synthetic transport.

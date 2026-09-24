@@ -1,6 +1,9 @@
 import XCTest
 import ScreenpunkCore
 @testable import ScreenpunkApple
+#if os(macOS)
+import Darwin
+#endif
 
 final class ConnectionAdapterTests: XCTestCase {
     func testDeviceRuntimeIsNotAMacProxy() {
@@ -11,6 +14,18 @@ final class ConnectionAdapterTests: XCTestCase {
     }
 
 #if os(macOS)
+    func testFixtureStartupDeadlineDoesNotBlockOnSilentChild() throws {
+        let started = Date()
+        XCTAssertThrowsError(try FixtureServer.start(nodeArguments: ["-e", "setInterval(() => {}, 1000)"], startupTimeout: 0.2))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
+    func testFixtureShutdownReapsChildIgnoringTermination() throws {
+        let fixture = try FixtureServer.start(nodeArguments: ["-e", "process.on('SIGTERM', () => {}); console.log('fixture-server 1234'); setInterval(() => {}, 1000)"])
+        fixture.stop()
+        XCTAssertFalse(fixture.process.isRunning)
+    }
+
     func testHTTPAgainstFixtureServer() async throws {
         let fixture = try FixtureServer.start()
         defer { fixture.stop() }
@@ -208,15 +223,16 @@ final class ConnectionAdapterTests: XCTestCase {
 private struct FixtureServer {
     let process: Process
     let port: Int
+    let exited: DispatchSemaphore
 
-    static func start(token: String? = nil) throws -> FixtureServer {
+    static func start(token: String? = nil, nodeArguments: [String]? = nil, startupTimeout: TimeInterval = 5) throws -> FixtureServer {
         let root = repoRoot()
         let script = root.appendingPathComponent("tools/fixture-server/server.mjs")
         XCTAssertTrue(FileManager.default.fileExists(atPath: script.path))
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["node", script.path]
+        process.arguments = ["node"] + (nodeArguments ?? [script.path])
         var environment = ProcessInfo.processInfo.environment
         environment["SCREENPUNK_FIXTURE_PORT"] = "0"
         if let token {
@@ -225,32 +241,49 @@ private struct FixtureServer {
         process.environment = environment
         process.standardOutput = pipe
         process.standardError = pipe
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(startupTimeout)
         var line = ""
         let handle = pipe.fileHandleForReading
+        let descriptor = handle.fileDescriptor
+        // availableData blocks when a child never writes, making the deadline
+        // ineffective. Read nonblocking so a broken fixture fails this test.
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) >= 0 else {
+            FixtureServer(process: process, port: 0, exited: exited).stop()
+            throw NSError(domain: "ScreenpunkFixture", code: 2)
+        }
+        var buffer = [UInt8](repeating: 0, count: 4096)
         while Date() < deadline && process.isRunning {
-            let available = handle.availableData
-            if available.isEmpty {
+            let count = Darwin.read(descriptor, &buffer, buffer.count)
+            if count <= 0 {
                 Thread.sleep(forTimeInterval: 0.05)
                 continue
             }
-            line += String(decoding: available, as: UTF8.self)
+            line += String(decoding: buffer.prefix(count), as: UTF8.self)
             if line.contains("\n") { break }
         }
         let match = line.split(separator: "\n").first { $0.hasPrefix("fixture-server ") }
         guard let match, let port = Int(match.split(separator: " ").last ?? "") else {
-            process.terminate()
+            FixtureServer(process: process, port: 0, exited: exited).stop()
             throw NSError(domain: "ScreenpunkFixture", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "fixture-server did not start: \(line)"
             ])
         }
-        return FixtureServer(process: process, port: port)
+        return FixtureServer(process: process, port: port, exited: exited)
     }
 
     func stop() {
-        process.terminate()
-        process.waitUntilExit()
+        guard process.isRunning else { return }
+        // Use the termination callback with bounded cleanup: a child that ignores
+        // SIGTERM must not hold the entire XCTest suite in waitUntilExit.
+        Darwin.kill(process.processIdentifier, SIGTERM)
+        if exited.wait(timeout: .now() + 2) == .timedOut {
+            Darwin.kill(process.processIdentifier, SIGKILL)
+            XCTAssertEqual(exited.wait(timeout: .now() + 2), .success, "Fixture child did not exit after SIGKILL")
+        }
     }
 }
 

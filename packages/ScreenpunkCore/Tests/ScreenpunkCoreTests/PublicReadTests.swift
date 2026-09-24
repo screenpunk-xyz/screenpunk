@@ -2,6 +2,43 @@ import XCTest
 @testable import ScreenpunkCore
 
 final class PublicReadTests: XCTestCase {
+    func testDynamicAssetNamesStayWithinApprovedTemplate() throws {
+        let op = PublicReadOperation(name: "photo", path: "/uploads/{year}/{month}/{filename}", response: "raster", parameters: [
+            "year": .init(location: "path", minimum: 2020, maximum: 2099),
+            "month": .init(location: "path", values: ["01", "09"]),
+            "filename": .init(location: "path", pathSegment: .init(maxLength: 64))])
+        let d = PublicReadDeclaration(origin: "https://images.example.org", operations: [op])
+        try d.validate(alias: "photos")
+        XCTAssertTrue(d.requiresDynamicPaths)
+        XCTAssertEqual(try JSONDecoder().decode(PublicReadDeclaration.self, from: JSONEncoder().encode(d)), d)
+        for name in ["new-image.jpg", "next_day~orig.png", "image.2.jpeg"] {
+            let (grant, _) = try d.grant(alias: "photos", operation: op, parameters: ["year":"2026", "month":"09", "filename":name])
+            XCTAssertEqual(grant.origin, "https://images.example.org")
+            XCTAssertEqual(grant.operations[0].path, "/uploads/2026/09/" + name)
+        }
+        for name in ["", ".", "..", "../secret", "a/b.jpg", "a\\b.jpg", "%2e%2e", "%252f", "a%00.jpg", "https://evil.example/a", "a?x=1", "a#fragment", "a\n.jpg", "a b.jpg", "a.png\n", "a.png\r\n", "a\0.jpg", "é.jpg", String(repeating: "a", count: 65)] {
+            XCTAssertThrowsError(try op.resolve(["year":"2026", "month":"09", "filename":name]), name)
+        }
+        var invalid = d
+        invalid.operations[0].response = "json"
+        XCTAssertThrowsError(try invalid.validate(alias: "photos"))
+        invalid = d; invalid.operations[0].path = "/{filename}/{year}/{month}"
+        XCTAssertThrowsError(try invalid.validate(alias: "photos"))
+        for rule in [PublicReadParameter(location: "query", pathSegment: .init(maxLength: 8)),
+                     .init(location: "path", minimum: 1, maximum: 2, pathSegment: .init(maxLength: 8)),
+                     .init(location: "path", values: ["a"], pathSegment: .init(maxLength: 8)),
+                     .init(location: "path", pathSegment: .init(maxLength: 0)),
+                     .init(location: "path", pathSegment: .init(maxLength: 257))] {
+            invalid = d; invalid.operations[0].parameters["filename"] = rule
+            XCTAssertThrowsError(try invalid.validate(alias: "photos"))
+        }
+        let long = PublicReadOperation(name: "photo", path: "/uploads/{a}/{b}", response: "raster", parameters: [
+            "a": .init(location: "path", pathSegment: .init(maxLength: 256)),
+            "b": .init(location: "path", pathSegment: .init(maxLength: 256))])
+        XCTAssertThrowsError(try long.resolve(["a": String(repeating: "a", count: 256), "b": String(repeating: "b", count: 256)]))
+        XCTAssertFalse(declaration().requiresDynamicPaths)
+    }
+
     func declaration() -> PublicReadDeclaration {
         .init(origin: "https://data.example.org", operations: [
             .init(name: "frame", path: "/frames/{time}/{point}.png", response: "raster", parameters: [

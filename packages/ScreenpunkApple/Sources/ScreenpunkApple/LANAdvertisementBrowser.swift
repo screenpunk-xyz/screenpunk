@@ -10,6 +10,8 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     private let hub: LoopbackDiscovery
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.browse")
     private var browser: NWBrowser?
+    private var pathMonitor: NWPathMonitor?
+    private var networkPath: String?
     private var recoveryTimer: DispatchSourceTimer?
     private var resolutions: [String: NWConnection] = [:]
     private var activeIDs = Set<String>()
@@ -22,6 +24,23 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self, self.recoveryTimer == nil else { return }
             self.startBrowser()
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { [weak self, weak monitor] path in
+                guard let self, let monitor, self.pathMonitor === monitor else { return }
+                let interfaces = path.availableInterfaces.map {
+                    "\($0.name):\($0.index):\(path.usesInterfaceType($0.type))"
+                }.sorted().joined(separator: ",")
+                let signature = "\(path.status):\(path.supportsIPv4):\(path.supportsIPv6):\(interfaces)"
+                let previous = self.networkPath
+                self.networkPath = signature
+                guard let previous, signature != previous else { return }
+                // Service endpoints may carry an interface scope. Discard old
+                // resolutions when routing changes, even if Bonjour stayed ready.
+                self.clearBrowser()
+                self.startBrowser()
+            }
+            self.pathMonitor = monitor
+            monitor.start(queue: self.queue)
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
             timer.schedule(deadline: .now() + 5, repeating: 5)
             timer.setEventHandler { [weak self] in
@@ -42,6 +61,9 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     public func stop() {
         queue.async { [weak self] in
             guard let self else { return }
+            self.pathMonitor?.cancel()
+            self.pathMonitor = nil
+            self.networkPath = nil
             self.recoveryTimer?.cancel()
             self.recoveryTimer = nil
             self.clearBrowser()
@@ -70,6 +92,7 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     }
 
     deinit {
+        pathMonitor?.cancel()
         recoveryTimer?.cancel()
         browser?.cancel()
         for connection in resolutions.values { connection.cancel() }

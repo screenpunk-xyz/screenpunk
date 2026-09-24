@@ -351,6 +351,18 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     // MARK: Persistence
 
+    public var installedManifests: [DashboardManifest] {
+        var packages = Array(screenPackages.values)
+        if let activePackage { packages.append(activePackage) }
+        var seen = Set<String>()
+        return packages.compactMap { package in
+            guard let data = package.assets["manifest.json"]?.data,
+                  let manifest = try? JSONDecoder().decode(DashboardManifest.self, from: data),
+                  seen.insert(manifest.dashboardId).inserted else { return nil }
+            return manifest
+        }
+    }
+
     private func restoreFromStore() {
         guard let store, let state = store.load() else { return }
         runtime.restore(state)
@@ -472,7 +484,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
                     name: runtime.profile.name,
-                    capabilities: ["home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "device-settings-v1", "generic-connections-v1"],
+                    capabilities: ["home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1"],
                     maxTransferBytes: LANProtocolLimits.maxMessageBytes,
                     profile: runtime.profile
                 )

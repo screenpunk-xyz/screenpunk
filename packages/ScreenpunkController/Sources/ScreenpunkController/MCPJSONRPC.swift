@@ -65,6 +65,8 @@ public struct MCPJSONRPC: Sendable {
         case "resources/list":
             result = [
                 "resources": [
+                    resource("screenpunk://authoring/catalog", "Component catalog"),
+                    resource("screenpunk://authoring/instructions", "React authoring"),
                     resource("screenpunk://help/onboarding", "Onboarding"),
                     resource("screenpunk://help/unlink", "Disconnect recovery"),
                     resource("screenpunk://help/preview", "Live preview"),
@@ -76,11 +78,12 @@ public struct MCPJSONRPC: Sendable {
             let uri = value["params"]?["uri"]?.string ?? "screenpunk://help/onboarding"
             let topicId = uri.split(separator: "/").last.map(String.init) ?? "onboarding"
             let topic = HelpCatalog.topic(id: topicId)
+            let authoringText = uri.hasPrefix("screenpunk://authoring/") ? try? router.service.authoring.resource(topicId) : nil
             result = [
                 "contents": [[
                     "uri": uri,
-                    "mimeType": "text/plain",
-                    "text": "\(topic.title)\n\n\(topic.body)"
+                    "mimeType": uri == "screenpunk://authoring/catalog" ? "application/json" : "text/plain",
+                    "text": authoringText ?? (uri.hasPrefix("screenpunk://authoring/") ? "Authoring kit unavailable. Install a Mac build with AuthoringKit." : "\(topic.title)\n\n\(topic.body)")
                 ]]
             ]
         default:

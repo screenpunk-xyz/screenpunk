@@ -2,6 +2,7 @@ import Foundation
 import ScreenpunkCore
 
 public final class ControllerService: @unchecked Sendable {
+    public let authoring: ScreenAuthoring
     public let store: DashboardPackageStore
     public let helper: HelperSupervisor
     public let devices: DeviceCoordinator
@@ -21,6 +22,7 @@ public final class ControllerService: @unchecked Sendable {
         devices: DeviceCoordinator? = nil
     ) {
         self.store = store
+        self.authoring = ScreenAuthoring(root: store.root)
         self.helper = helper
         self.renderer = renderer
         self.devices = devices ?? DeviceCoordinator(
@@ -277,7 +279,8 @@ public final class ControllerService: @unchecked Sendable {
         }
         try devices.requireScreenSetSupport(deviceId: deviceId, serviceCalls: records.contains { $0.manifest.connections.contains { $0.serviceCalls != nil } },
             cameras: records.contains { $0.manifest.connections.contains { $0.cameraEntities != nil } },
-            publicReads: records.contains { $0.manifest.connections.contains { $0.publicHTTP != nil } })
+            publicReads: records.contains { $0.manifest.connections.contains { $0.publicHTTP != nil } },
+            dynamicPublicPaths: records.contains { $0.manifest.connections.contains { $0.publicHTTP?.requiresDynamicPaths == true } })
         let items = try zip(records, packages).map { record, package -> LANScreenSetItem in
             let configuration: HomeAssistantProvisioning?
             if record.manifest.connections.contains(where: { $0.alias == "home" }) {

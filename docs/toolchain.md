@@ -9,7 +9,7 @@ executed Apple evidence.
 | Build host | macOS 26+ | Required for native Mac Icon Composer rendering; app minimum deployment versions are unchanged. |
 | Xcode | 26+ | Required to compile the shared Icon Composer app icon; does not raise deployment targets. Apple CI/release builds select a compatible installed Xcode through `scripts/select-icon-xcode.sh`. |
 | XcodeGen | 2.46.0 | Generate app projects from `project.yml`. CI installs the GitHub release zip (`sha256:4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806`) via `scripts/ci/install-xcodegen.sh`. Do not commit `.xcodeproj`. |
-| Node.js | 22 | SDK and Linux contract jobs |
+| Node.js | 24.21.0 | CI and bundled Mac authoring runtime; authoring/toolchain.json pins archive SHA-256 |
 | TypeScript | 5.9.2 | SDK compile |
 | Swift (packages) | 5.9+ tools, Swift 6 language mode where hosts allow | ScreenpunkCore is Linux-testable |
 | iOS deployment | 16.0 | Universal iPhone/iPad |

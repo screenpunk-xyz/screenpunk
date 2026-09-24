@@ -687,6 +687,27 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertNil(device.installedSet)
     }
 
+    func testDynamicPathsRequireNewCapabilityBeforeDeploy() throws {
+        let device = FakeLANDevice(deviceId: "dynamic-assets", name: "Fixture")
+        device.supportsPublicReads = true
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "dynamic-assets")
+        var connection = ManifestConnection(alias: "photos", required: true)
+        connection.publicHTTP = .init(origin: "https://images.example.org", operations: [
+            .init(name: "photo", path: "/photos/{filename}", response: "raster", parameters: ["filename": .init(location: "path", pathSegment: .init(maxLength: 128))])])
+        let screen = try harness.service.store.putDashboard(dashboardId: nil, name: "Dynamic assets", baseRevision: nil,
+            target: harness.service.defaultTarget(), connections: [connection], files: [.init(path: "index.html", text: "<p>Synthetic</p>")])
+        _ = try harness.service.approvePublicConnections(dashboardId: screen.manifest.dashboardId, revision: screen.manifest.revision, approved: true)
+        XCTAssertThrowsError(try harness.service.shipSet(records: [screen], deviceId: "dynamic-assets", selectedDashboardId: screen.manifest.dashboardId)) {
+            XCTAssertEqual(($0 as? ControllerError)?.code, .unsupportedVersion)
+        }
+        XCTAssertEqual(device.deployAttempts, 0)
+        XCTAssertNil(device.installedSet)
+        XCTAssertNoThrow(try harness.service.devices.requireScreenSetSupport(deviceId: "dynamic-assets", publicReads: true))
+        device.supportsDynamicPublicPaths = true
+        XCTAssertNoThrow(try harness.service.devices.requireScreenSetSupport(deviceId: "dynamic-assets", publicReads: true, dynamicPublicPaths: true))
+    }
+
     private func makeHarness(
         device: FakeLANDevice,
         identity: PairingIdentity? = nil,

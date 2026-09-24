@@ -16,6 +16,8 @@ final class FakeLANDevice: @unchecked Sendable {
     var supportsGeneralServices = false
     var supportsHomeAssistant = false
     var supportsScreenSets = true
+    var supportsPublicReads = false
+    var supportsDynamicPublicPaths = false
     var maxTransferBytes: Int? = LANProtocolLimits.maxMessageBytes
     var installedSet: [LANScreenSetEntry]?
     var selectedDashboardId: String?
@@ -83,7 +85,7 @@ final class FakeLANDevice: @unchecked Sendable {
             switch LANMethod(rawValue: request.method) {
             case .hello:
                 let shown = claimedHelloPin ?? identityPin
-                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: (supportsGeneralServices ? ["home-assistant-services-v1"] : []) + (supportsHomeAssistant ? ["home-assistant-http-v1"] : []) + (supportsScreenSets ? ["screen-set-v1"] : []), maxTransferBytes: maxTransferBytes, profile: runtime.profile))
+                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: (supportsPublicReads ? ["public-read-http-v1"] : []) + (supportsDynamicPublicPaths ? ["public-read-dynamic-path-v1"] : []) + (supportsGeneralServices ? ["home-assistant-services-v1"] : []) + (supportsHomeAssistant ? ["home-assistant-http-v1"] : []) + (supportsScreenSets ? ["screen-set-v1"] : []), maxTransferBytes: maxTransferBytes, profile: runtime.profile))
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
                 guard PeerPin.matches(expected: peerPin, presentedHex: body.controllerPinHex) else {

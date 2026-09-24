@@ -54,8 +54,8 @@
     },
     {
       "path": "screenpunk.js",
-      "bytes": 18969,
-      "sha256": "cd9fe46b0c6b40bd6245ea28b174ace387b47c240aed8fd1e218b2bd34a726b5"
+      "bytes": 19569,
+      "sha256": "08b975a07a0ed5aa7854f4f02f5d2a84a9d31c1a9a80afacb8a10c9a148c2d1d"
     },
     {
       "path": "styles.css",
@@ -73,5 +73,5 @@
       "sha256": "fb227404d572c944ff17554e4822f9693bcf9bb0dd76aaf6072969cf677f04cf"
     }
   ],
-  "digest": "e11186a4c5e1d4ebb7bbffbf1cf817bfe7c881be4339af896b55dcea558e6d2d"
+  "digest": "bb128f17390a7096ad16ec64a057f3c82dd4c69a2d7f01cd4d514fb134a40765"
 }

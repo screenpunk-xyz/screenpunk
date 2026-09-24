@@ -11,7 +11,7 @@ final class PublicReadControllerTests: XCTestCase {
         var connection = ManifestConnection(alias: "jsonData", required: true)
         connection.publicHTTP = .init(origin: "https://data.example.org", operations: [.init(name: "timeline", path: "/timeline", response: "json")])
         var raster = ManifestConnection(alias: "rasterData", required: false)
-        raster.publicHTTP = .init(origin: "https://images.example.org", operations: [.init(name: "frame", path: "/frame.png", response: "raster")])
+        raster.publicHTTP = .init(origin: "https://images.example.org", operations: [.init(name: "frame", path: "/photos/{filename}", response: "raster", parameters: ["filename": .init(location: "path", pathSegment: .init(maxLength: 128))])])
         let record = try service.store.putDashboard(dashboardId: nil, name: "Public fixture", baseRevision: nil,
             target: service.defaultTarget(), connections: [connection,raster], files: [.init(path: "index.html", text: "<p>Fixture</p>")])
         XCTAssertThrowsError(try service.approvedPublicConnections(record.manifest))
@@ -29,6 +29,12 @@ final class PublicReadControllerTests: XCTestCase {
         XCTAssertThrowsError(try reopened.approvedPublicConnections(changed))
         let all = try service.approvePublicConnections(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision, approved: true, aliases: ["rasterData"])
         XCTAssertEqual(all.connections.count, 2)
+        XCTAssertTrue(all.requiresDynamicPaths)
+        _ = try service.previewDashboard(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision)
+        XCTAssertEqual(recorder.request?.nativePublicReads, all)
+        var widened = record.manifest
+        widened.connections[1].publicHTTP?.operations[0].parameters["filename"]?.pathSegment?.maxLength = 256
+        XCTAssertThrowsError(try service.approvedPublicConnections(widened))
         let inspect = try XCTUnwrap(JSONSerialization.jsonObject(with: service.inspectPublicConnections(dashboardId: record.manifest.dashboardId, revision: nil)) as? [String: Any])
         XCTAssertEqual(inspect["approved"] as? Bool, true)
     }
@@ -39,7 +45,7 @@ final class PublicReadControllerTests: XCTestCase {
         var json = ManifestConnection(alias: "jsonData", required: true)
         json.publicHTTP = .init(origin: "https://data.example.org", operations: [.init(name: "timeline", path: "/timeline", response: "json")])
         var raster = ManifestConnection(alias: "rasterData", required: false)
-        raster.publicHTTP = .init(origin: "https://images.example.org", operations: [.init(name: "frame", path: "/frame.png", response: "raster")])
+        raster.publicHTTP = .init(origin: "https://images.example.org", operations: [.init(name: "frame", path: "/photos/{filename}", response: "raster", parameters: ["filename": .init(location: "path", pathSegment: .init(maxLength: 128))])])
         let source = try service.store.putDashboard(dashboardId: nil, name: "Public fixture", baseRevision: nil,
             target: service.defaultTarget(), connections: [json, raster], files: [.init(path: "index.html", text: "<p>Fixture</p>")])
         let device = DeviceProfile(deviceId: "ipad", name: "iPad", width: 768, height: 1024)

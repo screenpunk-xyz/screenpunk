@@ -38,6 +38,41 @@ final class PublicReadRuntimeTests: XCTestCase {
         XCTAssertTrue(CGImageDestinationFinalize(destination))
         return data as Data
     }
+    func testChangingDynamicRasterNamesUseNativeResourcesAndRejectURLInjection() async throws {
+        let transport = Transport(); let clock = Clock()
+        var config = try provisioning()
+        config.connections[0].publicHTTP!.operations[1] = .init(name: "frame", path: "/uploads/{filename}", response: "raster", parameters: ["filename": .init(location: "path", pathSegment: .init(maxLength: 128))])
+        let runtime = try PublicReadRuntime(provisioning: config, transport: transport, resolver: FixedResolver(["203.0.113.10"]), clock: clock)
+        let resources = PublicRasterResources()
+        for (i, name) in ["day-one~orig.png", "day-two.png"].enumerated() {
+            clock.advance(1)
+            let bytes = try raster(width: i + 2)
+            await transport.set(.init(status: 200, body: bytes, headers: ["content-type": "image/png"]))
+            let result = try await runtime.request(alias: "publicData", operation: "frame", parameters: ["filename": name])
+            XCTAssertEqual(result.state, "fresh")
+            let handle = try resources.put(result)
+            XCTAssertEqual(try resources.asset(url: handle).data, bytes)
+            resources.release(url: handle)
+            XCTAssertThrowsError(try resources.asset(url: handle))
+        }
+        for value in ["https://evil.example/a.png", "../a.png", "%2Fother.png"] {
+            do { _ = try await runtime.request(alias: "publicData", operation: "frame", parameters: ["filename":value]); XCTFail("accepted injection") }
+            catch { XCTAssertEqual(error as? ConnectionFailure, .permissionRequired) }
+        }
+        let requests = await transport.requests
+        XCTAssertEqual(requests.map { $0.url.absoluteString }, ["https://data.example.org/uploads/day-one~orig.png", "https://data.example.org/uploads/day-two.png"])
+        clock.advance(1)
+        await transport.set(.init(status: 302, body: Data(), headers: ["location":"https://evil.example/a.png"]))
+        let redirected = try await runtime.request(alias: "publicData", operation: "frame", parameters: ["filename":"redirect.png"])
+        XCTAssertEqual(redirected.state, "error"); XCTAssertNil(redirected.body)
+        XCTAssertEqual(redirected.code, ConnectionFailure.deniedEgress.rawValue)
+        let count = await transport.count(); XCTAssertEqual(count, 3, "No follow-up to redirect destination")
+        let denied = try PublicReadRuntime(provisioning: config, transport: transport, resolver: FixedResolver(["127.0.0.1"]))
+        let local = try await denied.request(alias: "publicData", operation: "frame", parameters: ["filename":"private.png"])
+        XCTAssertEqual(local.code, ConnectionFailure.deniedEgress.rawValue)
+        let after = await transport.count(); XCTAssertEqual(after, count)
+    }
+
     func testCacheIdentityDeduplicationNoCredentialsAndCachedReplay() async throws {
         let transport = Transport(); let clock = Clock()
         await transport.set(.init(status: 200, body: try raster(), headers: ["content-type": "image/png", "last-modified": "Mon, 14 Sep 2026 10:00:00 GMT"]), delay: 30_000_000)
@@ -134,7 +169,8 @@ final class PublicReadRuntimeTests: XCTestCase {
     }
 
     func testVaultOwnerRevisionAndGenerationScoping() throws {
-        let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore()); let config = try provisioning()
+        let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore()); var config = try provisioning()
+        config.connections[0].publicHTTP!.operations[1] = .init(name: "frame", path: "/photos/{filename}", response: "raster", parameters: ["filename": .init(location: "path", pathSegment: .init(maxLength: 128))])
         try vault.stagePublic([config], owner: "owner-a", generation: "set-a")
         XCTAssertEqual(try vault.publicConfiguration(owner: "owner-a", dashboardId: config.dashboardId, revision: config.revision, generation: "set-a"), config)
         for (owner, id, revision, generation) in [("owner-b",config.dashboardId,config.revision,"set-a"),("owner-a","other",config.revision,"set-a"),("owner-a",config.dashboardId,"new-revision","set-a"),("owner-a",config.dashboardId,config.revision,"set-b")] {
