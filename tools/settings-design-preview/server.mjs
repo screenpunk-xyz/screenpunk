@@ -13,7 +13,7 @@ const scenarios = ['New device','Needs setup','Partly ready','Ready','Needs atte
 const guidedStates = ['Not set up','Enabled, inactive','Active'];
 const presentations = ['Current', 'iOS 18–25', 'iOS 16–17'];
 const screens = ['TV remote','Daily information','Home controls'];
-let state = { scenario:'Partly ready', screen:'TV remote', count:2, view:'menu', guided:'Not set up', appearance:'System', orientation:'Landscape', presentation:'Current', revision:0 };
+let state = { scenario:'Partly ready', screen:'TV remote', count:2, view:'googleTV', guided:'Not set up', appearance:'System', orientation:'Portrait', presentation:'Current', revision:0 };
 await mkdir(path.dirname(destination), {recursive:true});
 await writeFile(destination, JSON.stringify(state));
 const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Screenpunk · Device settings studio</title><style>
@@ -25,8 +25,8 @@ const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
 <label>Guided Access <select id="guided">${guidedStates.map(x=>`<option>${x}</option>`).join('')}</select></label>
 <label>Appearance <select id="appearance"><option>System</option><option>Light</option><option>Dark</option></select></label>
 <label>iOS presentation <select id="presentation">${presentations.map(x=>`<option>${x}</option>`).join('')}</select></label>
-<label>Orientation <select id="orientation"><option>Portrait</option><option selected>Landscape</option></select></label>
-<nav><button data-view="welcome">First launch</button><button data-view="screen">Screen</button><button data-view="menu" aria-pressed="true">Screenpunk menu</button><button data-view="settings">Settings</button></nav><span id="status">Sample state</span></header>
+<label>Orientation <select id="orientation"><option selected>Portrait</option><option>Landscape</option></select></label>
+<nav><button data-view="welcome">First launch</button><button data-view="screen">Screen</button><button data-view="menu" aria-pressed="true">Screenpunk menu</button><button data-view="settings">Settings</button><button data-view="googleTV">Google TV</button></nav><span id="status">Sample state</span></header>
 <aside>First design pass · First launch and the two-finger hold open the same menu. All screens and connections are sample state. Older presentation modes approximate app behavior; system styling uses the installed simulator OS.</aside>
 <iframe title="Native iPad Simulator" src="http://localhost:3200"></iframe>
 <script>
@@ -40,6 +40,6 @@ http.createServer(async(req,res)=>{
  if(req.method==='POST'&&req.url==='/state'){
   if(req.headers.origin!=='http://localhost:3201'&&req.headers.origin!=='http://127.0.0.1:3201'){res.writeHead(403);return res.end();}
   let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>2048){res.writeHead(413);return res.end();}}
-  try{const v=JSON.parse(raw);if(!presentations.includes(v.presentation)||!scenarios.includes(v.scenario)||!screens.includes(v.screen)||![0,1,2,3,6,12].includes(v.count)||!guidedStates.includes(v.guided)||!['System','Light','Dark'].includes(v.appearance)||!['Portrait','Landscape'].includes(v.orientation)||!['welcome','screen','menu','settings'].includes(v.view))throw Error();if(v.orientation!==state.orientation){if(!orientationCLI)throw Error('Missing orientation CLI');await run(process.execPath,[orientationCLI,'rotate',v.orientation==='Landscape'?'landscape_left':'portrait','-d',simulator]);}state={...v,revision:state.revision+1};await writeFile(destination,JSON.stringify(state));res.writeHead(200);res.end('ok');}catch{res.writeHead(400);res.end('Invalid state');}return;
+  try{const v=JSON.parse(raw);if(!presentations.includes(v.presentation)||!scenarios.includes(v.scenario)||!screens.includes(v.screen)||![0,1,2,3,6,12].includes(v.count)||!guidedStates.includes(v.guided)||!['System','Light','Dark'].includes(v.appearance)||!['Portrait','Landscape'].includes(v.orientation)||!['welcome','screen','menu','settings','googleTV'].includes(v.view))throw Error();if(v.orientation!==state.orientation){if(!orientationCLI)throw Error('Missing orientation CLI');await run(process.execPath,[orientationCLI,'rotate',v.orientation==='Landscape'?'landscape_left':'portrait','-d',simulator]);}state={...v,revision:state.revision+1};await writeFile(destination,JSON.stringify(state));res.writeHead(200);res.end('ok');}catch{res.writeHead(400);res.end('Invalid state');}return;
  }res.writeHead(404);res.end();
 }).listen(3201,'127.0.0.1',()=>console.log('Settings studio: http://localhost:3201'));

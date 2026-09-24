@@ -4,6 +4,17 @@ import Security
 @testable import ScreenpunkApple
 
 final class GoogleTVADBTests: XCTestCase {
+    func testEndpointRecoveryPreservesIdentityAndEveryPermission() throws {
+        var saved = GoogleTVADBConfiguration(host: "old-tv", port: 123, serverPin: Data(repeating: 7, count: 32), deviceGUID: "same-tv", dashboardIDs: ["screen"], channelIDs: ["LXfrE81qMGA"], pinFormat: GoogleTVADBTrust.format, powerToggleAllowed: true)
+        saved.automaticScreenAccess = false
+        let updated = try saved.replacingEndpoint(host: "new-tv", port: 38355)
+        var expected = saved; expected.host = "new-tv"; expected.port = 38355
+        XCTAssertEqual(updated, expected)
+        XCTAssertThrowsError(try saved.replacingEndpoint(host: "https://invalid", port: 38355))
+        XCTAssertThrowsError(try saved.replacingEndpoint(host: "new-tv", port: 0))
+        XCTAssertEqual(saved.host, "old-tv")
+    }
+
     func testTLSRejectionIsNotReportedAsUserCancellation() {
         let cancelled = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
         let rejected = ADBTransportSTLS.diagnosticError(cancelled, authenticationFailure: "TV key changed", cancelledByOwner: false)

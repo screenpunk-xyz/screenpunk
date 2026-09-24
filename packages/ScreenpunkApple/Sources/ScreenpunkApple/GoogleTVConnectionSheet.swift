@@ -41,6 +41,21 @@ final class GoogleTVSetup: ObservableObject {
         } catch { message = error.localizedDescription }
     }
     private func lines(_ text: String) -> [String] { Array(Set(text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted() }
+    func updateAddress() {
+        let address = host
+        guard GoogleTVConfiguration.validHost(address) else { message = "Enter a valid TV IP address or hostname."; return }
+        run { [self] in
+            let saved = GoogleTVConfiguration.load(); try saved.validate()
+            message = "Verifying the paired TV at the new address…"
+            try await session.connect(host: address, pin: saved.pin)
+            try Task.checkCancellation()
+            let current = GoogleTVConfiguration.load()
+            guard current.host == saved.host, current.pin == saved.pin else { throw GoogleTVError.message("Connection changed during verification. Try again.") }
+            var updated = current; updated.host = address; try updated.save()
+            message = "Address saved. Existing pairing and permissions preserved."
+        }
+    }
+
     func check() {
         run { [self] in
             let saved = GoogleTVConfiguration.load(); try saved.validate()

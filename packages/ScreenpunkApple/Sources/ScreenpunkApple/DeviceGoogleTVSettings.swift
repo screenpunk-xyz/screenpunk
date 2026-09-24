@@ -8,6 +8,8 @@ struct DeviceGoogleTVSettings: View {
     @StateObject private var developer = GoogleTVADBSetup()
     @State private var refresh = UUID()
     @State private var confirmForget = false
+    @AppStorage("screenpunk.googleTV.addressDraft") private var addressDraft = ""
+    @AppStorage("screenpunk.googleTV.portDraft") private var portDraft = ""
     @Environment(\.scenePhase) private var scenePhase
     var onChange: () -> Void
     private var basicPaired: Bool { GoogleTVConfiguration.load().pin.count == 32 }
@@ -23,7 +25,7 @@ struct DeviceGoogleTVSettings: View {
                     Text("Keep the iPad and TV on the same network. Allow Screenpunk Local Network access in iPad Settings.")
                     Text("2. Find your TV’s address").font(.headline)
                     Text("On Google TV, open Settings → Network & Internet and select your network to find its IP address. Enter it below. Menu names vary by TV.")
-                    Text("Also enter the connection port from Wireless debugging. The steps below explain how to enable it. This port is collected now for channels and power.")
+
                     Text("3. Pair this iPad").font(.headline)
                     Text("Tap Pair and enter the six-character code shown on the TV to connect volume and mute.")
                 } label: { VStack(alignment: .leading, spacing: 4) {
@@ -33,64 +35,77 @@ struct DeviceGoogleTVSettings: View {
                 HStack(alignment: .top, spacing: 16) {
                     field("IP address", placeholder: "TV address", text: $basic.host)
                         .frame(maxWidth: 240, alignment: .leading)
-                    field("Port", placeholder: "Port", text: $developer.connectionPort)
-                        .frame(width: 100, alignment: .leading)
                     Spacer(minLength: 0)
                 }.disabled(busy || basic.waitingCode)
-                if !validPort { Text("Enter the connection port from Wireless debugging (1–65535).").font(.footnote).foregroundStyle(.secondary) }
+                if basicPaired && basic.host != GoogleTVConfiguration.load().host {
+                    Text("Address edited · not saved").font(.footnote).foregroundStyle(.secondary)
+                }
+                if basicPaired {
+                    Button("Update TV address", action: basic.updateAddress).disabled(busy || !GoogleTVConfiguration.validHost(basic.host))
+                    Text("Verifies the same TV before saving. Pairing and permissions are kept.").font(.footnote).foregroundStyle(.secondary)
+                }
                 HStack(spacing: 16) {
                     status(basic.host.isEmpty ? "Google TV" : basic.host, connected: basicPaired, waiting: basic.waitingCode)
                         .frame(maxWidth: 240, alignment: .leading)
                     Group {
                         if basic.waitingCode { Button("Cancel") { basic.stop(); basic.waitingCode = false } }
                         else if basicPaired { Button(role: .destructive) { basic.forget(); changed() } label: { Text("Disconnect").foregroundStyle(.red) } }
-                        else { Button("Pair") { basic.pair() }.disabled(!validPort || !GoogleTVConfiguration.validHost(basic.host)) }
+                        else { Button("Pair") { basic.pair() }.disabled(!GoogleTVConfiguration.validHost(basic.host)) }
                     }.buttonStyle(.borderless).frame(width: 100, alignment: .leading)
                     Spacer(minLength: 0)
                 }.disabled(busy)
                 if basic.waitingCode {
                     TextField("Six-character TV code", text: $basic.code).textInputAutocapitalization(.characters).autocorrectionDisabled()
-                    Button("Confirm code", action: basic.finish).disabled(busy || basic.code.trimmingCharacters(in: .whitespacesAndNewlines).count != 6 || !validPort)
+                    Button("Confirm code", action: basic.finish).disabled(busy || basic.code.trimmingCharacters(in: .whitespacesAndNewlines).count != 6)
                 }
+                if !basic.message.isEmpty { Text(basic.message).font(.footnote).accessibilityIdentifier("basicConnectionResult") }
             }
             Section {
                 DisclosureGroup("1. Enable Developer options on your TV") {
                     Text("Open Settings → System → About. Select Android TV OS build repeatedly until Developer options are enabled. Return to System and open Developer options. Names may vary by TV.")
                 }
                 DisclosureGroup("2. Turn on wireless debugging") {
-                    Text("Enable Wireless debugging on your trusted home network. Enter its connection port under Your TV. Choose Pair device with pairing code, then enter the six-digit code and separate pairing port below. USB debugging is not required.")
+                    Text("Enable Wireless debugging on your trusted home network. Enter its connection port below. Choose Pair device with pairing code, then enter the six-digit code and separate pairing port below. USB debugging is not required.")
                 }
                 HStack(alignment: .top, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Pairing code").font(.caption).foregroundStyle(.secondary)
-                        SecureField("Six-digit code", text: $developer.code).keyboardType(.numberPad)
-                    }.frame(maxWidth: 240, alignment: .leading)
-                    field("Developer port", placeholder: "Port", text: $developer.pairingPort).frame(width: 100, alignment: .leading)
-                    Spacer(minLength: 0)
+                    field("Connection port", placeholder: "e.g. 38355", text: $developer.connectionPort)
+                    field("Pairing port", placeholder: "For new pairing", text: $developer.pairingPort)
                 }.disabled(busy)
+                Text("Connection port: on the main Wireless debugging page. Pairing port: in ‘Pair device with pairing code’; only needed when pairing.").font(.footnote).foregroundStyle(.secondary)
+                if !validPort { Text("Enter a Connection port from 1–65535.").font(.footnote).foregroundStyle(.red) }
+                if developerPaired && (basic.host != GoogleTVADBConfiguration.load().host || developer.connectionPort != String(GoogleTVADBConfiguration.load().port)) {
+                    Text("Connection edited · not saved").font(.footnote).foregroundStyle(.secondary)
+                }
+                if developerPaired {
+                    Button("Verify and save connection") { developer.host = basic.host; developer.updateEndpoint() }.disabled(busy || !validPort)
+                    Text("Saves the IP address above and Connection port after checking the existing TV identity. No pairing code needed.").font(.footnote).foregroundStyle(.secondary)
+                }
+                if !developerPaired && !developer.pendingPairing {
+                    SecureField("Six-digit pairing code", text: $developer.code).keyboardType(.numberPad).disabled(busy)
+                }
                 HStack(spacing: 16) {
-                    status("Developer pairing", connected: developerPaired).frame(maxWidth: 240, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 6) {
+                        if developer.pendingPairing {
+                            Text("Developer pairing").font(.caption).foregroundStyle(.secondary)
+                            Text("Paired · connection incomplete")
+                        } else { status("Developer pairing", connected: developerPaired) }
+                    }.frame(maxWidth: 240, alignment: .leading)
                     Group {
-                        if developerPaired { Button(role: .destructive) { developer.forget(); changed() } label: { Text("Disconnect").foregroundStyle(.red) } }
+                        if developer.pendingPairing { Button("Retry connection") { developer.host = basic.host; developer.retryConnection() }.disabled(!validPort) }
+                        else if developerPaired { Button(role: .destructive) { developer.forget(); changed() } label: { Text("Disconnect").foregroundStyle(.red) } }
                         else { Button("Pair") { developer.host = basic.host; developer.pair() }
                             .disabled(!validPort || (UInt16(developer.pairingPort) ?? 0) == 0 || developer.code.count != 6 || !developer.code.allSatisfy(\.isNumber)) }
-                    }.buttonStyle(.borderless).frame(width: 100, alignment: .leading)
+                    }.buttonStyle(.borderless).frame(minWidth: 100, alignment: .leading)
                     Spacer(minLength: 0)
                 }.disabled(busy)
+                if !developer.message.isEmpty { Text(developer.message).font(.footnote).accessibilityIdentifier("developerConnectionResult") }
+                if busy { ProgressView(); Button("Cancel") { basic.stop(); developer.stop() } }
             } header: { Text("Channels and power") } footer: {
                 Text("Wireless debugging grants this iPad debugging access to the TV. Screenpunk uses it for the channels and power controls defined by your screens.")
             }
             Section("Connection help") {
                 Button("Check connections") { if basicPaired { basic.check() }; if developerPaired { developer.host = basic.host; developer.check() } }.disabled(busy)
-                DisclosureGroup("Connection changed or stopped working?") {
-                    Text("Check the network and Local Network permission. Update the connection port if the TV’s debugging service restarted. Pair again if the TV address changed.")
-                    Button("Save connection port") { savePort(); changed() }.disabled(!validPort || busy || !developerPaired)
-                    Button("Refresh TV trust") { developer.host = basic.host; developer.refreshTrust() }.disabled(!developerPaired || busy || !validPort)
-                    Text("Only refresh trust when the saved address and connection port match your TV.").font(.footnote)
-                }
-                if basic.busy || developer.busy { ProgressView(); Button("Cancel") { basic.stop(); developer.stop() } }
-                if !basic.message.isEmpty { Text(basic.message).font(.footnote).foregroundStyle(.secondary) }
-                if !developer.message.isEmpty { Text(developer.message).font(.footnote).foregroundStyle(.secondary) }
+                Text("If the TV’s address changed, update it above, then verify and save each connection. If only wireless debugging’s port changed, update Connection port and verify and save. Disconnect removes saved trust and permissions; it is not needed for an address change.").font(.footnote).foregroundStyle(.secondary)
                 Button(role: .destructive) { confirmForget = true } label: { Text("Forget Google TV").foregroundStyle(.red) }
                     .confirmationDialog("Forget this TV’s connections?", isPresented: $confirmForget, titleVisibility: .visible) {
                         Button("Forget TV", role: .destructive) { basic.forget(); developer.forget(); changed() }
@@ -104,9 +119,13 @@ struct DeviceGoogleTVSettings: View {
                 let draft = UserDefaults.standard.integer(forKey: "screenpunk.googleTV.connectionPortDraft")
                 if draft > 0 { developer.connectionPort = String(draft) }
             }
+            if !addressDraft.isEmpty { basic.host = addressDraft }
+            if !portDraft.isEmpty { developer.connectionPort = portDraft }
             basic.message = ""; developer.message = ""
         }
-        .onChange(of: basic.busy) { value in if !value { savePort(); changed() } }
+        .onChange(of: basic.host) { addressDraft = $0 }
+        .onChange(of: developer.connectionPort) { portDraft = $0 }
+        .onChange(of: basic.busy) { value in if !value { changed() } }
         .onChange(of: developer.busy) { value in if !value { changed() } }
         .onDisappear { basic.stop(); developer.stop() }
         .onChange(of: scenePhase) { if $0 == .background { basic.stop(); developer.stop() } }
@@ -115,18 +134,12 @@ struct DeviceGoogleTVSettings: View {
     private func changed() {
         // Pairing grants the installed screens bounded TV capabilities; no extra per-screen toggles.
         var b = GoogleTVConfiguration.load()
-        if b.pin.count == 32 { b.automaticScreenAccess = true; try? b.save() }
+        if basic.message.hasPrefix("Paired."), b.pin.count == 32 { b.automaticScreenAccess = true; try? b.save() }
         var d = GoogleTVADBConfiguration.load()
-        if d.serverPin.count == 32 { d.automaticScreenAccess = true; try? d.save() }
+        if developer.message.hasPrefix("Paired and connected."), d.serverPin.count == 32 { d.automaticScreenAccess = true; try? d.save() }
         if basic.message.hasPrefix("Paired.") { basic.message = "Paired. Volume and mute are available to your screens." }
-        if developer.message.hasPrefix("Paired and connected.") { developer.message = "Paired. Channels and power are available to your screens." }
+        if developer.message.hasPrefix("Paired and connected.") { developer.message = "Connection saved. Channels and power are available to your screens." }
         refresh = UUID(); onChange()
-    }
-    private func savePort() {
-        guard let port = UInt16(developer.connectionPort), port > 0 else { return }
-        UserDefaults.standard.set(Int(port), forKey: "screenpunk.googleTV.connectionPortDraft")
-        var saved = GoogleTVADBConfiguration.load()
-        if saved.host == basic.host, saved.serverPin.count == 32 { saved.port = port; try? saved.save() }
     }
     private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
