@@ -50,7 +50,7 @@ struct DeviceSetupMenu: View {
     private var preferredWidth: CGFloat { wide ? min(1100, windowSize.width - 80) : min(580, windowSize.width - 32) }
     private var preferredHeight: CGFloat {
         let available = max(200, windowSize.height - 96)
-        return compact ? min(headerHeight + rowsHeight + 44, available) : available
+        return compact ? min(headerHeight + rowsHeight + 56, available) : available
     }
     var body: some View {
         ZStack {
@@ -77,6 +77,10 @@ struct DeviceSetupMenu: View {
         windowSize = CGSize(width: window.bounds.width, height: window.bounds.height - window.safeAreaInsets.top - window.safeAreaInsets.bottom)
     }
     private var close: some View { Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 17, weight: .regular)).foregroundStyle(Color.primary) }.tint(.primary).accessibilityLabel("Close") }
+    @ViewBuilder private func detailClose(_ page: DeviceSetupPage) -> some View {
+        if #available(iOS 18, *) { close }
+        else if page != .display { close }
+    }
     private var back: some View { Button { settingsOpen = false; path = [] } label: { Image(systemName: "chevron.left").font(.system(size: 17, weight: .regular)).foregroundStyle(Color.primary) }.tint(.primary).accessibilityLabel("Back to Welcome") }
     private var welcomeStack: some View {
         NavigationStack(path: $path) {
@@ -100,7 +104,7 @@ struct DeviceSetupMenu: View {
                         if screens.count > 1 {
                             NavigationLink(value: DeviceSetupPage.screens) { row("Current screen", subtitle: currentName, icon: "rectangle", disclosure: true, detail: "\(screens.count) screens") }.buttonStyle(.plain)
                         } else { row("Current screen", subtitle: currentName, icon: "rectangle", disclosure: false) }
-                    }.padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 48)
+                    }.padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 28)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
                 }
             }
@@ -109,14 +113,14 @@ struct DeviceSetupMenu: View {
                 ToolbarItem(placement: .topBarLeading) { Button { settingsOpen = true; path = [] } label: { Image(systemName: "gearshape").font(.system(size: 17, weight: .regular)).foregroundStyle(Color.primary) }.tint(.primary).accessibilityLabel("Settings") }
                 ToolbarItem(placement: .topBarTrailing) { close }
             }
-            .navigationDestination(for: DeviceSetupPage.self) { page in destination(page).navigationTitle(title(page)).navigationBarTitleDisplayMode(.large).toolbar { ToolbarItem(placement: .topBarTrailing) { close } } }
+            .navigationDestination(for: DeviceSetupPage.self) { page in destination(page).navigationTitle(title(page)).navigationBarTitleDisplayMode(.large).toolbar { ToolbarItem(placement: .topBarTrailing) { detailClose(page) } } }
         }
     }
     private var settingsStack: some View {
         NavigationStack(path: $path) {
             settingsList.navigationTitle("Settings").navigationBarTitleDisplayMode(.large)
                 .toolbar { ToolbarItem(placement: .topBarLeading) { back }; ToolbarItem(placement: .topBarTrailing) { close } }
-                .navigationDestination(for: DeviceSetupPage.self) { page in destination(page).navigationTitle(title(page)).navigationBarTitleDisplayMode(.large).toolbar { ToolbarItem(placement: .topBarTrailing) { close } } }
+                .navigationDestination(for: DeviceSetupPage.self) { page in destination(page).navigationTitle(title(page)).navigationBarTitleDisplayMode(.large).toolbar { ToolbarItem(placement: .topBarTrailing) { detailClose(page) } } }
         }
     }
     private var split: some View {
@@ -136,7 +140,7 @@ struct DeviceSetupMenu: View {
         } detail: {
             NavigationStack {
                 destination(selection ?? .display).navigationTitle(title(selection ?? .display)).navigationBarTitleDisplayMode(.inline)
-                    .toolbar { ToolbarItem(placement: .topBarTrailing) { close } }
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) { detailClose(selection ?? .display) } }
             }.id(selection)
         }
     }
@@ -197,6 +201,15 @@ private struct DeviceMenuPresentation: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 18, *) {
             content.presentationSizing(.fitted.fitted(horizontal: true, vertical: true))
+        } else if #available(iOS 16.4, *) {
+            // Older iPads keep a system-sized sheet even when the content has a
+            // smaller frame. Draw only our fitted panel, not that outer canvas.
+            content
+                .background(Color(uiColor: .systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .presentationBackground(.clear)
+                .presentationDragIndicator(.hidden)
+                .presentationDetents([.height(height)])
         } else {
             content.presentationDetents([.height(height)])
         }
