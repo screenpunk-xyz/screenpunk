@@ -83,10 +83,10 @@ public struct DeviceRuntimeRootView: View {
                 }
                 .onDisappear { brightness.stop() }
 #if os(iOS)
-                .sheet(isPresented: $showDeviceMenu) {
+                .modifier(DeviceMenuContainer(isPresented: $showDeviceMenu) {
                     DeviceSetupMenu(host: host, initialPage: initialSetupPage) { connectorRevision = UUID() }
                         .onDisappear { initialSetupPage = nil; connectorRevision = UUID() }
-                }
+                })
                 .onAppear {
                     if !welcomeShown { welcomeShown = true; showDeviceMenu = true }
                     // Existing paired devices adopt the simplified capability model without re-pairing.
@@ -193,6 +193,9 @@ public struct DeviceRuntimeRootView: View {
 
 #if os(iOS)
     private var missingConnector: DeviceSetupPage? {
+#if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--preview-required-connection") { return .googleTV }
+#endif
         _ = connectorRevision
         return DeviceConnectorCatalog(manifests: host.server?.installedManifests ?? []).missing(for: host.screenSet?.selectedDashboardId ?? host.server?.installedManifests.first?.dashboardId)
     }
@@ -332,3 +335,23 @@ public struct DeviceRuntimeRootView: View {
         }
     }
 }
+
+#if os(iOS)
+private struct DeviceMenuContainer<Menu: View>: ViewModifier {
+    @Binding var isPresented: Bool
+    @ViewBuilder let menu: () -> Menu
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.sheet(isPresented: $isPresented, content: menu)
+        } else {
+            content.fullScreenCover(isPresented: $isPresented) {
+                ZStack {
+                    Color.black.opacity(0.3).ignoresSafeArea()
+                    menu()
+                }
+            }
+        }
+    }
+}
+#endif
