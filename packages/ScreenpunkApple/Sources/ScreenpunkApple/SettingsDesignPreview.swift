@@ -13,6 +13,7 @@ private struct DesignControlState: Decodable, Equatable {
     var view = "menu"
     var guided = "Not set up"
     var appearance: String? = "System"
+    var presentation: String? = "Current"
     var revision = 0
 }
 private struct PreviewRequirement: Identifiable {
@@ -203,7 +204,7 @@ private struct DeviceMenuDesignPreview: View {
 
     private var usesSplitSettings: Bool { availableWidth >= 1000 && showingSettings }
     @ViewBuilder private var sheetContents: some View {
-        if #available(iOS 18, macOS 15, *) {
+        if #available(iOS 18, macOS 15, *), control.presentation != "iOS 16–17" {
             ZStack {
                 if usesSplitSettings {
                     splitSettings.transition(.identity)
@@ -221,7 +222,15 @@ private struct DeviceMenuDesignPreview: View {
             .animation(.easeInOut(duration: 0.55), value: showingSettings)
 
         } else {
+#if os(iOS)
+            Group {
+                if showingSettings { compactSettings } else { menuPanel }
+            }.presentationDetents([.height(page == .menu
+                ? min(welcomeHeaderHeight + welcomeRowsHeight + 44, availableHeight - 64)
+                : max(400, availableHeight - 64))])
+#else
             menuPanel
+#endif
         }
     }
     @available(iOS 18, macOS 15, *)
@@ -241,7 +250,7 @@ private struct DeviceMenuDesignPreview: View {
             .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 320)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    if #available(iOS 26, macOS 26, *) {
+                    if #available(iOS 26, macOS 26, *), control.presentation == nil || control.presentation == "Current" {
                         Button { page = .menu } label: { Image(systemName: "chevron.left").frame(width: 28, height: 28) }
                             .buttonStyle(.glass).buttonBorderShape(.circle)
                             .padding(.top, 8)
@@ -679,7 +688,7 @@ private struct DeviceMenuDesignPreview: View {
                 Image(systemName: "slider.horizontal.3").font(.largeTitle).foregroundStyle(accent)
                 Text("Set up \(missing.first?.connectorName ?? selected)").font(.title2.bold())
                 Text("A few things need to be connected before you can use this screen.").foregroundStyle(captionColor).fixedSize(horizontal: false, vertical: true)
-                if #available(iOS 26, macOS 26, *) {
+                if #available(iOS 26, macOS 26, *), control.presentation == nil || control.presentation == "Current" {
                     Button("Open settings") { if let first = missing.first { openRequirement(first) } }
                         .buttonStyle(.glass).controlSize(.large)
                 } else {
