@@ -23,6 +23,12 @@ struct GoogleTVADBConfiguration: Codable, Equatable {
             throw GoogleTVError.message("Pair wireless debugging and approve up to 32 screen IDs and YouTube TV channel IDs.")
         }
     }
+    func replacingEndpoint(host: String, port: UInt16) throws -> Self {
+        var updated = self
+        updated.host = host; updated.port = port
+        try updated.validate()
+        return updated
+    }
     func save() throws { try validate(); UserDefaults.standard.set(try JSONEncoder().encode(self), forKey: Self.key) }
     func trustedKeyPin() throws -> Data {
         try validate()

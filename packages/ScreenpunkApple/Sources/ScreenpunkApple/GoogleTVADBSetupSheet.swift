@@ -11,6 +11,8 @@ final class GoogleTVADBSetup: ObservableObject {
     @Published var channels = GoogleTVADBConfiguration.load().channelIDs.joined(separator: "\n")
     @Published var message = "Pair this device separately. No Mac, Home Assistant, or computer connection is needed at runtime."
     @Published var busy = false
+    @Published private(set) var pendingPairing = false
+    private var pendingPeer: (host: String, guid: String, pin: Data?)?
     private var task: Task<Void, Never>?
     private var client: GoogleTVADBClient?
     private var generation = UUID()
@@ -27,21 +29,58 @@ final class GoogleTVADBSetup: ObservableObject {
         run { [self] in
             let peer = try await ADBPairing.pair(host: address, port: pairPort, code: pairingCode)
             try Task.checkCancellation()
-            message = "Paired. Checking the connection port and remembering this TV debugging key…"
-            let connection = try GoogleTVADBClient(pin: nil)
-            client = connection
-            try await connection.connect(host: address, port: port)
-            try Task.checkCancellation()
-            guard generation == epoch, let pin = connection.serverPin else { throw GoogleTVError.message("Pairing cancelled or TV certificate unavailable.") }
-            var saved = GoogleTVADBConfiguration.load()
-            if saved.deviceGUID != peer.guid || saved.serverPin != pin || saved.host != address {
-                saved.dashboardIDs = []; saved.channelIDs = []; saved.powerToggleAllowed = false; powerToggleAllowed = false; screens = ""; channels = ""
-            }
-            saved.host = address; saved.port = port; saved.serverPin = pin; saved.pinFormat = GoogleTVADBTrust.format; saved.deviceGUID = peer.guid
-            try saved.save()
-            message = "Paired and connected. Approve the test screen ID and channel IDs below. Playback has not been tested."
+            pendingPeer = (address, peer.guid, nil); pendingPairing = true
+            try await completePairing(address: address, port: port, epoch: epoch)
         }
     }
+    private func completePairing(address: String, port: UInt16, epoch: UUID) async throws {
+        guard let peer = pendingPeer, peer.host == address else { throw GoogleTVError.message("The address changed. Pair the new TV explicitly.") }
+        message = "TV accepted pairing. Verifying the connection port…"
+        let connection = try GoogleTVADBClient(pin: peer.pin); client = connection
+        do { try await connection.connect(host: address, port: port) }
+        catch {
+            if let pin = connection.serverPin { pendingPeer = (peer.host, peer.guid, pin) }
+            throw GoogleTVError.message("TV accepted pairing, but connection verification failed: \(error.localizedDescription) Check Connection port on the main Wireless debugging page, then Retry connection. Your existing settings are unchanged.")
+        }
+        try Task.checkCancellation()
+        guard generation == epoch, let pin = connection.serverPin else { throw GoogleTVError.message("Connection verification cancelled. Existing settings are unchanged.") }
+        var saved = GoogleTVADBConfiguration.load()
+        // An IP change alone is not a new TV. Keep permissions for the same trusted identity.
+        if saved.deviceGUID != peer.guid || saved.serverPin != pin {
+            saved.dashboardIDs = []; saved.channelIDs = []; saved.powerToggleAllowed = false
+            saved.automaticScreenAccess = nil; screens = ""; channels = ""; powerToggleAllowed = false
+        }
+        saved.host = address; saved.port = port; saved.serverPin = pin
+        saved.pinFormat = GoogleTVADBTrust.format; saved.deviceGUID = peer.guid
+        try saved.save()
+        pendingPeer = nil; pendingPairing = false
+        message = "Paired and connected. Connection details saved."
+    }
+    func retryConnection() {
+        guard let peer = pendingPeer, peer.host == host, let port = UInt16(connectionPort), port > 0 else {
+            message = "Keep the paired TV address and enter its current Connection port."; return
+        }
+        let epoch = generation
+        run { [self] in try await completePairing(address: peer.host, port: port, epoch: epoch) }
+    }
+    func updateEndpoint() {
+        let address = host
+        guard GoogleTVConfiguration.validHost(address), let port = UInt16(connectionPort), port > 0 else {
+            message = "Enter a valid TV address and Connection port (1–65535)."; return
+        }
+        let epoch = generation
+        run { [self] in
+            let saved = GoogleTVADBConfiguration.load()
+            let connection = try GoogleTVADBClient(pin: saved.trustedKeyPin()); client = connection
+            message = "Verifying the paired TV at the updated address and port…"
+            try await connection.connect(host: address, port: port)
+            try Task.checkCancellation()
+            guard generation == epoch, GoogleTVADBConfiguration.load() == saved else { throw GoogleTVError.message("Settings changed during verification. Try again.") }
+            let updated = try saved.replacingEndpoint(host: address, port: port); try updated.save()
+            message = "Connection saved. Existing pairing and screen permissions preserved."
+        }
+    }
+
     func save() {
         do {
             var saved = GoogleTVADBConfiguration.load()
@@ -77,7 +116,7 @@ final class GoogleTVADBSetup: ObservableObject {
             message = "TV trust refreshed. Existing pairing and screen permissions preserved. Check Debugging Connection can now be repeated without a new pairing code."
         }
     }
-    func forget() { stop(); GoogleTVADBConfiguration.forget(); screens = ""; channels = ""; powerToggleAllowed = false; message = "Direct channel permissions removed locally. To revoke debugging authority, forget Screenpunk in the TV's Wireless debugging settings." }
+    func forget() { stop(); pendingPeer = nil; pendingPairing = false; GoogleTVADBConfiguration.forget(); screens = ""; channels = ""; powerToggleAllowed = false; message = "Direct channel permissions removed locally. To revoke debugging authority, forget Screenpunk in the TV's Wireless debugging settings." }
     private func lines(_ value: String) -> [String] { Array(Set(value.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted() }
 }
 

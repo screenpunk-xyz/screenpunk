@@ -53,10 +53,12 @@ private struct DeviceMenuDesignPreview: View {
     @State private var tvAddress = "192.168.1.120"
     @State private var tvCode = ""
     @State private var waitingTVCode = false
-    @State private var connectionPort = "5555"
+    @State private var connectionPort = "38355"
     @State private var pairingPort = ""
     @State private var debuggingCode = ""
     @State private var tvFeedback: String?
+    @State private var developerFeedback: String?
+    @State private var previewPendingPairing = false
     @State private var showForgetTV = false
     @State private var completed: [String: Bool] = [:]
     @State private var permissionDraft = false
@@ -120,7 +122,12 @@ private struct DeviceMenuDesignPreview: View {
         guard let data = try? Data(contentsOf: url), let next = try? JSONDecoder().decode(DesignControlState.self, from: data), next != control else { return }
         control = next; selected = next.screen; completed = [:]; guidedConfirmed = false; savedMessage = nil
         menuVisible = next.view != "screen"
-        page = next.view == "settings" ? .settings : .menu
+        page = ["settings", "googleTV"].contains(next.view) ? .settings : .menu
+        if next.view == "googleTV" { page = .googleTV; wideSelection = .googleTV }
+        tvPaired = next.scenario != "New device"
+        channelsPaired = next.scenario == "Ready"
+        previewPendingPairing = next.scenario == "Needs attention"
+        developerFeedback = previewPendingPairing ? "TV accepted pairing. Check Connection port, then Retry connection. This failure is simulated." : nil
     }
     private func openMenu() { page = .menu; savedMessage = nil; menuVisible = true }
     private func advance(_ offset: Int) {
@@ -489,130 +496,80 @@ private struct DeviceMenuDesignPreview: View {
                     }
                 }
             case .googleTV:
-                Section {
-                    DisclosureGroup {
-                        Text("1. Connect to the same network").font(.headline)
-                        Text("Keep the iPad and TV on the same network. On the iPad, allow Screenpunk access to the Local Network in Settings.")
-                        Text("2. Find your TV’s address").font(.headline)
-                        Text("On Google TV, open Settings and find your network connection under Network & Internet. Enter its IP address in the field below. Menu names vary by TV.")
-                        Text("Enter the connection port shown in your TV’s Wireless debugging settings. Screenpunk requires it here so the address and port are ready for channels and power. The guide below explains how to enable Developer options and wireless debugging.")
-                        Text("3. Pair this iPad").font(.headline)
-                        Text("Tap Pair below. Your TV will display a six-character code. Enter that code here to enable volume and mute.")
-                        Text("Volume and mute pairing uses its own TV code. The connection port prepares the separate channels-and-power connection.")
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Basic setup guide")
-                            Text("Connect for volume and mute").font(.subheadline).foregroundStyle(captionColor)
-                        }
+                Section("Your TV") {
+                    DisclosureGroup("Basic setup guide") {
+                        Text("Connect the iPad and TV to the same network. Find the TV’s IP address in Settings → Network & Internet. Pair volume and mute using the code shown on the TV.")
                     }
-                    HStack(alignment: .top, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("IP address").font(.caption).foregroundStyle(captionColor)
-                            TextField("IP address or hostname", text: $tvAddress)
-                                .accessibilityLabel("TV IP address or hostname")
-                        }.frame(maxWidth: 240, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Port").font(.caption).foregroundStyle(captionColor)
-                            TextField("Port", text: $connectionPort)
-                                .accessibilityLabel("Connection port")
-                        }.frame(width: 100, alignment: .leading)
-                        Spacer(minLength: 0)
-                    }.padding(.vertical, 4)
-                    if !validConnectionPort {
-                        Text("Enter the connection port shown in your TV’s Wireless debugging settings (1–65535).")
-                            .font(.footnote).foregroundStyle(Color.red)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("IP address").font(.caption).foregroundStyle(captionColor)
+                        TextField("TV IP address", text: $tvAddress)
                     }
-                    HStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Living room TV").font(.caption).foregroundStyle(captionColor)
-                            HStack(spacing: 5) {
-                                Text(waitingTVCode ? "Waiting for TV code" : tvPaired ? "Connected" : "Not connected")
-                                    .foregroundStyle(Color.primary)
-                                if !waitingTVCode {
-                                    Image(systemName: tvPaired ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(tvPaired ? Color.green : captionColor)
-                                        .accessibilityHidden(true)
-                                }
-                            }
-                        }.frame(maxWidth: 240, alignment: .leading)
-                        VStack(alignment: .leading) {
-                        if waitingTVCode {
-                            Button("Cancel", role: .cancel) { waitingTVCode = false }.buttonStyle(.borderless)
-                        } else if tvPaired {
-                            Button(role: .destructive) { tvPaired = false; waitingTVCode = false; tvCode = "" } label: {
-                                Text("Disconnect").foregroundStyle(Color.red)
-                            }.buttonStyle(.borderless)
-                        } else {
-                            Button("Pair") { waitingTVCode = true; tvCode = "" }
-                                .buttonStyle(.borderless).disabled(tvAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !validConnectionPort)
-                        }
-                        }.frame(width: 100, alignment: .leading)
-                        Spacer(minLength: 0)
+                    Button("Update TV address") {
+                        tvFeedback = tvAddress.isEmpty ? "Enter a valid TV IP address." : "Address saved in preview. Pairing and permissions preserved."
+                    }.disabled(!tvPaired)
+                    Text("Verifies the same TV before saving. Pairing and permissions are kept.").font(.footnote).foregroundStyle(captionColor)
+                    HStack {
+                        Label(tvPaired ? "Connected" : "Not connected", systemImage: tvPaired ? "checkmark.circle" : "circle")
+                        Spacer()
+                        if tvPaired { Button("Disconnect", role: .destructive) { tvPaired = false } }
+                        else { Button("Pair") { tvPaired = true; tvFeedback = "Volume and mute paired in preview." } }
                     }
-                    if waitingTVCode {
-                        TextField("Six-character TV code", text: $tvCode)
-                        Button("Confirm code") { tvPaired = true; waitingTVCode = false; tvFeedback = "Volume and mute paired in this preview." }
-                            .disabled(tvCode.trimmingCharacters(in: .whitespaces).count != 6 || !validConnectionPort || tvAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                } header: { Text("Your TV") }
+                    if let tvFeedback { Text(tvFeedback).font(.footnote) }
+                }
                 Section {
                     DisclosureGroup("1. Enable Developer options on your TV") {
-                        Text("Open the TV’s Settings → System → About. Select Android TV OS build repeatedly until the TV confirms Developer options are enabled. Return to System and open Developer options. Names may vary by TV.")
+                        Text("Open Settings → System → About. Select Android TV OS build repeatedly until Developer options are enabled.")
                     }
                     DisclosureGroup("2. Turn on wireless debugging") {
-                        Text("In Developer options, enable Wireless debugging on your trusted home network. Note the IP address and connection port shown on that page.")
-                        Text("Choose Pair device with pairing code. Keep that dialog open: it shows a separate pairing port and a six-digit pairing code. USB debugging is not required.")
+                        Text("Enable Wireless debugging on your trusted home network. Its main page shows Connection port. Choose Pair device with pairing code for Pairing port and a six-digit code.")
                     }
                     HStack(alignment: .top, spacing: 16) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Pairing code").font(.caption).foregroundStyle(captionColor)
-                            SecureField("Six-digit code", text: $debuggingCode)
-                                .accessibilityLabel("Six-digit pairing code")
-                        }.frame(maxWidth: 240, alignment: .leading)
+                            Text("Connection port").font(.caption).foregroundStyle(captionColor)
+                            TextField("e.g. 38355", text: $connectionPort).accessibilityLabel("Connection port")
+                        }
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Developer port").font(.caption).foregroundStyle(captionColor)
-                            TextField("Port", text: $pairingPort)
-                                .accessibilityLabel("Developer port")
-                        }.frame(width: 100, alignment: .leading)
-                        Spacer(minLength: 0)
-                    }.padding(.vertical, 4)
-                    HStack(spacing: 16) {
+                            Text("Pairing port").font(.caption).foregroundStyle(captionColor)
+                            TextField("For new pairing", text: $pairingPort).accessibilityLabel("Pairing port")
+                        }
+                    }
+                    Text("Connection port: on the main Wireless debugging page. Pairing port: in ‘Pair device with pairing code’; only needed when pairing.").font(.footnote).foregroundStyle(captionColor)
+                    if !validConnectionPort { Text("Enter a Connection port from 1–65535.").font(.footnote).foregroundStyle(.red) }
+                    if channelsPaired {
+                        Button("Verify and save connection") { developerFeedback = "Connection saved in preview. Existing pairing and screen permissions preserved." }
+                            .disabled(!validConnectionPort)
+                        Text("Saves the IP address above and Connection port after checking the existing TV identity. No pairing code needed.").font(.footnote).foregroundStyle(captionColor)
+                    } else if !previewPendingPairing {
+                        SecureField("Six-digit pairing code", text: $debuggingCode)
+                    }
+                    HStack {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Developer pairing").font(.caption).foregroundStyle(captionColor)
-                            HStack(spacing: 5) {
-                                Text(channelsPaired ? "Connected" : "Not connected").foregroundStyle(Color.primary)
-                                Image(systemName: channelsPaired ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(channelsPaired ? Color.green : captionColor)
-                                    .accessibilityHidden(true)
-                            }
-                        }.frame(maxWidth: 240, alignment: .leading)
-                        Button { channelsPaired = true; debuggingCode = ""; tvFeedback = "Channels and power paired in this preview." } label: {
-                            Text("Pair").foregroundStyle(accent)
+                            Text(previewPendingPairing ? "Paired · connection incomplete" : channelsPaired ? "Connected" : "Not connected")
                         }
-                            .buttonStyle(.borderless)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .tint(accent)
-                            .disabled(tvAddress.isEmpty || !validConnectionPort || Int(pairingPort) == nil || debuggingCode.count != 6)
-                            .frame(width: 100, alignment: .leading)
-                        Spacer(minLength: 0)
+                        Spacer()
+                        if previewPendingPairing {
+                            Button("Retry connection") { channelsPaired = true; previewPendingPairing = false; developerFeedback = "Connection saved in preview. No new pairing code needed." }.disabled(!validConnectionPort)
+                        } else if channelsPaired {
+                            Button("Disconnect", role: .destructive) { channelsPaired = false; developerFeedback = "Preview connection removed." }
+                        } else {
+                            Button("Pair") { previewPendingPairing = true; debuggingCode = ""; developerFeedback = "TV accepted pairing. Simulated connection failure: check Connection port, then Retry connection." }
+                                .disabled(!validConnectionPort || pairingPort.isEmpty || debuggingCode.count != 6)
+                        }
                     }
+                    if let developerFeedback { Text(developerFeedback).font(.footnote) }
                 } header: { Text("Channels and power") } footer: {
                     Text("Wireless debugging grants this iPad debugging access to the TV. Screenpunk uses it for the channels and power controls defined by your screens.")
                 }
-                Section {
-                    Button("Check connections") { tvFeedback = "Preview check: volume and mute \(tvPaired ? "paired" : "not paired"); channels and power \(channelsPaired ? "paired" : "not paired")." }
-                    DisclosureGroup("Connection changed or stopped working?") {
-                        Text("Check that both devices are on the same network and Local Network access is enabled. If the TV’s address or connection port changed, update its address and connection port under Your TV above.")
-                        Button("Save connection details") { tvFeedback = "Connection details saved in the preview." }
-                        Text("If wireless debugging restarted, verify the address and port belong to your TV before refreshing trust. Refreshing keeps pairing and screen approvals.").font(.footnote)
-                        Button("Refresh TV trust") { tvFeedback = "TV trust refreshed in the preview; pairing preserved." }.disabled(!channelsPaired)
-                    }
-                    if let tvFeedback { Text(tvFeedback).font(.footnote).foregroundStyle(captionColor) }
-                    Button(role: .destructive) { showForgetTV = true } label: { Text("Forget Google TV").foregroundStyle(Color.red) }
+                Section("Connection help") {
+                    Button("Check connections") { developerFeedback = "Preview check complete. No TV contacted." }
+                    Text("If the TV’s address changed, update it above, then verify and save each connection. If only wireless debugging’s port changed, update Connection port and verify and save. Disconnect removes saved trust and permissions; it is not needed for an address change.").font(.footnote).foregroundStyle(captionColor)
+                    Button("Forget Google TV", role: .destructive) { showForgetTV = true }
                         .confirmationDialog("Forget this TV’s connections?", isPresented: $showForgetTV, titleVisibility: .visible) {
-                            Button("Forget TV", role: .destructive) { tvPaired = false; channelsPaired = false; tvFeedback = nil }
+                            Button("Forget TV", role: .destructive) { tvPaired = false; channelsPaired = false; previewPendingPairing = false }
                         }
-                } header: { Text("Connection help") } footer: { Text("Design preview only. Pairing, checks, and recovery are simulated; no TV commands are sent.") }
+                    Text("Interactive design preview. Pair simulates an incomplete connection so Retry can be reviewed; no TV is contacted.").font(.footnote).foregroundStyle(captionColor)
+                }
             case .googleAccounts:
                 Section {
                     ForEach(googleAccounts, id: \.self) { account in
