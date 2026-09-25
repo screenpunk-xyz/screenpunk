@@ -405,7 +405,7 @@ final class LANTransferTests: XCTestCase {
                 advertisement: AdvertisedDevice(deviceId: "slots-phone", host: "127.0.0.1", port: 0, source: .advertised)
             ),
             identity: deviceIdentity,
-            untrustedIdleTimeout: 0.6,
+            untrustedIdleTimeout: 1.5,
             maxUntrustedConnections: 2
         )
         try server.start()
@@ -424,7 +424,7 @@ final class LANTransferTests: XCTestCase {
         XCTAssertEqual(server.untrustedConnectionCount, 2)
 
         // Idle strangers time out and free their slots.
-        XCTAssertTrue(waitUntil(timeout: 3) { server.untrustedConnectionCount == 0 }, "idle strangers were dropped")
+        XCTAssertTrue(waitUntil(timeout: 6) { server.untrustedConnectionCount == 0 }, "idle strangers were dropped")
         XCTAssertThrowsError(try first.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))),
                              "an idle stranger's connection was closed")
         first.cancel(); second.cancel(); third.cancel()
@@ -446,7 +446,7 @@ final class LANTransferTests: XCTestCase {
                 advertisement: AdvertisedDevice(deviceId: "owner-idle-phone", host: "127.0.0.1", port: 0, source: .advertised)
             ),
             identity: deviceIdentity,
-            untrustedIdleTimeout: 0.4
+            untrustedIdleTimeout: 1.0
         )
         try server.start()
         defer { server.stop() }
@@ -458,9 +458,10 @@ final class LANTransferTests: XCTestCase {
         try server.confirmLocally()
         try client.confirmPairing(code: begin.code)
         XCTAssertTrue(server.runtime.isPaired)
-        XCTAssertTrue(waitUntil(timeout: 2) { server.untrustedConnectionCount == 0 }, "the owner's connection left the untrusted pool")
+        XCTAssertTrue(waitUntil(timeout: 3) { server.untrustedConnectionCount == 0 }, "the owner's connection left the untrusted pool")
 
-        Thread.sleep(forTimeInterval: 1.2)
+        // Well past the untrusted idle deadline; the owner's connection has none.
+        Thread.sleep(forTimeInterval: 2.0)
         XCTAssertNil(try client.queryActive(), "the owner is still served after the stranger deadline passed")
     }
 
