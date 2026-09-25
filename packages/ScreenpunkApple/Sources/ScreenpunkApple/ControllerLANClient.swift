@@ -26,7 +26,11 @@ public final class ControllerLANClient: @unchecked Sendable {
         self.identity = identity
     }
 
-    public func connect(host: String, port: UInt16, pinnedDevice: [UInt8]? = nil) throws {
+    /// `timeout` bounds the TCP+TLS handshake. The default is generous for an
+    /// unpinned first connection (the Keychain may prompt for the controller
+    /// key during the handshake) and short for a pinned reconnect; discovery
+    /// probes pass their own, smaller budget.
+    public func connect(host: String, port: UInt16, pinnedDevice: [UInt8]? = nil, timeout: TimeInterval? = nil) throws {
         cancel()
         lastHost = host
         lastPort = port
@@ -46,7 +50,7 @@ public final class ControllerLANClient: @unchecked Sendable {
             port: nwPort,
             using: parameters
         )
-        try waitReady(connection, timeout: pinnedDevice == nil ? 60 : 8)
+        try waitReady(connection, timeout: timeout ?? (pinnedDevice == nil ? 60 : 8))
         let observed = LANChannel.observedPeerPin(connection)
         if let expected = pinnedDevice ?? devicePin, observed != expected {
             connection.cancel()

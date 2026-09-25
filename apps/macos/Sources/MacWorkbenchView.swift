@@ -448,15 +448,27 @@ struct MacWorkbenchView: View {
             if let pairing = model.pairing {
                 Text("Match the Code").font(.largeTitle.weight(.semibold))
                 Text(pairing.code).font(.system(size: 42, weight: .medium, design: .monospaced)).tracking(8)
-                Text("Check that this code matches the one on your device.\nTap Confirm on the device to finish pairing.").multilineTextAlignment(.center).foregroundStyle(.secondary)
-                HStack {
-                    Button("Cancel") { model.cancelPairing() }.workbenchButton()
-                    ProgressView().controlSize(.small)
-                    Text("Waiting for confirmation on your device…").font(.callout).foregroundStyle(.secondary)
+                if model.pairingConfirmedOnMac {
+                    Text("Tap Confirm on the device to finish pairing.").multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Cancel") { model.cancelPairing() }.workbenchButton()
+                        ProgressView().controlSize(.small)
+                        Text("Waiting for confirmation on your device…").font(.callout).foregroundStyle(.secondary)
+                    }
+                } else {
+                    // Mutual confirmation: this Mac sends nothing further until the
+                    // person has compared the two codes. A device that confirms on
+                    // its own cannot pair itself to this Mac.
+                    Text("Does your device show exactly this code?\nIf it shows a different code, or no code, cancel.").multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Cancel") { model.cancelPairing() }.workbenchButton()
+                        Button { model.confirmPairingCodesMatch() } label: { Label("Codes Match", systemImage: "checkmark").fontWeight(.semibold) }
+                            .workbenchButton(prominent: true).tint(Color(nsColor: .systemGreen))
+                    }
                 }
             } else {
                 Text("Pair \(model.detected?.title ?? "Your Device")").font(.largeTitle.weight(.semibold))
-                Text("Keep Screenpunk open on your device and stay on the same Wi-Fi network.\nStart pairing, compare the code on both screens, then confirm on your device.").multilineTextAlignment(.center).foregroundStyle(.secondary).frame(maxWidth: 440)
+                Text("Keep Screenpunk open on your device and stay on the same Wi-Fi network.\nStart pairing, compare the code on both screens, then confirm on both.").multilineTextAlignment(.center).foregroundStyle(.secondary).frame(maxWidth: 440)
                 Button { if let entry = model.detected { model.pair(entry) } } label: { Label("Start Pairing", systemImage: "plus").fontWeight(.semibold) }
                     .workbenchButton(prominent: true).tint(Color(nsColor: .systemGreen)).controlSize(.large).disabled(model.busy)
             }

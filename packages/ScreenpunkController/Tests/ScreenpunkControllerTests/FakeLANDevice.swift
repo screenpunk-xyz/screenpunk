@@ -34,8 +34,17 @@ final class FakeLANDevice: @unchecked Sendable {
     private(set) var pinnedController: [UInt8]?
     private(set) var receivedFiles: [String: Data] = [:]
     private(set) var deployAttempts = 0
+    /// Every `connect` a link attempted against this device's factory, including
+    /// ones aimed at other addresses that failed as offline.
+    private(set) var connectAttempts = 0
     private let clock = FixedClock(Date())
     private let lock = NSLock()
+
+    func recordConnectAttempt() {
+        lock.lock()
+        connectAttempts += 1
+        lock.unlock()
+    }
 
     init(deviceId: String, name: String) {
         let identity = PairingIdentityFactory.make(role: .device)
@@ -221,6 +230,7 @@ final class FakeLANLink: DeviceLink {
     }
 
     func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?) throws {
+        device.recordConnectAttempt()
         guard device.online, host == device.host, port == device.port else { throw TransferFailure.deviceOffline }
         // Either side failing pin verification aborts the TLS handshake.
         guard device.acceptTLS(controllerPin: controllerPin) else { throw TransferFailure.notPaired }
