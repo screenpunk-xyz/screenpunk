@@ -37,6 +37,16 @@ public final class GenericConnectionDeviceVault: @unchecked Sendable {
         records.append(.init(owner: owner, configuration: configuration, generation: UUID()))
         try store.put(JSONEncoder().encode(records), for: account)
     }
+    func inventory(owner: String, screen: LANScreenSetEntry) throws -> [DeviceConnectionEntry] {
+        lock.lock(); defer { lock.unlock() }
+        return try load().filter { $0.owner == owner && $0.configuration.dashboardId == screen.dashboardId && $0.configuration.revision == screen.revision }.flatMap { record in
+            record.configuration.entries.map { entry in
+                DeviceConnectionEntry(id: entry.grant.id.uuidString, screen: screen, name: entry.grant.alias,
+                    kind: "Custom connection", origin: entry.grant.origin, authentication: entry.binding.placement.rawValue,
+                    operations: entry.grant.operations.map { .init(name: $0.name, method: $0.method.rawValue, path: $0.path, write: $0.write) })
+            }
+        }
+    }
     public func revoke() throws {
         lock.lock(); defer { lock.unlock() }
         try store.delete(account)

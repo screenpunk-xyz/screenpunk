@@ -18,7 +18,7 @@ struct ConnectionsView: View {
             VStack(alignment: .leading, spacing: 32) {
                 section("Installed") {
                     if installed.isEmpty && !(store.homeAssistant != nil && matches("Home Assistant")) {
-                        Text(search.isEmpty ? "Your connected agents and services appear here." : "No matching connections.")
+                        Text(search.isEmpty ? "Your connected agents and services appear here." : "No matching plugins.")
                             .foregroundStyle(.secondary).padding(.vertical, 12)
                     } else {
                         LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {

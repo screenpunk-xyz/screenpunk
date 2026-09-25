@@ -451,6 +451,19 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// One connection, one request at a time, for as long as the peer keeps it
     /// open. Any failure closes the connection so the controller sees a dead
     /// socket rather than requests that are read and never answered.
+    private func connectionInventory(owner: String) throws -> DeviceConnectionInventory {
+        let screens: [LANScreenSetEntry]
+        if let screenSet { screens = screenSet.screens.map(\.entry) }
+        else if let revision = activeStoredRevision { screens = [.init(dashboardId: revision.dashboardId, revision: revision.revision, name: "Current screen")] }
+        else { screens = [] }
+        var entries: [DeviceConnectionEntry] = []
+        for screen in screens {
+            entries += try homeAssistantVault.inventory(owner: owner, screen: screen, grantSet: screenSet?.grantSet)
+            entries += try genericConnectionVault.inventory(owner: owner, screen: screen)
+        }
+        return .init(deviceId: runtime.profile.deviceId, entries: entries)
+    }
+
     private func serve(_ link: LANLink, peerPin: [UInt8]?) {
         defer { link.cancel() }
         while true {
@@ -484,7 +497,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
                     name: runtime.profile.name,
-                    capabilities: ["home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1"],
+                    capabilities: ["home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1", "connection-inventory-v1"],
                     maxTransferBytes: LANProtocolLimits.maxMessageBytes,
                     profile: runtime.profile
                 )
@@ -591,6 +604,20 @@ public final class DeviceLANServer: @unchecked Sendable {
                     persist()
                 }
                 return ok(request, payload: outcome)
+            case .connectionsInventory:
+                try requireOwner(peerPin)
+                return ok(request, payload: try connectionInventory(owner: PeerPin.hex(peerPin!)))
+            case .connectionsUpdateHome:
+                try requireOwner(peerPin)
+                let body = try LANCodec.decodePayload(DeviceHomeAssistantUpdate.self, json: request.payloadJSON)
+                let owner = PeerPin.hex(peerPin!)
+                let inventory = try connectionInventory(owner: owner)
+                guard body.entries.allSatisfy({ inventory.entries.contains($0) && $0.kind == "Service integration" }) else { throw ConnectionFailure.permissionRequired }
+                try homeAssistantVault.update(body, owner: owner, grantSet: screenSet?.grantSet)
+                let service = homeAssistantRuntime
+                Task { await service.cancelPending() }
+                onChange?()
+                return ok(request, payload: try connectionInventory(owner: owner))
             case .connectionsProvision:
                 try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(ConnectionProvisioning.self, json: request.payloadJSON)

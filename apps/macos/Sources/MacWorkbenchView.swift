@@ -140,7 +140,7 @@ struct MacWorkbenchView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 12) {
                 Divider()
-                sidebarNavigationItem("Connections", symbol: "point.3.connected.trianglepath.dotted", selected: connectionsSelected, count: activeConnectionCount) {
+                sidebarNavigationItem("Plugins", symbol: "puzzlepiece.extension", selected: connectionsSelected, count: activeConnectionCount) {
                     connectionsSelected = true
                 }
             }.padding(16)
@@ -165,7 +165,7 @@ struct MacWorkbenchView: View {
                 Text(title).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.tail)
                 if let count {
                     Spacer(minLength: 10)
-                    sidebarCount(count).accessibilityLabel("\(count) active connections")
+                    sidebarCount(count).accessibilityLabel("\(count) active plugins")
                 }
             }.frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .padding(.horizontal, 12).padding(.vertical, 6).contentShape(Rectangle())

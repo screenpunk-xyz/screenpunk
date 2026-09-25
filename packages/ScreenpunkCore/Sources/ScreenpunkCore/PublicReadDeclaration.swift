@@ -132,6 +132,10 @@ public struct PublicReadProvisioning: Codable, Equatable, Sendable {
     public var dashboardId: String
     public var revision: String
     public var connections: [ManifestConnection]
+    public init(dashboardId: String, revision: String, connections: [ManifestConnection]) throws {
+        self.dashboardId = dashboardId; self.revision = revision; self.connections = connections
+        try validate()
+    }
     public init(manifest: DashboardManifest) throws {
         dashboardId = manifest.dashboardId; revision = manifest.revision
         connections = manifest.connections.filter { $0.publicHTTP != nil }

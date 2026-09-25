@@ -118,6 +118,17 @@ public final class ControllerLANClient: @unchecked Sendable {
         return try LANCodec.decodePayload(LANScreenSetReceipt.self, json: reply.payloadJSON)
     }
 
+    public func connectionInventory() throws -> DeviceConnectionInventory {
+        guard lastHello?.capabilities?.contains("connection-inventory-v1") == true else { throw ConnectionFailure.validationFailed }
+        let reply = try request(method: .connectionsInventory, payload: [String: String]())
+        return try LANCodec.decodePayload(DeviceConnectionInventory.self, json: reply.payloadJSON)
+    }
+    public func updateHomeConnection(_ update: DeviceHomeAssistantUpdate) throws -> DeviceConnectionInventory {
+        guard lastHello?.capabilities?.contains("connection-inventory-v1") == true else { throw ConnectionFailure.validationFailed }
+        let reply = try request(method: .connectionsUpdateHome, payload: update)
+        return try LANCodec.decodePayload(DeviceConnectionInventory.self, json: reply.payloadJSON)
+    }
+
     public func getSettings() throws -> DeviceSettingsSnapshot {
         guard lastHello?.capabilities?.contains("device-settings-v1") == true else { throw TransferFailure.validationFailed }
         let reply = try request(method: .settingsGet, payload: [String: String]())
@@ -186,6 +197,11 @@ public final class ControllerLANClient: @unchecked Sendable {
             case .cancelled:
                 failed = TransferFailure.interrupted
                 ready.signal()
+            case .waiting:
+                if connection.currentPath?.unsatisfiedReason == .localNetworkDenied {
+                    failed = LocalNetworkAccessFailure.denied
+                    ready.signal()
+                }
             default:
                 break
             }
@@ -195,7 +211,7 @@ public final class ControllerLANClient: @unchecked Sendable {
             connection.cancel()
             throw TransferFailure.interrupted
         }
-        if let failed { throw failed }
+        if let failed { connection.cancel(); throw failed }
     }
 
     private func request<T: Encodable>(
@@ -225,6 +241,7 @@ public final class ControllerLANClient: @unchecked Sendable {
             if reply.error == PairingFailure.codeMismatch.rawValue { throw PairingFailure.codeMismatch }
             if let raw = reply.error, let failure = DeviceSettingsFailure(rawValue: raw) { throw failure }
             if let raw = reply.error, let failure = TransferFailure(rawValue: raw) { throw failure }
+            if let raw = reply.error, let failure = ConnectionFailure(rawValue: raw) { throw failure }
             throw TransferFailure.interrupted
         }
         return reply
