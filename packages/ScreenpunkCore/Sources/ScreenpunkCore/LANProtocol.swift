@@ -24,6 +24,8 @@ public enum LANMethod: String, Sendable, Codable, Equatable {
     case deploy
     case deploySet = "deploy.set"
     case queryActive = "query.active"
+    case connectionsInventory = "connections.inventory"
+    case connectionsUpdateHome = "connections.updateHome"
     case connectionsProvision = "connections.provision"
     case connectionsRevoke = "connections.revoke"
     case homeAssistantProvision = "homeAssistant.provision"

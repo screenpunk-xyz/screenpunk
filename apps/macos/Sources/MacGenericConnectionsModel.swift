@@ -2,116 +2,127 @@ import Foundation
 import SwiftUI
 import ScreenpunkCore
 import ScreenpunkController
+import ScreenpunkApple
 
-/// Ephemeral native consent state. Neither proposed grants nor credentials are saved on the Mac.
 @MainActor
 final class MacGenericConnectionsModel: ObservableObject {
-    struct Approval: Identifiable {
-        var id: UUID { grant.id }
-        var grant: ConnectionGrant
-        var placement: ConnectionAuthPlacement = .none
-        var fieldName = ""
-        var secret = ""
-        var entry: ConnectionProvisioning.Entry {
-            .init(grant: grant, binding: .init(authRef: grant.authRef, placement: placement,
-                  fieldName: placement == .header || placement == .query ? fieldName : nil),
-                  secret: placement == .none ? nil : Data(secret.utf8))
-        }
+    struct Connection: Identifiable {
+        var id: String
+        var entries: [DeviceConnectionEntry]
+        var first: DeviceConnectionEntry { entries[0] }
+        var screens: String { Array(Set(entries.map { $0.screen.name })).sorted().joined(separator: " · ") }
     }
-    @Published var proposal = ""
-    @Published var approvals: [Approval] = []
+    @Published private(set) var connections: [Connection] = []
+    @Published var selected: String?
     @Published private(set) var deviceName = "Device"
-    @Published private(set) var dashboardID: String?
-    @Published private(set) var revision: String?
     @Published private(set) var busy = false
-    @Published private(set) var reviewed = false
+    @Published private(set) var online = false
     @Published private(set) var message: String?
-    @Published private(set) var failed = false
+    @Published private(set) var statuses: [String: String] = [:]
+    @Published private(set) var diagnostics: [String: String] = [:]
+    @Published var configuring: Connection?
+    @Published var address = ""
+    @Published var token = ""
+    @Published var saveError: String?
     private var service: ControllerService?
     private var deviceID = ""
-    private let queue = DispatchQueue(label: "xyz.screenpunk.connection-approval", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "xyz.screenpunk.connection-management", qos: .userInitiated)
 
-    var canApprove: Bool {
-        guard reviewed, !busy, let configuration else { return false }
-        return (try? configuration.validate()) != nil
-    }
-    private var configuration: ConnectionProvisioning? {
-        guard let dashboardID, let revision else { return nil }
-        return .init(dashboardId: dashboardID, revision: revision, entries: approvals.map(\.entry))
-    }
-
-    func load(model: MacWorkbenchModel, deviceID: String) {
+    var current: Connection? { connections.first { $0.id == selected } }
+    func load(model: MacWorkbenchModel, deviceID: String) async {
         guard service == nil else { return }
-        self.service = model.service; self.deviceID = deviceID
+        service = model.service; self.deviceID = deviceID
         if let record = model.devices.first(where: { $0.id == deviceID }) {
             deviceName = DeviceDisplayName.label(name: record.displayName ?? record.device.profile.name, deviceId: deviceID, fallback: "Device")
         }
-        refreshTarget()
+        await refresh()
     }
-
-    func refreshTarget() {
+    private func accept(_ inventory: DeviceConnectionInventory) {
+        let groups = Dictionary(grouping: inventory.entries) { entry in
+            if let source = entry.publicConnection?.publicHTTP { return "public|\(source.origin)|\(source.userAgent)" }
+            // Credentials may differ between screens even when their server addresses match.
+            return "\(entry.kind)|\(entry.screen.dashboardId)|\(entry.id)"
+        }
+        connections = groups.map { Connection(id: $0.key, entries: $0.value) }.sorted { $0.first.name.localizedStandardCompare($1.first.name) == .orderedAscending }
+        if !connections.contains(where: { $0.id == selected }) { selected = connections.first?.id }
+        online = true; message = nil
+    }
+    func refresh() async {
         guard let service, !busy else { return }
-        busy = true; dashboardID = nil; revision = nil; message = nil
-        let deviceID = self.deviceID
-        queue.async {
-            let result = Result { try service.devices.device(deviceID, probe: true) }
-            Task { @MainActor in
-                self.busy = false
-                guard case .success(let record) = result, record.device.reachable,
-                      let revision = record.device.activeRevision,
-                      let dashboard = record.selectedDashboardId
-                        ?? record.device.history.first(where: { $0.revision == revision })?.dashboardId else {
-                    self.failed = true
-                    self.message = "The current dashboard could not be confirmed. Open Screenpunk on the paired device, apply a dashboard, then refresh. Nothing is queued."
-                    return
-                }
-                self.dashboardID = dashboard; self.revision = revision; self.failed = false
-            }
+        busy = true
+        let id = deviceID
+        let result: Result<DeviceConnectionInventory, Error> = await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: Result { try service.devices.connectionInventory(deviceId: id) }) }
+        }
+        busy = false
+        switch result {
+        case .success(let inventory): accept(inventory)
+        case .failure(let error):
+            online = false
+            message = (error as? LocalNetworkAccessFailure)?.errorDescription
+                ?? (error as? ControllerError)?.detail ?? "Cannot load connections. Connect the iPad and ensure Screenpunk is up to date."
+            if !connections.isEmpty { message = (message ?? "iPad unavailable.") + " Showing last known connections." }
         }
     }
-
-    func review() {
+    func configure(_ connection: Connection) {
+        address = connection.first.origin; token = ""; saveError = nil; configuring = connection
+    }
+    func save() async {
+        guard online, !busy, let connection = configuring, let service else { return }
+        let origin: String
         do {
-            guard let data = proposal.data(using: .utf8), data.count <= 128 * 1024 else { throw ConnectionFailure.sizeLimit }
-            let grants: [ConnectionGrant]
-            if proposal.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("[") {
-                grants = try JSONDecoder().decode([ConnectionGrant].self, from: data)
-            } else { grants = [try ConnectionGrantValidator.decode(data)] }
-            guard grants.count <= 32, Set(grants.map(\.id)).count == grants.count,
-                  Set(grants.map(\.alias)).count == grants.count,
-                  Set(grants.map(\.authRef)).count == grants.count else { throw ConnectionFailure.validationFailed }
-            for grant in grants { try ConnectionGrantValidator.validate(grant) }
-            approvals = grants.map { Approval(grant: $0) }
-            reviewed = true; proposal = ""; message = nil; failed = false
-        } catch {
-            failed = true
-            message = "Enter a valid ConnectionGrant object or array (at most 32 distinct grants). Credentials belong in the secure fields after review, never in the JSON."
+            var components = URLComponents(url: try HomeAssistantClient.baseURL(address), resolvingAgainstBaseURL: false)!
+            components.path = ""; origin = components.string!
+            if origin != connection.first.origin && token.isEmpty {
+                saveError = "Enter a new token when changing the server address."; return
+            }
+        } catch { saveError = error.localizedDescription; return }
+        busy = true; saveError = nil
+        let update = DeviceHomeAssistantUpdate(entries: connection.entries, origin: origin, token: token.isEmpty ? nil : token)
+        let id = deviceID
+        let result: Result<DeviceConnectionInventory, Error> = await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: Result { try service.devices.updateHomeConnection(deviceId: id, update: update) }) }
+        }
+        busy = false; token = ""
+        switch result {
+        case .success(let inventory):
+            accept(inventory); statuses[connection.id] = nil; diagnostics[connection.id] = nil; configuring = nil
+        case .failure:
+            saveError = "The iPad did not confirm the update. Nothing is queued. Reconnect and reload before trying again."
+            online = false
         }
     }
-
-    func editProposal() {
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        proposal = (try? encoder.encode(approvals.map(\.grant))).flatMap { String(data: $0, encoding: .utf8) } ?? ""
-        approvals = []; reviewed = false; message = nil
-    }
-
-    func approve() {
-        guard canApprove, let service, let configuration else { return }
-        busy = true; message = nil
-        let deviceID = self.deviceID
-        queue.async {
-            let result = Result { try service.devices.provisionConnections(deviceId: deviceID, configuration: configuration) }
-            Task { @MainActor in
-                self.busy = false
-                switch result {
-                case .success:
-                    self.approvals = []; self.reviewed = false; self.proposal = ""; self.failed = false
-                    self.message = "Device confirmed these connection permissions were installed. Endpoint connectivity has not been tested. Credentials are stored in the device’s Keychain."
-                case .failure:
-                    self.failed = true
-                    self.message = "Installation was not confirmed. No update is queued. Check that the device is online and still showing this dashboard revision, then refresh and explicitly approve again."
+    func test(_ connection: Connection) async {
+        guard statuses[connection.id] != "Testing" else { return }
+        statuses[connection.id] = "Testing"
+        do {
+            if let declaration = connection.first.publicConnection, let source = declaration.publicHTTP {
+                guard let operation = source.operations.first(where: { $0.parameters.isEmpty }) else {
+                    statuses[connection.id] = "Test needs parameters"
+                    diagnostics[connection.id] = "This source requires values supplied by its screen. No request was sent."; return
                 }
+                let provisioning = try PublicReadProvisioning(dashboardId: connection.first.screen.dashboardId, revision: connection.first.screen.revision, connections: [declaration])
+                try provisioning.validate()
+                let runtime = try PublicReadRuntime(provisioning: provisioning)
+                let result = try await runtime.request(alias: declaration.alias, operation: operation.name, parameters: [:])
+                guard result.state == "fresh" else { throw ConnectionFailure.deviceOffline }
+                diagnostics[connection.id] = "\(operation.name) checked from this Mac at \(Date().formatted(date: .omitted, time: .shortened)). This does not test the iPad."
+            } else if connection.first.kind == "Service integration" {
+                let config = try MacHomeAssistantConnection.provisioning(dashboardId: connection.first.screen.dashboardId, revision: connection.first.screen.revision, provisioningId: UUID().uuidString)
+                guard config.origin == connection.first.origin, config.connectionId == connection.first.id else {
+                    statuses[connection.id] = "Test unavailable"
+                    diagnostics[connection.id] = "This Mac has no matching Home Assistant credentials. Device credentials stay on the iPad."; return
+                }
+                try await HomeAssistantClient.verify(baseURL: HomeAssistantClient.baseURL(config.origin), token: config.token)
+                diagnostics[connection.id] = "Checked from this Mac using its saved token at \(Date().formatted(date: .omitted, time: .shortened)). The iPad may have a different token."
+            } else {
+                statuses[connection.id] = "Test unavailable"
+                diagnostics[connection.id] = "Custom connections cannot be tested from this Mac without their device credentials and request parameters."; return
             }
+            statuses[connection.id] = "Source reachable"
+        } catch {
+            statuses[connection.id] = "Test failed"
+            diagnostics[connection.id] = "The source could not be verified from this Mac. Check its address, network access, and authentication."
         }
     }
 }

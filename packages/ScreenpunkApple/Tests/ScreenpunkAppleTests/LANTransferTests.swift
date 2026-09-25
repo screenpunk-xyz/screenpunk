@@ -23,7 +23,7 @@ final class LANTransferTests: XCTestCase {
         let store = DeviceStateStore(root: FileManager.default.temporaryDirectory
             .appendingPathComponent("sp-lan-device-\(UUID().uuidString)", isDirectory: true))
         defer { try? store.erase() }
-        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity, store: store)
+        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity, store: store, homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
         try server.start()
         XCTAssertGreaterThan(server.port, 0)
         defer { server.stop() }
@@ -37,6 +37,7 @@ final class LANTransferTests: XCTestCase {
         XCTAssertEqual(client.devicePin, deviceIdentity.pin)
         XCTAssertFalse(hello.pinHex.contains("sk-"))
 
+        XCTAssertThrowsError(try client.connectionInventory(), "inventory requires the paired owner")
         let nonce = PairingIdentityFactory.nonce()
         let begin = try client.beginPairing(nonce: nonce)
         XCTAssertEqual(begin.code.count, 6)
@@ -79,6 +80,17 @@ final class LANTransferTests: XCTestCase {
         XCTAssertEqual(store.load()?.activeRevision, StoredRevision.offlineFixture.revision)
         XCTAssertEqual(store.load()?.activeStoredRevision, StoredRevision.offlineFixture)
         XCTAssertEqual(try store.loadPackageFiles().map(\.path), delivered.assets.keys.sorted())
+
+        let home = HomeAssistantProvisioning(dashboardId: StoredRevision.offlineFixture.dashboardId,
+            connectionId: "test-home", provisioningId: "test-home-install", revision: StoredRevision.offlineFixture.revision,
+            origin: "https://ha.example", token: "fixture-secret")
+        _ = try client.provisionHomeAssistant(home)
+        let inventory = try client.connectionInventory()
+        XCTAssertEqual(inventory.entries.count, 1)
+        let updated = try client.updateHomeConnection(.init(entries: inventory.entries, origin: home.origin, token: "replacement"))
+        XCTAssertNotEqual(updated.entries.first?.configurationVersion, inventory.entries.first?.configurationVersion)
+        XCTAssertEqual(updated.entries.first?.operations, inventory.entries.first?.operations)
+        XCTAssertThrowsError(try client.updateHomeConnection(.init(entries: inventory.entries, origin: home.origin, token: "stale")))
 
         let replay = try client.deploy(
             LANDeployBody(

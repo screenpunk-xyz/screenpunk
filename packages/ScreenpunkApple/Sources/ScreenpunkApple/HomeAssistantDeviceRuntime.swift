@@ -90,6 +90,53 @@ public final class HomeAssistantDeviceVault: @unchecked Sendable {
         let sets = try publicSets().filter { (generation == nil || $0.key == generation) && $0.key != removing }
         try store.put(JSONEncoder().encode(sets), for: publicAccount)
     }
+    func inventory(owner: String, screen: LANScreenSetEntry, grantSet: String?) throws -> [DeviceConnectionEntry] {
+        var entries: [DeviceConnectionEntry] = []
+        if let grantSet, let config = try? publicConfiguration(owner: owner, dashboardId: screen.dashboardId, revision: screen.revision, generation: grantSet) {
+            entries += config.connections.compactMap { connection in
+                guard let source = connection.publicHTTP else { return nil }
+                return .init(id: connection.alias, screen: screen, name: connection.alias, kind: "Public data source",
+                    origin: source.origin, authentication: "None", operations: source.operations.map { .init(name: $0.name, method: "GET", path: $0.path) }, publicConnection: connection)
+            }
+        }
+        if let record = try? record(owner: owner, revision: screen.revision, grantSet: grantSet), record.configuration.dashboardId == screen.dashboardId {
+            let config = record.configuration
+            var operations = [DeviceConnectionOperation(name: "Fetch entity states", method: "GET", path: "/api/states")]
+            if config.schemaVersion == 1 {
+                operations += HomeAssistantProvisioning.services.sorted { $0.key < $1.key }.map { .init(name: $0.key, method: "POST", path: "/api/services/\($0.value.domain)/\($0.value.service)", write: true) }
+            } else {
+                operations += (config.serviceCalls ?? []).map { .init(name: "\($0.domain).\($0.service)", method: "POST", path: $0.entityIds.joined(separator: ", "), write: true) }
+            }
+            operations += (config.cameraEntities ?? []).map { .init(name: "View camera", method: "GET", path: $0) }
+            entries.append(.init(id: config.connectionId, screen: screen, name: "Home Assistant", kind: "Service integration", origin: config.origin,
+                authentication: "Access token", operations: operations, configurationVersion: record.generation.uuidString))
+        }
+        return entries
+    }
+
+    func update(_ update: DeviceHomeAssistantUpdate, owner: String, grantSet: String?) throws {
+        guard !update.entries.isEmpty, update.entries.count <= 32 else { throw ConnectionFailure.validationFailed }
+        lock.lock(); defer { lock.unlock() }
+        var sets = try grantSets()
+        var records: [Record]
+        if let grantSet { records = sets[grantSet] ?? [] }
+        else if let data = try store.secret(for: account) { records = [try JSONDecoder().decode(Record.self, from: data)] }
+        else { throw ConnectionFailure.permissionRequired }
+        var indices = Set<Int>()
+        for entry in update.entries {
+            guard let index = records.firstIndex(where: { $0.owner == owner && $0.configuration.dashboardId == entry.screen.dashboardId && $0.configuration.revision == entry.screen.revision && $0.configuration.connectionId == entry.id && $0.generation.uuidString == entry.configurationVersion }), indices.insert(index).inserted else { throw ConnectionFailure.permissionRequired }
+            var config = records[index].configuration
+            // Never forward an existing token to a different server without a new explicit token.
+            if config.origin != update.origin && update.token == nil { throw ConnectionFailure.permissionRequired }
+            config.origin = update.origin; config.allowInsecureHTTP = update.origin.hasPrefix("http://")
+            if let token = update.token { config.token = token }
+            config.provisioningId = UUID().uuidString
+            try config.validate()
+            records[index] = Record(owner: owner, configuration: config, generation: UUID())
+        }
+        if let grantSet { sets[grantSet] = records; try store.put(JSONEncoder().encode(sets), for: setsAccount) }
+        else { try store.put(JSONEncoder().encode(records[0]), for: account) }
+    }
     private func grantSets() throws -> [String: [Record]] {
         guard let data = try store.secret(for: setsAccount) else { return [:] }
         return try JSONDecoder().decode([String: [Record]].self, from: data)

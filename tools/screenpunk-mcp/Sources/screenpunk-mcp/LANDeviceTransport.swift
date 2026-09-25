@@ -80,6 +80,8 @@ final class LANDeviceLink: DeviceLink {
         try client.deployScreenSet(body)
     }
     func queryActiveState() throws -> LANActiveQuery { try client.queryActiveState() }
+    func connectionInventory() throws -> DeviceConnectionInventory { try client.connectionInventory() }
+    func updateHomeConnection(_ update: DeviceHomeAssistantUpdate) throws -> DeviceConnectionInventory { try client.updateHomeConnection(update) }
     func getSettings() throws -> DeviceSettingsSnapshot { try client.getSettings() }
     func updateSettings(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot { try client.updateSettings(update) }
 

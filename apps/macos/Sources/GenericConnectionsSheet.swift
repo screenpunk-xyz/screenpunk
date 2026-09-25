@@ -6,94 +6,139 @@ struct GenericConnectionsSheet: View {
     @ObservedObject var model: MacWorkbenchModel
     let deviceID: String
     @StateObject private var editor = MacGenericConnectionsModel()
+    @State private var hovered: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("\(editor.deviceName) Connections").font(.title2.weight(.semibold))
-            Text("Approve network access for the dashboard currently installed on this device.").foregroundStyle(.secondary)
-            if let dashboard = editor.dashboardID, let revision = editor.revision {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Dashboard: \(dashboard)")
-                    Text("Revision: \(revision)").font(.caption).foregroundStyle(.secondary)
-                }.textSelection(.enabled)
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if editor.reviewed {
-                        Text("This replaces all generic connection permissions for this dashboard revision. Review every destination and operation before approving.")
-                            .font(.callout).fixedSize(horizontal: false, vertical: true)
-                        if editor.approvals.isEmpty {
-                            Text("No connections. Approving will remove this dashboard revision’s generic connection permissions.")
-                        }
-                        ForEach($editor.approvals) { $approval in
-                            approvalCard($approval)
-                        }
-                    } else {
-                        Text("Paste proposed ConnectionGrant JSON (one object or an array). Include all connections this dashboard needs. This proposal does not grant permission until you review and approve it.")
-                            .font(.callout).fixedSize(horizontal: false, vertical: true)
-                        Text("Do not paste credentials here. Enter them in the secure fields after review. Use an empty array [] to remove all grants for this revision.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        TextEditor(text: $editor.proposal).font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 210).border(.secondary.opacity(0.3))
-                    }
-                }
-            }.disabled(editor.busy)
-            if let message = editor.message {
-                Text(message).font(.callout).foregroundStyle(editor.failed ? Color.red : Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("Connections run directly on the active device. Credentials are sent only over its paired, encrypted connection; they are not saved in a dashboard or on this Mac.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: 0) {
             HStack {
-                Button("Refresh Device") { editor.refreshTarget() }.disabled(editor.busy)
-                if editor.reviewed { Button("Edit Proposal") { editor.editProposal() }.disabled(editor.busy) }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(editor.deviceName) Connections").font(.title2.weight(.semibold))
+                    Text("Connections used by screens on this iPad").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button { dismiss() } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("Close")
+            }.padding(24)
+            Divider()
+            HStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("CURRENT CONNECTIONS").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 10)
+                        ForEach(editor.connections) { connection in
+                            Button { editor.selected = connection.id } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: connection.first.publicConnection == nil ? "link" : "cloud").frame(width: 24)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(connection.first.name)
+                                        Text(connection.first.kind).font(.caption).opacity(0.7)
+                                    }
+                                    Spacer(minLength: 0)
+                                }.padding(.horizontal, 14).padding(.vertical, 10).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                                .foregroundStyle(editor.selected == connection.id ? Color.white : Color.primary)
+                                .background(rowColor(connection.id), in: RoundedRectangle(cornerRadius: 8))
+                                .onHover { hovered = $0 ? connection.id : nil }
+                        }
+                    }.padding(12)
+                }.frame(width: 240).background(.secondary.opacity(0.04))
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if let message = editor.message {
+                            HStack { Text(message).foregroundStyle(.secondary); Button("Retry") { Task { await editor.refresh() } }.disabled(editor.busy) }
+                        }
+                        if let connection = editor.current { details(connection) }
+                        else if editor.busy { ProgressView("Loading connections…") }
+                        else if editor.message == nil { Text("No connections used by installed screens.").foregroundStyle(.secondary) }
+                    }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            Divider()
+            HStack {
                 if editor.busy { ProgressView().controlSize(.small) }
                 Spacer()
-                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction).disabled(editor.busy)
-                if editor.reviewed {
-                    Button("Approve and Replace") { editor.approve() }.disabled(!editor.canApprove)
-                } else {
-                    Button("Review Permissions") { editor.review() }.disabled(editor.busy || editor.proposal.isEmpty)
+                if let connection = editor.current {
+                    if connection.first.kind == "Service integration" {
+                        Button("Configure connection") { editor.configure(connection) }.disabled(editor.busy)
+                    }
+                    Button("Test connection") { Task { await editor.test(connection) } }
+                        .disabled(editor.statuses[connection.id] == "Testing")
+                        .buttonStyle(.borderedProminent)
+                }
+            }.padding(16)
+        }.frame(minWidth: 760, idealWidth: 980, maxWidth: 1100, minHeight: 480, idealHeight: 640, maxHeight: 760)
+            .task { await editor.load(model: model, deviceID: deviceID) }
+            .sheet(item: $editor.configuring, onDismiss: { editor.token = "" }) { _ in configuration }
+    }
+    private func rowColor(_ id: String) -> Color {
+        if editor.selected == id { return Color.accentColor.opacity(hovered == id ? 0.85 : 1) }
+        return hovered == id ? Color.primary.opacity(0.06) : .clear
+    }
+    private func details(_ connection: MacGenericConnectionsModel.Connection) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                Text(connection.first.name).font(.title2.bold())
+                Spacer()
+                Text(editor.statuses[connection.id] ?? "Not checked").font(.caption)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                    .help(editor.diagnostics[connection.id] ?? "Test the source from this Mac.")
+                    .accessibilityValue(editor.diagnostics[connection.id] ?? "Not checked from this Mac")
+            }
+            Text("Access details").font(.caption).foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                detailRow("Destination", connection.first.origin)
+                Divider()
+                detailRow("Access", connection.entries.contains { $0.operations.contains { $0.write } } ? "Read and control" : "Read only")
+                Divider()
+                detailRow("Authentication", connection.first.authentication)
+                Divider()
+                detailRow("Used by", connection.screens)
+            }.padding(.horizontal, 16).background(.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+            Text("Operations").font(.caption).foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                ForEach(Array(connection.entries.enumerated()), id: \.offset) { _, entry in
+                    ForEach(Array(entry.operations.enumerated()), id: \.offset) { _, operation in
+                        HStack(alignment: .top, spacing: 24) {
+                            Text("\(operation.method) · \(operation.write ? "Makes changes" : "Read only")").foregroundStyle(.secondary)
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Text(operation.name)
+                                Text(entry.screen.name).font(.caption).foregroundStyle(.secondary)
+                                Text(operation.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                            }.multilineTextAlignment(.trailing)
+                        }.padding(.vertical, 12)
+                        Divider()
+                    }
+                }
+            }.padding(.horizontal, 16).background(.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 24) {
+            Text(label).foregroundStyle(.secondary); Spacer(); Text(value).multilineTextAlignment(.trailing).textSelection(.enabled)
+        }.padding(.vertical, 12)
+    }
+    private var configuration: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Configure Home Assistant").font(.title2.bold())
+            TextField("Server address", text: $editor.address).textFieldStyle(.roundedBorder)
+            SecureField("Access token — leave blank to keep saved token", text: $editor.token).textFieldStyle(.roundedBorder)
+            Text("Save updates this iPad immediately. The iPad must be connected.").foregroundStyle(.secondary)
+            if !editor.online { Text("iPad unavailable. Reconnect to save changes.").foregroundStyle(.orange) }
+            if let error = editor.saveError { Text(error).foregroundStyle(.red) }
+            HStack {
+                if !editor.online { Button("Retry") { Task { await editor.refresh() } }.disabled(editor.busy) }
+                Spacer()
+                Button("Cancel") { editor.configuring = nil }.disabled(editor.busy)
+                Button(editor.busy ? "Saving…" : "Save") { Task { await editor.save() } }
+                    .disabled(!editor.online || editor.busy).buttonStyle(.borderedProminent)
+            }
+        }.padding(24).frame(width: 460).interactiveDismissDisabled(editor.busy)
+            .task {
+                while !Task.isCancelled {
+                    await editor.refresh()
+                    try? await Task.sleep(for: .seconds(5))
                 }
             }
-        }.padding(24).frame(width: 720, height: 730).interactiveDismissDisabled(editor.busy)
-            .task { editor.load(model: model, deviceID: deviceID) }
-    }
-
-    private func approvalCard(_ binding: Binding<MacGenericConnectionsModel.Approval>) -> some View {
-        let approval = binding.wrappedValue
-        return GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(approval.grant.alias).font(.headline)
-                Text(approval.grant.origin).textSelection(.enabled)
-                Text("Transport: \(approval.grant.transport == .ws ? "WebSocket subscription" : "HTTP request / polling")")
-                Text("Local network: \(approval.grant.lan ? "Allowed" : "Not allowed") · Unencrypted HTTP / WebSocket: \(approval.grant.allowInsecureHTTP ? "Allowed" : "Not allowed")")
-                    .font(.callout).foregroundStyle(approval.grant.allowInsecureHTTP ? Color.orange : Color.secondary)
-                ForEach(approval.grant.operations, id: \.name) { operation in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(operation.name) · \(operation.method.rawValue) \(operation.path)").font(.system(.callout, design: .monospaced))
-                        Text("\(operation.write ? "Write operation" : "Read operation") · \(operation.idempotent ? "Idempotent" : "Not idempotent")").font(.caption).foregroundStyle(.secondary)
-                    }.textSelection(.enabled)
-                }
-                Divider()
-                Picker("Authentication", selection: binding.placement) {
-                    Text("None").tag(ConnectionAuthPlacement.none)
-                    Text("Bearer token").tag(ConnectionAuthPlacement.bearer)
-                    Text("Custom header").tag(ConnectionAuthPlacement.header)
-                    Text("Query parameter").tag(ConnectionAuthPlacement.query)
-                }
-                if approval.placement == .header || approval.placement == .query {
-                    TextField(approval.placement == .header ? "Header name" : "Query parameter name", text: binding.fieldName)
-                        .textFieldStyle(.roundedBorder)
-                }
-                if approval.placement != .none {
-                    SecureField("Credential for \(approval.grant.authRef)", text: binding.secret).textFieldStyle(.roundedBorder)
-                }
-                if approval.placement == .query {
-                    Text("Query credentials are included in the request URL and may be recorded by the destination service.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
-        }
     }
 }

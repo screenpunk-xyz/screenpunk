@@ -18,6 +18,8 @@ public protocol DeviceLink: AnyObject {
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord
     func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt
     func queryActiveState() throws -> LANActiveQuery
+    func connectionInventory() throws -> DeviceConnectionInventory
+    func updateHomeConnection(_ update: DeviceHomeAssistantUpdate) throws -> DeviceConnectionInventory
     func getSettings() throws -> DeviceSettingsSnapshot
     func updateSettings(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot
     func provisionConnections(_ configuration: ConnectionProvisioning) throws -> ConnectionProvisioningReceipt
@@ -28,6 +30,13 @@ public protocol DeviceLink: AnyObject {
 }
 
 public extension DeviceLink {
+    func connectionInventory() throws -> DeviceConnectionInventory {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on the iPad to view its connections.")
+    }
+    func updateHomeConnection(_ update: DeviceHomeAssistantUpdate) throws -> DeviceConnectionInventory {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on the iPad to configure its connections.")
+    }
+
     func provisionConnections(_ configuration: ConnectionProvisioning) throws -> ConnectionProvisioningReceipt {
         throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to approve generic connections.")
     }

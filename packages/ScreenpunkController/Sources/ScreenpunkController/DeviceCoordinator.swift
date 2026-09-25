@@ -523,6 +523,21 @@ public final class DeviceCoordinator: @unchecked Sendable {
 
     /// Explicit native approval only. A changed active dashboard/revision is rejected by the device.
     /// No durable queue: a transport retry uses the same idempotent provisioning identifier.
+    public func connectionInventory(deviceId: String) throws -> DeviceConnectionInventory {
+        let record = try ownedRecord(deviceId)
+        let inventory = try withLink(record) { try $0.connectionInventory() }
+        guard inventory.deviceId == deviceId else { throw ConnectionFailure.validationFailed }
+        return inventory
+    }
+    public func updateHomeConnection(deviceId: String, update: DeviceHomeAssistantUpdate) throws -> DeviceConnectionInventory {
+        let record = try ownedRecord(deviceId)
+        let inventory = try withLink(record) { try $0.updateHomeConnection(update) }
+        guard inventory.deviceId == deviceId, update.entries.allSatisfy({ expected in
+            inventory.entries.contains { $0.id == expected.id && $0.screen == expected.screen && $0.origin == update.origin && $0.operations == expected.operations && $0.configurationVersion != expected.configurationVersion }
+        }) else { throw ConnectionFailure.validationFailed }
+        return inventory
+    }
+
     public func provisionConnections(deviceId: String, configuration: ConnectionProvisioning) throws -> ConnectionProvisioningReceipt {
         let record = try ownedRecord(deviceId)
         try configuration.validate()

@@ -34,7 +34,7 @@ struct AgentConnectionSheet: View {
                 Text(configuration).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(14)
             }.frame(height: 190).background(.quaternary, in: .rect(cornerRadius: 12)).id(agent)
-            Text("Install Screenpunk in Applications and reopen this sheet before copying, so the command uses a permanent path. Your agent appears in Connections → Installed after it connects and requests Screenpunk’s tools.")
+            Text("Install Screenpunk in Applications and reopen this sheet before copying, so the command uses a permanent path. Your agent appears in Plugins → Installed after it connects and requests Screenpunk’s tools.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()

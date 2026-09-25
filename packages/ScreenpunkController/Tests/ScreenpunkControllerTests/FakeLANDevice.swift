@@ -146,7 +146,7 @@ final class FakeLANDevice: @unchecked Sendable {
                     throw TransferFailure.notPaired
                 }
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
-            case .connectionsProvision, .connectionsRevoke, .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
+            case .connectionsInventory, .connectionsUpdateHome, .connectionsProvision, .connectionsRevoke, .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
                 throw TransferFailure.validationFailed
             }
         } catch {
