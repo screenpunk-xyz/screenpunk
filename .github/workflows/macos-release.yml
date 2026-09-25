@@ -82,13 +82,15 @@ jobs:
         with:
           node-version: "24.21.0"
       - name: Require release tag
+        env:
+          TAG: ${{ inputs.release_tag }}
         run: |
           set +x
-          if [[ -z "${{ inputs.release_tag }}" ]]; then
+          if [[ -z "$TAG" ]]; then
             echo "release_tag is required when publish_github_release is true"
             exit 1
           fi
-          if [[ ! "${{ inputs.release_tag }}" =~ ^v[0-9] ]]; then
+          if [[ ! "$TAG" =~ ^v[0-9] ]]; then
             echo "release_tag must start with v and a digit"
             exit 1
           fi
