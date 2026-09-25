@@ -8,5 +8,9 @@ updates:
     directory: /sdk
     schedule:
       interval: weekly
+  - package-ecosystem: npm
+    directory: /authoring
+    schedule:
+      interval: weekly
 # SwiftPM is not in Dependabot's current ecosystems for this repo.
 # Review Package.swift pins on a weekly cadence until a supported bot exists.
