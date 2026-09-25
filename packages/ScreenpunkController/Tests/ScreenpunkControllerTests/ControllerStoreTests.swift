@@ -100,6 +100,33 @@ final class DashboardPackageStoreTests: XCTestCase {
             )
         )
     }
+
+    /// MCP callers hand dashboardId/revision straight through. A `..` segment
+    /// must never become a path component under the controller home.
+    func testRejectsIdentifierPathTraversal() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sp-ctrl-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try DashboardPackageStore(root: root)
+        let escape = "../../../../tmp/sp-escape-\(UUID().uuidString)"
+
+        // Writing to an escaped dashboardId must fail and create nothing outside root.
+        XCTAssertThrowsError(
+            try store.putDashboard(dashboardId: escape, name: "Evil", baseRevision: nil,
+                                   target: fixtureTarget(), connections: [], files: [htmlFile("x")])
+        ) { XCTAssertEqual(($0 as? ControllerError)?.code, .validationFailed) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "/tmp/sp-escape-head.json"))
+
+        for bad in [escape, "..", ".", "a/b", "../secret", "with space"] {
+            XCTAssertThrowsError(try store.getRevision(dashboardId: bad, revision: nil), bad)
+            XCTAssertThrowsError(try store.listRevisions(dashboardId: bad), bad)
+        }
+
+        // A real dashboard still reads back with a traversal revision rejected.
+        let good = try store.putDashboard(dashboardId: nil, name: "Good", baseRevision: nil,
+                                          target: fixtureTarget(), connections: [], files: [htmlFile("ok")])
+        XCTAssertThrowsError(try store.getRevision(dashboardId: good.manifest.dashboardId, revision: "../../etc/passwd"))
+        XCTAssertNoThrow(try store.getRevision(dashboardId: good.manifest.dashboardId, revision: good.manifest.revision))
+    }
 }
 
 func fixtureTarget() -> ManifestTarget {
