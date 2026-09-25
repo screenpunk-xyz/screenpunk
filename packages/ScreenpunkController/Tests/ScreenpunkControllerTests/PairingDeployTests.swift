@@ -48,6 +48,53 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertEqual(reopened.directory.get(pairedTablet.id)?.port, 8002)
     }
 
+    /// Anyone on the LAN can advertise `_screenpunk._tcp`. A burst of dead
+    /// advertisements must cost a bounded number of probes per pass, and a
+    /// failed endpoint must not be probed again on every pass.
+    func testDiscoveryBoundsProbesAndBacksOffFailedEndpoints() throws {
+        let phone = FakeLANDevice(deviceId: "device-real", name: "Real iPhone")
+        phone.online = false
+        let clock = MutableClock()
+        let harness = try makeHarness(device: phone, now: { clock.now })
+        let coordinator = harness.service.devices
+        coordinator.hub.reset()
+        // More dead advertisements than the per-pass probe budget.
+        for index in 0..<(DeviceCoordinator.discoveryProbesPerPass + 4) {
+            coordinator.hub.advertise(AdvertisedDevice(deviceId: "bonjour:ghost-\(index)", host: "192.168.9.\(100 + index)", port: 7843, source: .advertised))
+        }
+
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        XCTAssertEqual(phone.connectAttempts, DeviceCoordinator.discoveryProbesPerPass, "one pass probes a bounded number of unknown endpoints")
+
+        // The next pass probes only the not-yet-tried endpoints; failed ones back off.
+        let afterFirst = phone.connectAttempts
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        XCTAssertEqual(phone.connectAttempts, afterFirst + 4, "already-failed endpoints are not retried within the interval")
+
+        // Fully inside the retry interval: nothing is re-probed.
+        clock.now = clock.now.addingTimeInterval(DeviceCoordinator.discoveryRetryInterval - 1)
+        let afterSecond = phone.connectAttempts
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        XCTAssertEqual(phone.connectAttempts, afterSecond, "every endpoint is still inside its retry interval")
+
+        // A real device advertised at a fresh address is probed and returned.
+        phone.host = "192.168.9.50"; phone.port = 7843; phone.online = true
+        phone.runtime.advertisement = AdvertisedDevice(deviceId: "device-real", host: phone.host, port: Int(phone.port), source: .advertised)
+        coordinator.hub.advertise(phone.runtime.advertisement)
+        XCTAssertEqual(coordinator.discover().map(\.deviceId), ["device-real"])
+
+        // A manual address entered by the person is never held back by an old failure.
+        phone.online = false
+        // Past the identity cache window so the offline device is actually re-probed and fails.
+        clock.now = clock.now.addingTimeInterval(11)
+        XCTAssertTrue(coordinator.discover().isEmpty, "the stale identity is not reused once the device stops answering")
+        phone.online = true
+        let before = phone.connectAttempts
+        coordinator.addManual(host: phone.host, port: Int(phone.port))
+        XCTAssertEqual(coordinator.discover().count, 1)
+        XCTAssertEqual(phone.connectAttempts, before + 1, "addManual clears the endpoint's back-off so it is probed at once")
+    }
+
     func testLegacySavedPairingSurvivesNativeIdentityUpgrade() throws {
         let phone = FakeLANDevice(deviceId: "device-native-id", name: "iPhone")
         let harness = try makeHarness(device: phone)

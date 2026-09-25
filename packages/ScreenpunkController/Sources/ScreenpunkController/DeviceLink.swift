@@ -12,6 +12,10 @@ public protocol DeviceLink: AnyObject {
     /// transcript binds to this value, never to a pin the device merely claims.
     var devicePin: [UInt8]? { get }
     func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?) throws
+    /// Same as `connect(host:port:pinnedDevice:)` with a bounded handshake
+    /// budget. Discovery probes use it so one dead or hostile advertisement
+    /// cannot stall the workbench for the full first-pairing timeout.
+    func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?, timeout: TimeInterval) throws
     func hello() throws -> LANHello
     func beginPairing(nonce: [UInt8]) throws -> LANPairBeginResult
     func confirmPairing(code: String) throws
@@ -30,6 +34,10 @@ public protocol DeviceLink: AnyObject {
 }
 
 public extension DeviceLink {
+    func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?, timeout: TimeInterval) throws {
+        try connect(host: host, port: port, pinnedDevice: pinnedDevice)
+    }
+
     func connectionInventory() throws -> DeviceConnectionInventory {
         throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on the iPad to view its connections.")
     }

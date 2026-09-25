@@ -33,6 +33,14 @@ public final class DeviceCoordinator: @unchecked Sendable {
     private let now: @Sendable () -> Date
     private let discoveryLock = NSLock()
     private var discoveryCache: [String: (hello: LANHello, pin: [UInt8], seen: Date)] = [:]
+    /// Endpoints whose last identity probe failed, with the failure time. Any
+    /// LAN peer can advertise `_screenpunk._tcp`; without these bounds a few
+    /// dead or hostile advertisements would stall every discovery pass (and
+    /// the workbench queue behind it) for the full connect timeout each.
+    private var discoveryFailures: [String: Date] = [:]
+    static let discoveryConnectTimeout: TimeInterval = 5
+    static let discoveryRetryInterval: TimeInterval = 30
+    static let discoveryProbesPerPass = 8
 
     private struct PendingPairing {
         var deviceId: String
@@ -86,6 +94,10 @@ public final class DeviceCoordinator: @unchecked Sendable {
         let advertisements = hub.browse()
         let addresses = Set(advertisements.map { "\($0.host):\($0.port)" })
         discoveryCache = discoveryCache.filter { addresses.contains($0.key) }
+        discoveryFailures = discoveryFailures.filter {
+            addresses.contains($0.key) && now().timeIntervalSince($0.value) < Self.discoveryRetryInterval
+        }
+        var probes = 0
         var resolved: [String: AdvertisedDevice] = [:]
         for var advertisement in advertisements {
             if advertisement.source == .loopback {
@@ -99,10 +111,15 @@ public final class DeviceCoordinator: @unchecked Sendable {
                     identity = cached
                 } else {
                     guard let port = UInt16(exactly: advertisement.port), port > 0 else { continue }
+                    // A recently failed endpoint waits out the retry interval, and one
+                    // pass probes only a handful of unknown endpoints; the rest are
+                    // reconsidered next pass so a burst of advertisements stays cheap.
+                    guard discoveryFailures[address] == nil, probes < Self.discoveryProbesPerPass else { continue }
+                    probes += 1
                     let link = try factory.makeLink()
                     defer { link.cancel() }
                     // Read-only identity discovery; no pairing, deployment or credentials.
-                    try link.connect(host: advertisement.host, port: port, pinnedDevice: nil)
+                    try link.connect(host: advertisement.host, port: port, pinnedDevice: nil, timeout: Self.discoveryConnectTimeout)
                     let hello = try link.hello()
                     guard hello.protocolMajor == DiscoveryService.protocolMajor,
                           let pin = link.devicePin, pin.count == PairingLimits.identityByteCount,
@@ -135,9 +152,18 @@ public final class DeviceCoordinator: @unchecked Sendable {
             } catch {
                 // An unreachable or foreign-owned endpoint is not a verified pairing candidate.
                 discoveryCache[address] = nil
+                discoveryFailures[address] = now()
             }
         }
         return resolved.values.sorted { $0.deviceId < $1.deviceId }
+    }
+
+    /// Forget a failed probe so the next `discover()` tries the endpoint again
+    /// at once (a device the person just brought back, or a manual address).
+    public func forgetDiscoveryFailure(host: String, port: Int) {
+        discoveryLock.lock()
+        discoveryFailures["\(host):\(port)"] = nil
+        discoveryLock.unlock()
     }
 
     private func verifiedDeviceId(hello: LANHello, pin: [UInt8]) throws -> String {
@@ -155,7 +181,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
 
     @discardableResult
     public func addManual(host: String, port: Int) -> AdvertisedDevice {
-        hub.addManual(host: host, port: port)
+        forgetDiscoveryFailure(host: host, port: port)
+        return hub.addManual(host: host, port: port)
     }
 
     public func pendingPairings() -> [PendingPairingSummary] {
