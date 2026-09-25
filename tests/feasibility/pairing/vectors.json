@@ -168,6 +168,35 @@
         { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 201, "expect": "ok" }
       ],
       "finalOwner": "honest"
+    },
+    {
+      "id": "live-session-cannot-be-swapped-by-second-candidate",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "begin", "case": "mitm-substituted-controller", "atSeconds": 30, "expect": "busy" },
+        { "op": "begin", "case": "key-change", "atSeconds": 119, "expect": "busy" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 120, "expect": "ok" }
+      ],
+      "finalOwner": "honest"
+    },
+    {
+      "id": "same-candidate-may-restart-live-session",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "begin", "case": "honest", "atSeconds": 30, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 60, "expect": "ok" }
+      ],
+      "finalOwner": "honest"
+    },
+    {
+      "id": "expired-session-releases-the-lock",
+      "steps": [
+        { "op": "begin", "case": "honest", "atSeconds": 0, "expect": "ok" },
+        { "op": "begin", "case": "mitm-substituted-controller", "atSeconds": 121, "expect": "ok" },
+        { "op": "confirm", "code": "case:honest", "presented": "honest", "atSeconds": 122, "expect": "identityChanged" },
+        { "op": "confirm", "code": "case:mitm-substituted-controller", "presented": "attacker", "atSeconds": 123, "expect": "ok" }
+      ],
+      "finalOwner": "attacker"
     }
   ]
 }

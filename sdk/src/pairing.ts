@@ -27,7 +27,8 @@ export type PairingFailure =
   | "codeMismatch"
   | "identityChanged"
   | "secondOwner"
-  | "invalidIdentity";
+  | "invalidIdentity"
+  | "busy";
 
 export class PairingError extends Error {
   readonly failure: PairingFailure;
@@ -102,6 +103,16 @@ export function beginPairing(
   }
   if (state.owner && !identitiesEqual(state.owner, candidateOwner)) {
     throw new PairingError("secondOwner");
+  }
+  // A live session belongs to its candidate until it completes, is cancelled,
+  // or expires; a late begin from someone else cannot swap the code on screen.
+  if (
+    state.session &&
+    !state.session.confirmed &&
+    nowMs - state.session.createdAtMs <= PAIRING_EXPIRY_SECONDS * 1000 &&
+    !identitiesEqual(state.session.candidateOwner, candidateOwner)
+  ) {
+    throw new PairingError("busy");
   }
   return {
     owner: state.owner,

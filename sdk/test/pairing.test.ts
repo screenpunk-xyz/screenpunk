@@ -154,7 +154,8 @@ test("pairing scenarios are shared with Swift and cover every failure class", ()
     "codeMismatch",
     "identityChanged",
     "secondOwner",
-    "invalidIdentity"
+    "invalidIdentity",
+    "busy"
   ] as const) {
     assert.ok(seen.has(failure), `scenarios must exercise ${failure}`);
   }

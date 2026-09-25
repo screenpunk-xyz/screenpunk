@@ -97,11 +97,13 @@ final class LANLink {
     }
 
     /// Server-side wait for the next request. A human sits between requests
-    /// (compare codes, tap Confirm, press Deploy), so the header wait has no
-    /// deadline; it ends when a frame arrives or the connection fails. The
-    /// body must still follow its header within `bodyTimeout`.
-    func receiveRequest(bodyTimeout: TimeInterval = 15, maximumBytes: Int = LANProtocolLimits.maxMessageBytes) throws -> LANEnvelope {
-        try receive(headerTimeout: nil, bodyTimeout: bodyTimeout, maximumBytes: maximumBytes)
+    /// (compare codes, tap Confirm, press Deploy), so for the owner the header
+    /// wait has no deadline (`idleTimeout == nil`); it ends when a frame
+    /// arrives or the connection fails. Peers that have not proven ownership
+    /// pass a bounded `idleTimeout` so an idle stranger cannot hold a worker
+    /// forever. The body must still follow its header within `bodyTimeout`.
+    func receiveRequest(idleTimeout: TimeInterval? = nil, bodyTimeout: TimeInterval = 15, maximumBytes: Int = LANProtocolLimits.maxMessageBytes) throws -> LANEnvelope {
+        try receive(headerTimeout: idleTimeout, bodyTimeout: bodyTimeout, maximumBytes: maximumBytes)
     }
 
     func cancel() {

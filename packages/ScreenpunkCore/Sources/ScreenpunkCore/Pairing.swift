@@ -56,6 +56,11 @@ public enum PairingFailure: String, Error, Sendable, Equatable {
     case identityChanged
     case secondOwner
     case invalidIdentity
+    /// Another controller's code is on screen and has not expired. The
+    /// session belongs to that candidate until it completes, is cancelled,
+    /// or times out, so a late `pair.begin` cannot swap the owner the
+    /// person is about to confirm.
+    case busy
 }
 
 public protocol PairingClock: Sendable {
@@ -110,6 +115,12 @@ public struct PairingSession: Sendable, Equatable {
         self.failures = failures
         self.confirmed = confirmed
     }
+
+    /// Unconfirmed and inside the expiry window: the code is still on screen
+    /// waiting for a person.
+    public func isLive(at now: Date) -> Bool {
+        !confirmed && now.timeIntervalSince(createdAt) <= PairingLimits.expirySeconds
+    }
 }
 
 /// One owning controller identity per device. No credentials are stored here.
@@ -133,6 +144,9 @@ public struct DevicePairingState: Sendable, Equatable {
         }
         if let owner, owner != candidateOwner {
             throw PairingFailure.secondOwner
+        }
+        if let session, session.isLive(at: clock.now), session.candidateOwner != candidateOwner {
+            throw PairingFailure.busy
         }
         session = PairingSession(
             transcript: transcript,

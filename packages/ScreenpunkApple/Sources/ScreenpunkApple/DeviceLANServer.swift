@@ -82,8 +82,24 @@ public final class DeviceLANServer: @unchecked Sendable {
     private let clock: PairingClock
     private let lock = NSLock()
     /// How long a frame body may trail its header. The wait *between* requests
-    /// has no deadline; see `serve`.
+    /// has no deadline for the owner; see `serve`.
     private let requestBodyTimeout: TimeInterval
+    /// Peers that have not proven the owner pin get bounded service: at most
+    /// `maxUntrustedConnections` at a time, each closed after
+    /// `untrustedIdleTimeout` without a request. The window still covers the
+    /// human pause between `pair.begin` and `pair.confirm`, which the code
+    /// expiry already bounds. Each accepted connection holds a worker thread,
+    /// so without these limits any LAN peer could starve the listener.
+    public static let maxUntrustedConnections = 8
+    public static let untrustedIdleTimeout: TimeInterval = PairingLimits.expirySeconds + 30
+    private let untrustedIdleTimeout: TimeInterval
+    private let maxUntrustedConnections: Int
+    private var untrustedConnections = 0
+    /// Number of non-owner connections currently being served. Test hook.
+    var untrustedConnectionCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return untrustedConnections
+    }
 
     public init(
         runtime: DeviceRuntime,
@@ -92,7 +108,9 @@ public final class DeviceLANServer: @unchecked Sendable {
         store: DeviceStateStore? = nil,
         homeAssistantVault: HomeAssistantDeviceVault = HomeAssistantDeviceVault(),
         genericConnectionVault: GenericConnectionDeviceVault = GenericConnectionDeviceVault(),
-        requestBodyTimeout: TimeInterval = LANProtocolLimits.transferTimeoutSeconds
+        requestBodyTimeout: TimeInterval = LANProtocolLimits.transferTimeoutSeconds,
+        untrustedIdleTimeout: TimeInterval = DeviceLANServer.untrustedIdleTimeout,
+        maxUntrustedConnections: Int = DeviceLANServer.maxUntrustedConnections
     ) {
         self.genericConnectionVault = genericConnectionVault
         self.homeAssistantVault = homeAssistantVault
@@ -101,6 +119,8 @@ public final class DeviceLANServer: @unchecked Sendable {
         self.clock = clock
         self.store = store
         self.requestBodyTimeout = requestBodyTimeout
+        self.untrustedIdleTimeout = untrustedIdleTimeout
+        self.maxUntrustedConnections = max(1, maxUntrustedConnections)
         self.runtime.identity = identity.pairingIdentity
         restoreFromStore()
         let migratedDeployment = DeviceInstallIdentity.migrate(&self.runtime, pin: identity.pin)
@@ -431,26 +451,31 @@ public final class DeviceLANServer: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
-        startAndWaitReady(connection)
+        guard startAndWaitReady(connection) else {
+            connection.cancel()
+            return
+        }
         let peerPin = LANChannel.observedPeerPin(connection)
         let link = LANLink(connection: connection, queue: queue)
         serve(link, peerPin: peerPin)
     }
 
-    /// Installs the state handler before `start` so a fast handshake cannot be missed.
-    private func startAndWaitReady(_ connection: NWConnection) {
+    /// Installs the state handler before `start` so a fast handshake cannot be
+    /// missed. Returns false when the handshake did not complete in time; a
+    /// half-open peer is dropped rather than parked on a worker thread.
+    private func startAndWaitReady(_ connection: NWConnection) -> Bool {
         let done = DispatchSemaphore(value: 0)
         connection.stateUpdateHandler = { state in
             if case .ready = state { done.signal() }
             if case .failed = state { done.signal() }
+            if case .cancelled = state { done.signal() }
         }
         connection.start(queue: queue)
-        _ = done.wait(timeout: .now() + 8)
+        guard done.wait(timeout: .now() + 8) == .success else { return false }
+        if case .ready = connection.state { return true }
+        return false
     }
 
-    /// One connection, one request at a time, for as long as the peer keeps it
-    /// open. Any failure closes the connection so the controller sees a dead
-    /// socket rather than requests that are read and never answered.
     private func connectionInventory(owner: String) throws -> DeviceConnectionInventory {
         let screens: [LANScreenSetEntry]
         if let screenSet { screens = screenSet.screens.map(\.entry) }
@@ -464,13 +489,31 @@ public final class DeviceLANServer: @unchecked Sendable {
         return .init(deviceId: runtime.profile.deviceId, entries: entries)
     }
 
+    /// One connection, one request at a time, for as long as the peer keeps it
+    /// open. Any failure closes the connection so the controller sees a dead
+    /// socket rather than requests that are read and never answered.
+    ///
+    /// The owner (handshake pin equals the pinned owner) waits without a
+    /// deadline. Everyone else counts against `maxUntrustedConnections` and
+    /// idles out after `untrustedIdleTimeout`; a connection that becomes the
+    /// owner mid-way (pairing just completed) leaves the untrusted pool.
     private func serve(_ link: LANLink, peerPin: [UInt8]?) {
         defer { link.cancel() }
+        var countedUntrusted = false
+        defer { if countedUntrusted { releaseUntrustedSlot() } }
         while true {
             do {
                 let owner = ownerPin()
                 let trusted = owner != nil && peerPin == owner
-                let request = try link.receiveRequest(bodyTimeout: trusted ? requestBodyTimeout : min(requestBodyTimeout, 15),
+                if trusted {
+                    if countedUntrusted { releaseUntrustedSlot(); countedUntrusted = false }
+                } else if !countedUntrusted {
+                    guard acquireUntrustedSlot() else { break }
+                    countedUntrusted = true
+                }
+                let request = try link.receiveRequest(
+                    idleTimeout: trusted ? nil : untrustedIdleTimeout,
+                    bodyTimeout: trusted ? requestBodyTimeout : min(requestBodyTimeout, 15),
                     maximumBytes: trusted ? LANProtocolLimits.maxMessageBytes : LANProtocolLimits.legacyMessageBytes)
                 let reply = handle(request, peerPin: peerPin)
                 try link.send(reply)
@@ -478,6 +521,18 @@ public final class DeviceLANServer: @unchecked Sendable {
                 break
             }
         }
+    }
+
+    private func acquireUntrustedSlot() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard untrustedConnections < maxUntrustedConnections else { return false }
+        untrustedConnections += 1
+        return true
+    }
+
+    private func releaseUntrustedSlot() {
+        lock.lock(); defer { lock.unlock() }
+        untrustedConnections = max(0, untrustedConnections - 1)
     }
 
     private func handle(_ request: LANEnvelope, peerPin: [UInt8]?) -> LANEnvelope {
@@ -560,7 +615,18 @@ public final class DeviceLANServer: @unchecked Sendable {
             case .deploy:
                 try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(LANDeployBody.self, json: request.payloadJSON)
+                // Idempotent on deploymentId: a retry answers with the recorded
+                // outcome and leaves the installed package alone. The same id
+                // with a different revision is a protocol error, never a
+                // silent replacement of the active screen.
+                if let last = runtime.lastDeployment, last.deploymentId == body.deployment.deploymentId {
+                    guard last.revision == body.revision.revision, last.dashboardId == body.revision.dashboardId else {
+                        throw TransferFailure.validationFailed
+                    }
+                    return ok(request, payload: last)
+                }
                 let staged = try stageFiles(body.files)
+                guard staged["index.html"] != nil else { throw TransferFailure.validationFailed }
                 let stagedDirectory = try store?.stagePackage(
                     staged.values.sorted { $0.path < $1.path }.map { (path: $0.path, data: $0.data) }
                 )
