@@ -48,14 +48,17 @@ public final class DashboardPackageStore: @unchecked Sendable {
     }
 
     public func listRevisions(dashboardId: String) throws -> [String] {
-        try withLock {
+        let dashboardId = try Self.safeIdentifier(dashboardId, field: "dashboardId")
+        return try withLock {
             _ = try readHead(dashboardId: dashboardId)
             return try revisionIDs(dashboardId: dashboardId)
         }
     }
 
     public func getRevision(dashboardId: String, revision: String?) throws -> DashboardRevisionRecord {
-        try withLock {
+        let dashboardId = try Self.safeIdentifier(dashboardId, field: "dashboardId")
+        let revision = try revision.map { try Self.safeIdentifier($0, field: "revision") }
+        return try withLock {
             let head = try readHead(dashboardId: dashboardId)
             let revisionId = revision ?? head.draftRevision
             let packageDir = revisionDir(dashboardId: dashboardId, revision: revisionId)
@@ -89,7 +92,9 @@ public final class DashboardPackageStore: @unchecked Sendable {
         defaultPageId: String? = nil,
         eventRules: [ManifestEventRule]? = nil
     ) throws -> DashboardRevisionRecord {
-        try withLock {
+        let dashboardId = try dashboardId.map { try Self.safeIdentifier($0, field: "dashboardId") }
+        let baseRevision = try baseRevision.map { try Self.safeIdentifier($0, field: "baseRevision") }
+        return try withLock {
             if files.isEmpty {
                 throw ControllerError.validationFailed(detail: "files required")
             }
@@ -191,6 +196,18 @@ public final class DashboardPackageStore: @unchecked Sendable {
             _ = try readHead(dashboardId: dashboardId)
             try fileManager.removeItem(at: dashboardDir(dashboardId))
         }
+    }
+
+    /// Dashboard and revision identifiers become path components under the
+    /// controller home. Existing ids are lowercase UUIDs; MCP callers (a
+    /// possibly prompt-injected agent) supply them directly, so reject anything
+    /// that could escape or point outside the store before it touches disk.
+    static func safeIdentifier(_ value: String, field: String) throws -> String {
+        guard (1...128).contains(value.count), value != ".", value != "..",
+              value.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]*$", options: .regularExpression) != nil else {
+            throw ControllerError.validationFailed(detail: "\(field) must be a plain identifier")
+        }
+        return value
     }
 
     private func inferEntrypoint(from paths: Set<String>) -> String {
