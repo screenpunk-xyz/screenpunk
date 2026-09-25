@@ -83,16 +83,23 @@ final class PairingDeployTests: XCTestCase {
         coordinator.hub.advertise(phone.runtime.advertisement)
         XCTAssertEqual(coordinator.discover().map(\.deviceId), ["device-real"])
 
-        // A manual address entered by the person is never held back by an old failure.
+        // Past the identity cache window and the ghosts' retry interval: the ghosts
+        // become candidates again (bounded per pass) and the now-offline device is
+        // re-probed instead of answered from the stale cache.
         phone.online = false
-        // Past the identity cache window so the offline device is actually re-probed and fails.
         clock.now = clock.now.addingTimeInterval(11)
         XCTAssertTrue(coordinator.discover().isEmpty, "the stale identity is not reused once the device stops answering")
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        // Every endpoint has now failed inside the current interval; a pass costs nothing.
+        let settled = phone.connectAttempts
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        XCTAssertEqual(phone.connectAttempts, settled, "all endpoints are backed off")
+
+        // A manual address entered by the person is never held back by an old failure.
         phone.online = true
-        let before = phone.connectAttempts
         coordinator.addManual(host: phone.host, port: Int(phone.port))
         XCTAssertEqual(coordinator.discover().count, 1)
-        XCTAssertEqual(phone.connectAttempts, before + 1, "addManual clears the endpoint's back-off so it is probed at once")
+        XCTAssertEqual(phone.connectAttempts, settled + 1, "addManual clears the endpoint's back-off so it is probed at once")
     }
 
     func testLegacySavedPairingSurvivesNativeIdentityUpgrade() throws {
