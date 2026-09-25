@@ -24,7 +24,7 @@
     "embla-carousel-react": "8.6.0",
     "esbuild": "0.28.2",
     "lucide-react": "1.47.0",
-    "motion": "13.4.0",
+    "motion": "13.4.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-test-renderer": "19.3.0",
