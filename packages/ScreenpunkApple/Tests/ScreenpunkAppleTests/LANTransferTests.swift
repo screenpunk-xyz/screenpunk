@@ -344,6 +344,190 @@ final class LANTransferTests: XCTestCase {
         XCTAssertNotNil(server.pairingCode)
     }
 
+    /// The person compares the code on the device with the Mac and taps
+    /// Confirm. A second controller that sends `pair.begin` in between must not
+    /// replace the session, or the tap would bind the device to it.
+    func testSecondControllerCannotSwapLivePairingSession() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-lock")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-lock")
+        let intruderIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-intruder")
+        let server = DeviceLANServer(
+            runtime: DeviceRuntime(
+                identity: deviceIdentity.pairingIdentity,
+                profile: DeviceProfile(deviceId: "lock-phone", name: "Lock"),
+                advertisement: AdvertisedDevice(deviceId: "lock-phone", host: "127.0.0.1", port: 0, source: .advertised)
+            ),
+            identity: deviceIdentity
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let client = ControllerLANClient(identity: controllerIdentity)
+        try client.connect(host: "127.0.0.1", port: server.port)
+        _ = try client.hello()
+        let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+        XCTAssertEqual(server.pairingCode, begin.code)
+
+        let intruder = ControllerLANClient(identity: intruderIdentity)
+        try intruder.connect(host: "127.0.0.1", port: server.port)
+        _ = try intruder.hello()
+        XCTAssertThrowsError(try intruder.beginPairing(nonce: PairingIdentityFactory.nonce())) { error in
+            XCTAssertEqual(error as? PairingFailure, .busy)
+        }
+        XCTAssertEqual(server.pairingCode, begin.code, "the code on screen did not change")
+        XCTAssertEqual(server.runtime.pairing.session?.candidateOwner, controllerIdentity.pairingIdentity)
+
+        // The tap binds the device to the controller whose code is on screen.
+        try server.confirmLocally()
+        XCTAssertEqual(server.runtime.pairing.owner, controllerIdentity.pairingIdentity)
+        XCTAssertNoThrow(try client.confirmPairing(code: begin.code))
+        XCTAssertTrue(server.runtime.isPaired)
+
+        // The same controller may always restart its own session.
+        let restarted = ControllerLANClient(identity: controllerIdentity)
+        try restarted.connect(host: "127.0.0.1", port: server.port, pinnedDevice: deviceIdentity.pin)
+        _ = try restarted.hello()
+        XCTAssertNoThrow(try restarted.beginPairing(nonce: PairingIdentityFactory.nonce()))
+        XCTAssertNoThrow(try restarted.beginPairing(nonce: PairingIdentityFactory.nonce()))
+        server.cancelPairing()
+    }
+
+    /// Any LAN peer can open a TLS connection to an unpaired device. Idle
+    /// strangers must be dropped and their number bounded, or each one would
+    /// hold a worker thread forever.
+    func testUntrustedConnectionsAreBoundedAndIdleOut() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-slots")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-slots")
+        let server = DeviceLANServer(
+            runtime: DeviceRuntime(
+                identity: deviceIdentity.pairingIdentity,
+                profile: DeviceProfile(deviceId: "slots-phone", name: "Slots"),
+                advertisement: AdvertisedDevice(deviceId: "slots-phone", host: "127.0.0.1", port: 0, source: .advertised)
+            ),
+            identity: deviceIdentity,
+            untrustedIdleTimeout: 0.6,
+            maxUntrustedConnections: 2
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let first = try RawController(identity: controllerIdentity, host: "127.0.0.1", port: server.port)
+        let second = try RawController(identity: controllerIdentity, host: "127.0.0.1", port: server.port)
+        XCTAssertEqual(try first.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))).ok, true)
+        XCTAssertEqual(try second.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))).ok, true)
+        XCTAssertEqual(server.untrustedConnectionCount, 2)
+
+        // Third stranger: accepted by TLS, closed by the server before any request is served.
+        let third = try RawController(identity: controllerIdentity, host: "127.0.0.1", port: server.port)
+        XCTAssertThrowsError(try third.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))),
+                             "no slot left for a third untrusted connection")
+        XCTAssertEqual(server.untrustedConnectionCount, 2)
+
+        // Idle strangers time out and free their slots.
+        XCTAssertTrue(waitUntil(timeout: 3) { server.untrustedConnectionCount == 0 }, "idle strangers were dropped")
+        XCTAssertThrowsError(try first.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))),
+                             "an idle stranger's connection was closed")
+        first.cancel(); second.cancel(); third.cancel()
+
+        // Freed slots serve the next peer again.
+        let fresh = try RawController(identity: controllerIdentity, host: "127.0.0.1", port: server.port)
+        defer { fresh.cancel() }
+        XCTAssertEqual(try fresh.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))).ok, true)
+    }
+
+    /// The owner's connection is never subject to the untrusted idle deadline.
+    func testOwnerConnectionOutlivesUntrustedIdleTimeout() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-owner-idle")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-owner-idle")
+        let server = DeviceLANServer(
+            runtime: DeviceRuntime(
+                identity: deviceIdentity.pairingIdentity,
+                profile: DeviceProfile(deviceId: "owner-idle-phone", name: "Owner"),
+                advertisement: AdvertisedDevice(deviceId: "owner-idle-phone", host: "127.0.0.1", port: 0, source: .advertised)
+            ),
+            identity: deviceIdentity,
+            untrustedIdleTimeout: 0.4
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let client = ControllerLANClient(identity: controllerIdentity)
+        try client.connect(host: "127.0.0.1", port: server.port)
+        _ = try client.hello()
+        let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+        try server.confirmLocally()
+        try client.confirmPairing(code: begin.code)
+        XCTAssertTrue(server.runtime.isPaired)
+        XCTAssertTrue(waitUntil(timeout: 2) { server.untrustedConnectionCount == 0 }, "the owner's connection left the untrusted pool")
+
+        Thread.sleep(forTimeInterval: 1.2)
+        XCTAssertNil(try client.queryActive(), "the owner is still served after the stranger deadline passed")
+    }
+
+    /// A retry of a known deploymentId is answered from the record and leaves
+    /// the installed package alone; the same id with another revision is refused.
+    func testDeployReplayIsIdempotentAndRejectsDifferentRevision() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-replay")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-replay")
+        let store = DeviceStateStore(root: FileManager.default.temporaryDirectory
+            .appendingPathComponent("sp-lan-replay-\(UUID().uuidString)", isDirectory: true))
+        defer { try? store.erase() }
+        let server = DeviceLANServer(
+            runtime: DeviceRuntime(
+                identity: deviceIdentity.pairingIdentity,
+                profile: DeviceProfile(deviceId: "replay-phone", name: "Replay"),
+                advertisement: AdvertisedDevice(deviceId: "replay-phone", host: "127.0.0.1", port: 0, source: .advertised)
+            ),
+            identity: deviceIdentity,
+            store: store
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let client = ControllerLANClient(identity: controllerIdentity)
+        try client.connect(host: "127.0.0.1", port: server.port)
+        _ = try client.hello()
+        let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+        try server.confirmLocally()
+        try client.confirmPairing(code: begin.code)
+
+        let files = try LANPackageFiles.offlineFixture()
+        let record = DeploymentRecord(deploymentId: "replay-1", revision: StoredRevision.offlineFixture.revision,
+                                      dashboardId: StoredRevision.offlineFixture.dashboardId, deviceId: "replay-phone", phase: .queued)
+        XCTAssertEqual(try client.deploy(LANDeployBody(deployment: record, revision: StoredRevision.offlineFixture, files: files)).phase, .active)
+        let installed = try XCTUnwrap(server.activePackage)
+
+        // Same id, different revision and different bytes: refused, nothing changes.
+        var other = StoredRevision.offlineFixture
+        other.revision = "44444444-4444-4444-8444-444444444444"
+        var altered = files
+        if let index = altered.firstIndex(where: { $0.path == "index.html" }) {
+            let data = Data("<!doctype html><title>swapped</title>".utf8)
+            altered[index] = LANFileBlob(path: "index.html", sha256: PeerPin.hex(PeerPin.sha256(data)), dataBase64: data.base64EncodedString())
+        }
+        XCTAssertThrowsError(try client.deploy(LANDeployBody(deployment: record, revision: other, files: altered))) { error in
+            XCTAssertEqual(error as? TransferFailure, .validationFailed)
+        }
+        XCTAssertEqual(server.runtime.activeRevision, StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(server.activePackage, installed)
+        XCTAssertEqual(store.load()?.activeStoredRevision, StoredRevision.offlineFixture)
+
+        // Same id, same revision, garbage bytes: the recorded outcome answers; nothing is re-staged.
+        let replay = try client.deploy(LANDeployBody(deployment: record, revision: StoredRevision.offlineFixture, files: altered))
+        XCTAssertEqual(replay.phase, .active)
+        XCTAssertEqual(server.activePackage, installed)
+
+        // A package without index.html cannot activate.
+        let noEntry = DeploymentRecord(deploymentId: "replay-2", revision: other.revision,
+                                       dashboardId: other.dashboardId, deviceId: "replay-phone", phase: .queued)
+        XCTAssertThrowsError(try client.deploy(LANDeployBody(deployment: noEntry, revision: other,
+                                                             files: files.filter { $0.path != "index.html" }))) { error in
+            XCTAssertEqual(error as? TransferFailure, .validationFailed)
+        }
+        XCTAssertEqual(server.runtime.activeRevision, StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(server.activePackage, installed)
+    }
+
     func testPinnedIdentityChangeIsRejected() throws {
         let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-pin")
         let otherDevice = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-other")
@@ -402,6 +586,16 @@ final class LANTransferTests: XCTestCase {
             XCTAssertNil(server.runtime.pairing.session)
         }
     }
+}
+
+/// Polls `condition` every 20 ms until it holds or `timeout` elapses.
+func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        Thread.sleep(forTimeInterval: 0.02)
+    }
+    return condition()
 }
 
 /// TLS server that presents `identity` but claims `claimedPinHex` in every reply.
