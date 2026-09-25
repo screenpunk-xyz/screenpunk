@@ -45,6 +45,10 @@ final class MacWorkbenchModel: ObservableObject {
     }
     @Published var orientation: DeviceOrientation = .portrait
     @Published var pairing: PairingRequestResult?
+    /// The person compared the code on this Mac with the device and pressed
+    /// Codes Match. Only then does the Mac send `pair.confirm`; a device that
+    /// self-confirms cannot pair itself to this Mac.
+    @Published private(set) var pairingConfirmedOnMac = false
     /// A reachability probe of saved devices is running on the workbench queue.
     @Published private(set) var checkingDevices = false
     @Published private(set) var manuallyRefreshingDevices = false
@@ -424,15 +428,25 @@ final class MacWorkbenchModel: ObservableObject {
         selection = entry.id
         let ad = entry.advertisement
         run({ try $0.devices.requestPairing(deviceId: ad.deviceId, host: ad.host, port: ad.port) }) { result in
+            self.pairingTimer?.invalidate(); self.pairingTimer = nil
+            self.pairingConfirmedOnMac = false
             self.pairing = result
-            self.pairingTimer?.invalidate()
-            self.pairingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.pollPairing() }
-            }
         }
     }
+    /// The Mac's half of the mutual confirmation. Until this runs no
+    /// `pair.confirm` leaves the Mac, so the device's answer alone cannot
+    /// complete pairing.
+    func confirmPairingCodesMatch() {
+        guard pairing != nil, !pairingConfirmedOnMac else { return }
+        pairingConfirmedOnMac = true
+        pairingTimer?.invalidate()
+        pairingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pollPairing() }
+        }
+        pollPairing()
+    }
     private func pollPairing() {
-        guard let pairing, let service, !pairingPollInFlight else { return }
+        guard let pairing, pairingConfirmedOnMac, let service, !pairingPollInFlight else { return }
         pairingPollInFlight = true
         queue.async {
             let result = Result { try service.devices.confirmPairing(deviceId: pairing.deviceId) }
@@ -441,7 +455,7 @@ final class MacWorkbenchModel: ObservableObject {
                 guard self.pairing?.deviceId == pairing.deviceId else { return }
                 switch result {
                 case .success(let record):
-                    self.pairingTimer?.invalidate(); self.pairingTimer = nil; self.pairing = nil
+                    self.pairingTimer?.invalidate(); self.pairingTimer = nil; self.pairing = nil; self.pairingConfirmedOnMac = false
                     self.nearby.removeAll { $0.id == record.id }
                     self.devices.removeAll { $0.id == record.id }; self.devices.append(record)
                     self.select(record.id); self.refresh()
@@ -457,6 +471,7 @@ final class MacWorkbenchModel: ObservableObject {
         pairingTimer?.invalidate(); pairingTimer = nil
         if let pairing { service?.devices.cancelPending(pairing.deviceId) }
         pairing = nil
+        pairingConfirmedOnMac = false
     }
     func addManual(host: String, port: String) {
         guard let host = WorkbenchSidebar.normalizeHost(host), let port = WorkbenchSidebar.parsePort(port) else { error = WorkbenchCopy.invalidAddress; return }

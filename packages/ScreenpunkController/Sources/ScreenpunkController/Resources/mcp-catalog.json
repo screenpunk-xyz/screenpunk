@@ -55,7 +55,7 @@
     {
       "name": "confirm_pairing",
       "group": "pairing",
-      "description": "Complete pairing after the user confirmed the matching code on the device. Returns permission_required until the device owner has tapped Confirm there; the agent cannot approve on the device's behalf.",
+      "description": "Complete pairing only after the user has told you the two codes match and has tapped Confirm on the device. This call is the Mac-side confirmation: never call it before the user compared both screens. Returns permission_required until the device owner has tapped Confirm there; the agent cannot approve on the device's behalf.",
       "readOnlyHint": false,
       "destructiveHint": false,
       "openWorldHint": false

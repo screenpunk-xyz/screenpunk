@@ -133,9 +133,10 @@ deployment all happen on the Mac.
    the host and port from the device's unpaired screen. Devices already
    paired with this Mac are listed under **Devices** instead; use
    **Pair Again** on one of those after it has been unlinked.
-3. Compare the six-digit matching code on both screens. Confirm on both,
-   and only if they match exactly. Codes expire after two minutes; five
-   failed confirmations pause pairing.
+3. Compare the six-digit matching code on both screens. Confirm on both —
+   **Codes Match** on the Mac, **Confirm** on the device — and only if they
+   match exactly. Pairing cannot complete until both confirmations happen.
+   Codes expire after two minutes; five failed confirmations pause pairing.
 4. Choose **Portrait** or **Landscape**. The device stores and applies it.
    Changing it later needs a new preview and deployment so an old design is
    not stretched silently.
