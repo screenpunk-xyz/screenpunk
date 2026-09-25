@@ -90,8 +90,8 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// human pause between `pair.begin` and `pair.confirm`, which the code
     /// expiry already bounds. Each accepted connection holds a worker thread,
     /// so without these limits any LAN peer could starve the listener.
-    static let maxUntrustedConnections = 8
-    static let untrustedIdleTimeout: TimeInterval = PairingLimits.expirySeconds + 30
+    public static let maxUntrustedConnections = 8
+    public static let untrustedIdleTimeout: TimeInterval = PairingLimits.expirySeconds + 30
     private let untrustedIdleTimeout: TimeInterval
     private let maxUntrustedConnections: Int
     private var untrustedConnections = 0
