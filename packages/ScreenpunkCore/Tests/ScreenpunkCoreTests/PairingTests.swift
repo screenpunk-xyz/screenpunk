@@ -101,6 +101,55 @@ final class PairingTests: XCTestCase {
         }
     }
 
+    /// The person compares the code on screen and taps Confirm. Between those
+    /// two moments nobody else may replace the session, or the tap would bind
+    /// the device to whoever sent `pair.begin` last.
+    func testLiveSessionIsLockedToItsCandidate() throws {
+        var state = DevicePairingState()
+        let owner = controller(controllerKey)
+        let attacker = controller(attackerKey)
+        try state.begin(transcript: transcript(), expectedCode: honestCode, candidateOwner: owner, clock: FixedClock(start))
+        XCTAssertThrowsError(
+            try state.begin(
+                transcript: transcript(controller: attackerKey),
+                expectedCode: mitmCode,
+                candidateOwner: attacker,
+                clock: FixedClock(start.addingTimeInterval(60))
+            )
+        ) { error in
+            XCTAssertEqual(error as? PairingFailure, .busy)
+        }
+        XCTAssertEqual(state.session?.candidateOwner, owner, "the live session is untouched")
+        XCTAssertEqual(state.session?.expectedCode, honestCode)
+
+        // The same candidate may restart (new nonce, new code).
+        XCTAssertNoThrow(
+            try state.begin(transcript: transcript(), expectedCode: "111111", candidateOwner: owner, clock: FixedClock(start.addingTimeInterval(61)))
+        )
+        XCTAssertEqual(state.session?.expectedCode, "111111")
+
+        // Once the window closes the lock is gone.
+        XCTAssertNoThrow(
+            try state.begin(
+                transcript: transcript(controller: attackerKey),
+                expectedCode: mitmCode,
+                candidateOwner: attacker,
+                clock: FixedClock(start.addingTimeInterval(61 + PairingLimits.expirySeconds + 1))
+            )
+        )
+        XCTAssertEqual(state.session?.candidateOwner, attacker)
+
+        // A confirmed session is no longer live; the owner check speaks instead.
+        var paired = DevicePairingState()
+        try paired.begin(transcript: transcript(), expectedCode: honestCode, candidateOwner: owner, clock: FixedClock(start))
+        try paired.confirm(code: honestCode, presentedOwner: owner, clock: FixedClock(start))
+        XCTAssertThrowsError(
+            try paired.begin(transcript: transcript(controller: attackerKey), expectedCode: mitmCode, candidateOwner: attacker, clock: FixedClock(start))
+        ) { error in
+            XCTAssertEqual(error as? PairingFailure, .secondOwner)
+        }
+    }
+
     func testNoCredentialsInPublishedVectors() {
         XCTAssertFalse(honestCode.contains("sk-"))
         XCTAssertEqual(PairingLimits.expirySeconds, 120)
@@ -130,7 +179,7 @@ final class PairingTests: XCTestCase {
             let expected = scenario.finalOwner.flatMap { fixture.identities[$0]?.publicKey }
             XCTAssertEqual(owner, expected, "\(scenario.id) final owner")
         }
-        for required in ["ok", "expired", "rateLimited", "codeMismatch", "identityChanged", "secondOwner", "invalidIdentity"] {
+        for required in ["ok", "expired", "rateLimited", "codeMismatch", "identityChanged", "secondOwner", "invalidIdentity", "busy"] {
             XCTAssertTrue(exercised.contains(required), "scenarios must exercise \(required)")
         }
     }

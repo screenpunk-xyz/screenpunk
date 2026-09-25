@@ -751,6 +751,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
                 return .notPaired("expired: the matching code expired; call request_pairing again")
             case .rateLimited:
                 return .notPaired("rate_limited: too many failed confirmations; the device paused pairing")
+            case .busy:
+                return .notPaired("busy: the device is showing a code for a different controller; wait for it to expire (\(Int(PairingLimits.expirySeconds)) s) or cancel it on the device, then call request_pairing again")
             case .invalidIdentity:
                 return .validationFailed(detail: "invalid controller identity")
             }

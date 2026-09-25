@@ -98,7 +98,11 @@ WebSocket data; the Mac is not a runtime proxy.
    `permission_required`; the agent cannot approve on the device's behalf. Codes
    expire after two minutes. One owner per device: a device that already
    belongs to another Mac returns `not_paired` (`second_owner`) until it is
-   unlinked on the device.
+   unlinked on the device. While a code from a different controller is on the
+   device screen and has not expired, `request_pairing` returns `not_paired`
+   (`busy`): the session belongs to that controller until it finishes, is
+   cancelled on the device, or times out, so nobody can swap the code under
+   the person about to tap Confirm.
 4. Author with `update_dashboard`, then `preview_dashboard`. Ask the user in
    chat whether the previewed revision should go to the device.
 5. `deploy_dashboard` with `deviceId`, `dashboardId`, the exact `revision` the

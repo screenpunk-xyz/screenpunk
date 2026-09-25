@@ -236,9 +236,7 @@ public final class ControllerLANClient: @unchecked Sendable {
             throw TransferFailure.validationFailed
         }
         if reply.ok != true {
-            if reply.error == PairingFailure.secondOwner.rawValue { throw PairingFailure.secondOwner }
-            if reply.error == PairingFailure.identityChanged.rawValue { throw PairingFailure.identityChanged }
-            if reply.error == PairingFailure.codeMismatch.rawValue { throw PairingFailure.codeMismatch }
+            if let raw = reply.error, let failure = PairingFailure(rawValue: raw) { throw failure }
             if let raw = reply.error, let failure = DeviceSettingsFailure(rawValue: raw) { throw failure }
             if let raw = reply.error, let failure = TransferFailure(rawValue: raw) { throw failure }
             if let raw = reply.error, let failure = ConnectionFailure(rawValue: raw) { throw failure }
