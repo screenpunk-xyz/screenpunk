@@ -71,17 +71,18 @@ public struct DeviceRuntimeRootView: View {
         Group {
 #if canImport(Network) && canImport(Security)
             lanBody
-                .onAppear { host.start(); applyBrightness() }
+                .onAppear { host.start(); host.setForeground(scenePhase == .active); applyBrightness() }
                 .onChange(of: host.settingsSnapshot?.revision) { _ in applyBrightness() }
                 .onChange(of: host.runtime.isPaired) { _ in applyBrightness() }
                 .onChange(of: scenePhase) { phase in
+                    host.setForeground(phase == .active)
                     if phase == .active { host.resume() }
                     applyBrightness()
                 }
                 .onReceive(brightness.$isApplied) { _ in
                     Task { @MainActor in acknowledgeSettings() }
                 }
-                .onDisappear { brightness.stop() }
+                .onDisappear { brightness.stop(); host.setForeground(false) }
 #if os(iOS)
                 .modifier(DeviceMenuContainer(isPresented: $showDeviceMenu) {
                     DeviceSetupMenu(host: host, initialPage: initialSetupPage) { connectorRevision = UUID() }

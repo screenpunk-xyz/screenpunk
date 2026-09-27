@@ -108,6 +108,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     private var programmaticURL: String?
     private var onSettingsApplied: (Bool) -> Void
     private var settingsValid = true
+    private var alertAudio = false
 
     init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
         self.handler = PackageSchemeHandler(store: store, rasterResources: rasterResources)
@@ -119,6 +120,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
                 let manifest = try JSONDecoder().decode(DashboardManifest.self, from: data)
                 let events = try DashboardEventRuntime(manifest: manifest, revision: revision, settings: settings,
                                                        homeAssistant: homeAssistant, connections: connections)
+                alertAudio = homeAssistant != nil && manifest.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "red alert"
                 self.events = events; initialPath = events.page.path; settingsValid = events.settingsApplied
             } catch { settingsValid = false }
         }
@@ -136,13 +138,13 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         if let events { settingsValid = events.settingsApplied }
         self.active = active
         bridge?.setActive(active)
-        if active { events?.start() } else { events?.stop(); bridge?.cancel() }
+        if active { events?.start() } else { events?.stop(); bridge?.cancel(); webView?.pauseAllMediaPlayback(completionHandler: nil) }
         // Defer callback to avoid publishing SwiftUI state during view update.
         let valid = settingsValid
         DispatchQueue.main.async { onSettingsApplied(valid) }
     }
 
-    func stop() { bridge?.setActive(false); events?.stop(); bridge?.cancel() }
+    func stop() { bridge?.setActive(false); events?.stop(); bridge?.cancel(); webView?.pauseAllMediaPlayback(completionHandler: nil) }
 
     private func load(path: String) {
         guard let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/\(path)") else { return }
@@ -156,6 +158,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         BundledAudio.configure(config)
+        if alertAudio { config.mediaTypesRequiringUserActionForPlayback = .video }
         config.setURLSchemeHandler(handler, forURLScheme: IsolationPolicy.customScheme)
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         if let bridge {
