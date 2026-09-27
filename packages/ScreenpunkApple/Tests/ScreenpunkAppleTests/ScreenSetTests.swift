@@ -192,6 +192,47 @@ final class ScreenSetTests: XCTestCase {
         XCTAssertThrowsError(try LANCodec.frame(Data(repeating: 0, count: LANProtocolLimits.maxMessageBytes + 1)))
     }
 
+    @MainActor func testDeviceAlertSwitchesInactiveScreenRestoresAndSurvivesRestart() throws {
+        let device = try TLSIdentity.make(role: .device, commonName: "alert-device")
+        let owner = try TLSIdentity.make(role: .controller, commonName: "alert-owner")
+        let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? store.erase() }
+        let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
+        let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test"),
+            advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
+        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        try server.start(); defer { server.stop() }
+        let client = ControllerLANClient(identity: owner); defer { client.cancel() }
+        try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
+        _ = try client.hello()
+        var body = try makeBody(); body.screens[1].name = "Red Alert"
+        _ = try client.deployScreenSet(body)
+        let scope = try XCTUnwrap(server.redAlertScope())
+        XCTAssertEqual(scope.dashboardId, "second", "inactive target has its own approved scope")
+        let listener = DeviceRedAlertRuntime(server: server)
+        listener.update(active: false)
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        let attributes: [String: Any] = ["alert_id": "test-run", "started_at": formatter.string(from: now),
+            "expires_at": formatter.string(from: now.addingTimeInterval(300))]
+        listener.receive(state: ["entity_id": RedAlertNavigation.entityId, "state": "on", "attributes": attributes], now: now)
+        XCTAssertEqual(try client.queryActiveState().selectedDashboardId, "second")
+        XCTAssertEqual(server.redAlertScope(), scope, "screen selection cannot revoke the native subscription")
+        listener.receive(state: ["entity_id": RedAlertNavigation.entityId, "state": "off", "attributes": attributes], now: now)
+        XCTAssertEqual(try client.queryActiveState().selectedDashboardId, "first")
+        var second = attributes; second["alert_id"] = "next-run"
+        second["started_at"] = formatter.string(from: now.addingTimeInterval(1))
+        listener.receive(state: ["entity_id": RedAlertNavigation.entityId, "state": "on", "attributes": second], now: now.addingTimeInterval(1))
+        XCTAssertEqual(server.screenSet?.selectedDashboardId, "second")
+        let restarted = DeviceRedAlertRuntime(server: server); restarted.update(active: false)
+        restarted.expire(now: now.addingTimeInterval(301))
+        XCTAssertEqual(server.screenSet?.selectedDashboardId, "first")
+        try vault.revoke()
+        XCTAssertNil(server.redAlertScope())
+        restarted.receive(state: ["entity_id": RedAlertNavigation.entityId, "state": "on", "attributes": second], now: now)
+        XCTAssertEqual(server.screenSet?.selectedDashboardId, "first")
+    }
+
     private func makeBody() throws -> LANScreenSetDeployBody {
         let items = ["first", "second"].map { name -> LANScreenSetItem in
             var revision = StoredRevision.offlineFixture

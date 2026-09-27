@@ -19,6 +19,14 @@ public final class DeviceLANHost: ObservableObject {
     private let recoveryQueue = DispatchQueue(label: "xyz.screenpunk.lan.recovery")
     private var recoveryTimer: DispatchSourceTimer?
     private var listenerError: String?
+    private var redAlert: DeviceRedAlertRuntime?
+    private var foreground = false
+
+    @MainActor public func setForeground(_ active: Bool) {
+        foreground = active
+        if redAlert == nil, let server { redAlert = DeviceRedAlertRuntime(server: server) }
+        redAlert?.update(active: active)
+    }
 
     /// `store` defaults to the per-user device home so pairing and the active
     /// package survive a relaunch. Tests pass a temporary store.
@@ -103,13 +111,14 @@ public final class DeviceLANHost: ObservableObject {
         refresh()
     }
 
-    public func advanceScreen(by offset: Int) {
+    @MainActor public func advanceScreen(by offset: Int) {
         guard let set = screenSet, let index = set.screens.firstIndex(where: { $0.revision.dashboardId == set.selectedDashboardId }) else { return }
         guard let next = ScreenCarousel.index(from: index, offset: offset, count: set.screens.count) else { return }
         selectScreen(set.screens[next].revision.dashboardId)
     }
 
-    public func selectScreen(_ dashboardId: String) {
+    @MainActor public func selectScreen(_ dashboardId: String) {
+        redAlert?.manualSelection()
         do {
             try server?.selectScreen(dashboardId)
             errorMessage = nil
@@ -155,6 +164,9 @@ public final class DeviceLANHost: ObservableObject {
             screenSet = server.screenSet
             settingsSnapshot = server.settingsSnapshot
             genericConnectionGeneration = server.genericConnectionGeneration
+            Task { @MainActor [weak self] in
+                guard let self else { return }; self.redAlert?.update(active: self.foreground)
+            }
         }
     }
 }

@@ -42,6 +42,19 @@ public final class DeviceLANServer: @unchecked Sendable {
         self?.homeAssistantScope()
     }
 
+    /// A narrow native listener may use the installed Red Alert grant even while
+    /// another dashboard is selected. It is never exposed to page JavaScript.
+    func redAlertScope() -> HomeAssistantDeviceRuntime.Scope? {
+        lock.lock(); defer { lock.unlock() }
+        guard let owner = runtime.pairing.owner, let set = screenSet else { return nil }
+        let targets = set.screens.filter { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "red alert" }
+        guard targets.count == 1, let target = targets.first,
+              let record = try? homeAssistantVault.record(owner: PeerPin.hex(owner.publicKey), revision: target.revision.revision, grantSet: set.grantSet),
+              record.configuration.dashboardId == target.revision.dashboardId else { return nil }
+        return .init(owner: PeerPin.hex(owner.publicKey), revision: target.revision.revision,
+                     dashboardId: target.revision.dashboardId, grantSet: set.grantSet)
+    }
+
     private func genericConnectionScope() -> GenericConnectionDeviceVault.Scope? {
         lock.lock(); defer { lock.unlock() }
         guard let owner = runtime.pairing.owner, let revision = runtime.activeRevision,
