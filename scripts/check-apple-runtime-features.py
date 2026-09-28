@@ -5,7 +5,8 @@ import sys
 
 app = pathlib.Path(sys.argv[1])
 mac = app / 'Contents/MacOS/Screenpunk'
-executables = [mac] if mac.exists() else [app / 'Screenpunk', *app.glob('*.dylib')]
+binary_dir = mac.parent if mac.exists() else app
+executables = [binary_dir / 'Screenpunk', *binary_dir.glob('*.dylib')]
 data = b''.join(p.read_bytes() for p in executables if p.is_file())
 required = {
     'device-level Red Alert listener': b'DeviceRedAlertRuntime',
