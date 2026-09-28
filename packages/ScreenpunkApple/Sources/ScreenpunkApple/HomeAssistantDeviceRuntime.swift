@@ -251,6 +251,38 @@ public actor HomeAssistantDeviceRuntime: CameraStreamResolver {
         }
     }
 
+    /// Native Red Alert observes one fixed entity; a whole-house get_states
+    /// snapshot can exceed the generic WebSocket limit before any event arrives.
+    /// This is deliberately not an arbitrary URL or a page bridge operation.
+    func readRedAlertState(revision: String) async throws -> Data {
+        guard let current = scope(), current.revision == revision else { throw ConnectionFailure.permissionRequired }
+        let record = try vault.record(owner: current.owner, revision: revision, grantSet: current.grantSet)
+        let config = record.configuration
+        guard config.dashboardId == current.dashboardId else { throw ConnectionFailure.permissionRequired }
+        _ = try config.authorize(operation: "getStates", parameters: [:])
+        let grant = config.connectionGrant(path: "/api/states/" + RedAlertNavigation.entityId, write: false)
+        let destination = try ConnectionPolicy.authorize(grant: grant, operationName: "request", parameters: [:],
+            resolvedAddresses: resolver.addresses(for: ConnectionPolicy.originHost(config.origin)),
+            binding: .init(authRef: "home-device", placement: .bearer))
+        let transport = self.transport
+        let request = Task {
+            try await transport.send(.init(url: destination.url, method: "GET",
+                headers: ["Authorization": "Bearer " + config.token], body: nil, timeout: 10, maxBytes: 64 * 1024))
+        }
+        pending = request
+        defer { pending = nil }
+        let response = try await withTaskCancellationHandler(operation: { try await request.value },
+                                                             onCancel: { request.cancel() })
+        try Task.checkCancellation()
+        try requireCurrent(record, current)
+        if response.status == 401 || response.status == 403 { throw ConnectionFailure.permissionRequired }
+        guard response.status == 200 else { throw ConnectionFailure.deviceOffline }
+        guard response.body.count <= 64 * 1024 else { throw ConnectionFailure.sizeLimit }
+        guard let state = try JSONSerialization.jsonObject(with: response.body) as? [String: Any],
+              state["entity_id"] as? String == RedAlertNavigation.entityId else { throw ConnectionFailure.validationFailed }
+        return response.body
+    }
+
     /// A snapshot always precedes live state changes, including after reconnect. The
     /// caller must use snapshots to refresh conditions without replaying navigation.
     public struct StateUpdate: Sendable {

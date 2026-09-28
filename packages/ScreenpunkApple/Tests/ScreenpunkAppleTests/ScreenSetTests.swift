@@ -234,6 +234,50 @@ final class ScreenSetTests: XCTestCase {
         XCTAssertEqual(server.screenSet?.selectedDashboardId, "first")
     }
 
+    @MainActor func testNativeAlertPollsOnlyItsEntityAndNavigatesThroughTransport() async throws {
+        let device = try TLSIdentity.make(role: .device, commonName: "alert-poll-device")
+        let owner = try TLSIdentity.make(role: .controller, commonName: "alert-poll-owner")
+        let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? store.erase() }
+        let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
+        let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test"),
+            advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
+        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        try server.start(); defer { server.stop() }
+        let client = ControllerLANClient(identity: owner); defer { client.cancel() }
+        try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
+        _ = try client.hello()
+        var body = try makeBody(); body.screens[1].name = "Red Alert"
+        _ = try client.deployScreenSet(body)
+        let transport = AlertEntityTransport()
+        let listener = DeviceRedAlertRuntime(server: server, pollNanoseconds: 10_000_000) { server in
+            HomeAssistantDeviceRuntime(vault: vault, scope: { server.redAlertScope() }, transport: transport,
+                resolver: FixedResolver(["203.0.113.10"]))
+        }
+        defer { listener.update(active: false) }
+        listener.update(active: true)
+        for _ in 0..<300 {
+            if server.screenSet?.selectedDashboardId == "second" { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(server.screenSet?.selectedDashboardId, "second", "real native task must consume HTTP state and select inactive alert")
+        let status = try XCTUnwrap(client.queryActiveState().redAlert)
+        XCTAssertEqual(status.lastState, "on"); XCTAssertEqual(status.selectionCount, 1)
+        XCTAssertGreaterThan(status.receivedCount, 0); XCTAssertNil(status.lastError)
+        await transport.setActive(false)
+        for _ in 0..<300 {
+            if server.screenSet?.selectedDashboardId == "first" { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(server.screenSet?.selectedDashboardId, "first")
+        let paths = await transport.paths
+        XCTAssertFalse(paths.isEmpty)
+        XCTAssertTrue(paths.allSatisfy { $0 == "/api/states/sensor.screenpunk_red_alert" })
+        try vault.revoke()
+        listener.update(active: true)
+        XCTAssertEqual(try client.queryActiveState().redAlert?.phase, "missing_target_or_grant")
+    }
+
     private func makeBody() throws -> LANScreenSetDeployBody {
         let items = ["first", "second"].map { name -> LANScreenSetItem in
             var revision = StoredRevision.offlineFixture
@@ -259,4 +303,26 @@ private final class SetTestCredentialStore: CredentialStore, @unchecked Sendable
     }
     func delete(_ account: String) throws { try base.delete(account) }
     func deleteAll() throws { try base.deleteAll() }
+}
+
+private actor AlertEntityTransport: HTTPTransport {
+    var paths: [String] = []
+    var active = true
+    let start = Date()
+    func setActive(_ value: Bool) { active = value }
+    func send(_ request: AuthorizedHTTPRequest) async throws -> HTTPTransportResponse {
+        paths.append(request.url.path)
+        // The household snapshot is larger than the generic 256KiB WebSocket
+        // bound. The listener must never depend on fetching this route.
+        if request.url.path == "/api/states" {
+            return .init(status: 200, body: Data(repeating: 32, count: 440_707))
+        }
+        guard request.url.path == "/api/states/" + RedAlertNavigation.entityId,
+              request.method == "GET", request.maxBytes == 64 * 1024 else { throw ConnectionFailure.validationFailed }
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let data = try JSONSerialization.data(withJSONObject: ["entity_id": RedAlertNavigation.entityId,
+            "state": active ? "on" : "off", "attributes": ["alert_id": "live-sized-household",
+            "started_at": f.string(from: start), "expires_at": f.string(from: start.addingTimeInterval(300))]])
+        return .init(status: 200, body: data)
+    }
 }

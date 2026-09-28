@@ -10,15 +10,26 @@ import ScreenpunkCore
     private var scope: HomeAssistantDeviceRuntime.Scope?
     private var engine = RedAlertNavigation()
     private var enabled = false
+    private var status = DeviceRedAlertStatus() {
+        didSet { server?.updateRedAlertStatus(status) }
+    }
     private var pendingSelection: String?
     private var service: HomeAssistantDeviceRuntime?
     private var checkpointURL: URL? { server?.store?.root.appendingPathComponent("red-alert.json") }
     private struct Checkpoint: Codable { var owner: String; var grantSet: String?; var target: String; var navigation: RedAlertNavigation; var pendingSelection: String? }
 
-    init(server: DeviceLANServer) { self.server = server }
+    private let makeService: (DeviceLANServer) -> HomeAssistantDeviceRuntime
+    private let pollNanoseconds: UInt64
+    init(server: DeviceLANServer, pollNanoseconds: UInt64 = 2_000_000_000,
+         makeService: @escaping (DeviceLANServer) -> HomeAssistantDeviceRuntime = { server in
+             HomeAssistantDeviceRuntime(vault: server.homeAssistantVault) { [weak server] in server?.redAlertScope() }
+         }) {
+        self.server = server; self.pollNanoseconds = pollNanoseconds; self.makeService = makeService
+    }
 
     func update(active: Bool) {
         enabled = active
+        status.foreground = active
         let next = server?.redAlertScope()
         if next != scope {
             stop(); scope = next; engine = .init(); pendingSelection = nil
@@ -28,30 +39,36 @@ import ScreenpunkCore
                 engine = saved.navigation; pendingSelection = saved.pendingSelection
             }
         }
-        guard active, let scope, let server else { stop(); return }
+        status.targetDashboardId = scope?.dashboardId
+        guard active, let scope, let server else {
+            status.phase = active ? "missing_target_or_grant" : "inactive"
+            stop(); return
+        }
         apply { $0.expire(selected: server.screenSet?.selectedDashboardId ?? "", now: Date()) }
         guard task == nil else { return }
-        let service = HomeAssistantDeviceRuntime(vault: server.homeAssistantVault) { [weak server] in server?.redAlertScope() }
+        let service = makeService(server)
         self.service = service
+        let pollNanoseconds = self.pollNanoseconds
         task = Task { [weak self] in
-            var delay: UInt64 = 1
+            var retrySeconds: UInt64 = 1
             while !Task.isCancelled {
+                var wait = pollNanoseconds
                 do {
-                    let updates = try await service.subscribeStates(revision: scope.revision)
-                    for try await update in updates {
-                        guard !Task.isCancelled, let self, self.enabled, self.scope == scope else { return }
-                        delay = 1
-                        let object = try JSONSerialization.jsonObject(with: update.data)
-                        let states: [[String: Any]]
-                        if update.isSnapshot { states = object as? [[String: Any]] ?? [] }
-                        else { states = [(object as? [String: Any])?["new_state"] as? [String: Any]].compactMap { $0 } }
-                        for state in states {
-                            self.receive(state: state, now: Date())
-                        }
-                    }
-                } catch { if Task.isCancelled { return } }
-                do { try await Task.sleep(nanoseconds: delay * 1_000_000_000) } catch { return }
-                delay = min(delay * 2, 60)
+                    self?.status.phase = "checking"
+                    let data = try await service.readRedAlertState(revision: scope.revision)
+                    guard !Task.isCancelled, let self, self.enabled, self.scope == scope else { return }
+                    let state = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+                    self.receive(state: state, now: Date())
+                    retrySeconds = 1
+                } catch {
+                    if Task.isCancelled { return }
+                    self?.status.phase = "retrying"
+                    let e = error as NSError
+                    self?.status.lastError = "\(e.domain):\(e.code)"
+                    wait = retrySeconds * 1_000_000_000
+                    retrySeconds = min(retrySeconds * 2, 30)
+                }
+                do { try await Task.sleep(nanoseconds: wait) } catch { return }
             }
         }
         timer = Task { [weak self] in
@@ -65,6 +82,9 @@ import ScreenpunkCore
 
     func receive(state: [String: Any], now: Date) {
         guard let scope, let server else { return }
+        guard state["entity_id"] as? String == RedAlertNavigation.entityId else { return }
+        status.phase = "receiving"; status.lastReceivedAt = now
+        status.lastState = state["state"] as? String; status.lastError = nil; status.receivedCount += 1
         apply { $0.receive(state: state, target: scope.dashboardId, selected: server.screenSet?.selectedDashboardId ?? "", now: now) }
     }
 
@@ -89,12 +109,16 @@ import ScreenpunkCore
             engine = next; pendingSelection = pending
             if let selection = pending, server.screenSet?.screens.contains(where: { $0.revision.dashboardId == selection }) == true {
                 try server.selectScreen(selection)
+                status.selectionCount += 1
             }
             pendingSelection = nil
             if let url = checkpointURL {
                 try JSONEncoder().encode(Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, navigation: engine, pendingSelection: nil)).write(to: url, options: .atomic)
             }
-        } catch { /* Preserve the old engine and retry on the next update/tick. */ }
+        } catch {
+            status.phase = "selection_failed"
+            let e = error as NSError; status.lastError = "\(e.domain):\(e.code)"
+        }
     }
 
     private func stop() {

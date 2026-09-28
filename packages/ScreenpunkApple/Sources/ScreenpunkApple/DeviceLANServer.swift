@@ -31,6 +31,10 @@ public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var activePackage: PackageAssetStore?
     public private(set) var screenSet: DeviceInstalledScreenSet?
     private var settings = DeviceSettingsSnapshot()
+    private var redAlertStatus = DeviceRedAlertStatus()
+    func updateRedAlertStatus(_ status: DeviceRedAlertStatus) {
+        lock.lock(); defer { lock.unlock() }; redAlertStatus = status
+    }
     private var screenPackages: [String: PackageAssetStore] = [:]
     public var onChange: (() -> Void)?
     public let identity: TLSIdentityMaterial
@@ -620,7 +624,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 clearPendingPairingLocked()
                 persist()
                 onChange?()
-                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId))
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, redAlert: redAlertStatus))
             case .deploySet:
                 try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(LANScreenSetDeployBody.self, json: request.payloadJSON)
@@ -736,7 +740,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 return ok(request, payload: ["revoked": true])
             case .queryActive:
                 try requireOwner(peerPin)
-                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId))
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, redAlert: redAlertStatus))
             case .none:
                 throw TransferFailure.validationFailed
             }
