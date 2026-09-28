@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "dashboardId": "77777777-7777-4777-8777-777777777777",
+  "name": "Calendar agenda",
+  "revision": "77777777-7777-4777-9777-777777777778",
+  "sdkVersion": "1",
+  "entrypoint": "index.html",
+  "target": {
+    "profileId": "fixture-phone",
+    "width": 390,
+    "height": 844,
+    "scale": 3,
+    "orientation": "portrait"
+  },
+  "connections": [
+    {
+      "alias": "googleCalendar",
+      "required": true,
+      "operations": [
+        {
+          "name": "events",
+          "kind": "http"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "index.html",
+      "bytes": 763,
+      "sha256": "42d1799ffe8186f1eaa17a84699f5e06b9824f9ff599af00c1cf55cee6bfef01"
+    },
+    {
+      "path": "app.js",
+      "bytes": 1994,
+      "sha256": "cf8a1c0319e8c43f594dd163bafb4f8ea07a4a444693331cd245963f707f193a"
+    },
+    {
+      "path": "screenpunk.js",
+      "bytes": 18969,
+      "sha256": "cd9fe46b0c6b40bd6245ea28b174ace387b47c240aed8fd1e218b2bd34a726b5"
+    }
+  ],
+  "digest": "ae44a385648a98e9377bbb1d1977805a687d147db984a12e9474e1810c9595ee"
+}

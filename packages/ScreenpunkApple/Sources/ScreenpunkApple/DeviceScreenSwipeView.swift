@@ -2,6 +2,7 @@ import SwiftUI
 import ScreenpunkCore
 #if os(iOS)
 import UIKit
+import MapKit
 
 /// Three native pages: a live dashboard in the center and inexpensive named
 /// cards on either side. Recenter after each committed page to form a loop.
@@ -23,6 +24,15 @@ private struct DeviceScreenSwipeView<Content: View>: UIViewControllerRepresentab
 private final class HorizontalPageScrollView: UIScrollView {
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer === panGestureRecognizer {
+            // A pinch/two-finger pan inside an embedded native map belongs to
+            // MapKit, not the device's two-finger screen carousel.
+            for index in 0..<panGestureRecognizer.numberOfTouches {
+                var hit = hitTest(panGestureRecognizer.location(ofTouch: index, in: self), with: nil)
+                while let view = hit, view !== self {
+                    if view is MKMapView { return false }
+                    hit = view.superview
+                }
+            }
             let velocity = panGestureRecognizer.velocity(in: self)
             guard abs(velocity.x) > abs(velocity.y) * 1.25 else { return false }
         }

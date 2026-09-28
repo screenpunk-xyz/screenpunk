@@ -194,6 +194,7 @@ else
 fi
 
 echo "=== packaged MCP and native preview acceptance ==="
+python3 "$ROOT/scripts/check-apple-runtime-features.py" "$app"
 python3 "$ROOT/scripts/check-packaged-mcp.py" "$app"
 
 echo "=== DMG ==="

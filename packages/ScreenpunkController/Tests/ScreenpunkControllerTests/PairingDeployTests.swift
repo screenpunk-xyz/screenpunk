@@ -741,6 +741,21 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertNil(device.installedSet)
     }
 
+    func testInteractiveMapsRejectOlderDeviceBeforeChangingScreens() throws {
+        let device = FakeLANDevice(deviceId: "maps-old-device", name: "Fixture")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "maps-old-device")
+        let connection = ManifestConnection(alias: "appleMaps", required: false,
+            operations: ["snapshot", "present", "update", "close"].map { .init(name: $0, kind: "http") })
+        let screen = try harness.service.store.putDashboard(dashboardId: nil, name: "Map fixture", baseRevision: nil,
+            target: harness.service.defaultTarget(), connections: [connection], files: [.init(path: "index.html", text: "<p>Public map fixture</p>")])
+        XCTAssertThrowsError(try harness.service.shipSet(records: [screen], deviceId: "maps-old-device", selectedDashboardId: screen.manifest.dashboardId)) {
+            XCTAssertEqual(($0 as? ControllerError)?.code, .unsupportedVersion)
+        }
+        XCTAssertEqual(device.deployAttempts, 0)
+        XCTAssertNil(device.installedSet)
+    }
+
     func testDynamicPathsRequireNewCapabilityBeforeDeploy() throws {
         let device = FakeLANDevice(deviceId: "dynamic-assets", name: "Fixture")
         device.supportsPublicReads = true

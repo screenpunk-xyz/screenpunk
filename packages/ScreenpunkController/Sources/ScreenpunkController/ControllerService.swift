@@ -280,7 +280,9 @@ public final class ControllerService: @unchecked Sendable {
         try devices.requireScreenSetSupport(deviceId: deviceId, serviceCalls: records.contains { $0.manifest.connections.contains { $0.serviceCalls != nil } },
             cameras: records.contains { $0.manifest.connections.contains { $0.cameraEntities != nil } },
             publicReads: records.contains { $0.manifest.connections.contains { $0.publicHTTP != nil } },
-            dynamicPublicPaths: records.contains { $0.manifest.connections.contains { $0.publicHTTP?.requiresDynamicPaths == true } })
+            dynamicPublicPaths: records.contains { $0.manifest.connections.contains { $0.publicHTTP?.requiresDynamicPaths == true } },
+            appleMaps: records.contains { $0.manifest.connections.contains { $0.alias == "appleMaps" } },
+            interactiveMaps: records.contains { $0.manifest.connections.contains { $0.alias == "appleMaps" && $0.operations?.contains(where: { $0.name != "snapshot" }) == true } })
         let items = try zip(records, packages).map { record, package -> LANScreenSetItem in
             let configuration: HomeAssistantProvisioning?
             if record.manifest.connections.contains(where: { $0.alias == "home" }) {

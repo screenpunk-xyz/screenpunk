@@ -81,14 +81,17 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
                         }
                         #if DEBUG
                         if ProcessInfo.processInfo.environment["SCREENPUNK_PUBLIC_READ_FIXTURE"] == "1" {
-                            homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision,
+                            homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision, manifest: manifest,
                                 publicTransport: SyntheticPublicReadTransport(), publicResolver: FixedResolver(["203.0.113.10"]))
                         } else {
-                            homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision)
+                            homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision, manifest: manifest)
                         }
 #else
-                        homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision)
+                        homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: connections, revision: manifest.revision, manifest: manifest)
 #endif
+                    }
+                    if homeAssistantBridge == nil {
+                        homeAssistantBridge = try HomeAssistantPreviewBridge(configuration: config, connections: .init(), revision: manifest.revision, manifest: manifest)
                     }
                 }
                 config.setURLSchemeHandler(PackageSchemeHandler(store: store, rasterResources: homeAssistantBridge?.rasterResources), forURLScheme: IsolationPolicy.customScheme)
