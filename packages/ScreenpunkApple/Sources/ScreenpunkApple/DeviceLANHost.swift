@@ -147,7 +147,12 @@ public final class DeviceLANHost: ObservableObject {
         refresh()
     }
 
-    public func unlink() {
+    @MainActor public func unlink() {
+        do {
+            try ScreenPreferenceStore.shared.erase()
+            try GoogleCalendarDeviceService.shared.erase()
+        }
+        catch { errorMessage = "Could not remove saved device data. Unlock the device and try disconnecting again."; return }
         server?.unlink()
         refresh()
     }

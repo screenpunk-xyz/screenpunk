@@ -565,7 +565,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
                     name: runtime.profile.name,
-                    capabilities: ["home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1", "connection-inventory-v1"],
+                    capabilities: ["apple-maps-v1", "apple-maps-interactive-v1", "home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1", "connection-inventory-v1", "home-assistant-red-alert-v1"],
                     maxTransferBytes: LANProtocolLimits.maxMessageBytes,
                     profile: runtime.profile
                 )

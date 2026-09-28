@@ -2,7 +2,7 @@
 
 Accepted design requirements — September 21, 2026.
 
-Status: the native Welcome and Settings menu is integrated with the device runtime. The separate interactive design preview uses fixture accounts; Google Calendar authorization remains unimplemented. Physical verification of the combined dynamic-path build is tracked separately from the earlier device builds below.
+Status: the native Welcome and Settings menu is integrated with the device runtime. The separate interactive design preview uses fixture accounts; Google Calendar now has a device-local OAuth implementation; live authorization awaits Google client configuration and device acceptance testing. See [Google Calendar setup](connections/google-calendar.md). Physical verification of the combined dynamic-path build is tracked separately from the earlier device builds below.
 
 The full menu supports iOS 16 and later. Only fitted sheet sizing is gated to iOS 18; iOS 16–17 use native sheet detents instead of substituting the old display-settings form. A separate first-presentation flag ensures users previously shown that fallback see the full Welcome menu after updating.
 
@@ -45,7 +45,7 @@ The full menu supports iOS 16 and later. Only fitted sheet sizing is gated to iO
 
 The preview is in `packages/ScreenpunkApple/Sources/ScreenpunkApple/SettingsDesignPreview.swift`; external fixture controls are in `tools/settings-design-preview/server.mjs`.
 
-The preview demonstrates the two connector pages and sample calendar selection. The shipping menu now filters connector visibility from installed manifests, retains saved Google TV setup, and uses real TV pairing sessions. Google Calendar sign-in and calendar selection remain preview-only. The Office iPad build notes below describe the native implementation and its remaining acceptance checks.
+The preview demonstrates the two connector pages and sample calendar selection. The shipping menu now filters connector visibility from installed manifests, retains saved Google TV setup, and uses real TV pairing sessions. Google Calendar sign-in and per-screen selection now have a native implementation; the historical build notes below predate it. The Office iPad build notes below describe the native implementation and its remaining acceptance checks.
 
 ## Google TV setup refinement
 

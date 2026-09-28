@@ -21,6 +21,7 @@ final class ScreenSetTests: XCTestCase {
         defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
         XCTAssertTrue(try client.hello().capabilities?.contains("screen-set-v1") == true)
+        XCTAssertTrue(try client.hello().capabilities?.contains("home-assistant-red-alert-v1") == true)
         let body = try makeBody()
         let receipt = try client.deployScreenSet(body)
         XCTAssertEqual(receipt.screens.map(\.dashboardId), ["first", "second"])

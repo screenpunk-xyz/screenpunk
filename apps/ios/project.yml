@@ -21,6 +21,14 @@ settings:
     # NSBonjourServices is an array and has no INFOPLIST_KEY_ build setting, so it
     # lives in Info.plist; Xcode merges the generated keys into that file.
     INFOPLIST_FILE: Info.plist
+  configs:
+    Debug:
+      SCREENPUNK_GOOGLE_CALENDAR_CLIENT_ID: 1055084253934-u2ekaq5cjrt3csutibvt550ms35bp2vr.apps.googleusercontent.com
+      SCREENPUNK_GOOGLE_CALENDAR_REVERSED_CLIENT_ID: com.googleusercontent.apps.1055084253934-u2ekaq5cjrt3csutibvt550ms35bp2vr
+    Release:
+      # Supply the production client explicitly; never fall back to Dev.
+      SCREENPUNK_GOOGLE_CALENDAR_CLIENT_ID: ""
+      SCREENPUNK_GOOGLE_CALENDAR_REVERSED_CLIENT_ID: ""
 packages:
   ScreenpunkCore:
     path: ../../packages/ScreenpunkCore

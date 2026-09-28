@@ -32,7 +32,7 @@ public struct UnlinkPanelView: View {
                 Text(confirmingDisconnect ? "Disconnect this device?" : "Device menu")
                     .font(.title3.bold())
                 if confirmingDisconnect {
-                    Text("This removes all deployed screens, pairing, and saved connection credentials from this device.")
+                    Text("This removes all deployed screens, saved screen preferences, pairing, and saved connection credentials from this device.")
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 12) {
                         Button("Cancel") { confirmingDisconnect = false }

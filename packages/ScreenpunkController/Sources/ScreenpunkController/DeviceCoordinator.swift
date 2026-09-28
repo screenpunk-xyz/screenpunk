@@ -468,7 +468,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
 
     /// No package or credential is sent until the current peer advertises atomic sets.
     @discardableResult
-    public func requireScreenSetSupport(deviceId: String, serviceCalls: Bool = false, cameras: Bool = false, publicReads: Bool = false, dynamicPublicPaths: Bool = false) throws -> LANHello {
+    public func requireScreenSetSupport(deviceId: String, serviceCalls: Bool = false, cameras: Bool = false, publicReads: Bool = false, dynamicPublicPaths: Bool = false, appleMaps: Bool = false, interactiveMaps: Bool = false) throws -> LANHello {
         let record = try ownedRecord(deviceId)
         let hello: LANHello
         do { hello = try withLink(record) { try $0.hello() } }
@@ -476,6 +476,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
         guard hello.deviceId == deviceId, hello.capabilities?.contains("screen-set-v1") == true,
               (!serviceCalls || hello.capabilities?.contains("home-assistant-services-v1") == true),
               (!cameras || hello.capabilities?.contains("camera-playback-v1") == true),
+              (!interactiveMaps || hello.capabilities?.contains("apple-maps-interactive-v1") == true),
+              (!appleMaps || hello.capabilities?.contains("apple-maps-v1") == true),
               (!publicReads || hello.capabilities?.contains("public-read-http-v1") == true),
               (!dynamicPublicPaths || hello.capabilities?.contains("public-read-dynamic-path-v1") == true) else {
             throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device before applying screens. Its current screens have been kept.")

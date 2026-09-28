@@ -60,6 +60,8 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=NO \
   build
 
+python3 scripts/check-apple-runtime-features.py "$ROOT/.ci-derived/ios/Build/Products/Debug-iphonesimulator/Screenpunk.app"
+
 sdk_list="$(xcodebuild -showsdks)"
 if echo "$sdk_list" | grep -qE 'macosx(2[6-9]|[3-9][0-9])(\.|$)'; then
   echo "=== macOS 26+ SDK present; compiling ScreenpunkMac ==="
@@ -71,6 +73,7 @@ if echo "$sdk_list" | grep -qE 'macosx(2[6-9]|[3-9][0-9])(\.|$)'; then
     CODE_SIGNING_ALLOWED=NO \
     CODE_SIGNING_REQUIRED=NO \
     build
+  python3 scripts/check-apple-runtime-features.py "$ROOT/.ci-derived/macos/Build/Products/Debug/Screenpunk.app"
 else
   echo "MACOS_26_SDK_UNAVAILABLE"
   echo "product Mac app stays macOS 26+; this runner cannot compile that target"

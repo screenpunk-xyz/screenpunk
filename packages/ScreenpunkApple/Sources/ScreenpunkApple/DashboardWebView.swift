@@ -111,6 +111,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     private var alertAudio = false
 
     init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+        let rasterResources = rasterResources ?? PublicRasterResources()
         self.handler = PackageSchemeHandler(store: store, rasterResources: rasterResources)
         self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold

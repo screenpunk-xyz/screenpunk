@@ -10,6 +10,7 @@ struct DeviceConnectorCatalog {
     let manifests: [DashboardManifest]
     var usesTV: Bool { manifests.contains { $0.connections.contains { $0.alias == "googleTV" } } }
     var usesCalendar: Bool { manifests.contains { $0.connections.contains { ["googleCalendar", "google-calendar"].contains($0.alias) } } }
+    var showsCalendar: Bool { usesCalendar || !((try? GoogleCalendarDeviceService.shared.snapshot().accounts.isEmpty) ?? true) }
     var showsTV: Bool { usesTV || !GoogleTVConfiguration.load().host.isEmpty || !GoogleTVADBConfiguration.load().host.isEmpty }
     func missing(for dashboardID: String?) -> DeviceSetupPage? {
         guard let manifest = manifests.first(where: { $0.dashboardId == dashboardID }) else { return nil }
@@ -20,7 +21,7 @@ struct DeviceConnectorCatalog {
                 let developer = operations.contains("launchChannel") || operations.contains("togglePower")
                 if (basic && GoogleTVConfiguration.load().pin.count != 32) || (developer && GoogleTVADBConfiguration.load().serverPin.count != 32) { return .googleTV }
             }
-            if ["googleCalendar", "google-calendar"].contains(connection.alias) { return .googleCalendar }
+            if ["googleCalendar", "google-calendar"].contains(connection.alias), !GoogleCalendarDeviceService.shared.isReady(dashboard: manifest.dashboardId) { return .googleCalendar }
         }
         return nil
     }
@@ -67,7 +68,7 @@ struct DeviceSetupMenu: View {
         .onAppear {
             updateSize()
             if let initialPage { settingsOpen = true; selection = initialPage; if initialPage != .settings { path = [initialPage] } }
-            else { selection = catalog.showsTV ? .googleTV : catalog.usesCalendar ? .googleCalendar : .display }
+            else { selection = catalog.showsTV ? .googleTV : catalog.showsCalendar ? .googleCalendar : .display }
         }
         .onReceive(clock) { _ in updateSize() }
         .tint(.blue)
@@ -126,10 +127,10 @@ struct DeviceSetupMenu: View {
     private var split: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                if catalog.showsTV || catalog.usesCalendar {
+                if catalog.showsTV || catalog.showsCalendar {
                     Section("Connections") {
                         if catalog.showsTV { Label("Google TV", systemImage: "tv").tag(DeviceSetupPage.googleTV) }
-                        if catalog.usesCalendar { Label("Google Calendar", systemImage: "calendar").tag(DeviceSetupPage.googleCalendar) }
+                        if catalog.showsCalendar { Label("Google Calendar", systemImage: "calendar").tag(DeviceSetupPage.googleCalendar) }
                     }
                 }
                 Section("This device") { Label("Display and behavior", systemImage: "sun.max").tag(DeviceSetupPage.display) }
@@ -146,13 +147,13 @@ struct DeviceSetupMenu: View {
     }
     private var settingsList: some View {
         Form {
-            if catalog.showsTV || catalog.usesCalendar {
+            if catalog.showsTV || catalog.showsCalendar {
                 Section("Connections") {
                     if catalog.showsTV { NavigationLink(value: DeviceSetupPage.googleTV) {
                         Label { VStack(alignment: .leading, spacing: 4) { Text("Google TV"); Text(catalog.usesTV ? "TV connection and pairing" : "Not used by any screen").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "tv").foregroundStyle(.blue) }
                     } }
-                    if catalog.usesCalendar { NavigationLink(value: DeviceSetupPage.googleCalendar) {
-                        Label { VStack(alignment: .leading, spacing: 4) { Text("Google Calendar"); Text("Calendar connection").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "calendar").foregroundStyle(.blue) }
+                    if catalog.showsCalendar { NavigationLink(value: DeviceSetupPage.googleCalendar) {
+                        Label { VStack(alignment: .leading, spacing: 4) { Text("Google Calendar"); Text(catalog.usesCalendar ? "Calendar connection" : "Not used by any screen").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "calendar").foregroundStyle(.blue) }
                     } }
                 }
             }
@@ -165,7 +166,7 @@ struct DeviceSetupMenu: View {
         switch page {
         case .settings: settingsList
         case .googleTV: DeviceGoogleTVSettings { connectionsRevision = UUID(); onConnectionsChanged() }
-        case .googleCalendar: Form { Section { Text("Google Calendar is not available in this device build yet."); Text("This screen requests Google Calendar. Account sign-in and calendar selection will be available when the connector is implemented.").foregroundStyle(.secondary) } }
+        case .googleCalendar: DeviceGoogleCalendarSettings(manifests: catalog.manifests) { connectionsRevision = UUID(); onConnectionsChanged() }
         case .display: DeviceLocalSettingsSheet(host: host, embedded: true)
         case .screens: List(screens, id: \.dashboardId) { screen in Button { host.selectScreen(screen.dashboardId); if host.errorMessage == nil { dismiss() } } label: { HStack { Text(screen.name); Spacer(); if screen.dashboardId == host.screenSet?.selectedDashboardId { Image(systemName: "checkmark") } } } }
         case .guided: ScrollView { VStack(alignment: .leading, spacing: 24) {
