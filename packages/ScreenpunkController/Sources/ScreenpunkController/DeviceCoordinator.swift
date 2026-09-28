@@ -372,6 +372,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             return try directory.update(deviceId) { current in
                 current.device.reachable = true
                 current.device.activeRevision = active.revision
+                current.redAlert = active.redAlert
                 if let screens = active.screens {
                     current.screenSet = screens
                     current.selectedDashboardId = active.selectedDashboardId
