@@ -144,7 +144,7 @@ public struct LANDeployBody: Sendable, Equatable, Codable {
 }
 
 /// Credential-free status of the native listener, available only to the paired owner.
-public struct DeviceRedAlertStatus: Sendable, Equatable, Codable {
+public struct DeviceTemporaryActivationStatus: Sendable, Equatable, Codable {
     public var phase = "not_started"
     public var foreground = false
     public var targetDashboardId: String?
@@ -161,9 +161,9 @@ public struct LANActiveQuery: Sendable, Equatable, Codable {
 
     public var screens: [LANScreenSetEntry]?
     public var selectedDashboardId: String?
-    public var redAlert: DeviceRedAlertStatus?
-    public init(revision: String? = nil, screens: [LANScreenSetEntry]? = nil, selectedDashboardId: String? = nil, redAlert: DeviceRedAlertStatus? = nil) {
-        self.revision = revision; self.screens = screens; self.selectedDashboardId = selectedDashboardId; self.redAlert = redAlert
+    public var temporaryActivation: DeviceTemporaryActivationStatus?
+    public init(revision: String? = nil, screens: [LANScreenSetEntry]? = nil, selectedDashboardId: String? = nil, temporaryActivation: DeviceTemporaryActivationStatus? = nil) {
+        self.revision = revision; self.screens = screens; self.selectedDashboardId = selectedDashboardId; self.temporaryActivation = temporaryActivation
     }
 }
 

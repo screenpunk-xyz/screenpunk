@@ -31,9 +31,9 @@ public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var activePackage: PackageAssetStore?
     public private(set) var screenSet: DeviceInstalledScreenSet?
     private var settings = DeviceSettingsSnapshot()
-    private var redAlertStatus = DeviceRedAlertStatus()
-    func updateRedAlertStatus(_ status: DeviceRedAlertStatus) {
-        lock.lock(); defer { lock.unlock() }; redAlertStatus = status
+    private var temporaryActivationStatus = DeviceTemporaryActivationStatus()
+    func updateTemporaryActivationStatus(_ status: DeviceTemporaryActivationStatus) {
+        lock.lock(); defer { lock.unlock() }; temporaryActivationStatus = status
     }
     private var screenPackages: [String: PackageAssetStore] = [:]
     public var onChange: (() -> Void)?
@@ -46,17 +46,25 @@ public final class DeviceLANServer: @unchecked Sendable {
         self?.homeAssistantScope()
     }
 
-    /// A narrow native listener may use the installed Red Alert grant even while
-    /// another dashboard is selected. It is never exposed to page JavaScript.
-    func redAlertScope() -> HomeAssistantDeviceRuntime.Scope? {
+    /// Uses the declaring package's grant while another screen is selected.
+    /// Ambiguous declarations never select a target implicitly.
+    func temporaryActivationScope() -> HomeAssistantDeviceRuntime.Scope? {
         lock.lock(); defer { lock.unlock() }
         guard let owner = runtime.pairing.owner, let set = screenSet else { return nil }
-        let targets = set.screens.filter { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "red alert" }
-        guard targets.count == 1, let target = targets.first,
+        let targets = set.screens.compactMap { screen -> (DeviceInstalledScreen, TemporaryActivationConfiguration)? in
+            guard let data = screenPackages[screen.revision.dashboardId]?.assets["manifest.json"]?.data,
+                  let manifest = try? JSONDecoder().decode(DashboardManifest.self, from: data),
+                  manifest.dashboardId == screen.revision.dashboardId, manifest.revision == screen.revision.revision,
+                  let configuration = manifest.deviceBehavior?.temporaryActivation,
+                  (try? configuration.validate()) != nil else { return nil }
+            return (screen, configuration)
+        }
+        guard targets.count == 1, let (target, configuration) = targets.first,
               let record = try? homeAssistantVault.record(owner: PeerPin.hex(owner.publicKey), revision: target.revision.revision, grantSet: set.grantSet),
-              record.configuration.dashboardId == target.revision.dashboardId else { return nil }
+              record.configuration.dashboardId == target.revision.dashboardId,
+              (try? record.configuration.authorize(operation: "getStates", parameters: [:])) != nil else { return nil }
         return .init(owner: PeerPin.hex(owner.publicKey), revision: target.revision.revision,
-                     dashboardId: target.revision.dashboardId, grantSet: set.grantSet)
+                     dashboardId: target.revision.dashboardId, grantSet: set.grantSet, temporaryActivation: configuration)
     }
 
     private func genericConnectionScope() -> GenericConnectionDeviceVault.Scope? {
@@ -569,7 +577,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
                     name: runtime.profile.name,
-                    capabilities: ["apple-maps-v1", "apple-maps-interactive-v1", "home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1", "connection-inventory-v1", "home-assistant-red-alert-v1"],
+                    capabilities: ["apple-maps-v1", "apple-maps-interactive-v1", "home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1", "connection-inventory-v1", "home-assistant-temporary-activation-v1"],
                     maxTransferBytes: LANProtocolLimits.maxMessageBytes,
                     profile: runtime.profile
                 )
@@ -624,7 +632,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 clearPendingPairingLocked()
                 persist()
                 onChange?()
-                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, redAlert: redAlertStatus))
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, temporaryActivation: temporaryActivationStatus))
             case .deploySet:
                 try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(LANScreenSetDeployBody.self, json: request.payloadJSON)
@@ -740,7 +748,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 return ok(request, payload: ["revoked": true])
             case .queryActive:
                 try requireOwner(peerPin)
-                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, redAlert: redAlertStatus))
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, temporaryActivation: temporaryActivationStatus))
             case .none:
                 throw TransferFailure.validationFailed
             }
@@ -834,6 +842,12 @@ public final class DeviceLANServer: @unchecked Sendable {
             guard outcome.phase == .active else { throw TransferFailure.targetMismatch }
             let assets = try stageFiles(item.deployment.files)
             guard assets["index.html"] != nil else { throw TransferFailure.validationFailed }
+            if let manifestData = assets["manifest.json"]?.data {
+                let manifest = try JSONDecoder().decode(DashboardManifest.self, from: manifestData)
+                try manifest.deviceBehavior?.validate()
+                guard manifest.dashboardId == item.deployment.revision.dashboardId,
+                      manifest.revision == item.deployment.revision.revision else { throw TransferFailure.validationFailed }
+            }
             if let reads = item.publicReads {
                 guard let manifestData = assets["manifest.json"]?.data else { throw TransferFailure.validationFailed }
                 let manifest = try JSONDecoder().decode(DashboardManifest.self, from: manifestData)

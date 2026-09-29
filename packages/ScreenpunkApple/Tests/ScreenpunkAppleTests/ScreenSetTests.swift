@@ -21,7 +21,7 @@ final class ScreenSetTests: XCTestCase {
         defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
         XCTAssertTrue(try client.hello().capabilities?.contains("screen-set-v1") == true)
-        XCTAssertTrue(try client.hello().capabilities?.contains("home-assistant-red-alert-v1") == true)
+        XCTAssertTrue(try client.hello().capabilities?.contains("home-assistant-temporary-activation-v1") == true)
         let body = try makeBody()
         let receipt = try client.deployScreenSet(body)
         XCTAssertEqual(receipt.screens.map(\.dashboardId), ["first", "second"])
@@ -206,31 +206,31 @@ final class ScreenSetTests: XCTestCase {
         let client = ControllerLANClient(identity: owner); defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
         _ = try client.hello()
-        var body = try makeBody(); body.screens[1].name = "Red Alert"
+        let body = try makeBody(activationTargets: ["second"])
         _ = try client.deployScreenSet(body)
-        let scope = try XCTUnwrap(server.redAlertScope())
+        let scope = try XCTUnwrap(server.temporaryActivationScope())
         XCTAssertEqual(scope.dashboardId, "second", "inactive target has its own approved scope")
-        let listener = DeviceRedAlertRuntime(server: server)
+        let listener = DeviceTemporaryActivationRuntime(server: server)
         listener.update(active: false)
         let now = Date()
         let formatter = ISO8601DateFormatter()
         let attributes: [String: Any] = ["alert_id": "test-run", "started_at": formatter.string(from: now),
             "expires_at": formatter.string(from: now.addingTimeInterval(300))]
-        listener.receive(state: ["entity_id": RedAlertNavigation.entityId, "state": "on", "attributes": attributes], now: now)
+        listener.receive(state: ["entity_id": "sensor.notice", "state": "on", "attributes": attributes], now: now)
         XCTAssertEqual(try client.queryActiveState().selectedDashboardId, "second")
-        XCTAssertEqual(server.redAlertScope(), scope, "screen selection cannot revoke the native subscription")
-        listener.receive(state: ["entity_id": RedAlertNavigation.entityId, "state": "off", "attributes": attributes], now: now)
+        XCTAssertEqual(server.temporaryActivationScope(), scope, "screen selection cannot revoke the native subscription")
+        listener.receive(state: ["entity_id": "sensor.notice", "state": "off", "attributes": attributes], now: now)
         XCTAssertEqual(try client.queryActiveState().selectedDashboardId, "first")
         var second = attributes; second["alert_id"] = "next-run"
         second["started_at"] = formatter.string(from: now.addingTimeInterval(1))
-        listener.receive(state: ["entity_id": RedAlertNavigation.entityId, "state": "on", "attributes": second], now: now.addingTimeInterval(1))
+        listener.receive(state: ["entity_id": "sensor.notice", "state": "on", "attributes": second], now: now.addingTimeInterval(1))
         XCTAssertEqual(server.screenSet?.selectedDashboardId, "second")
-        let restarted = DeviceRedAlertRuntime(server: server); restarted.update(active: false)
+        let restarted = DeviceTemporaryActivationRuntime(server: server); restarted.update(active: false)
         restarted.expire(now: now.addingTimeInterval(301))
         XCTAssertEqual(server.screenSet?.selectedDashboardId, "first")
         try vault.revoke()
-        XCTAssertNil(server.redAlertScope())
-        restarted.receive(state: ["entity_id": RedAlertNavigation.entityId, "state": "on", "attributes": second], now: now)
+        XCTAssertNil(server.temporaryActivationScope())
+        restarted.receive(state: ["entity_id": "sensor.notice", "state": "on", "attributes": second], now: now)
         XCTAssertEqual(server.screenSet?.selectedDashboardId, "first")
     }
 
@@ -247,11 +247,11 @@ final class ScreenSetTests: XCTestCase {
         let client = ControllerLANClient(identity: owner); defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
         _ = try client.hello()
-        var body = try makeBody(); body.screens[1].name = "Red Alert"
+        let body = try makeBody(activationTargets: ["second"])
         _ = try client.deployScreenSet(body)
         let transport = AlertEntityTransport()
-        let listener = DeviceRedAlertRuntime(server: server, pollNanoseconds: 10_000_000) { server in
-            HomeAssistantDeviceRuntime(vault: vault, scope: { server.redAlertScope() }, transport: transport,
+        let listener = DeviceTemporaryActivationRuntime(server: server, pollNanoseconds: 10_000_000) { server in
+            HomeAssistantDeviceRuntime(vault: vault, scope: { server.temporaryActivationScope() }, transport: transport,
                 resolver: FixedResolver(["203.0.113.10"]))
         }
         defer { listener.update(active: false) }
@@ -261,7 +261,7 @@ final class ScreenSetTests: XCTestCase {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         XCTAssertEqual(server.screenSet?.selectedDashboardId, "second", "real native task must consume HTTP state and select inactive alert")
-        let status = try XCTUnwrap(client.queryActiveState().redAlert)
+        let status = try XCTUnwrap(client.queryActiveState().temporaryActivation)
         XCTAssertEqual(status.lastState, "on"); XCTAssertEqual(status.selectionCount, 1)
         XCTAssertGreaterThan(status.receivedCount, 0); XCTAssertNil(status.lastError)
         await transport.setActive(false)
@@ -272,20 +272,71 @@ final class ScreenSetTests: XCTestCase {
         XCTAssertEqual(server.screenSet?.selectedDashboardId, "first")
         let paths = await transport.paths
         XCTAssertFalse(paths.isEmpty)
-        XCTAssertTrue(paths.allSatisfy { $0 == "/api/states/sensor.screenpunk_red_alert" })
+        XCTAssertTrue(paths.allSatisfy { $0 == "/api/states/sensor.notice" })
         try vault.revoke()
         listener.update(active: true)
-        XCTAssertEqual(try client.queryActiveState().redAlert?.phase, "missing_target_or_grant")
+        XCTAssertEqual(try client.queryActiveState().temporaryActivation?.phase, "missing_target_or_grant")
     }
 
-    private func makeBody() throws -> LANScreenSetDeployBody {
-        let items = ["first", "second"].map { name -> LANScreenSetItem in
+    func testActivationRequiresDeclarationUniqueTargetAndScopedGrant() throws {
+        let device = try TLSIdentity.make(role: .device, commonName: "config-device")
+        let owner = try TLSIdentity.make(role: .controller, commonName: "config-owner")
+        let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? store.erase() }
+        let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
+        let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test"),
+            advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
+        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        try server.start(); defer { server.stop() }
+        let client = ControllerLANClient(identity: owner); defer { client.cancel() }
+        try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
+        _ = try client.hello()
+        var namedOnly = try makeBody(); namedOnly.screens[1].name = "Red Alert"
+        _ = try client.deployScreenSet(namedOnly)
+        XCTAssertNil(server.temporaryActivationScope(), "Names never grant participation")
+        var ambiguous = try makeBody(activationTargets: ["first", "second"]); ambiguous.deploymentId = "ambiguous"
+        _ = try client.deployScreenSet(ambiguous)
+        XCTAssertNil(server.temporaryActivationScope(), "Multiple declarations fail closed")
+        var ungranted = try makeBody(activationTargets: ["second"]); ungranted.deploymentId = "ungranted"
+        ungranted.screens[1].homeAssistant = nil
+        _ = try client.deployScreenSet(ungranted)
+        XCTAssertNil(server.temporaryActivationScope(), "Other screen's grant does not authorize target")
+        var configured = try makeBody(activationTargets: ["second"]); configured.deploymentId = "configured"
+        _ = try client.deployScreenSet(configured)
+        XCTAssertEqual(server.temporaryActivationScope()?.temporaryActivation?.entityId, "sensor.notice")
+        let restored = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        XCTAssertEqual(restored.temporaryActivationScope(), server.temporaryActivationScope())
+        var invalid = configured; invalid.deploymentId = "invalid"
+        let index = try XCTUnwrap(invalid.screens[1].deployment.files.firstIndex(where: { $0.path == "manifest.json" }))
+        let original = try XCTUnwrap(Data(base64Encoded: invalid.screens[1].deployment.files[index].dataBase64))
+        var manifest = try JSONDecoder().decode(DashboardManifest.self, from: original)
+        manifest.deviceBehavior?.temporaryActivation?.entityId = "sensor.notice/escape"
+        let bytes = try JSONEncoder().encode(manifest)
+        invalid.screens[1].deployment.files[index] = .init(path: "manifest.json", sha256: PeerPin.hex(PeerPin.sha256(bytes)), dataBase64: bytes.base64EncodedString())
+        XCTAssertThrowsError(try client.deployScreenSet(invalid))
+        XCTAssertEqual(server.temporaryActivationScope(), restored.temporaryActivationScope())
+    }
+
+    private func makeBody(activationTargets: Set<String> = []) throws -> LANScreenSetDeployBody {
+        let items = try ["first", "second"].map { name -> LANScreenSetItem in
             var revision = StoredRevision.offlineFixture
             revision.dashboardId = name; revision.revision = name + "-revision"
             let data = Data("<html>\(name)</html>".utf8)
+            var files = [LANFileBlob(path: "index.html", sha256: PeerPin.hex(PeerPin.sha256(data)), dataBase64: data.base64EncodedString())]
+            if activationTargets.contains(name) {
+                let configuration = TemporaryActivationConfiguration(entityId: "sensor.notice", activeState: "on", inactiveState: "off",
+                    idAttribute: "alert_id", startedAtAttribute: "started_at", expiresAtAttribute: "expires_at", maxDurationSeconds: 300)
+                let manifest = DashboardManifest(schemaVersion: 1, dashboardId: name, name: "Unrelated display name", revision: revision.revision,
+                    entrypoint: "index.html", sdkVersion: "1", target: .init(profileId: "set-phone", width: revision.width,
+                    height: revision.height, scale: 1, orientation: "landscape"), connections: [],
+                    files: [.init(path: "index.html", bytes: data.count, sha256: PeerPin.hex(PeerPin.sha256(data)))],
+                    deviceBehavior: .init(temporaryActivation: configuration))
+                let bytes = try JSONEncoder().encode(manifest)
+                files.append(.init(path: "manifest.json", sha256: PeerPin.hex(PeerPin.sha256(bytes)), dataBase64: bytes.base64EncodedString()))
+            }
             return .init(name: name, deployment: .init(deployment: .init(deploymentId: name + "-deploy",
                 revision: revision.revision, dashboardId: name, deviceId: "set-phone", phase: .queued), revision: revision,
-                files: [.init(path: "index.html", sha256: PeerPin.hex(PeerPin.sha256(data)), dataBase64: data.base64EncodedString())]),
+                files: files),
                 homeAssistant: .init(dashboardId: name, connectionId: "home", provisioningId: name + "-grant",
                     revision: revision.revision, origin: "https://ha.example", token: name + "-token"))
         }
@@ -317,10 +368,10 @@ private actor AlertEntityTransport: HTTPTransport {
         if request.url.path == "/api/states" {
             return .init(status: 200, body: Data(repeating: 32, count: 440_707))
         }
-        guard request.url.path == "/api/states/" + RedAlertNavigation.entityId,
+        guard request.url.path == "/api/states/" + "sensor.notice",
               request.method == "GET", request.maxBytes == 64 * 1024 else { throw ConnectionFailure.validationFailed }
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let data = try JSONSerialization.data(withJSONObject: ["entity_id": RedAlertNavigation.entityId,
+        let data = try JSONSerialization.data(withJSONObject: ["entity_id": "sensor.notice",
             "state": active ? "on" : "off", "attributes": ["alert_id": "live-sized-household",
             "started_at": f.string(from: start), "expires_at": f.string(from: start.addingTimeInterval(300))]])
         return .init(status: 200, body: data)

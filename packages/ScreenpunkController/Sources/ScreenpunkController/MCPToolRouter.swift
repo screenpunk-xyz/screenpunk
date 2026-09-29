@@ -337,8 +337,8 @@ public struct MCPToolRouter: Sendable {
             "pairedAt": iso(record.pairedAt),
             "capabilities": ["tls": "1.3", "transfer": "lan", "runtimeProxy": false]
         ]
-        if let status = record.redAlert, let data = try? JSONEncoder().encode(status),
-           let value = try? JSONSerialization.jsonObject(with: data) { object["redAlert"] = value }
+        if let status = record.temporaryActivation, let data = try? JSONEncoder().encode(status),
+           let value = try? JSONSerialization.jsonObject(with: data) { object["temporaryActivation"] = value }
         if let seen = record.lastSeenAt {
             object["lastSeenAt"] = iso(seen)
         }

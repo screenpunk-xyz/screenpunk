@@ -179,7 +179,7 @@ public final class ScreenAuthoring: @unchecked Sendable {
                 guard values.isSymbolicLink != true else { throw fail("Build output contains a symlink") }
                 if values.isRegularFile == true { inputs.append(.object(["path": .string(file.resolvingSymlinksInPath().pathComponents.dropFirst(output.resolvingSymlinksInPath().pathComponents.count).joined(separator: "/")), "base64": .string(try Data(contentsOf: file).base64EncodedString())])) }
             }
-            var arguments = (config.object ?? [:]).filter { ["name", "target", "connections", "pages", "defaultPageId", "eventRules"].contains($0.key) }
+            var arguments = (config.object ?? [:]).filter { ["name", "target", "connections", "pages", "defaultPageId", "eventRules", "deviceBehavior"].contains($0.key) }
             arguments["dashboardId"] = metadata["dashboardId"]; arguments["files"] = .array(inputs)
             if let baseRevision { arguments["baseRevision"] = .string(baseRevision) }
             let record = try service.updateDashboard(arguments: .object(arguments))

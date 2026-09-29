@@ -1,8 +1,7 @@
 import Foundation
 
 /// Device-level, state-driven navigation. No service calls or credentials.
-public struct RedAlertNavigation: Codable, Equatable, Sendable {
-    public static let entityId = "sensor.screenpunk_red_alert"
+public struct TemporaryActivationNavigation: Codable, Equatable, Sendable {
     public var alertId: String?
     public var expiresAt: Date?
     public var startedAt: Date?
@@ -12,17 +11,18 @@ public struct RedAlertNavigation: Codable, Equatable, Sendable {
     public init() {}
 
     /// Returning a selection is a proposal: callers persist this value before selecting.
-    public mutating func receive(state: [String: Any], target: String, selected: String, now: Date) -> String? {
-        guard state["entity_id"] as? String == Self.entityId,
+    public mutating func receive(state: [String: Any], configuration: TemporaryActivationConfiguration, target: String, selected: String, now: Date) -> String? {
+        guard (try? configuration.validate()) != nil,
+              state["entity_id"] as? String == configuration.entityId,
               let attributes = state["attributes"] as? [String: Any],
-              let id = attributes["alert_id"] as? String, !id.isEmpty, id.utf8.count <= 128 else { return nil }
-        if state["state"] as? String == "off" {
+              let id = attributes[configuration.idAttribute] as? String, !id.isEmpty, id.utf8.count <= 128 else { return nil }
+        if state["state"] as? String == configuration.inactiveState {
             guard id == alertId else { return nil }
             return finish(selected: selected)
         }
-        guard state["state"] as? String == "on",
-              let start = Self.date(attributes["started_at"]), let end = Self.date(attributes["expires_at"]),
-              start <= now.addingTimeInterval(5), end > start, end.timeIntervalSince(start) <= 300,
+        guard state["state"] as? String == configuration.activeState,
+              let start = Self.date(attributes[configuration.startedAtAttribute]), let end = Self.date(attributes[configuration.expiresAtAttribute]),
+              start <= now.addingTimeInterval(5), end > start, end.timeIntervalSince(start) <= Double(configuration.maxDurationSeconds),
               end > now else { return expire(selected: selected, now: now) }
         if id == alertId { return nil } // Repeated starts never extend the deadline or undo a manual dismissal.
         if let startedAt, start <= startedAt { return nil }

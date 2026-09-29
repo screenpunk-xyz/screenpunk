@@ -9,8 +9,7 @@ binary_dir = mac.parent if mac.exists() else app
 executables = [binary_dir / 'Screenpunk', *binary_dir.glob('*.dylib')]
 data = b''.join(p.read_bytes() for p in executables if p.is_file())
 required = {
-    'device-level Red Alert listener': b'DeviceRedAlertRuntime',
-    'Red Alert state contract': b'sensor.screenpunk_red_alert',
+    'declarative device activation': b'DeviceTemporaryActivationRuntime',
     'durable screen preferences': b'ScreenPreferenceStore',
     'native Calendar connection': b'GoogleCalendarDeviceService',
     'native Maps': b'InteractiveMapController',

@@ -90,7 +90,8 @@ public final class DashboardPackageStore: @unchecked Sendable {
         files: [DashboardFileInput],
         pages: [DashboardPage]? = nil,
         defaultPageId: String? = nil,
-        eventRules: [ManifestEventRule]? = nil
+        eventRules: [ManifestEventRule]? = nil,
+        deviceBehavior: DeviceBehavior? = nil
     ) throws -> DashboardRevisionRecord {
         let dashboardId = try dashboardId.map { try Self.safeIdentifier($0, field: "dashboardId") }
         let baseRevision = try baseRevision.map { try Self.safeIdentifier($0, field: "baseRevision") }
@@ -158,7 +159,8 @@ public final class DashboardPackageStore: @unchecked Sendable {
                 files: inventory.sorted { $0.path < $1.path },
                 pages: pages?.isEmpty == true ? nil : (pages ?? previousManifest?.pages),
                 defaultPageId: pages?.isEmpty == true ? nil : (defaultPageId ?? previousManifest?.defaultPageId),
-                eventRules: eventRules ?? previousManifest?.eventRules
+                eventRules: eventRules ?? previousManifest?.eventRules,
+                deviceBehavior: deviceBehavior ?? previousManifest?.deviceBehavior
             )
             try PackageValidator.validate(manifest)
             manifest.digest = try DeploymentDigest.digest(for: manifest)

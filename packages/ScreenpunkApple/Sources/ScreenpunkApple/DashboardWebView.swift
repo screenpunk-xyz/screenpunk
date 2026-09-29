@@ -108,7 +108,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     private var programmaticURL: String?
     private var onSettingsApplied: (Bool) -> Void
     private var settingsValid = true
-    private var alertAudio = false
+    private var allowsAudioAutoplay = false
 
     init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
         let rasterResources = rasterResources ?? PublicRasterResources()
@@ -119,9 +119,10 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         if let data = store.assets["manifest.json"]?.data {
             do {
                 let manifest = try JSONDecoder().decode(DashboardManifest.self, from: data)
+                try manifest.deviceBehavior?.validate()
                 let events = try DashboardEventRuntime(manifest: manifest, revision: revision, settings: settings,
                                                        homeAssistant: homeAssistant, connections: connections)
-                alertAudio = homeAssistant != nil && manifest.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "red alert"
+                allowsAudioAutoplay = manifest.deviceBehavior?.allowsAudioAutoplay == true
                 self.events = events; initialPath = events.page.path; settingsValid = events.settingsApplied
             } catch { settingsValid = false }
         }
@@ -159,7 +160,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         BundledAudio.configure(config)
-        if alertAudio { config.mediaTypesRequiringUserActionForPlayback = .video }
+        if allowsAudioAutoplay { config.mediaTypesRequiringUserActionForPlayback = .video }
         config.setURLSchemeHandler(handler, forURLScheme: IsolationPolicy.customScheme)
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         if let bridge {
