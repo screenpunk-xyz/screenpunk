@@ -777,6 +777,23 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertNoThrow(try harness.service.devices.requireScreenSetSupport(deviceId: "dynamic-assets", publicReads: true, dynamicPublicPaths: true))
     }
 
+    func testDeviceBehaviorRequiresCapabilityBeforeCredentialsOrTransfer() throws {
+        let device = FakeLANDevice(deviceId: "behavior", name: "Fixture")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "behavior")
+        let behavior = DeviceBehavior(audio: .init(autoplay: true))
+        let screen = try harness.service.store.putDashboard(dashboardId: nil, name: "Audio", baseRevision: nil,
+            target: harness.service.defaultTarget(), connections: [], files: [.init(path: "index.html", text: "<p>Audio</p>")], deviceBehavior: behavior)
+        XCTAssertThrowsError(try harness.service.shipSet(records: [screen], deviceId: "behavior", selectedDashboardId: screen.manifest.dashboardId)) {
+            XCTAssertEqual(($0 as? ControllerError)?.code, .unsupportedVersion)
+        }
+        XCTAssertEqual(device.deployAttempts, 0)
+        XCTAssertNil(device.installedSet)
+        device.supportsDeviceBehavior = true
+        XCTAssertNoThrow(try harness.service.shipSet(records: [screen], deviceId: "behavior", selectedDashboardId: screen.manifest.dashboardId))
+        XCTAssertEqual(device.installedSet?.first?.revision, screen.manifest.revision)
+    }
+
     private func makeHarness(
         device: FakeLANDevice,
         identity: PairingIdentity? = nil,

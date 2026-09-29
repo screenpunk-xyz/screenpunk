@@ -793,6 +793,83 @@
           }
         }
       }
+    },
+    "deviceBehavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temporaryActivation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "entityId",
+            "activeState",
+            "inactiveState",
+            "idAttribute",
+            "startedAtAttribute",
+            "expiresAtAttribute",
+            "maxDurationSeconds"
+          ],
+          "properties": {
+            "source": {
+              "const": "homeAssistant"
+            },
+            "entityId": {
+              "type": "string",
+              "maxLength": 255,
+              "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$(?![\\s\\S])"
+            },
+            "activeState": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$(?![\\s\\S])"
+            },
+            "inactiveState": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$(?![\\s\\S])"
+            },
+            "idAttribute": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_]+$(?![\\s\\S])"
+            },
+            "startedAtAttribute": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_]+$(?![\\s\\S])"
+            },
+            "expiresAtAttribute": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_]+$(?![\\s\\S])"
+            },
+            "maxDurationSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            }
+          }
+        },
+        "audio": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "autoplay"
+          ],
+          "properties": {
+            "autoplay": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
     }
   }
 }

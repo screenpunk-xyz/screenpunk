@@ -113,6 +113,21 @@ export interface ManifestEventRule {
   allowTimeoutOverride: boolean; payload?: EventPayloadFields;
 }
 
+export interface TemporaryActivationConfiguration {
+  source: "homeAssistant";
+  entityId: string;
+  activeState: string;
+  inactiveState: string;
+  idAttribute: string;
+  startedAtAttribute: string;
+  expiresAtAttribute: string;
+  maxDurationSeconds: number;
+}
+export interface DeviceBehavior {
+  temporaryActivation?: TemporaryActivationConfiguration;
+  audio?: { autoplay: boolean };
+}
+
 export interface DashboardManifest {
   schemaVersion: number;
   dashboardId: string;
@@ -127,6 +142,7 @@ export interface DashboardManifest {
   pages?: DashboardPage[];
   defaultPageId?: string;
   eventRules?: ManifestEventRule[];
+  deviceBehavior?: DeviceBehavior;
 }
 
 export type PackageIssueCode =
@@ -273,6 +289,7 @@ export function validateManifest(manifest: unknown): DashboardManifest {
   }
   if (entry && !seen.has(entry)) issues.push("missing_entrypoint");
 
+  try { validateDeviceBehavior(typed.deviceBehavior); } catch { issues.push("validation_failed"); }
   try { validateNavigation(typed); } catch { issues.push("validation_failed"); }
 
   if (typed.digest && typed.digest !== deploymentDigest(typed)) {
@@ -284,6 +301,25 @@ export function validateManifest(manifest: unknown): DashboardManifest {
 }
 
 /** Mirrors native EventNavigationEngine validation; payloads never introduce capabilities. */
+export function validateDeviceBehavior(value: unknown): void {
+  if (value === undefined) return;
+  const invalid = (): never => { throw new PackageValidationError(["validation_failed"]); };
+  if (!isObject(value)) invalid();
+  const behavior = value as Record<string, unknown>;
+  if (behavior.audio !== undefined && (!isObject(behavior.audio) || typeof behavior.audio.autoplay !== "boolean")) invalid();
+  if (behavior.temporaryActivation === undefined) return;
+  if (!isObject(behavior.temporaryActivation)) invalid();
+  const config = behavior.temporaryActivation as Record<string, unknown>;
+  const boundedString = (x: unknown, max: number): x is string => typeof x === "string" && x.length > 0 && Buffer.byteLength(x, "utf8") <= max;
+  if (config.source !== "homeAssistant" || !boundedString(config.entityId, 255) ||
+      !/^[a-z0-9_]+\.[a-z0-9_]+$(?![\s\S])/.test(config.entityId)) invalid();
+  const states = [config.activeState, config.inactiveState];
+  if (states.some(x => !boundedString(x, 128) || /[\p{Cc}\p{Cf}]/u.test(x)) || states[0] === states[1]) invalid();
+  const attributes = [config.idAttribute, config.startedAtAttribute, config.expiresAtAttribute];
+  if (attributes.some(x => !boundedString(x, 128) || !/^[A-Za-z0-9_]+$(?![\s\S])/.test(x)) || new Set(attributes).size !== 3) invalid();
+  if (typeof config.maxDurationSeconds !== "number" || !Number.isInteger(config.maxDurationSeconds) || config.maxDurationSeconds < 1 || config.maxDurationSeconds > 3600) invalid();
+}
+
 export function validateNavigation(manifest: DashboardManifest): void {
   const invalid = () => { throw new PackageValidationError(["validation_failed"]); };
   if (manifest.pages === undefined && manifest.defaultPageId === undefined && manifest.eventRules === undefined) return;

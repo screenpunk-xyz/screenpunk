@@ -91,7 +91,7 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
     public var screenSet: [LANScreenSetEntry]?
     public var selectedDashboardId: String?
     public var settingsSnapshot: DeviceSettingsSnapshot?
-    public var redAlert: DeviceRedAlertStatus?
+    public var temporaryActivation: DeviceTemporaryActivationStatus?
 
     public init(
         device: PairedDevice,

@@ -18,6 +18,7 @@ final class FakeLANDevice: @unchecked Sendable {
     var supportsScreenSets = true
     var supportsPublicReads = false
     var supportsDynamicPublicPaths = false
+    var supportsDeviceBehavior = false
     var maxTransferBytes: Int? = LANProtocolLimits.maxMessageBytes
     var installedSet: [LANScreenSetEntry]?
     var selectedDashboardId: String?
@@ -94,7 +95,14 @@ final class FakeLANDevice: @unchecked Sendable {
             switch LANMethod(rawValue: request.method) {
             case .hello:
                 let shown = claimedHelloPin ?? identityPin
-                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: (supportsPublicReads ? ["public-read-http-v1"] : []) + (supportsDynamicPublicPaths ? ["public-read-dynamic-path-v1"] : []) + (supportsGeneralServices ? ["home-assistant-services-v1"] : []) + (supportsHomeAssistant ? ["home-assistant-http-v1"] : []) + (supportsScreenSets ? ["screen-set-v1"] : []), maxTransferBytes: maxTransferBytes, profile: runtime.profile))
+                var capabilities: [String] = []
+                if supportsDeviceBehavior { capabilities.append("home-assistant-temporary-activation-v1") }
+                if supportsPublicReads { capabilities.append("public-read-http-v1") }
+                if supportsDynamicPublicPaths { capabilities.append("public-read-dynamic-path-v1") }
+                if supportsGeneralServices { capabilities.append("home-assistant-services-v1") }
+                if supportsHomeAssistant { capabilities.append("home-assistant-http-v1") }
+                if supportsScreenSets { capabilities.append("screen-set-v1") }
+                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: capabilities, maxTransferBytes: maxTransferBytes, profile: runtime.profile))
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
                 guard PeerPin.matches(expected: peerPin, presentedHex: body.controllerPinHex) else {

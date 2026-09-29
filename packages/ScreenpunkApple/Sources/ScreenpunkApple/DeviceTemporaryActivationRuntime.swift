@@ -3,26 +3,26 @@ import ScreenpunkCore
 
 #if canImport(Network) && canImport(Security)
 /// Separate from the WebView: a screen switch cannot dispose this subscription.
-@MainActor final class DeviceRedAlertRuntime {
+@MainActor final class DeviceTemporaryActivationRuntime {
     private weak var server: DeviceLANServer?
     private var task: Task<Void, Never>?
     private var timer: Task<Void, Never>?
     private var scope: HomeAssistantDeviceRuntime.Scope?
-    private var engine = RedAlertNavigation()
+    private var engine = TemporaryActivationNavigation()
     private var enabled = false
-    private var status = DeviceRedAlertStatus() {
-        didSet { server?.updateRedAlertStatus(status) }
+    private var status = DeviceTemporaryActivationStatus() {
+        didSet { server?.updateTemporaryActivationStatus(status) }
     }
     private var pendingSelection: String?
     private var service: HomeAssistantDeviceRuntime?
-    private var checkpointURL: URL? { server?.store?.root.appendingPathComponent("red-alert.json") }
-    private struct Checkpoint: Codable { var owner: String; var grantSet: String?; var target: String; var navigation: RedAlertNavigation; var pendingSelection: String? }
+    private var checkpointURL: URL? { server?.store?.root.appendingPathComponent("temporary-activation.json") }
+    private struct Checkpoint: Codable { var owner: String; var grantSet: String?; var target: String; var configuration: TemporaryActivationConfiguration; var navigation: TemporaryActivationNavigation; var pendingSelection: String? }
 
     private let makeService: (DeviceLANServer) -> HomeAssistantDeviceRuntime
     private let pollNanoseconds: UInt64
     init(server: DeviceLANServer, pollNanoseconds: UInt64 = 2_000_000_000,
          makeService: @escaping (DeviceLANServer) -> HomeAssistantDeviceRuntime = { server in
-             HomeAssistantDeviceRuntime(vault: server.homeAssistantVault) { [weak server] in server?.redAlertScope() }
+             HomeAssistantDeviceRuntime(vault: server.homeAssistantVault) { [weak server] in server?.temporaryActivationScope() }
          }) {
         self.server = server; self.pollNanoseconds = pollNanoseconds; self.makeService = makeService
     }
@@ -30,12 +30,12 @@ import ScreenpunkCore
     func update(active: Bool) {
         enabled = active
         status.foreground = active
-        let next = server?.redAlertScope()
+        let next = server?.temporaryActivationScope()
         if next != scope {
             stop(); scope = next; engine = .init(); pendingSelection = nil
             if let next, let url = checkpointURL, let data = try? Data(contentsOf: url),
                let saved = try? JSONDecoder().decode(Checkpoint.self, from: data),
-               saved.owner == next.owner, saved.grantSet == next.grantSet, saved.target == next.dashboardId {
+               saved.owner == next.owner, saved.grantSet == next.grantSet, saved.target == next.dashboardId, saved.configuration == next.temporaryActivation {
                 engine = saved.navigation; pendingSelection = saved.pendingSelection
             }
         }
@@ -55,7 +55,7 @@ import ScreenpunkCore
                 var wait = pollNanoseconds
                 do {
                     self?.status.phase = "checking"
-                    let data = try await service.readRedAlertState(revision: scope.revision)
+                    let data = try await service.readTemporaryActivationState(revision: scope.revision)
                     guard !Task.isCancelled, let self, self.enabled, self.scope == scope else { return }
                     let state = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
                     self.receive(state: state, now: Date())
@@ -81,11 +81,11 @@ import ScreenpunkCore
     }
 
     func receive(state: [String: Any], now: Date) {
-        guard let scope, let server else { return }
-        guard state["entity_id"] as? String == RedAlertNavigation.entityId else { return }
+        guard let scope, let configuration = scope.temporaryActivation, let server else { return }
+        guard state["entity_id"] as? String == configuration.entityId else { return }
         status.phase = "receiving"; status.lastReceivedAt = now
         status.lastState = state["state"] as? String; status.lastError = nil; status.receivedCount += 1
-        apply { $0.receive(state: state, target: scope.dashboardId, selected: server.screenSet?.selectedDashboardId ?? "", now: now) }
+        apply { $0.receive(state: state, configuration: configuration, target: scope.dashboardId, selected: server.screenSet?.selectedDashboardId ?? "", now: now) }
     }
 
     func expire(now: Date) {
@@ -95,15 +95,15 @@ import ScreenpunkCore
 
     func manualSelection() { pendingSelection = nil; apply { $0.manualSelection(); return nil } }
 
-    private func apply(_ change: (inout RedAlertNavigation) -> String?) {
-        guard let server, let scope, server.redAlertScope() == scope else { return }
+    private func apply(_ change: (inout TemporaryActivationNavigation) -> String?) {
+        guard let server, let scope, let configuration = scope.temporaryActivation, server.temporaryActivationScope() == scope else { return }
         var next = engine
         let selection = change(&next)
         guard next != engine || selection != nil || pendingSelection != nil else { return }
         do {
             let pending = selection ?? pendingSelection
             if let url = checkpointURL {
-                let saved = Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, navigation: next, pendingSelection: pending)
+                let saved = Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: next, pendingSelection: pending)
                 try JSONEncoder().encode(saved).write(to: url, options: .atomic)
             }
             engine = next; pendingSelection = pending
@@ -113,7 +113,7 @@ import ScreenpunkCore
             }
             pendingSelection = nil
             if let url = checkpointURL {
-                try JSONEncoder().encode(Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, navigation: engine, pendingSelection: nil)).write(to: url, options: .atomic)
+                try JSONEncoder().encode(Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: engine, pendingSelection: nil)).write(to: url, options: .atomic)
             }
         } catch {
             status.phase = "selection_failed"

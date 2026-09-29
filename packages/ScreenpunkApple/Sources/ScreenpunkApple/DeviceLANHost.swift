@@ -19,13 +19,13 @@ public final class DeviceLANHost: ObservableObject {
     private let recoveryQueue = DispatchQueue(label: "xyz.screenpunk.lan.recovery")
     private var recoveryTimer: DispatchSourceTimer?
     private var listenerError: String?
-    private var redAlert: DeviceRedAlertRuntime?
+    private var temporaryActivation: DeviceTemporaryActivationRuntime?
     private var foreground = false
 
     @MainActor public func setForeground(_ active: Bool) {
         foreground = active
-        if redAlert == nil, let server { redAlert = DeviceRedAlertRuntime(server: server) }
-        redAlert?.update(active: active)
+        if temporaryActivation == nil, let server { temporaryActivation = DeviceTemporaryActivationRuntime(server: server) }
+        temporaryActivation?.update(active: active)
     }
 
     /// `store` defaults to the per-user device home so pairing and the active
@@ -118,7 +118,7 @@ public final class DeviceLANHost: ObservableObject {
     }
 
     @MainActor public func selectScreen(_ dashboardId: String) {
-        redAlert?.manualSelection()
+        temporaryActivation?.manualSelection()
         do {
             try server?.selectScreen(dashboardId)
             errorMessage = nil
@@ -170,7 +170,7 @@ public final class DeviceLANHost: ObservableObject {
             settingsSnapshot = server.settingsSnapshot
             genericConnectionGeneration = server.genericConnectionGeneration
             Task { @MainActor [weak self] in
-                guard let self else { return }; self.redAlert?.update(active: self.foreground)
+                guard let self else { return }; self.temporaryActivation?.update(active: self.foreground)
             }
         }
     }

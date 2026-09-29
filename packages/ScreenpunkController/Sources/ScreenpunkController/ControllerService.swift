@@ -108,7 +108,8 @@ public final class ControllerService: @unchecked Sendable {
             files: files,
             pages: try parseNavigationField([DashboardPage].self, object["pages"], name: "pages"),
             defaultPageId: object["defaultPageId"]?.string,
-            eventRules: try parseNavigationField([ManifestEventRule].self, object["eventRules"], name: "eventRules")
+            eventRules: try parseNavigationField([ManifestEventRule].self, object["eventRules"], name: "eventRules"),
+            deviceBehavior: try parseNavigationField(DeviceBehavior.self, object["deviceBehavior"], name: "deviceBehavior")
         )
     }
 
@@ -282,7 +283,8 @@ public final class ControllerService: @unchecked Sendable {
             publicReads: records.contains { $0.manifest.connections.contains { $0.publicHTTP != nil } },
             dynamicPublicPaths: records.contains { $0.manifest.connections.contains { $0.publicHTTP?.requiresDynamicPaths == true } },
             appleMaps: records.contains { $0.manifest.connections.contains { $0.alias == "appleMaps" } },
-            interactiveMaps: records.contains { $0.manifest.connections.contains { $0.alias == "appleMaps" && $0.operations?.contains(where: { $0.name != "snapshot" }) == true } })
+            interactiveMaps: records.contains { $0.manifest.connections.contains { $0.alias == "appleMaps" && $0.operations?.contains(where: { $0.name != "snapshot" }) == true } },
+            deviceBehavior: records.contains { $0.manifest.deviceBehavior?.temporaryActivation != nil || $0.manifest.deviceBehavior?.audio != nil })
         let items = try zip(records, packages).map { record, package -> LANScreenSetItem in
             let configuration: HomeAssistantProvisioning?
             if record.manifest.connections.contains(where: { $0.alias == "home" }) {

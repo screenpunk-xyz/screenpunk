@@ -166,8 +166,9 @@ public actor HomeAssistantDeviceRuntime: CameraStreamResolver {
         public var revision: String
         public var dashboardId: String
         public var grantSet: String?
-        public init(owner: String, revision: String, dashboardId: String, grantSet: String? = nil) {
-            self.owner = owner; self.revision = revision; self.dashboardId = dashboardId; self.grantSet = grantSet
+        public var temporaryActivation: TemporaryActivationConfiguration?
+        public init(owner: String, revision: String, dashboardId: String, grantSet: String? = nil, temporaryActivation: TemporaryActivationConfiguration? = nil) {
+            self.owner = owner; self.revision = revision; self.dashboardId = dashboardId; self.grantSet = grantSet; self.temporaryActivation = temporaryActivation
         }
     }
     private let vault: HomeAssistantDeviceVault
@@ -251,16 +252,18 @@ public actor HomeAssistantDeviceRuntime: CameraStreamResolver {
         }
     }
 
-    /// Native Red Alert observes one fixed entity; a whole-house get_states
+    /// Native temporary activation observes one declared entity; a whole-house get_states
     /// snapshot can exceed the generic WebSocket limit before any event arrives.
     /// This is deliberately not an arbitrary URL or a page bridge operation.
-    func readRedAlertState(revision: String) async throws -> Data {
-        guard let current = scope(), current.revision == revision else { throw ConnectionFailure.permissionRequired }
+    func readTemporaryActivationState(revision: String) async throws -> Data {
+        guard let current = scope(), current.revision == revision,
+              let activation = current.temporaryActivation else { throw ConnectionFailure.permissionRequired }
+        try activation.validate()
         let record = try vault.record(owner: current.owner, revision: revision, grantSet: current.grantSet)
         let config = record.configuration
         guard config.dashboardId == current.dashboardId else { throw ConnectionFailure.permissionRequired }
         _ = try config.authorize(operation: "getStates", parameters: [:])
-        let grant = config.connectionGrant(path: "/api/states/" + RedAlertNavigation.entityId, write: false)
+        let grant = config.connectionGrant(path: "/api/states/" + activation.entityId, write: false)
         let destination = try ConnectionPolicy.authorize(grant: grant, operationName: "request", parameters: [:],
             resolvedAddresses: resolver.addresses(for: ConnectionPolicy.originHost(config.origin)),
             binding: .init(authRef: "home-device", placement: .bearer))
@@ -279,7 +282,7 @@ public actor HomeAssistantDeviceRuntime: CameraStreamResolver {
         guard response.status == 200 else { throw ConnectionFailure.deviceOffline }
         guard response.body.count <= 64 * 1024 else { throw ConnectionFailure.sizeLimit }
         guard let state = try JSONSerialization.jsonObject(with: response.body) as? [String: Any],
-              state["entity_id"] as? String == RedAlertNavigation.entityId else { throw ConnectionFailure.validationFailed }
+              state["entity_id"] as? String == activation.entityId else { throw ConnectionFailure.validationFailed }
         return response.body
     }
 

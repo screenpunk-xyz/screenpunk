@@ -372,7 +372,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             return try directory.update(deviceId) { current in
                 current.device.reachable = true
                 current.device.activeRevision = active.revision
-                current.redAlert = active.redAlert
+                current.temporaryActivation = active.temporaryActivation
                 if let screens = active.screens {
                     current.screenSet = screens
                     current.selectedDashboardId = active.selectedDashboardId
@@ -469,12 +469,13 @@ public final class DeviceCoordinator: @unchecked Sendable {
 
     /// No package or credential is sent until the current peer advertises atomic sets.
     @discardableResult
-    public func requireScreenSetSupport(deviceId: String, serviceCalls: Bool = false, cameras: Bool = false, publicReads: Bool = false, dynamicPublicPaths: Bool = false, appleMaps: Bool = false, interactiveMaps: Bool = false) throws -> LANHello {
+    public func requireScreenSetSupport(deviceId: String, serviceCalls: Bool = false, cameras: Bool = false, publicReads: Bool = false, dynamicPublicPaths: Bool = false, appleMaps: Bool = false, interactiveMaps: Bool = false, deviceBehavior: Bool = false) throws -> LANHello {
         let record = try ownedRecord(deviceId)
         let hello: LANHello
         do { hello = try withLink(record) { try $0.hello() } }
         catch { throw mapTransfer(error) }
         guard hello.deviceId == deviceId, hello.capabilities?.contains("screen-set-v1") == true,
+              (!deviceBehavior || hello.capabilities?.contains("home-assistant-temporary-activation-v1") == true),
               (!serviceCalls || hello.capabilities?.contains("home-assistant-services-v1") == true),
               (!cameras || hello.capabilities?.contains("camera-playback-v1") == true),
               (!interactiveMaps || hello.capabilities?.contains("apple-maps-interactive-v1") == true),
@@ -489,11 +490,19 @@ public final class DeviceCoordinator: @unchecked Sendable {
     public func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
         let record = try ownedRecord(body.deviceId)
         try body.validate()
+        let behaviors = try body.screens.compactMap { screen -> DeviceBehavior? in
+            guard let file = screen.deployment.files.first(where: { $0.path == "manifest.json" }) else { return nil }
+            guard let data = Data(base64Encoded: file.dataBase64) else { throw TransferFailure.validationFailed }
+            let manifest = try JSONDecoder().decode(DashboardManifest.self, from: data)
+            try manifest.deviceBehavior?.validate()
+            return manifest.deviceBehavior
+        }
         let hello = try requireScreenSetSupport(deviceId: body.deviceId,
             serviceCalls: body.screens.contains { ($0.homeAssistant?.schemaVersion ?? 1) >= 2 },
             cameras: body.screens.contains { $0.homeAssistant?.cameraEntities != nil },
             publicReads: body.screens.contains { $0.publicReads != nil },
-            dynamicPublicPaths: body.screens.contains { $0.publicReads?.requiresDynamicPaths == true })
+            dynamicPublicPaths: body.screens.contains { $0.publicReads?.requiresDynamicPaths == true },
+            deviceBehavior: behaviors.contains { $0.temporaryActivation != nil || $0.audio != nil })
         let encoded = try LANCodec.encodePayload(body)
         let envelope = LANEnvelope(requestId: UUID().uuidString, method: LANMethod.deploySet.rawValue, payloadJSON: encoded)
         try checkTransferSize(try LANCodec.encode(envelope).count, advertised: hello.maxTransferBytes)

@@ -12,15 +12,19 @@ final class NavigationAuthoringTests: XCTestCase {
         let pages = [DashboardPage(id: "home", name: "Home", path: "index.html"), DashboardPage(id: "door", name: "Door", path: "door.html")]
         let connections = [ManifestConnection(alias: "events", required: false, operations: [.init(name: "read", kind: "http")])]
         let rules = [ManifestEventRule(id: "door", name: "Door", source: .init(mode: .poll, alias: "events", operation: "read"), condition: .init(field: ["active"], equals: .bool(true)), defaults: .init(pageId: "door", returnBehavior: .conditionClear))]
-        let first = try store.putDashboard(dashboardId: nil, name: "House", baseRevision: nil, target: target, connections: connections, files: files, pages: pages, defaultPageId: "home", eventRules: rules)
+        let behavior = DeviceBehavior(temporaryActivation: .init(entityId: "sensor.notice", activeState: "on", inactiveState: "off", idAttribute: "id", startedAtAttribute: "start", expiresAtAttribute: "end", maxDurationSeconds: 90), audio: .init(autoplay: true))
+        let first = try store.putDashboard(dashboardId: nil, name: "House", baseRevision: nil, target: target, connections: connections, files: files, pages: pages, defaultPageId: "home", eventRules: rules, deviceBehavior: behavior)
         let edit = try store.putDashboard(dashboardId: first.manifest.dashboardId, name: "House", baseRevision: first.manifest.revision, target: target, connections: connections, files: files)
+        XCTAssertEqual(edit.manifest.deviceBehavior, behavior)
         XCTAssertEqual(edit.manifest.pages, pages)
         XCTAssertEqual(edit.manifest.eventRules, rules)
         let loaded = try store.getRevision(dashboardId: first.manifest.dashboardId, revision: nil)
         let prepared = try ScreenPackagePreparation.prepare(loaded, for: .init(deviceId: "ipad", name: "iPad", width: 768, height: 1024), orientation: .portrait, root: root)
+        XCTAssertEqual(prepared.manifest.deviceBehavior, behavior)
         XCTAssertEqual(prepared.manifest.eventRules, rules)
         XCTAssertEqual(prepared.manifest.defaultPageId, "home")
-        let clear = try store.putDashboard(dashboardId: edit.manifest.dashboardId, name: "House", baseRevision: edit.manifest.revision, target: target, connections: [], files: files, pages: [], eventRules: [])
+        let clear = try store.putDashboard(dashboardId: edit.manifest.dashboardId, name: "House", baseRevision: edit.manifest.revision, target: target, connections: [], files: files, pages: [], eventRules: [], deviceBehavior: .init())
+        XCTAssertEqual(clear.manifest.deviceBehavior, DeviceBehavior())
         XCTAssertNil(clear.manifest.pages)
         XCTAssertEqual(clear.manifest.eventRules, [])
         XCTAssertEqual(clear.manifest.resolvedDefaultPageId, "default")
