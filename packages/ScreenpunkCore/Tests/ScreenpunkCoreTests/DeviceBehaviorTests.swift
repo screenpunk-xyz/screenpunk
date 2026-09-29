@@ -26,7 +26,9 @@ final class DeviceBehaviorTests: XCTestCase {
         }
         var config = valid; config.inactiveState = config.activeState; XCTAssertThrowsError(try config.validate())
         config = valid; config.startedAtAttribute = config.idAttribute; XCTAssertThrowsError(try config.validate())
-        config = valid; config.expiresAtAttribute = "nested.end"; XCTAssertThrowsError(try config.validate())
+        for attribute in ["nested.end", "end\n", "end\r", "end\r\n"] {
+            config = valid; config.expiresAtAttribute = attribute; XCTAssertThrowsError(try config.validate())
+        }
         XCTAssertThrowsError(try JSONDecoder().decode(DeviceBehavior.self, from: Data("{\"temporaryActivation\":{\"source\":\"homeAssistant\"}}".utf8)))
         XCTAssertThrowsError(try JSONDecoder().decode(DeviceBehavior.self, from: Data("{\"audio\":{\"autoplay\":\"true\"}}".utf8)))
     }

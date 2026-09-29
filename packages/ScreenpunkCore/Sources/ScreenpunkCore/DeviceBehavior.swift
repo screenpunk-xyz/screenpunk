@@ -39,10 +39,10 @@ public struct TemporaryActivationConfiguration: Codable, Equatable, Sendable {
     public func validate() throws {
         let attributes = [idAttribute, startedAtAttribute, expiresAtAttribute]
         guard entityId.utf8.count <= 255,
-              entityId.range(of: "^[a-z0-9_]+\\.[a-z0-9_]+$", options: .regularExpression) != nil,
+              entityId.range(of: "^[a-z0-9_]+\\.[a-z0-9_]+\\z", options: .regularExpression) != nil,
               [activeState, inactiveState].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }),
               activeState != inactiveState,
-              attributes.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && $0.range(of: "^[A-Za-z0-9_]+$", options: .regularExpression) != nil }),
+              attributes.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && $0.range(of: "^[A-Za-z0-9_]+\\z", options: .regularExpression) != nil }),
               Set(attributes).count == attributes.count,
               (1...3600).contains(maxDurationSeconds) else { throw ConnectionFailure.validationFailed }
     }
