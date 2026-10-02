@@ -257,15 +257,18 @@ private struct DeviceMenuDesignPreview: View {
             .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 320)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
+#if compiler(>=6.2)
                     if #available(iOS 26, macOS 26, *), control.presentation == nil || control.presentation == "Current" {
                         Button { page = .menu } label: { Image(systemName: "chevron.left").frame(width: 28, height: 28) }
                             .buttonStyle(.glass).buttonBorderShape(.circle)
                             .padding(.top, 8)
                             .accessibilityLabel("Back to Welcome")
                     } else {
-                        Button { page = .menu } label: { Image(systemName: "chevron.left") }
-                            .accessibilityLabel("Back to Welcome")
+                        legacyBackButton
                     }
+#else
+                    legacyBackButton
+#endif
                 }
             }
         } detail: {
@@ -638,6 +641,14 @@ private struct DeviceMenuDesignPreview: View {
             VStack(alignment: .leading, spacing: 7) { Text(title).font(.headline); Text(body).font(.subheadline).foregroundStyle(captionColor).fixedSize(horizontal: false, vertical: true) }
         }
     }
+    private var legacyBackButton: some View {
+        Button { page = .menu } label: { Image(systemName: "chevron.left") }
+            .accessibilityLabel("Back to Welcome")
+    }
+    private var legacyRequirementButton: some View {
+        Button("Open settings") { if let first = missing.first { openRequirement(first) } }
+            .buttonStyle(.bordered).controlSize(.large)
+    }
     private var requirementGate: some View {
         ZStack {
             Color.black.opacity(0.34).ignoresSafeArea()
@@ -645,13 +656,16 @@ private struct DeviceMenuDesignPreview: View {
                 Image(systemName: "slider.horizontal.3").font(.largeTitle).foregroundStyle(accent)
                 Text("Set up \(missing.first?.connectorName ?? selected)").font(.title2.bold())
                 Text("A few things need to be connected before you can use this screen.").foregroundStyle(captionColor).fixedSize(horizontal: false, vertical: true)
+#if compiler(>=6.2)
                 if #available(iOS 26, macOS 26, *), control.presentation == nil || control.presentation == "Current" {
                     Button("Open settings") { if let first = missing.first { openRequirement(first) } }
                         .buttonStyle(.glass).controlSize(.large)
                 } else {
-                    Button("Open settings") { if let first = missing.first { openRequirement(first) } }
-                        .buttonStyle(.bordered).controlSize(.large)
+                    legacyRequirementButton
                 }
+#else
+                legacyRequirementButton
+#endif
                 Divider()
                 Text("You can swipe with two fingers to another screen, or hold two fingers for five seconds to open the Screenpunk menu.").font(.footnote).foregroundStyle(captionColor).fixedSize(horizontal: false, vertical: true)
             }.padding(30).frame(maxWidth: 490).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26)).padding(24)
