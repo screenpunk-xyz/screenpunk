@@ -5,8 +5,12 @@ import ScreenpunkCore
 final class CloudInstallationRecoveryTests: XCTestCase {
     private let reference = "candidate-fixture"
     private let secret = Data(repeating: 7, count: 32)
-    private func record(phase: DeviceManagementTransitionPhase = .intent) throws -> DeviceManagementTransitionRecord {
-        try .init(transitionID: UUID(), credentialReference: reference, phase: phase)
+    private func record(phase: DeviceManagementTransitionPhase = .intent) throws -> DeviceManagementTransitionHistory {
+        let history = try DeviceManagementTransitionHistory.intent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: reference)
+        return phase == .intent ? history : try history.fenced()
+    }
+    private func stage(_ history: DeviceManagementTransitionHistory, journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore) throws -> Data {
+        try CloudInstallationRecovery.stageCredential(history, credentialGenerationID: history.credentials.last!.credentialGenerationID, journal: journal, credentials: credentials)
     }
     private func credentials(_ backend: InstallationBackend) -> CloudInstallationCredentialStore {
         let secret = secret
@@ -64,18 +68,18 @@ final class CloudInstallationRecoveryTests: XCTestCase {
         let intent = try record()
         let backend = InstallationBackend()
         backend.onGenerate = { XCTAssertEqual(journal.record, intent); XCTAssertEqual(journal.loads, 2); XCTAssertEqual(journal.saves, 1) }
-        XCTAssertEqual(try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend)), secret)
+        XCTAssertEqual(try stage(intent, journal: journal, credentials: credentials(backend)), secret)
         XCTAssertEqual(journal.record, intent)
     }
     func testJournalWriteThenThrowCannotRegenerateMissingKeyOnRetry() throws {
         let journal = InstallationJournal(); journal.writeThenThrow = true
         let intent = try record()
         let backend = InstallationBackend()
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend)))
+        XCTAssertThrowsError(try stage(intent, journal: journal, credentials: credentials(backend)))
         XCTAssertEqual(journal.record, intent)
         XCTAssertEqual(backend.generations, 0)
         journal.writeThenThrow = false
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend))) {
+        XCTAssertThrowsError(try stage(intent, journal: journal, credentials: credentials(backend))) {
             XCTAssertEqual($0 as? CloudInstallationStagingError, .missingCredential)
         }
         XCTAssertEqual(backend.generations, 0)
@@ -84,7 +88,7 @@ final class CloudInstallationRecoveryTests: XCTestCase {
     func testPreexistingIntentMissingKeyNeverGeneratesOrInserts() throws {
         let journal = InstallationJournal(); let intent = try record(); journal.record = intent
         let backend = InstallationBackend()
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend))) {
+        XCTAssertThrowsError(try stage(intent, journal: journal, credentials: credentials(backend))) {
             XCTAssertEqual($0 as? CloudInstallationStagingError, .missingCredential)
         }
         XCTAssertEqual(backend.generations, 0)
@@ -94,7 +98,7 @@ final class CloudInstallationRecoveryTests: XCTestCase {
     func testPreexistingIntentLoadsSameKeyWithoutGenerationOrInsertion() throws {
         let journal = InstallationJournal(); let intent = try record(); journal.record = intent
         let backend = InstallationBackend(); backend.values[reference] = secret
-        XCTAssertEqual(try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend)), secret)
+        XCTAssertEqual(try stage(intent, journal: journal, credentials: credentials(backend)), secret)
         XCTAssertEqual(backend.generations, 0)
         XCTAssertEqual(backend.inserts, 0)
         XCTAssertEqual(journal.saves, 0)
@@ -102,7 +106,7 @@ final class CloudInstallationRecoveryTests: XCTestCase {
     func testOrphanSameReferenceBlocksNewIntentBeforeJournalWriteOrGeneration() throws {
         let journal = InstallationJournal(); let intent = try record()
         let backend = InstallationBackend(); backend.values[reference] = secret
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend))) {
+        XCTAssertThrowsError(try stage(intent, journal: journal, credentials: credentials(backend))) {
             XCTAssertEqual($0 as? CloudInstallationStagingError, .orphanedCredential)
         }
         XCTAssertEqual(journal.saves, 0)
@@ -112,7 +116,7 @@ final class CloudInstallationRecoveryTests: XCTestCase {
     func testExistingIntentWithExtraReferenceBlocksWithoutWritesOrGeneration() throws {
         let journal = InstallationJournal(); let intent = try record(); journal.record = intent
         let backend = InstallationBackend(); backend.values[reference] = secret; backend.values["orphan-fixture"] = secret
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend))) {
+        XCTAssertThrowsError(try stage(intent, journal: journal, credentials: credentials(backend))) {
             XCTAssertEqual($0 as? CloudInstallationStagingError, .orphanedCredential)
         }
         XCTAssertEqual(journal.saves, 0)
@@ -122,7 +126,7 @@ final class CloudInstallationRecoveryTests: XCTestCase {
     func testInaccessibleInventoryBlocksIntentBeforeMutationOrGeneration() throws {
         let journal = InstallationJournal(); let backend = InstallationBackend()
         backend.enumerationFailure = .inaccessible(status: -25308)
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(try record(), journal: journal, credentials: credentials(backend))) {
+        XCTAssertThrowsError(try stage(try record(), journal: journal, credentials: credentials(backend))) {
             XCTAssertEqual($0 as? CloudInstallationCredentialError, .inaccessible(status: -25308))
         }
         XCTAssertEqual(journal.saves, 0)
@@ -134,7 +138,7 @@ final class CloudInstallationRecoveryTests: XCTestCase {
         let journal = InstallationJournal(); let intent = try record()
         let backend = InstallationBackend(); let fenced = try intent.fenced()
         backend.onInsert = { journal.record = fenced }
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend))) {
+        XCTAssertThrowsError(try stage(intent, journal: journal, credentials: credentials(backend))) {
             XCTAssertEqual($0 as? CloudInstallationStagingError, .unconfirmedIntent)
         }
         XCTAssertEqual(journal.record, fenced)
@@ -143,8 +147,8 @@ final class CloudInstallationRecoveryTests: XCTestCase {
 
     func testConflictingTransitionNeverWritesOrGenerates() throws {
         let journal = InstallationJournal(); journal.record = try record()
-        let backend = InstallationBackend()
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(try record(), journal: journal, credentials: credentials(backend))) {
+        let backend = InstallationBackend(); backend.values[reference] = secret
+        XCTAssertThrowsError(try stage(try record(), journal: journal, credentials: credentials(backend))) {
             XCTAssertEqual($0 as? CloudInstallationStagingError, .transitionConflict)
         }
         XCTAssertEqual(journal.saves, 0)
@@ -180,7 +184,7 @@ final class CloudInstallationRecoveryTests: XCTestCase {
         let journal = DeviceManagementTransitionStore(directory: directory)
         let intent = try record()
         let backend = InstallationBackend()
-        _ = try CloudInstallationRecovery.stageIntent(intent, journal: journal, credentials: credentials(backend))
+        _ = try stage(intent, journal: journal, credentials: credentials(backend))
         XCTAssertEqual(CloudInstallationRecovery.localEligibility(journal: journal, credentials: credentials(backend)), .blocked(.pendingIntent))
         try journal.save(intent.fenced())
         let restarted = DeviceManagementTransitionStore(directory: directory)
@@ -198,9 +202,104 @@ final class CloudInstallationRecoveryTests: XCTestCase {
         XCTAssertEqual(backend.values.count, 1)
     }
 
+    func testRepeatedFencedTransitionsRetainEveryCredentialAcrossRestart() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = DeviceManagementTransitionStore(directory: root)
+        let backend = InstallationBackend()
+        let first = try record()
+        _ = try stage(first, journal: journal, credentials: credentials(backend))
+        let fencedFirst = try first.fenced(); try journal.save(fencedFirst)
+        let second = try fencedFirst.appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "candidate-second")
+        _ = try stage(second, journal: journal, credentials: credentials(backend))
+        XCTAssertEqual(CloudInstallationRecovery.localEligibility(journal: journal, credentials: credentials(backend)), .blocked(.pendingIntent))
+        try journal.save(second.fenced())
+        let restarted = DeviceManagementTransitionStore(directory: root)
+        XCTAssertEqual(try restarted.load()?.transitions.count, 2)
+        XCTAssertEqual(try restarted.load()?.credentials.count, 2)
+        XCTAssertEqual(Set(backend.values.keys), [reference, "candidate-second"])
+        XCTAssertEqual(CloudInstallationRecovery.localEligibility(journal: restarted, credentials: credentials(backend)), .locallyFenced)
+    }
+
+    func testTwoCredentialGenerationsBelongToOneIntentWithoutActiveSelection() throws {
+        let journal = InstallationJournal(); let backend = InstallationBackend()
+        let first = try record()
+        _ = try stage(first, journal: journal, credentials: credentials(backend))
+        let second = try first.appendingCredential(credentialGenerationID: UUID(), credentialReference: "candidate-rotation")
+        _ = try stage(second, journal: journal, credentials: credentials(backend))
+        XCTAssertEqual(second.transitions.count, 1)
+        XCTAssertEqual(second.credentials.count, 2)
+        XCTAssertEqual(Set(second.credentials.map(\.transitionID)), [first.transitions[0].transitionID])
+        XCTAssertEqual(Set(backend.values.keys), [reference, "candidate-rotation"])
+        XCTAssertEqual(backend.generations, 2)
+        journal.record = try second.fenced()
+        XCTAssertEqual(CloudInstallationRecovery.localEligibility(journal: journal, credentials: credentials(backend)), .locallyFenced)
+    }
+
+    func testMissingPriorGenerationBlocksAdditionalStagingWithoutNewKey() throws {
+        let journal = InstallationJournal(); let first = try record(); journal.record = first
+        let backend = InstallationBackend()
+        let second = try first.appendingCredential(credentialGenerationID: UUID(), credentialReference: "candidate-rotation")
+        XCTAssertThrowsError(try stage(second, journal: journal, credentials: credentials(backend))) {
+            XCTAssertEqual($0 as? CloudInstallationStagingError, .missingCredential)
+        }
+        XCTAssertEqual(journal.saves, 0)
+        XCTAssertEqual(backend.generations, 0)
+        XCTAssertEqual(backend.inserts, 0)
+    }
+
+    func testRetainedFencedOrphanPreventsNextTransitionStaging() throws {
+        let journal = InstallationJournal(); let backend = InstallationBackend()
+        let first = try record(); _ = try stage(first, journal: journal, credentials: credentials(backend))
+        let fenced = try first.fenced(); journal.record = fenced
+        backend.values["orphan-fixture"] = secret
+        let next = try fenced.appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "candidate-next")
+        let saves = journal.saves; let generations = backend.generations
+        XCTAssertThrowsError(try stage(next, journal: journal, credentials: credentials(backend))) {
+            XCTAssertEqual($0 as? CloudInstallationStagingError, .orphanedCredential)
+        }
+        XCTAssertEqual(journal.saves, saves)
+        XCTAssertEqual(backend.generations, generations)
+        XCTAssertNil(backend.values["candidate-next"])
+    }
+
+    func testHistoryAppendRacingInsertionRejectsReturnedMaterial() throws {
+        let journal = InstallationJournal(); let backend = InstallationBackend(); let first = try record()
+        let appended = try first.appendingCredential(credentialGenerationID: UUID(), credentialReference: "candidate-raced")
+        backend.onInsert = { journal.record = appended }
+        XCTAssertThrowsError(try stage(first, journal: journal, credentials: credentials(backend))) {
+            XCTAssertEqual($0 as? CloudInstallationStagingError, .unconfirmedIntent)
+        }
+        XCTAssertEqual(journal.record, appended)
+        XCTAssertEqual(backend.values.count, 1)
+    }
+
+    func testVersionOneFenceMigrationPreservesKeyThenPermitsNewHistoryAppend() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let journal = DeviceManagementTransitionStore(directory: root)
+        let legacy = try DeviceManagementTransitionRecord(transitionID: UUID(), credentialReference: reference, phase: .locallyFenced)
+        let original = try JSONEncoder().encode(legacy)
+        try original.write(to: journal.recordURL)
+        let backend = InstallationBackend(); backend.values[reference] = secret
+        let migrated = try XCTUnwrap(journal.load())
+        XCTAssertEqual(migrated.schemaVersion, 2)
+        XCTAssertEqual(migrated.credentials[0].credentialReference, reference)
+        XCTAssertNotEqual(migrated.credentials[0].credentialGenerationID, legacy.transitionID)
+        XCTAssertEqual(try journal.load(), migrated)
+        XCTAssertEqual(CloudInstallationRecovery.localEligibility(journal: journal, credentials: credentials(backend)), .locallyFenced)
+        XCTAssertEqual(try Data(contentsOf: journal.recordURL), original) // Inspection alone does not rewrite migration.
+        let next = try migrated.appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "candidate-migrated-next")
+        _ = try stage(next, journal: journal, credentials: credentials(backend))
+        XCTAssertEqual(try journal.load(), next)
+        XCTAssertEqual(Set(backend.values.keys), [reference, "candidate-migrated-next"])
+        XCTAssertEqual(CloudInstallationRecovery.localEligibility(journal: journal, credentials: credentials(backend)), .blocked(.pendingIntent))
+    }
+
     func testFencedIntentCannotStageOrRegenerateCredential() throws {
         let backend = InstallationBackend()
-        XCTAssertThrowsError(try CloudInstallationRecovery.stageIntent(try record(phase: .locallyFenced), journal: InstallationJournal(), credentials: credentials(backend))) {
+        XCTAssertThrowsError(try stage(try record(phase: .locallyFenced), journal: InstallationJournal(), credentials: credentials(backend))) {
             XCTAssertEqual($0 as? CloudInstallationStagingError, .notIntent)
         }
         XCTAssertEqual(backend.generations, 0)
@@ -208,17 +307,17 @@ final class CloudInstallationRecoveryTests: XCTestCase {
 }
 
 private final class InstallationJournal: CloudInstallationTransitionJournal {
-    var record: DeviceManagementTransitionRecord?
+    var record: DeviceManagementTransitionHistory?
     var loadFailure = false
     var writeThenThrow = false
     var loads = 0
     var saves = 0
-    func load() throws -> DeviceManagementTransitionRecord? {
+    func load() throws -> DeviceManagementTransitionHistory? {
         loads += 1
         if loadFailure { throw CocoaError(.fileReadUnknown) }
         return record
     }
-    func save(_ record: DeviceManagementTransitionRecord) throws {
+    func save(_ record: DeviceManagementTransitionHistory) throws {
         saves += 1; self.record = record
         if writeThenThrow { throw CocoaError(.fileWriteUnknown) }
     }

@@ -42,6 +42,106 @@ public struct DeviceManagementTransitionRecord: Codable, Equatable, Sendable {
     }
 }
 
+public struct DeviceManagementTransitionEntry: Codable, Equatable, Sendable {
+    public let transitionID: UUID
+    public let phase: DeviceManagementTransitionPhase
+    public init(transitionID: UUID, phase: DeviceManagementTransitionPhase) { self.transitionID = transitionID; self.phase = phase }
+    private enum CodingKeys: String, CodingKey { case transitionID, phase }
+    public init(from decoder: Decoder) throws {
+        try validateManagementKeys(decoder, ["transitionID", "phase"])
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(transitionID: try values.decode(UUID.self, forKey: .transitionID), phase: try values.decode(DeviceManagementTransitionPhase.self, forKey: .phase))
+    }
+}
+
+public struct DeviceManagementCredentialBinding: Codable, Equatable, Sendable {
+    public let credentialGenerationID: UUID
+    public let transitionID: UUID
+    public let credentialReference: String
+    public init(credentialGenerationID: UUID, transitionID: UUID, credentialReference: String) throws {
+        _ = try DeviceManagementTransitionRecord(transitionID: transitionID, credentialReference: credentialReference)
+        self.credentialGenerationID = credentialGenerationID; self.transitionID = transitionID; self.credentialReference = credentialReference
+    }
+    private enum CodingKeys: String, CodingKey { case credentialGenerationID, transitionID, credentialReference }
+    public init(from decoder: Decoder) throws {
+        try validateManagementKeys(decoder, ["credentialGenerationID", "transitionID", "credentialReference"])
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(credentialGenerationID: values.decode(UUID.self, forKey: .credentialGenerationID), transitionID: values.decode(UUID.self, forKey: .transitionID), credentialReference: values.decode(String.self, forKey: .credentialReference))
+    }
+}
+
+/// Append-only local evidence. Credential generations are storage bindings, not remote rotation outcomes.
+/// Future remote operation request IDs must remain distinct from these authority transition IDs.
+public struct DeviceManagementTransitionHistory: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 2
+    public static let maximumTransitions = 64
+    public static let maximumCredentials = 128
+    public let schemaVersion: Int
+    public let transitions: [DeviceManagementTransitionEntry]
+    public let credentials: [DeviceManagementCredentialBinding]
+    public init(transitions: [DeviceManagementTransitionEntry], credentials: [DeviceManagementCredentialBinding]) throws {
+        guard transitions.count <= Self.maximumTransitions, credentials.count <= Self.maximumCredentials else { throw DeviceManagementTransitionStoreError.capacityExceeded }
+        guard !transitions.isEmpty, !credentials.isEmpty,
+              Set(transitions.map(\.transitionID)).count == transitions.count,
+              Set(credentials.map(\.credentialGenerationID)).count == credentials.count,
+              Set(credentials.map(\.credentialReference)).count == credentials.count,
+              Set(credentials.map(\.credentialGenerationID)).isDisjoint(with: Set(transitions.map(\.transitionID))),
+              transitions.dropLast().allSatisfy({ $0.phase == .locallyFenced }),
+              credentials.allSatisfy({ binding in transitions.contains { $0.transitionID == binding.transitionID } }),
+              transitions.allSatisfy({ entry in credentials.contains { $0.transitionID == entry.transitionID } }) else { throw DeviceManagementTransitionStoreError.invalidRecord }
+        for binding in credentials { _ = try DeviceManagementCredentialBinding(credentialGenerationID: binding.credentialGenerationID, transitionID: binding.transitionID, credentialReference: binding.credentialReference) }
+        schemaVersion = Self.currentSchemaVersion; self.transitions = transitions; self.credentials = credentials
+    }
+    public static func intent(transitionID: UUID, credentialGenerationID: UUID, credentialReference: String) throws -> Self {
+        try .init(transitions: [.init(transitionID: transitionID, phase: .intent)], credentials: [.init(credentialGenerationID: credentialGenerationID, transitionID: transitionID, credentialReference: credentialReference)])
+    }
+    public func appendingIntent(transitionID: UUID, credentialGenerationID: UUID, credentialReference: String) throws -> Self {
+        guard transitions.last?.phase == .locallyFenced else { throw DeviceManagementTransitionStoreError.transitionConflict }
+        return try .init(transitions: transitions + [.init(transitionID: transitionID, phase: .intent)], credentials: credentials + [.init(credentialGenerationID: credentialGenerationID, transitionID: transitionID, credentialReference: credentialReference)])
+    }
+    public func appendingCredential(credentialGenerationID: UUID, credentialReference: String) throws -> Self {
+        guard let current = transitions.last, current.phase == .intent else { throw DeviceManagementTransitionStoreError.transitionConflict }
+        return try .init(transitions: transitions, credentials: credentials + [.init(credentialGenerationID: credentialGenerationID, transitionID: current.transitionID, credentialReference: credentialReference)])
+    }
+    public func fenced() throws -> Self {
+        guard let current = transitions.last else { throw DeviceManagementTransitionStoreError.invalidRecord }
+        return try .init(transitions: Array(transitions.dropLast()) + [.init(transitionID: current.transitionID, phase: .locallyFenced)], credentials: credentials)
+    }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, transitions, credentials }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try values.decode(Int.self, forKey: .schemaVersion)
+        if version == 1 {
+            let legacy = try DeviceManagementTransitionRecord(from: decoder)
+            // Fixed local migration namespace transform: deterministic, bijective, and distinct from authority ID.
+            var bytes = legacy.transitionID.uuid; bytes.0 ^= 0xA7; bytes.15 ^= 0x5D
+            try self.init(transitions: [.init(transitionID: legacy.transitionID, phase: legacy.phase)], credentials: [.init(credentialGenerationID: UUID(uuid: bytes), transitionID: legacy.transitionID, credentialReference: legacy.credentialReference)])
+            return
+        }
+        guard version == Self.currentSchemaVersion else { throw DeviceManagementTransitionStoreError.unsupportedVersion(version) }
+        let raw = try decoder.container(keyedBy: DeviceManagementRecordKey.self)
+        guard Set(raw.allKeys.map(\.stringValue)) == Set(["schemaVersion", "transitions", "credentials"]) else { throw DeviceManagementTransitionStoreError.invalidRecord }
+        try self.init(transitions: values.decode([DeviceManagementTransitionEntry].self, forKey: .transitions), credentials: values.decode([DeviceManagementCredentialBinding].self, forKey: .credentials))
+    }
+    fileprivate func permitsSuccessor(_ next: Self) -> Bool {
+        if self == next { return true }
+        if let fenced = try? fenced(), fenced == next { return true }
+        guard next.credentials.count >= credentials.count, Array(next.credentials.prefix(credentials.count)) == credentials else { return false }
+        if transitions == next.transitions, transitions.last?.phase == .intent {
+            return next.credentials.dropFirst(credentials.count).allSatisfy { $0.transitionID == transitions.last!.transitionID }
+        }
+        guard transitions.allSatisfy({ $0.phase == .locallyFenced }), next.transitions.count == transitions.count + 1,
+              Array(next.transitions.prefix(transitions.count)) == transitions, next.transitions.last?.phase == .intent,
+              next.credentials.count == credentials.count + 1 else { return false }
+        return next.credentials.last?.transitionID == next.transitions.last?.transitionID
+    }
+}
+
+private func validateManagementKeys(_ decoder: Decoder, _ keys: Set<String>) throws {
+    let raw = try decoder.container(keyedBy: DeviceManagementRecordKey.self)
+    guard Set(raw.allKeys.map(\.stringValue)) == keys else { throw DeviceManagementTransitionStoreError.invalidRecord }
+}
+
 private struct DeviceManagementRecordKey: CodingKey {
     let stringValue: String
     let intValue: Int? = nil
@@ -53,14 +153,14 @@ private struct DeviceManagementRecordKey: CodingKey {
 public enum DeviceManagementLocalState: Equatable, Sendable {
     case blocked
     case legacyLocal
-    case fenced(credentialReference: String)
+    case fenced(credentialReferences: [String])
 }
 
 public enum DeviceManagementTransitionIOOperation: String, Equatable, Sendable {
     case inspect, createDirectory, open, close, lock, read, write, syncFile, replace, syncDirectory, injectedBoundary
 }
 public enum DeviceManagementTransitionStoreError: Error, Equatable, Sendable {
-    case invalidRecord, corrupt, unsupportedVersion(Int), recordTooLarge, transitionConflict, writeOutcomeUncertain
+    case invalidRecord, capacityExceeded, corrupt, unsupportedVersion(Int), recordTooLarge, transitionConflict, writeOutcomeUncertain
     case io(operation: DeviceManagementTransitionIOOperation, code: Int32)
 }
 
@@ -68,18 +168,18 @@ enum DeviceManagementCommitBoundary: Sendable, Equatable {
     case afterTemporaryWrite, afterFileSync, beforeReplace, afterReplace, afterDirectorySync
 }
 
-/// Conservative one-record primitive: no deletion, rotation, unfencing, credential staging, or remote promotion.
+/// Append-only bounded history: no deletion, unfencing, credential staging, or remote promotion.
 /// Persist intent before any side effect; persist its fence before using it as local eligibility evidence.
 /// A failed write has an uncertain outcome. Diagnostic readback alone never clears that uncertainty;
 /// durably recommit the exact attempted record, or remain blocked. A restart reads the surviving committed bytes.
 public final class DeviceManagementTransitionStore: @unchecked Sendable {
-    public static let maximumRecordBytes = 4096
+    public static let maximumRecordBytes = 65536
     public let directory: URL
     public var recordURL: URL { directory.appendingPathComponent("management-transition.json") }
     private let lock = NSLock()
     // Reconstructing a store in this process must not bypass a previous writer's uncertainty.
     private static let uncertaintyLock = NSLock()
-    private static var uncertainWrites: [String: DeviceManagementTransitionRecord] = [:]
+    private static var uncertainWrites: [String: DeviceManagementTransitionHistory] = [:]
     private var uncertaintyKey: String { directory.resolvingSymlinksInPath().standardizedFileURL.path }
     private let boundary: @Sendable (DeviceManagementCommitBoundary) throws -> Void
 
@@ -96,7 +196,7 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
     }
 
     /// nil means confirmed ENOENT only; corruption, unsupported versions and IO are throwing blocked states.
-    public func load() throws -> DeviceManagementTransitionRecord? {
+    public func load() throws -> DeviceManagementTransitionHistory? {
         lock.lock(); defer { lock.unlock() }
         guard uncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
         return try withDiskLock(create: false) {
@@ -105,19 +205,17 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
         }
     }
     /// This is inspection for reconciliation, never authorization after a write error.
-    public func diagnosticReadback() throws -> DeviceManagementTransitionRecord? {
+    public func diagnosticReadback() throws -> DeviceManagementTransitionHistory? {
         lock.lock(); defer { lock.unlock() }
         return try withDiskLock(create: false) { try readRecord() }
     }
     public func localState(cloudCredentialsConfirmedEmpty: Bool) throws -> DeviceManagementLocalState {
         guard let record = try load() else { return cloudCredentialsConfirmedEmpty ? .legacyLocal : .blocked }
-        switch record.phase {
-        case .intent: return .blocked
-        case .locallyFenced: return .fenced(credentialReference: record.credentialReference)
-        }
+        return record.transitions.allSatisfy { $0.phase == .locallyFenced }
+            ? .fenced(credentialReferences: record.credentials.map(\.credentialReference)) : .blocked
     }
 
-    public func save(_ record: DeviceManagementTransitionRecord) throws {
+    public func save(_ record: DeviceManagementTransitionHistory) throws {
         lock.lock(); defer { lock.unlock() }
         if let uncertainRecord = uncertainty(), uncertainRecord != record { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -127,13 +225,12 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
             try withDiskLock(create: true) {
                 if let uncertainRecord = uncertainty(), uncertainRecord != record { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
                 if let previous = try readRecord() {
-                    guard previous.transitionID == record.transitionID, previous.credentialReference == record.credentialReference,
-                          previous.phase != .locallyFenced || record.phase == .locallyFenced else {
+                    guard previous.permitsSuccessor(record) else {
                         throw DeviceManagementTransitionStoreError.transitionConflict
                     }
                 } else {
                     // Every transition begins as intent, even when credential staging never finishes.
-                    guard record.phase == .intent else { throw DeviceManagementTransitionStoreError.transitionConflict }
+                    guard record.transitions.count == 1, record.credentials.count == 1, record.transitions.first?.phase == .intent else { throw DeviceManagementTransitionStoreError.transitionConflict }
                 }
                 markUncertainty(record)
                 try commit(data)
@@ -151,11 +248,11 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
         }
     }
 
-    private func uncertainty() -> DeviceManagementTransitionRecord? {
+    private func uncertainty() -> DeviceManagementTransitionHistory? {
         Self.uncertaintyLock.lock(); defer { Self.uncertaintyLock.unlock() }
         return Self.uncertainWrites[uncertaintyKey]
     }
-    private func markUncertainty(_ record: DeviceManagementTransitionRecord?) {
+    private func markUncertainty(_ record: DeviceManagementTransitionHistory?) {
         Self.uncertaintyLock.lock(); defer { Self.uncertaintyLock.unlock() }
         Self.uncertainWrites[uncertaintyKey] = record
     }
@@ -195,7 +292,7 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
         defer { flock(descriptor, LOCK_UN) }
         return try operation()
     }
-    private func readRecord() throws -> DeviceManagementTransitionRecord? {
+    private func readRecord() throws -> DeviceManagementTransitionHistory? {
         let descriptor = open(recordURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else {
             if errno == ENOENT { return nil }
@@ -215,7 +312,7 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
             guard data.count + count <= Self.maximumRecordBytes else { throw DeviceManagementTransitionStoreError.recordTooLarge }
             data.append(contentsOf: buffer.prefix(count))
         }
-        do { return try JSONDecoder().decode(DeviceManagementTransitionRecord.self, from: data) }
+        do { return try JSONDecoder().decode(DeviceManagementTransitionHistory.self, from: data) }
         catch let error as DeviceManagementTransitionStoreError {
             if case .unsupportedVersion = error { throw error }
             throw DeviceManagementTransitionStoreError.corrupt
