@@ -155,6 +155,17 @@ final class PackageValidatorTests: XCTestCase {
         XCTAssertThrowsError(try PackageValidator.validate(sideways))
     }
 
+    func testHostileDecodedInventorySizesFailWithoutOverflow() {
+        for sizes in [[Int.max, 1], [-1, 1], [PackageLimits.expandedBytes, 1]] {
+            let files = ["index.html", "second.js"].enumerated().map { index, path in
+                ManifestFile(path: path, bytes: sizes[index], sha256: String(repeating: "a", count: 64))
+            }
+            XCTAssertThrowsError(try PackageValidator.validate(manifest(files: files))) { error in
+                XCTAssertEqual((error as? PackageValidationError)?.issues.contains(.sizeLimit), true)
+            }
+        }
+    }
+
     func testStoreBoundsAndNativeChrome() throws {
         var store = DashboardStore(dashboardId: "dash")
         try store.set(key: "k", json: "1")

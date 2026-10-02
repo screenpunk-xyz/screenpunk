@@ -50,7 +50,24 @@ public enum PackagePath {
 }
 
 public enum PackageValidator {
+    /// Check decoded legacy inventory metadata before file reads or aggregate arithmetic.
+    public static func validateInventoryBounds(_ files: [ManifestFile]) throws {
+        guard !files.isEmpty, files.count <= PackageLimits.maxFiles else {
+            throw PackageValidationError(issues: [.sizeLimit])
+        }
+        var expanded = 0
+        for file in files {
+            guard file.bytes >= 0, file.bytes <= PackageLimits.expandedBytes - expanded else {
+                throw PackageValidationError(issues: [.sizeLimit])
+            }
+            expanded += file.bytes
+        }
+    }
+
     public static func validate(_ manifest: DashboardManifest) throws {
+        if manifest.files.count > PackageLimits.maxFiles {
+            throw PackageValidationError(issues: [.sizeLimit])
+        }
         var issues: [PackageIssue] = []
         do { _ = try PublicReadProvisioning(manifest: manifest) } catch { issues.append(.validationFailed) }
         if manifest.schemaVersion != PackageLimits.schemaMajor {
@@ -79,7 +96,8 @@ public enum PackageValidator {
         }
 
         var seen = Set<String>()
-        var expanded = 0
+        do { try validateInventoryBounds(manifest.files) }
+        catch { issues.append(.sizeLimit) }
         for file in manifest.files {
             do {
                 let path = try PackagePath.normalize(file.path)
@@ -88,10 +106,6 @@ public enum PackageValidator {
             } catch {
                 issues.append(.pathTraversal)
             }
-            expanded += file.bytes
-        }
-        if manifest.files.count > PackageLimits.maxFiles || expanded > PackageLimits.expandedBytes {
-            issues.append(.sizeLimit)
         }
         if let entry = try? PackagePath.normalize(manifest.entrypoint), !seen.contains(entry) {
             issues.append(.missingEntrypoint)
