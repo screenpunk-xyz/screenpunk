@@ -12,9 +12,12 @@ public struct DeviceRuntimeRootView: View {
     @State private var showDeviceMenu = false
     @State private var showSettings = false
 #if os(iOS)
-    // The old flag was also set when older systems showed only display settings.
-    // Track the full menu separately so those devices see Welcome after upgrading.
-    @AppStorage("screenpunk.fullWelcomeShown") private var welcomeShown = false
+    @State private var onboardingRoute = "welcome"
+    @State private var pairingSessionCode: String?
+    @State private var showScreens = false
+    @State private var showOnboarding = false
+    @State private var generalAfterOnboarding = false
+    @State private var onboardingAfterDismissal = false
     @State private var initialSetupPage: DeviceSetupPage?
     @State private var connectorRevision = UUID()
 #endif
@@ -84,12 +87,11 @@ public struct DeviceRuntimeRootView: View {
                 }
                 .onDisappear { brightness.stop(); host.setForeground(false) }
 #if os(iOS)
-                .modifier(DeviceMenuContainer(isPresented: $showDeviceMenu) {
-                    DeviceSetupMenu(host: host, initialPage: initialSetupPage) { connectorRevision = UUID() }
+                .modifier(DeviceMenuContainer(isPresented: $showDeviceMenu, onDismiss: presentQueuedOnboarding) {
+                    DeviceSetupMenu(host: host, initialPage: initialSetupPage, onConnectionsChanged: { connectorRevision = UUID() }, onConnect: queueOnboarding)
                         .onDisappear { initialSetupPage = nil; connectorRevision = UUID() }
                 })
                 .onAppear {
-                    if !welcomeShown { welcomeShown = true; showDeviceMenu = true }
                     // Existing paired devices adopt the simplified capability model without re-pairing.
                     var basic = GoogleTVConfiguration.load()
                     if basic.pin.count == 32 { basic.automaticScreenAccess = true; try? basic.save() }
@@ -97,12 +99,20 @@ public struct DeviceRuntimeRootView: View {
                     if developer.serverPin.count == 32 { developer.automaticScreenAccess = true; try? developer.save() }
                 }
 #endif
+                #if os(iOS)
+                .sheet(isPresented: $showSettings, onDismiss: presentQueuedOnboarding) { NavigationStack { DeviceProductionGeneral(host: host, connect: queueOnboarding).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showSettings = false } } } } }
+#else
                 .sheet(isPresented: $showSettings) { DeviceLocalSettingsSheet(host: host) }
+#endif
+#if os(iOS)
+                .fullScreenCover(isPresented: $showOnboarding, onDismiss: { if generalAfterOnboarding { generalAfterOnboarding = false; showSettings = true } }) { NavigationStack { productionLanding.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"; showOnboarding = false } } } } }
+                .sheet(isPresented: $showScreens) { NavigationStack { DeviceProductionScreens(host: host, opened: { showScreens = false }).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showScreens = false } } } } }
+#endif
                 .task(id: "\(host.runtime.activeRevision ?? "none"):\(host.genericConnectionGeneration.uuidString)") {
                     if let genericConnections { try? await genericConnections.clearCredentials() }
                     genericConnections = nil
                     genericRuntimeID = UUID()
-                    guard let server = host.server, host.runtime.isPaired else { return }
+                    guard let server = host.server else { return }
                     let runtime = try? await server.makeGenericConnectionRuntime()
                     guard !Task.isCancelled else {
                         if let runtime { try? await runtime.clearCredentials() }
@@ -120,7 +130,7 @@ public struct DeviceRuntimeRootView: View {
 #if canImport(Network) && canImport(Security)
     private var lanBody: some View {
         Group {
-            if let revision = host.runtime.activeRevision {
+            if let revision = host.runtime.activeRevision, !localOnboardingActive {
                 GeometryReader { geometry in
                     let profile = host.runtime.profile
                     let width = CGFloat(profile.width), height = CGFloat(profile.height)
@@ -128,7 +138,7 @@ public struct DeviceRuntimeRootView: View {
                     let displayWidth = rotate ? height : width
                     let displayHeight = rotate ? width : height
                     let scale = min(geometry.size.width / displayWidth, geometry.size.height / displayHeight)
-                    deployedDashboard(revision: revision, package: host.activePackage) { host.unlink() }
+                    deployedDashboard(revision: revision, package: host.activePackage) { showSettings = true }
                         .frame(width: width, height: height)
                         .rotationEffect(.degrees(rotate ? 90 : 0))
                         .scaleEffect(scale)
@@ -143,14 +153,15 @@ public struct DeviceRuntimeRootView: View {
                     .accessibilityAction(named: "Next screen") { host.advanceScreen(by: 1) }
                     .accessibilityAction(named: "Previous screen") { host.advanceScreen(by: -1) }
             } else {
-                UnpairedHostView(
-                    detail: host.port == 0 ? nil : "TLS 1.3 · port \(host.port)",
-                    paired: host.runtime.isPaired
-                )
+#if os(iOS)
+                productionLanding
+#else
+                UnpairedHostView(detail: host.port == 0 ? nil : "TLS 1.3 · port \(host.port)", paired: host.runtime.isPaired)
+#endif
             }
         }
-        .allowsHitTesting(host.pairingCode == nil && !showDeviceMenu)
-        .accessibilityHidden(host.pairingCode != nil || showDeviceMenu)
+        .allowsHitTesting((!legacyPairingOverlayActive || localOnboardingActive) && !showDeviceMenu)
+        .accessibilityHidden((legacyPairingOverlayActive && !localOnboardingActive) || showDeviceMenu)
 #if !os(iOS)
         .overlay {
             if showDeviceMenu {
@@ -165,13 +176,13 @@ public struct DeviceRuntimeRootView: View {
         }
 #else
         .overlay {
-            if !showDeviceMenu, host.pairingCode == nil, let missing = missingConnector {
+            if !showDeviceMenu, !localOnboardingActive, !showOnboarding, host.pairingCode == nil, let missing = missingConnector {
                 connectorGate(missing)
             }
         }
 #endif
         .overlay {
-            if let code = host.pairingCode {
+            if let code = host.pairingCode, legacyPairingOverlayActive {
                 ZStack {
                     Color.black.opacity(0.45).ignoresSafeArea()
                     PairingCodeView(code: code, waiting: host.awaitingControllerConfirm,
@@ -182,10 +193,12 @@ public struct DeviceRuntimeRootView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let confirmError = host.errorMessage {
-                Text(confirmError)
-                    .font(.footnote)
-                    .padding()
+            if host.errorMessage != nil && !localOnboardingActive {
+                VStack(spacing: 8) {
+                    Text(host.server == nil ? "The local connection could not start. Unlock this device, close Screenpunk, then open it again." : "The local connection could not start. Unlock this device and try again.")
+                        .font(.footnote).multilineTextAlignment(.center)
+                    if host.server != nil { Button("Try again") { host.resume() } }
+                }.padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding()
             }
         }
     }
@@ -193,6 +206,62 @@ public struct DeviceRuntimeRootView: View {
 #endif
 
 #if os(iOS)
+    private func queueOnboarding() {
+        onboardingAfterDismissal = true
+        showDeviceMenu = false
+        showSettings = false
+    }
+
+    private func presentQueuedOnboarding() {
+        guard onboardingAfterDismissal else { return }
+        onboardingAfterDismissal = false
+        pairingSessionCode = nil
+        onboardingRoute = "welcome"
+        showOnboarding = true
+    }
+
+    private var productionAppIcon: Image? {
+        guard let url = Bundle.module.url(forResource: "ScreenpunkAppIcon", withExtension: "png"),
+              let image = UIImage(contentsOfFile: url.path) else { return nil }
+        return Image(uiImage: image)
+    }
+
+    @ViewBuilder private var productionLanding: some View {
+        if onboardingRoute == "local" {
+            let displayedRequest = host.pendingPairingRequest
+            let displayedRequestID = displayedRequest?.sessionNonceHex
+            let displayedCode = displayedRequest?.code
+            DeviceOnboardingLocalView(state: localPairingState(code: displayedCode, requestID: displayedRequestID), confirm: {
+                guard let displayedRequestID else { return }
+                pairingSessionCode = displayedRequestID
+                host.confirm(expectedSessionNonceHex: displayedRequestID)
+            }, decline: {
+                guard let displayedRequestID else { return }
+                host.cancelPairing(expectedSessionNonceHex: displayedRequestID)
+                pairingSessionCode = nil
+            }, retry: { if host.server != nil { host.cancelPairing(); host.resume() } else { onboardingRoute = "welcome" }; pairingSessionCode = nil }, cancel: {
+                if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"
+                if showOnboarding { showOnboarding = false }
+            }, done: { onboardingRoute = "connected"; if showOnboarding { generalAfterOnboarding = true; showOnboarding = false } else { showSettings = true } })
+        } else if onboardingRoute == "cloud" {
+            DeviceOnboardingCloudView(message: "Cloud sign-in is not available in this version.", cancel: { onboardingRoute = "welcome" })
+        } else if host.runtime.isPaired && !showOnboarding {
+            DeviceOnboardingConnectedView(connectionDescription: "Connected to Screenpunk on your Mac", hasScreens: !(host.server?.installedManifests.isEmpty ?? true), screens: { showScreens = true }, settings: { initialSetupPage = .settings; showDeviceMenu = true })
+        } else {
+            DeviceOnboardingWelcomeView(appIcon: productionAppIcon, cloud: { onboardingRoute = "cloud" }, local: { pairingSessionCode = nil; onboardingRoute = "local" })
+        }
+    }
+    private func localPairingState(code: String?, requestID: String?) -> DeviceOnboardingLocalState {
+        if host.server == nil { return .failed(message: "The local connection could not start. Unlock this device, close Screenpunk, then open it again.") }
+        if host.errorMessage != nil { return .failed(message: "The connection could not be completed. Try again from Screenpunk on your Mac.") }
+        if let code, requestID != nil {
+            if host.awaitingControllerConfirm { return .approving }
+            return .request(macName: "a Mac", code: code)
+        }
+        if let pairingSessionCode, host.completedPairingSessionNonceHex == pairingSessionCode { return .completed(macName: "the Mac") }
+        return .waiting
+    }
+
     private var missingConnector: DeviceSetupPage? {
 #if DEBUG && targetEnvironment(simulator)
         if ProcessInfo.processInfo.arguments.contains("--preview-required-connection") { return .googleTV }
@@ -250,6 +319,22 @@ public struct DeviceRuntimeRootView: View {
                     .padding()
             }
         }
+    }
+
+    private var legacyPairingOverlayActive: Bool {
+#if os(iOS)
+        host.pairingCode != nil && !localOnboardingActive && host.runtime.isPaired && !showOnboarding
+#else
+        host.pairingCode != nil
+#endif
+    }
+
+    private var localOnboardingActive: Bool {
+#if os(iOS)
+        onboardingRoute == "local"
+#else
+        false
+#endif
     }
 
     private var currentSettings: DeviceSettings {
@@ -340,13 +425,14 @@ public struct DeviceRuntimeRootView: View {
 #if os(iOS)
 private struct DeviceMenuContainer<Menu: View>: ViewModifier {
     @Binding var isPresented: Bool
+    let onDismiss: () -> Void
     @ViewBuilder let menu: () -> Menu
 
     func body(content: Content) -> some View {
         if #available(iOS 18, *) {
-            content.sheet(isPresented: $isPresented, content: menu)
+            content.sheet(isPresented: $isPresented, onDismiss: onDismiss, content: menu)
         } else {
-            content.fullScreenCover(isPresented: $isPresented) {
+            content.fullScreenCover(isPresented: $isPresented, onDismiss: onDismiss) {
                 ZStack {
                     Color.black.opacity(0.3).ignoresSafeArea()
                     menu()

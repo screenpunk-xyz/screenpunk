@@ -7,7 +7,9 @@ public final class GenericConnectionDeviceVault: @unchecked Sendable {
         public var owner: String
         public var dashboardId: String
         public var revision: String
-        public init(owner: String, dashboardId: String, revision: String) {
+        public var authorityGeneration: UUID?
+        public init(owner: String, dashboardId: String, revision: String, authorityGeneration: UUID? = nil) {
+            self.authorityGeneration = authorityGeneration
             self.owner = owner; self.dashboardId = dashboardId; self.revision = revision
         }
     }

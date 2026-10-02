@@ -16,6 +16,8 @@ public struct DevicePersistedState: Sendable, Equatable, Codable {
     public var lastDeployment: DeploymentRecord?
     public var screenSet: DeviceInstalledScreenSet?
     public var settings: DeviceSettingsSnapshot?
+    /// Public owner pin for installed content; retained across local disconnect.
+    public var contentOwner: PairingIdentity?
     public var savedAt: Date
 
     public init(
@@ -179,7 +181,7 @@ public struct DeviceStateStore: Sendable {
     /// Remove only package generations that no committed screen references.
     public func prunePackageGenerations(keeping directories: Set<String>) {
         guard let contents = try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
-        for url in contents where url.lastPathComponent.hasPrefix("package.staging-") && !directories.contains(url.lastPathComponent) {
+        for url in contents where (url.lastPathComponent == "package" || url.lastPathComponent.hasPrefix("package.staging-")) && !directories.contains(url.lastPathComponent) {
             try? fileManager.removeItem(at: url)
         }
     }

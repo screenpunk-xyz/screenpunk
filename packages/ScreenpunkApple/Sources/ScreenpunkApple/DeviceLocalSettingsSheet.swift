@@ -12,8 +12,10 @@ struct DeviceLocalSettingsSheet: View {
     @State private var saveFailed = false
     @State private var showGoogleTV = false
     var embedded = false
+    var generalConnection: DeviceGeneralConnection?
 
-    init(host: DeviceLANHost, embedded: Bool = false) {
+    init(host: DeviceLANHost, embedded: Bool = false, generalConnection: DeviceGeneralConnection? = nil) {
+        self.generalConnection = generalConnection
         self.embedded = embedded
         self.host = host
         _value = State(initialValue: host.settingsSnapshot?.value ?? .init())
@@ -25,7 +27,12 @@ struct DeviceLocalSettingsSheet: View {
         return try? JSONDecoder().decode(DashboardManifest.self, from: data)
     }
     private var conflict: Bool { base?.revision != host.settingsSnapshot?.revision }
-    private var valid: Bool { (try? value.validate()) != nil }
+    private var saveValue: DeviceSettings {
+        var result = value
+        result.displayName = DeviceGeneralName.savedValue(value.displayName)
+        return result
+    }
+    private var valid: Bool { (try? saveValue.validate()) != nil }
 
     var body: some View {
         if embedded { editor } else { NavigationStack { editor } }
@@ -42,8 +49,14 @@ struct DeviceLocalSettingsSheet: View {
                         }
                     }.font(.callout).padding()
                 }
-                if !embedded { Button("Google TV Connection") { showGoogleTV = true }.padding() }
-                DeviceSettingsEditor(settings: $value, manifest: manifest).disabled(conflict)
+                if !embedded && generalConnection == nil { Button("Google TV Connection") { showGoogleTV = true }.padding() }
+                if let generalConnection {
+                    DeviceGeneralSettingsForm(settings: $value, manifest: manifest,
+                                              defaultName: host.runtime.profile.name,
+                                              connection: generalConnection, editingDisabled: conflict)
+                } else {
+                    DeviceSettingsEditor(settings: $value, manifest: manifest).disabled(conflict)
+                }
                 if let message { Text(message).font(.callout).foregroundStyle(saveFailed ? Color.red : Color.secondary).padding() }
                 if let snapshot = host.settingsSnapshot {
                     Text(snapshot.isApplied ? "Applied while Screenpunk is active" : "Saved on this device · waiting for runtime application")
@@ -51,7 +64,7 @@ struct DeviceLocalSettingsSheet: View {
                 }
             }
             .sheet(isPresented: $showGoogleTV) { GoogleTVConnectionSheet() }
-            .navigationTitle(embedded ? "Display and behavior" : "\(host.runtime.profile.name) Settings")
+            .navigationTitle(generalConnection != nil ? "General" : embedded ? "Display and behavior" : "\(host.runtime.profile.name) Settings")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -61,7 +74,7 @@ struct DeviceLocalSettingsSheet: View {
                     Button("Save") {
                         guard let base else { return }
                         do {
-                            let snapshot = try host.saveSettings(.init(expectedRevision: base.revision, value: value))
+                            let snapshot = try host.saveSettings(.init(expectedRevision: base.revision, value: saveValue))
                             self.base = snapshot; self.value = snapshot.value
                             message = "Saved on this device. The Mac does not need to be connected."
                             saveFailed = false

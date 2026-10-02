@@ -167,7 +167,9 @@ public actor HomeAssistantDeviceRuntime: CameraStreamResolver {
         public var dashboardId: String
         public var grantSet: String?
         public var temporaryActivation: TemporaryActivationConfiguration?
-        public init(owner: String, revision: String, dashboardId: String, grantSet: String? = nil, temporaryActivation: TemporaryActivationConfiguration? = nil) {
+        public var authorityGeneration: UUID?
+        public init(owner: String, revision: String, dashboardId: String, grantSet: String? = nil, temporaryActivation: TemporaryActivationConfiguration? = nil, authorityGeneration: UUID? = nil) {
+            self.authorityGeneration = authorityGeneration
             self.owner = owner; self.revision = revision; self.dashboardId = dashboardId; self.grantSet = grantSet; self.temporaryActivation = temporaryActivation
         }
     }

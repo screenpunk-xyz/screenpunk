@@ -14,6 +14,11 @@ import Security
 /// each connection's TLS handshake, never to the pin a message claims. Owner,
 /// active revision, and package bytes persist through `DeviceStateStore` so a
 /// relaunch returns paired and rendering; Unlink erases all of it.
+public struct DevicePendingPairingRequest: Sendable, Equatable {
+    public let code: String
+    public let sessionNonceHex: String
+}
+
 public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var runtime: DeviceRuntime
     public private(set) var port: UInt16 = 0
@@ -50,7 +55,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Ambiguous declarations never select a target implicitly.
     func temporaryActivationScope() -> HomeAssistantDeviceRuntime.Scope? {
         lock.lock(); defer { lock.unlock() }
-        guard let owner = runtime.pairing.owner, let set = screenSet else { return nil }
+        guard let owner = executionOwner, let set = screenSet else { return nil }
         let targets = set.screens.compactMap { screen -> (DeviceInstalledScreen, TemporaryActivationConfiguration)? in
             guard let data = screenPackages[screen.revision.dashboardId]?.assets["manifest.json"]?.data,
                   let manifest = try? JSONDecoder().decode(DashboardManifest.self, from: data),
@@ -64,14 +69,14 @@ public final class DeviceLANServer: @unchecked Sendable {
               record.configuration.dashboardId == target.revision.dashboardId,
               (try? record.configuration.authorize(operation: "getStates", parameters: [:])) != nil else { return nil }
         return .init(owner: PeerPin.hex(owner.publicKey), revision: target.revision.revision,
-                     dashboardId: target.revision.dashboardId, grantSet: set.grantSet, temporaryActivation: configuration)
+                     dashboardId: target.revision.dashboardId, grantSet: set.grantSet, temporaryActivation: configuration, authorityGeneration: authorityGeneration)
     }
 
     private func genericConnectionScope() -> GenericConnectionDeviceVault.Scope? {
         lock.lock(); defer { lock.unlock() }
-        guard let owner = runtime.pairing.owner, let revision = runtime.activeRevision,
+        guard let owner = executionOwner, let revision = runtime.activeRevision,
               let dashboardId = activeStoredRevision?.dashboardId else { return nil }
-        return .init(owner: PeerPin.hex(owner.publicKey), dashboardId: dashboardId, revision: revision)
+        return .init(owner: PeerPin.hex(owner.publicKey), dashboardId: dashboardId, revision: revision, authorityGeneration: authorityGeneration)
     }
 
     public func makeGenericConnectionRuntime() async throws -> ConnectionRuntime {
@@ -93,9 +98,26 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     private func homeAssistantScope() -> HomeAssistantDeviceRuntime.Scope? {
         lock.lock(); defer { lock.unlock() }
-        guard let owner = runtime.pairing.owner, let revision = runtime.activeRevision, let dashboardId = activeStoredRevision?.dashboardId else { return nil }
-        return .init(owner: PeerPin.hex(owner.publicKey), revision: revision, dashboardId: dashboardId, grantSet: screenSet?.grantSet)
+        guard let owner = executionOwner, let revision = runtime.activeRevision, let dashboardId = activeStoredRevision?.dashboardId else { return nil }
+        return .init(owner: PeerPin.hex(owner.publicKey), revision: revision, dashboardId: dashboardId, grantSet: screenSet?.grantSet, authorityGeneration: authorityGeneration)
     }
+    private var contentOwner: PairingIdentity?
+    private var managementGeneration = UUID()
+    private var authorityGeneration: UUID?
+    /// Content capabilities belong to their installer, independently of management.
+    private var executionOwner: PairingIdentity? {
+        let owner = contentOwner
+        guard runtime.pairing.owner == nil || runtime.pairing.owner == owner else { return nil }
+        return owner
+    }
+    public private(set) var completedPairingSessionNonceHex: String?
+    public var pendingPairingRequest: DevicePendingPairingRequest? {
+        lock.lock(); defer { lock.unlock() }
+        guard let code = pairingCode, let session = runtime.pairing.session,
+              code == session.expectedCode else { return nil }
+        return .init(code: code, sessionNonceHex: PeerPin.hex(session.transcript.sessionNonce))
+    }
+    public var pendingPairingSessionNonceHex: String? { pendingPairingRequest?.sessionNonceHex }
     private var deviceConfirmed = false
     private var pairingExpiry: DispatchWorkItem?
     private var pinnedController: [UInt8]?
@@ -140,6 +162,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         self.genericConnectionVault = genericConnectionVault
         self.homeAssistantVault = homeAssistantVault
         self.runtime = runtime
+        self.contentOwner = runtime.pairing.owner
         self.identity = identity
         self.clock = clock
         self.store = store
@@ -225,25 +248,22 @@ public final class DeviceLANServer: @unchecked Sendable {
         lock.unlock()
     }
 
-    public func confirmLocally() throws {
+    public func confirmLocally(expectedSessionNonceHex: String? = nil) throws {
         lock.lock()
         defer { lock.unlock() }
         expirePairingIfNeededLocked()
-        guard let code = pairingCode ?? runtime.pairingCode else {
-            throw PairingFailure.expired
+        guard pairingCode != nil, runtime.pairing.session != nil else { throw PairingFailure.expired }
+        if let expectedSessionNonceHex {
+            guard runtime.pairing.session.map({ PeerPin.hex($0.transcript.sessionNonce) }) == expectedSessionNonceHex else { throw PairingFailure.identityChanged }
         }
         deviceConfirmed = true
-        if let owner = runtime.pairing.session?.candidateOwner {
-            try runtime.confirmPairing(code: code, presentedOwner: owner, clock: clock)
-        }
-        pinnedController = runtime.pairing.owner?.publicKey
-        persist()
         onChange?()
     }
 
     /// Cancels only the pending handshake. Existing ownership and deployed content remain intact.
-    public func cancelPairing() {
+    public func cancelPairing(expectedSessionNonceHex: String? = nil) {
         lock.lock()
+        if let expectedSessionNonceHex, runtime.pairing.session.map({ PeerPin.hex($0.transcript.sessionNonce) }) != expectedSessionNonceHex { lock.unlock(); return }
         clearPendingPairingLocked()
         lock.unlock()
         onChange?()
@@ -281,6 +301,10 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Erases owner, active revision, package bytes, and everything on disk.
     public func unlink() {
         lock.lock()
+        managementGeneration = UUID()
+        authorityGeneration = UUID()
+        contentOwner = nil
+        completedPairingSessionNonceHex = nil
         try? genericConnectionVault.revoke()
         genericConnectionGeneration = UUID()
         clearPublicSession()
@@ -300,6 +324,73 @@ public final class DeviceLANServer: @unchecked Sendable {
         pinnedController = nil
         try? store?.erase()
         lock.unlock()
+        onChange?()
+    }
+
+    /// Durable local disconnect. Credentials, retained content grants, and settings remain.
+    public func disconnect(keepScreens: Bool) throws {
+        try updateLocalContent(disconnect: true, removing: keepScreens ? [] : nil)
+    }
+
+    public func removeScreen(_ dashboardId: String) throws {
+        try updateLocalContent(disconnect: false, removing: [dashboardId])
+    }
+
+    public func removeAllScreens() throws {
+        try updateLocalContent(disconnect: false, removing: nil)
+    }
+
+    /// The state-file replacement is the commit point; an IO failure leaves authority and content intact.
+    private func updateLocalContent(disconnect: Bool, removing ids: Set<String>?) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        var nextRuntime = runtime
+        var nextSet = screenSet
+        var nextStored = activeStoredRevision
+        nextRuntime.stagedRevision = nil
+        if disconnect { nextRuntime.pairing = DevicePairingState() }
+        if var set = nextSet {
+            set.screens.removeAll { ids == nil || ids!.contains($0.revision.dashboardId) }
+            if set.screens.isEmpty { nextSet = nil; nextStored = nil }
+            else {
+                if !set.screens.contains(where: { $0.revision.dashboardId == set.selectedDashboardId }) {
+                    set.selectedDashboardId = set.screens[0].revision.dashboardId
+                }
+                let selected = set.screens.first { $0.revision.dashboardId == set.selectedDashboardId }!
+                nextStored = selected.revision
+                nextRuntime.lastDeployment = selected.deployment
+                nextSet = set
+            }
+        } else if ids == nil || ids!.contains(nextStored?.dashboardId ?? "") { nextStored = nil }
+        nextRuntime.activeRevision = nextStored?.revision
+        if nextStored == nil { nextRuntime.lastDeployment = nil }
+        var state = DevicePersistedState(runtime: nextRuntime, activeStoredRevision: nextStored)
+        state.screenSet = nextSet
+        state.settings = settings
+        state.contentOwner = contentOwner
+        try store?.save(state)
+        runtime = nextRuntime
+        screenSet = nextSet
+        activeStoredRevision = nextStored
+        contentOwner = state.contentOwner
+        authorityGeneration = UUID()
+        genericConnectionGeneration = UUID()
+        clearPublicSession()
+        if disconnect {
+            managementGeneration = UUID()
+            completedPairingSessionNonceHex = nil
+            clearPendingPairingLocked()
+            pinnedController = nil
+            deviceConfirmed = false
+        }
+        let retained = Set(nextSet?.screens.map { $0.revision.dashboardId } ?? [])
+        screenPackages = screenPackages.filter { retained.contains($0.key) }
+        if let set = nextSet { activateSelectionLocked(set.selectedDashboardId) }
+        else if nextStored == nil { activePackage = nil }
+        let service = homeAssistantRuntime
+        Task { await service.cancelPending() }
+        let directories = nextSet?.screens.map { $0.packageDirectory } ?? (nextStored == nil ? [] : ["package"])
+        store?.prunePackageGenerations(keeping: Set(directories))
         onChange?()
     }
 
@@ -363,6 +454,7 @@ public final class DeviceLANServer: @unchecked Sendable {
             var state = DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision)
             state.screenSet = screenSet
             state.settings = next
+            state.contentOwner = contentOwner
             do { try store.save(state) }
             catch { throw DeviceSettingsFailure.persistenceFailed }
         }
@@ -411,6 +503,8 @@ public final class DeviceLANServer: @unchecked Sendable {
     private func restoreFromStore() {
         guard let store, let state = store.load() else { return }
         runtime.restore(state)
+        let restoredOwner = state.contentOwner ?? state.owner
+        contentOwner = restoredOwner?.isWellFormed == true && restoredOwner?.role == .controller ? restoredOwner : nil
         if let saved = state.settings {
             settings = saved
             settings.appliedRevision = nil
@@ -446,6 +540,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         var state = DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision)
         state.screenSet = screenSet
         state.settings = settings
+        state.contentOwner = contentOwner
         try? store.save(state)
     }
 
@@ -524,6 +619,9 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// owner mid-way (pairing just completed) leaves the untrusted pool.
     private func serve(_ link: LANLink, peerPin: [UInt8]?) {
         defer { link.cancel() }
+        lock.lock()
+        var connectionGeneration = managementGeneration
+        lock.unlock()
         var countedUntrusted = false
         defer { if countedUntrusted { releaseUntrustedSlot() } }
         while true {
@@ -540,7 +638,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     idleTimeout: trusted ? nil : untrustedIdleTimeout,
                     bodyTimeout: trusted ? requestBodyTimeout : min(requestBodyTimeout, 15),
                     maximumBytes: trusted ? LANProtocolLimits.maxMessageBytes : LANProtocolLimits.legacyMessageBytes)
-                let reply = handle(request, peerPin: peerPin)
+                let reply = handle(request, peerPin: peerPin, managementGeneration: &connectionGeneration)
                 try link.send(reply)
             } catch {
                 break
@@ -560,7 +658,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         untrustedConnections = max(0, untrustedConnections - 1)
     }
 
-    private func handle(_ request: LANEnvelope, peerPin: [UInt8]?) -> LANEnvelope {
+    private func handle(_ request: LANEnvelope, peerPin: [UInt8]?, managementGeneration requestGeneration: inout UUID) -> LANEnvelope {
         if request.method == LANMethod.pairConfirm.rawValue {
             _ = waitUntilDeviceConfirmed(timeout: 60)
         }
@@ -570,7 +668,11 @@ public final class DeviceLANServer: @unchecked Sendable {
             guard request.protocolVersion == LANProtocolLimits.version else {
                 throw TransferFailure.validationFailed
             }
-            switch LANMethod(rawValue: request.method) {
+            let method = LANMethod(rawValue: request.method)
+            if method != .hello && method != .pairBegin && method != .pairConfirm {
+                guard requestGeneration == managementGeneration else { throw TransferFailure.notPaired }
+            }
+            switch method {
             case .hello:
                 let hello = LANHello(
                     role: .device,
@@ -613,6 +715,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     clock: clock
                 )
                 pairingCode = code
+                completedPairingSessionNonceHex = nil
                 deviceConfirmed = false
                 schedulePairingExpiryLocked()
                 onChange?()
@@ -625,7 +728,25 @@ public final class DeviceLANServer: @unchecked Sendable {
                 let body = try LANCodec.decodePayload(LANPairConfirm.self, json: request.payloadJSON)
                 let controllerPin = try authenticatedPeer(peerPin, claimedHex: body.controllerPinHex)
                 let controller = PairingIdentity(role: .controller, publicKey: controllerPin)
-                try runtime.confirmPairing(code: body.code, presentedOwner: controller, clock: clock)
+                var confirmedRuntime = runtime
+                do {
+                    try confirmedRuntime.confirmPairing(code: body.code, presentedOwner: controller, clock: clock)
+                } catch {
+                    // Validation may increment the transient wrong-code counter; ownership never commits here.
+                    runtime.pairing.session = confirmedRuntime.pairing.session
+                    throw error
+                }
+                var confirmedState = DevicePersistedState(runtime: confirmedRuntime, activeStoredRevision: activeStoredRevision)
+                confirmedState.screenSet = screenSet
+                confirmedState.settings = settings
+                confirmedState.contentOwner = contentOwner
+                try store?.save(confirmedState)
+                completedPairingSessionNonceHex = runtime.pairing.session.map { PeerPin.hex($0.transcript.sessionNonce) }
+                runtime = confirmedRuntime
+                authorityGeneration = UUID()
+                managementGeneration = UUID()
+                requestGeneration = managementGeneration
+                clearPublicSession()
                 pinnedController = runtime.pairing.owner?.publicKey
                 // The session has done its job. Keeping it would leave
                 // `runtime.pairingCode` set and the code view on screen.
@@ -684,6 +805,9 @@ public final class DeviceLANServer: @unchecked Sendable {
                     screenPackages = [:]
                     activePackage = PackageAssetStore(assets: staged)
                     activeStoredRevision = body.revision
+                    contentOwner = runtime.pairing.owner
+                    authorityGeneration = UUID()
+                    genericConnectionGeneration = UUID()
                     persist()
                     onChange?()
                 } else {
@@ -778,6 +902,7 @@ public final class DeviceLANServer: @unchecked Sendable {
             var state = DevicePersistedState(runtime: runtime, activeStoredRevision: activeStoredRevision)
             state.screenSet = next
             state.settings = settings
+            state.contentOwner = contentOwner
             if let screen = next.screens.first(where: { $0.revision.dashboardId == dashboardId }) {
                 state.activeRevision = screen.revision.revision
                 state.activeStoredRevision = screen.revision
@@ -874,7 +999,11 @@ public final class DeviceLANServer: @unchecked Sendable {
             activeStoredRevision: selected.revision, lastDeployment: selected.deployment)
         state.screenSet = installed
         state.settings = settings
+        state.contentOwner = runtime.pairing.owner
         try store?.save(state)
+        contentOwner = runtime.pairing.owner
+        authorityGeneration = UUID()
+        genericConnectionGeneration = UUID()
         committed = true
         clearPublicSession()
         screenSet = installed
