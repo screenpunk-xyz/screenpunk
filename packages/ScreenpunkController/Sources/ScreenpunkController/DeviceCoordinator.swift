@@ -28,8 +28,16 @@ public final class DeviceCoordinator: @unchecked Sendable {
     public let hub: LoopbackDiscovery
     public private(set) var linkFactory: DeviceLinkFactory?
     private var pending: [String: PendingPairing] = [:]
-    private var links: [String: DeviceLink] = [:]
+    private struct CachedLink {
+        var generation: UInt64
+        var identity: PairingIdentity
+        var link: DeviceLink
+    }
+    private var links: [String: CachedLink] = [:]
+    private var inflightLinks: [UUID: DeviceLink] = [:]
     private let lock = NSLock()
+    private let lifecycleLock = NSLock()
+    private var transportGeneration: UInt64 = 0
     private let now: @Sendable () -> Date
     private let discoveryLock = NSLock()
     private var discoveryCache: [String: (hello: LANHello, pin: [UInt8], seen: Date)] = [:]
@@ -43,6 +51,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
     static let discoveryProbesPerPass = 8
 
     private struct PendingPairing {
+        var sessionID: UUID
         var deviceId: String
         var deviceName: String
         var host: String
@@ -51,6 +60,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
         var code: String
         var startedAt: Date
         var rePairing: Bool
+        var generation: UInt64
+        var controllerIdentity: PairingIdentity
         var link: DeviceLink
         var profile: DeviceProfile?
     }
@@ -67,9 +78,99 @@ public final class DeviceCoordinator: @unchecked Sendable {
         self.now = now
     }
 
-    public func attach(_ factory: DeviceLinkFactory?) {
+    @discardableResult
+    public func attach(_ factory: DeviceLinkFactory?) -> UInt64 {
+        replaceTransport(with: factory, ifGeneration: nil, requireEmpty: false)!
+    }
+
+    /// Used by a broker-owned native transport: another live binding is a
+    /// conflict, never an implicit handoff between transport instances.
+    @discardableResult
+    public func attachIfEmpty(_ factory: DeviceLinkFactory) -> UInt64? {
+        replaceTransport(with: factory, ifGeneration: nil, requireEmpty: true)
+    }
+
+    /// A transport instance may detach only the binding it installed. A later
+    /// explicit replacement must survive teardown of an earlier instance.
+    @discardableResult
+    public func detach(ifGeneration expected: UInt64) -> Bool {
+        replaceTransport(with: nil, ifGeneration: expected, requireEmpty: false) != nil
+    }
+
+    public var currentTransportGeneration: UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return transportGeneration
+    }
+
+    private func replaceTransport(with factory: DeviceLinkFactory?, ifGeneration expected: UInt64?, requireEmpty: Bool) -> UInt64? {
+        // Discovery holds discoveryLock while probing and may then enter lock.
+        // Preserve that ordering, and publish the next factory only after all
+        // previous pending/cached channels have been invalidated and cancelled.
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        discoveryLock.lock()
+        defer { discoveryLock.unlock() }
+        lock.lock()
+        if let expected, transportGeneration != expected {
+            lock.unlock()
+            return nil
+        }
+        if requireEmpty, linkFactory != nil {
+            lock.unlock()
+            return nil
+        }
+        transportGeneration &+= 1
+        let newGeneration = transportGeneration
+        let old = Array(pending.values.map(\.link)) + Array(links.values.map(\.link)) + Array(inflightLinks.values)
+        pending.removeAll()
+        links.removeAll()
+        inflightLinks.removeAll()
+        discoveryCache.removeAll()
+        discoveryFailures.removeAll()
+        linkFactory = nil
+        lock.unlock()
+        var cancelled = Set<ObjectIdentifier>()
+        for link in old where cancelled.insert(ObjectIdentifier(link)).inserted {
+            link.cancel()
+        }
         lock.lock()
         linkFactory = factory
+        lock.unlock()
+        return newGeneration
+    }
+
+    private func requireTransport() throws -> (factory: DeviceLinkFactory, generation: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let linkFactory else {
+            throw ControllerError.deviceOffline("LAN transport unavailable in this controller process")
+        }
+        return (linkFactory, transportGeneration)
+    }
+
+    private func requireCurrent(_ generation: UInt64) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard transportGeneration == generation, linkFactory != nil else {
+            throw ControllerError.deviceOffline("LAN transport changed; retry with the current controller identity")
+        }
+    }
+
+    private func track(_ link: DeviceLink, generation: UInt64) throws -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        guard transportGeneration == generation, linkFactory != nil else {
+            throw ControllerError.deviceOffline("LAN transport changed; retry with the current controller identity")
+        }
+        let id = UUID()
+        inflightLinks[id] = link
+        return id
+    }
+
+    private func untrack(_ id: UUID) {
+        lock.lock()
+        inflightLinks[id] = nil
         lock.unlock()
     }
 
@@ -208,12 +309,17 @@ public final class DeviceCoordinator: @unchecked Sendable {
     /// confirms natively and `confirmPairing` succeeds.
     public func requestPairing(deviceId: String?, host: String?, port: Int?) throws -> PairingRequestResult {
         let target = try resolveTarget(deviceId: deviceId, host: host, port: port)
-        let factory = try requireFactory()
         let known = directory.get(target.deviceId)
 
         cancelPending(target.deviceId)
+        let transport = try requireTransport()
+        let factory = transport.factory
 
         let link = try factory.makeLink()
+        let tracking: UUID
+        do { tracking = try track(link, generation: transport.generation) }
+        catch { link.cancel(); throw error }
+        defer { untrack(tracking) }
         do {
             try link.connect(host: target.host, port: target.port, pinnedDevice: known?.devicePin)
         } catch {
@@ -253,6 +359,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             var profile = hello.profile
             profile?.deviceId = resolvedId
             let entry = PendingPairing(
+                sessionID: UUID(),
                 deviceId: resolvedId,
                 deviceName: matched?.displayName ?? name,
                 host: target.host,
@@ -261,15 +368,22 @@ public final class DeviceCoordinator: @unchecked Sendable {
                 code: begin.code,
                 startedAt: started,
                 rePairing: matched != nil,
+                generation: transport.generation,
+                controllerIdentity: factory.controllerIdentity,
                 link: link,
                 profile: profile
             )
             lock.lock()
-            if resolvedId != target.deviceId {
-                pending[target.deviceId] = nil
+            guard transportGeneration == transport.generation,
+                  linkFactory?.controllerIdentity == factory.controllerIdentity else {
+                lock.unlock()
+                throw ControllerError.deviceOffline("LAN transport changed during pairing; begin a fresh pairing")
             }
-            pending[resolvedId] = entry
+            let displacedAlias = resolvedId == target.deviceId ? nil : pending.removeValue(forKey: target.deviceId)?.link
+            let displacedCanonical = pending.updateValue(entry, forKey: resolvedId)?.link
             lock.unlock()
+            if displacedAlias !== link { displacedAlias?.cancel() }
+            if displacedCanonical !== link, displacedCanonical !== displacedAlias { displacedCanonical?.cancel() }
             return PairingRequestResult(
                 deviceId: resolvedId,
                 deviceName: entry.deviceName,
@@ -290,15 +404,18 @@ public final class DeviceCoordinator: @unchecked Sendable {
     /// Sends `pair.confirm`. The device only answers `ok` after its owner tapped
     /// Confirm on the device screen, so MCP cannot self-approve.
     public func confirmPairing(deviceId: String) throws -> PairedDeviceRecord {
-        let factory = try requireFactory()
         lock.lock()
+        let factory = linkFactory
+        let generation = transportGeneration
         let entry = pending[deviceId]
         lock.unlock()
-        guard let entry else {
+        guard let factory, let entry,
+              entry.generation == generation,
+              entry.controllerIdentity == factory.controllerIdentity else {
             throw ControllerError.notPaired("no pending pairing for \(deviceId); call request_pairing first")
         }
         if now().timeIntervalSince(entry.startedAt) > PairingLimits.expirySeconds {
-            cancelPending(deviceId)
+            cancelPending(deviceId, matching: entry)
             throw ControllerError.notPaired("expired: the matching code expired after \(Int(PairingLimits.expirySeconds)) seconds; call request_pairing again")
         }
         do {
@@ -309,7 +426,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             )
         } catch {
             if let failure = error as? PairingFailure, failure == .codeMismatch {
-                cancelPending(deviceId)
+                cancelPending(deviceId, matching: entry)
             }
             throw mapPairing(error)
         }
@@ -339,12 +456,23 @@ public final class DeviceCoordinator: @unchecked Sendable {
             lastSeenAt: pairedAt,
             displayName: directory.get(deviceId)?.displayName
         )
-        try directory.upsert(record)
         lock.lock()
+        guard transportGeneration == generation,
+              linkFactory?.controllerIdentity == entry.controllerIdentity,
+              pending[deviceId]?.sessionID == entry.sessionID,
+              pending[deviceId]?.link === entry.link else {
+            lock.unlock()
+            throw ControllerError.notPaired("pairing session ended; begin a fresh pairing")
+        }
+        do { try directory.upsert(record) }
+        catch { lock.unlock(); throw error }
         pending[deviceId] = nil
-        links[deviceId]?.cancel()
-        links[deviceId] = entry.link
+        let previous = links.updateValue(
+            CachedLink(generation: generation, identity: entry.controllerIdentity, link: entry.link),
+            forKey: deviceId
+        )?.link
         lock.unlock()
+        previous?.cancel()
         return record
     }
 
@@ -353,6 +481,22 @@ public final class DeviceCoordinator: @unchecked Sendable {
         let entry = pending.removeValue(forKey: deviceId)
         lock.unlock()
         entry?.link.cancel()
+    }
+
+    private func cancelPending(_ deviceId: String, matching entry: PendingPairing) {
+        lock.lock()
+        let removed: PendingPairing?
+        if transportGeneration == entry.generation,
+           let current = pending[deviceId],
+           current.generation == entry.generation,
+           current.sessionID == entry.sessionID,
+           current.link === entry.link {
+            removed = pending.removeValue(forKey: deviceId)
+        } else {
+            removed = nil
+        }
+        lock.unlock()
+        removed?.link.cancel()
     }
 
     // MARK: Devices
@@ -391,7 +535,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
     public func forget(deviceId: String) throws -> Bool {
         cancelPending(deviceId)
         lock.lock()
-        links.removeValue(forKey: deviceId)?.cancel()
+        links.removeValue(forKey: deviceId)?.link.cancel()
         lock.unlock()
         return try directory.remove(deviceId)
     }
@@ -682,12 +826,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
     }
 
     private func requireFactory() throws -> DeviceLinkFactory {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let linkFactory else {
-            throw ControllerError.deviceOffline("LAN transport unavailable in this controller process")
-        }
-        return linkFactory
+        try requireTransport().factory
     }
 
     private func verifySAS(code: String, devicePin: [UInt8], controllerPin: [UInt8], nonce: [UInt8]) throws {
@@ -707,18 +846,25 @@ public final class DeviceCoordinator: @unchecked Sendable {
     }
 
     private func withLink<T>(_ record: PairedDeviceRecord, _ body: (DeviceLink) throws -> T) throws -> T {
-        let factory = try requireFactory()
+        let transport = try requireTransport()
+        let factory = transport.factory
         lock.lock()
         let cached = links[record.id]
         lock.unlock()
-        if let cached {
+        if let cached,
+           cached.generation == transport.generation,
+           cached.identity == factory.controllerIdentity {
+            try requireCurrent(transport.generation)
             do {
-                return try body(cached)
+                let result = try body(cached.link)
+                try requireCurrent(transport.generation)
+                return result
             } catch {
+                try requireCurrent(transport.generation)
                 if isDeviceVerdict(error) { throw error }
-                cached.cancel()
+                cached.link.cancel()
                 lock.lock()
-                if links[record.id] === cached { links[record.id] = nil }
+                if links[record.id]?.link === cached.link { links[record.id] = nil }
                 lock.unlock()
             }
         }
@@ -726,6 +872,10 @@ public final class DeviceCoordinator: @unchecked Sendable {
             throw TransferFailure.deviceOffline
         }
         let link = try factory.makeLink()
+        let tracking: UUID
+        do { tracking = try track(link, generation: transport.generation) }
+        catch { link.cancel(); throw error }
+        defer { untrack(tracking) }
         do {
             let advertised = discover().first { $0.deviceId == record.id }
             try link.connect(host: advertised?.host ?? record.host, port: UInt16(exactly: advertised?.port ?? Int(port)) ?? port, pinnedDevice: record.devicePin)
@@ -733,22 +883,43 @@ public final class DeviceCoordinator: @unchecked Sendable {
             guard let pin = link.devicePin, pin == record.devicePin,
                   hello.deviceId == record.id,
                   PeerPin.matches(expected: pin, presentedHex: hello.pinHex) else { throw PairingFailure.identityChanged }
+            try requireCurrent(transport.generation)
+            lock.lock()
+            guard transportGeneration == transport.generation,
+                  linkFactory?.controllerIdentity == factory.controllerIdentity else {
+                lock.unlock()
+                throw ControllerError.deviceOffline("LAN transport changed; retry with the current controller identity")
+            }
             if var profile = hello.profile {
                 profile.deviceId = record.id
-                _ = try directory.update(record.id) { current in
-                    current.device.profile = profile
-                    if let name = current.displayName { current.device.profile.name = name }
+                do {
+                    _ = try directory.update(record.id) { current in
+                        current.device.profile = profile
+                        if let name = current.displayName { current.device.profile.name = name }
+                    }
+                } catch {
+                    lock.unlock()
+                    throw error
                 }
             }
+            let previous = links.updateValue(
+                CachedLink(generation: transport.generation, identity: factory.controllerIdentity, link: link),
+                forKey: record.id
+            )?.link
+            lock.unlock()
+            if previous !== link { previous?.cancel() }
         } catch {
             link.cancel()
             throw error
         }
-        lock.lock()
-        links[record.id]?.cancel()
-        links[record.id] = link
-        lock.unlock()
-        return try body(link)
+        do {
+            let result = try body(link)
+            try requireCurrent(transport.generation)
+            return result
+        } catch {
+            try requireCurrent(transport.generation)
+            throw error
+        }
     }
 
     /// Replies the device made on purpose. Reconnecting would not change them.
