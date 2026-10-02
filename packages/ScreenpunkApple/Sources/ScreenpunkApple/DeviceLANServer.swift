@@ -35,10 +35,28 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// transfer activates; a failed transfer leaves the current package in place.
     public private(set) var activePackage: PackageAssetStore?
     public private(set) var screenSet: DeviceInstalledScreenSet?
+    private let management: DeviceManagementContext
+    private var postCommitActions: [() -> Void] = []
+    public var onManagementSuspended: (() -> Void)?
+    private var managementSuspended = false
+    private var invalidationObserver: UUID?
+    private var listenerAttempt = UUID()
+    private var pendingListener: NWListener?
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
+    enum ManagementBoundary: Equatable { case listenerWillStart, listenerReady, handshakeReady, requestReceived(String), pairingWaitStarted }
+    // Deterministic test observation only. Invoked outside all locks and never grants admission.
+    var managementBoundary: ((ManagementBoundary) -> Void)?
+    private func observeManagementBoundary(_ boundary: ManagementBoundary) {
+        lock.lock(); let observation = managementBoundary; lock.unlock()
+        observation?(boundary)
+    }
+    var activeConnectionCount: Int { lock.lock(); defer { lock.unlock() }; return connections.count }
     private var settings = DeviceSettingsSnapshot()
     private var temporaryActivationStatus = DeviceTemporaryActivationStatus()
-    func updateTemporaryActivationStatus(_ status: DeviceTemporaryActivationStatus) {
-        lock.lock(); defer { lock.unlock() }; temporaryActivationStatus = status
+    func updateTemporaryActivationStatus(_ status: DeviceTemporaryActivationStatus) throws {
+        try managementTransaction {
+            temporaryActivationStatus = status
+        }
     }
     private var screenPackages: [String: PackageAssetStore] = [:]
     public var onChange: (() -> Void)?
@@ -55,6 +73,9 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Ambiguous declarations never select a target implicitly.
     func temporaryActivationScope() -> HomeAssistantDeviceRuntime.Scope? {
         lock.lock(); defer { lock.unlock() }
+        return temporaryActivationScopeLocked()
+    }
+    private func temporaryActivationScopeLocked() -> HomeAssistantDeviceRuntime.Scope? {
         guard let owner = executionOwner, let set = screenSet else { return nil }
         let targets = set.screens.compactMap { screen -> (DeviceInstalledScreen, TemporaryActivationConfiguration)? in
             guard let data = screenPackages[screen.revision.dashboardId]?.assets["manifest.json"]?.data,
@@ -86,15 +107,19 @@ public final class DeviceLANServer: @unchecked Sendable {
     private var publicSession: (scope: HomeAssistantDeviceRuntime.Scope, session: PublicReadSession)?
     public func publicReadSession() -> PublicReadSession? {
         guard let scope = homeAssistantScope(), let generation = scope.grantSet else { return nil }
-        lock.lock(); defer { lock.unlock() }
+        var retired: PublicReadSession?
+        lock.lock(); defer { lock.unlock(); retired?.cancel() }
         if let existing = publicSession, existing.scope == scope { return existing.session }
-        publicSession?.session.cancel(); publicSession = nil
+        retired = publicSession?.session; publicSession = nil
         guard let config = try? homeAssistantVault.publicConfiguration(owner: scope.owner, dashboardId: scope.dashboardId,
             revision: scope.revision, generation: generation),
               let session = try? PublicReadSession(provisioning: config, isCurrent: { [weak self] in self?.homeAssistantScope() == scope }) else { return nil }
         publicSession = (scope, session); return session
     }
-    private func clearPublicSession() { publicSession?.session.cancel(); publicSession = nil }
+    private func clearPublicSession() {
+        let retired = publicSession?.session; publicSession = nil
+        afterCommitLocked { retired?.cancel() }
+    }
 
     private func homeAssistantScope() -> HomeAssistantDeviceRuntime.Scope? {
         lock.lock(); defer { lock.unlock() }
@@ -124,7 +149,6 @@ public final class DeviceLANServer: @unchecked Sendable {
     private var activeStoredRevision: StoredRevision?
     // Internal visibility allows transport-failure regression tests to cancel it.
     private(set) var listener: NWListener?
-    private let listenerLock = NSLock()
     private let queue = DispatchQueue(label: "xyz.screenpunk.lan.device")
     private let clock: PairingClock
     private let lock = NSLock()
@@ -149,6 +173,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     }
 
     public init(
+        management: DeviceManagementContext,
         runtime: DeviceRuntime,
         identity: TLSIdentityMaterial,
         clock: PairingClock = SystemClock(),
@@ -158,7 +183,8 @@ public final class DeviceLANServer: @unchecked Sendable {
         requestBodyTimeout: TimeInterval = LANProtocolLimits.transferTimeoutSeconds,
         untrustedIdleTimeout: TimeInterval = DeviceLANServer.untrustedIdleTimeout,
         maxUntrustedConnections: Int = DeviceLANServer.maxUntrustedConnections
-    ) {
+    ) throws {
+        self.management = management
         self.genericConnectionVault = genericConnectionVault
         self.homeAssistantVault = homeAssistantVault
         self.runtime = runtime
@@ -170,117 +196,151 @@ public final class DeviceLANServer: @unchecked Sendable {
         self.untrustedIdleTimeout = untrustedIdleTimeout
         self.maxUntrustedConnections = max(1, maxUntrustedConnections)
         self.runtime.identity = identity.pairingIdentity
-        restoreFromStore()
-        let migratedDeployment = DeviceInstallIdentity.migrate(&self.runtime, pin: identity.pin)
-        if migratedDeployment { persist() }
-        if runtime.profile.model != nil {
-            let orientation = self.runtime.profile.orientation
-            self.runtime.profile.model = runtime.profile.model
-            self.runtime.profile.width = runtime.profile.width
-            self.runtime.profile.height = runtime.profile.height
-            self.runtime.profile.orientation = .portrait
-            self.runtime.profile.apply(orientation: orientation)
+        try management.withAuthority {
+            restoreFromStore()
+            let migratedDeployment = DeviceInstallIdentity.migrate(&self.runtime, pin: identity.pin)
+            if migratedDeployment { persist() }
+            if runtime.profile.model != nil {
+                let orientation = self.runtime.profile.orientation
+                self.runtime.profile.model = runtime.profile.model
+                self.runtime.profile.width = runtime.profile.width
+                self.runtime.profile.height = runtime.profile.height
+                self.runtime.profile.orientation = .portrait
+                self.runtime.profile.apply(orientation: orientation)
+            }
         }
+        invalidationObserver = try management.observeInvalidation { [weak self] in
+            guard let self, self.suspendManagement() else { return }
+            self.onManagementSuspended?()
+        }
+        try management.validate()
+    }
+    deinit {
+        if let invalidationObserver { management.removeInvalidationObserver(invalidationObserver) }
+        stop()
+    }
+
+    /// Lock ordering is always authority -> server. Work and callbacks escape neither lock.
+    private func managementTransaction<T>(_ operation: () throws -> T) throws -> T {
+        var actions: [() -> Void] = []
+        defer { for action in actions { action() } }
+        do {
+            return try management.withAuthority {
+                lock.lock()
+                defer { actions = postCommitActions; postCommitActions = []; lock.unlock() }
+                guard !managementSuspended else { throw DeviceManagementAuthority.Failure.staleLease }
+                return try operation()
+            }
+        } catch {
+            if error is DeviceManagementAuthority.Failure, suspendManagement() { onManagementSuspended?() }
+            throw error
+        }
+    }
+    private func notifyLocked() { if let onChange { postCommitActions.append(onChange) } }
+    private func afterCommitLocked(_ action: @escaping () -> Void) { postCommitActions.append(action) }
+
+    /// Revocation-only cleanup is unconditional; it cannot install authority or modify retained content.
+    @discardableResult public func suspendManagement() -> Bool {
+        lock.lock()
+        guard !managementSuspended else { lock.unlock(); return false }
+        managementSuspended = true
+        managementGeneration = UUID()
+        clearPendingPairingLocked()
+        completedPairingSessionNonceHex = nil
+        lock.unlock()
+        stop()
+        return true
     }
 
     /// Recreate a failed listener without touching pairing or installed content.
     /// May block during startup; callers should use a worker queue.
     public func start() throws {
-        listenerLock.lock()
-        defer { listenerLock.unlock() }
-        if let listener {
-            switch listener.state {
-            case .ready, .setup: return
-            default: listener.cancel()
+        let attempt = UUID()
+        let needed = try managementTransaction {
+            if let listener, case .ready = listener.state { return false }
+            let previous = self.listener; let pending = pendingListener; let links = Array(connections.values)
+            self.listener = nil; pendingListener = nil; connections = [:]; port = 0; listenerAttempt = attempt
+            afterCommitLocked { previous?.cancel(); pending?.cancel(); for link in links { link.cancel() } }
+            return true
+        }
+        guard needed else { return }
+        let parameters = try LANChannel.tlsParameters(identity: identity,
+            pinnedPeer: { [weak self] in self?.ownerPin() }, queue: queue)
+        let candidate = try NWListener(using: parameters, on: .any)
+        var installed = false
+        defer {
+            if !installed {
+                candidate.cancel()
+                lock.lock()
+                if pendingListener === candidate { pendingListener = nil }
+                lock.unlock()
             }
         }
-        listener = nil
-        port = 0
-        let parameters = try LANChannel.tlsParameters(
-            identity: identity,
-            pinnedPeer: { [weak self] in self?.ownerPin() },
-            queue: queue
-        )
-        let listener = try NWListener(using: parameters, on: .any)
         let ready = DispatchSemaphore(value: 0)
-        listener.stateUpdateHandler = { state in
+        candidate.stateUpdateHandler = { state in
             switch state {
-            case .ready:
-                ready.signal()
-            case .failed, .cancelled:
-                ready.signal()
-            default:
-                break
+            case .ready, .failed, .cancelled: ready.signal()
+            default: break
             }
         }
-        listener.newConnectionHandler = { [weak self] connection in
-            DispatchQueue.global(qos: .userInitiated).async {
-                self?.accept(connection)
-            }
+        candidate.newConnectionHandler = { [weak self] connection in
+            DispatchQueue.global(qos: .userInitiated).async { self?.accept(connection, listenerAttempt: attempt) }
         }
-        listener.start(queue: queue)
-        if ready.wait(timeout: .now() + 5) == .timedOut {
-            listener.cancel()
-            throw TransferFailure.interrupted
+        try managementTransaction {
+            guard listenerAttempt == attempt else { throw TransferFailure.interrupted }
+            pendingListener = candidate
         }
-        if case .failed(let error) = listener.state {
-            listener.cancel()
-            throw error
+        // No authority/server lock is held during network setup or readiness waits.
+        observeManagementBoundary(.listenerWillStart)
+        candidate.start(queue: queue)
+        guard ready.wait(timeout: .now() + 5) == .success else { throw TransferFailure.interrupted }
+        if case .failed(let error) = candidate.state { throw error }
+        guard case .ready = candidate.state, let candidatePort = candidate.port?.rawValue else { throw TransferFailure.interrupted }
+        observeManagementBoundary(.listenerReady)
+        try managementTransaction {
+            guard listenerAttempt == attempt, pendingListener === candidate else { throw TransferFailure.interrupted }
+            self.listener = candidate; pendingListener = nil; port = candidatePort
+            advertiseBonjour(on: candidate)
+            runtime.advertisement = AdvertisedDevice(deviceId: runtime.profile.deviceId, host: "127.0.0.1",
+                port: Int(candidatePort), source: .advertised)
+            installed = true
         }
-        guard case .ready = listener.state else {
-            listener.cancel()
-            throw TransferFailure.interrupted
-        }
-        guard let port = listener.port?.rawValue else {
-            listener.cancel()
-            throw TransferFailure.interrupted
-        }
-        self.listener = listener
-        self.port = port
-        advertiseBonjour(on: listener)
-        lock.lock()
-        runtime.advertisement = AdvertisedDevice(
-            deviceId: runtime.profile.deviceId,
-            host: "127.0.0.1",
-            port: Int(port),
-            source: .advertised
-        )
-        lock.unlock()
     }
 
     public func confirmLocally(expectedSessionNonceHex: String? = nil) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        expirePairingIfNeededLocked()
-        guard pairingCode != nil, runtime.pairing.session != nil else { throw PairingFailure.expired }
-        if let expectedSessionNonceHex {
-            guard runtime.pairing.session.map({ PeerPin.hex($0.transcript.sessionNonce) }) == expectedSessionNonceHex else { throw PairingFailure.identityChanged }
+        try managementTransaction {
+            expirePairingIfNeededLocked()
+            guard pairingCode != nil, runtime.pairing.session != nil else { throw PairingFailure.expired }
+            if let expectedSessionNonceHex {
+                guard runtime.pairing.session.map({ PeerPin.hex($0.transcript.sessionNonce) }) == expectedSessionNonceHex else { throw PairingFailure.identityChanged }
+            }
+            deviceConfirmed = true
+            notifyLocked()
         }
-        deviceConfirmed = true
-        onChange?()
     }
 
     /// Cancels only the pending handshake. Existing ownership and deployed content remain intact.
-    public func cancelPairing(expectedSessionNonceHex: String? = nil) {
-        lock.lock()
-        if let expectedSessionNonceHex, runtime.pairing.session.map({ PeerPin.hex($0.transcript.sessionNonce) }) != expectedSessionNonceHex { lock.unlock(); return }
-        clearPendingPairingLocked()
-        lock.unlock()
-        onChange?()
+    public func cancelPairing(expectedSessionNonceHex: String? = nil) throws {
+        try managementTransaction {
+            if let expectedSessionNonceHex, runtime.pairing.session.map({ PeerPin.hex($0.transcript.sessionNonce) }) != expectedSessionNonceHex { return }
+            clearPendingPairingLocked()
+            notifyLocked()
+        }
     }
 
     /// Also called by the scheduled expiry and directly by deterministic tests.
-    public func expirePairingIfNeeded() {
-        lock.lock()
-        expirePairingIfNeededLocked()
-        lock.unlock()
+    public func expirePairingIfNeeded(expectedSessionNonceHex: String? = nil) throws {
+        try managementTransaction {
+            if let expectedSessionNonceHex, runtime.pairing.session.map({ PeerPin.hex($0.transcript.sessionNonce) }) != expectedSessionNonceHex { return }
+            expirePairingIfNeededLocked()
+        }
     }
 
     private func expirePairingIfNeededLocked() {
         guard let session = runtime.pairing.session,
               clock.now.timeIntervalSince(session.createdAt) >= PairingLimits.expirySeconds else { return }
         clearPendingPairingLocked()
-        onChange?()
+        notifyLocked()
     }
 
     private func clearPendingPairingLocked() {
@@ -293,38 +353,39 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     private func schedulePairingExpiryLocked() {
         pairingExpiry?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.expirePairingIfNeeded() }
+        let nonce = runtime.pairing.session.map { PeerPin.hex($0.transcript.sessionNonce) }
+        let work = DispatchWorkItem { [weak self] in try? self?.expirePairingIfNeeded(expectedSessionNonceHex: nonce) }
         pairingExpiry = work
-        queue.asyncAfter(deadline: .now() + PairingLimits.expirySeconds + 0.1, execute: work)
+        afterCommitLocked { [queue] in queue.asyncAfter(deadline: .now() + PairingLimits.expirySeconds + 0.1, execute: work) }
     }
 
     /// Erases owner, active revision, package bytes, and everything on disk.
-    public func unlink() {
-        lock.lock()
-        managementGeneration = UUID()
-        authorityGeneration = UUID()
-        contentOwner = nil
-        completedPairingSessionNonceHex = nil
-        try? genericConnectionVault.revoke()
-        genericConnectionGeneration = UUID()
-        clearPublicSession()
-        try? homeAssistantVault.revoke()
-        try? homeAssistantVault.revokePublic()
-        let homeAssistantRuntime = self.homeAssistantRuntime
-        Task { await homeAssistantRuntime.cancelPending() }
-        clearPendingPairingLocked()
-        runtime.unlink()
-        screenSet = nil
-        settings = DeviceSettingsSnapshot()
-        screenPackages = [:]
-        activePackage = nil
-        activeStoredRevision = nil
-        pairingCode = nil
-        deviceConfirmed = false
-        pinnedController = nil
-        try? store?.erase()
-        lock.unlock()
-        onChange?()
+    public func unlink() throws {
+        try managementTransaction {
+            managementGeneration = UUID()
+            authorityGeneration = UUID()
+            contentOwner = nil
+            completedPairingSessionNonceHex = nil
+            try? genericConnectionVault.revoke()
+            genericConnectionGeneration = UUID()
+            clearPublicSession()
+            try? homeAssistantVault.revoke()
+            try? homeAssistantVault.revokePublic()
+            let homeAssistantRuntime = self.homeAssistantRuntime
+            afterCommitLocked { Task { await homeAssistantRuntime.cancelPending() } }
+            clearPendingPairingLocked()
+            runtime.unlink()
+            screenSet = nil
+            settings = DeviceSettingsSnapshot()
+            screenPackages = [:]
+            activePackage = nil
+            activeStoredRevision = nil
+            pairingCode = nil
+            deviceConfirmed = false
+            pinnedController = nil
+            try? store?.erase()
+            notifyLocked()
+        }
     }
 
     /// Durable local disconnect. Credentials, retained content grants, and settings remain.
@@ -342,64 +403,65 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     /// The state-file replacement is the commit point; an IO failure leaves authority and content intact.
     private func updateLocalContent(disconnect: Bool, removing ids: Set<String>?) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        var nextRuntime = runtime
-        var nextSet = screenSet
-        var nextStored = activeStoredRevision
-        nextRuntime.stagedRevision = nil
-        if disconnect { nextRuntime.pairing = DevicePairingState() }
-        if var set = nextSet {
-            set.screens.removeAll { ids == nil || ids!.contains($0.revision.dashboardId) }
-            if set.screens.isEmpty { nextSet = nil; nextStored = nil }
-            else {
-                if !set.screens.contains(where: { $0.revision.dashboardId == set.selectedDashboardId }) {
-                    set.selectedDashboardId = set.screens[0].revision.dashboardId
+        try managementTransaction {
+            var nextRuntime = runtime
+            var nextSet = screenSet
+            var nextStored = activeStoredRevision
+            nextRuntime.stagedRevision = nil
+            if disconnect { nextRuntime.pairing = DevicePairingState() }
+            if var set = nextSet {
+                set.screens.removeAll { ids == nil || ids!.contains($0.revision.dashboardId) }
+                if set.screens.isEmpty { nextSet = nil; nextStored = nil }
+                else {
+                    if !set.screens.contains(where: { $0.revision.dashboardId == set.selectedDashboardId }) {
+                        set.selectedDashboardId = set.screens[0].revision.dashboardId
+                    }
+                    let selected = set.screens.first { $0.revision.dashboardId == set.selectedDashboardId }!
+                    nextStored = selected.revision
+                    nextRuntime.lastDeployment = selected.deployment
+                    nextSet = set
                 }
-                let selected = set.screens.first { $0.revision.dashboardId == set.selectedDashboardId }!
-                nextStored = selected.revision
-                nextRuntime.lastDeployment = selected.deployment
-                nextSet = set
+            } else if ids == nil || ids!.contains(nextStored?.dashboardId ?? "") { nextStored = nil }
+            nextRuntime.activeRevision = nextStored?.revision
+            if nextStored == nil { nextRuntime.lastDeployment = nil }
+            var state = DevicePersistedState(runtime: nextRuntime, activeStoredRevision: nextStored)
+            state.screenSet = nextSet
+            state.settings = settings
+            state.contentOwner = contentOwner
+            try store?.save(state)
+            runtime = nextRuntime
+            screenSet = nextSet
+            activeStoredRevision = nextStored
+            contentOwner = state.contentOwner
+            authorityGeneration = UUID()
+            genericConnectionGeneration = UUID()
+            clearPublicSession()
+            if disconnect {
+                managementGeneration = UUID()
+                completedPairingSessionNonceHex = nil
+                clearPendingPairingLocked()
+                pinnedController = nil
+                deviceConfirmed = false
             }
-        } else if ids == nil || ids!.contains(nextStored?.dashboardId ?? "") { nextStored = nil }
-        nextRuntime.activeRevision = nextStored?.revision
-        if nextStored == nil { nextRuntime.lastDeployment = nil }
-        var state = DevicePersistedState(runtime: nextRuntime, activeStoredRevision: nextStored)
-        state.screenSet = nextSet
-        state.settings = settings
-        state.contentOwner = contentOwner
-        try store?.save(state)
-        runtime = nextRuntime
-        screenSet = nextSet
-        activeStoredRevision = nextStored
-        contentOwner = state.contentOwner
-        authorityGeneration = UUID()
-        genericConnectionGeneration = UUID()
-        clearPublicSession()
-        if disconnect {
-            managementGeneration = UUID()
-            completedPairingSessionNonceHex = nil
-            clearPendingPairingLocked()
-            pinnedController = nil
-            deviceConfirmed = false
+            let retained = Set(nextSet?.screens.map { $0.revision.dashboardId } ?? [])
+            screenPackages = screenPackages.filter { retained.contains($0.key) }
+            if let set = nextSet { activateSelectionLocked(set.selectedDashboardId) }
+            else if nextStored == nil { activePackage = nil }
+            let service = homeAssistantRuntime
+            afterCommitLocked { Task { await service.cancelPending() } }
+            let directories = nextSet?.screens.map { $0.packageDirectory } ?? (nextStored == nil ? [] : ["package"])
+            store?.prunePackageGenerations(keeping: Set(directories))
+            notifyLocked()
         }
-        let retained = Set(nextSet?.screens.map { $0.revision.dashboardId } ?? [])
-        screenPackages = screenPackages.filter { retained.contains($0.key) }
-        if let set = nextSet { activateSelectionLocked(set.selectedDashboardId) }
-        else if nextStored == nil { activePackage = nil }
-        let service = homeAssistantRuntime
-        Task { await service.cancelPending() }
-        let directories = nextSet?.screens.map { $0.packageDirectory } ?? (nextStored == nil ? [] : ["package"])
-        store?.prunePackageGenerations(keeping: Set(directories))
-        onChange?()
     }
 
     public func stop() {
-        listenerLock.lock()
-        defer { listenerLock.unlock() }
-        listener?.cancel()
-        listener = nil
-        port = 0
+        lock.lock()
+        let current = listener; let pending = pendingListener; let links = Array(connections.values)
+        listener = nil; pendingListener = nil; connections = [:]; port = 0; listenerAttempt = UUID()
+        lock.unlock()
+        current?.cancel(); pending?.cancel()
+        for connection in links { connection.cancel() }
     }
 
     public var advertisedDevice: AdvertisedDevice {
@@ -418,33 +480,31 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     @discardableResult
     public func updateSettingsLocally(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
-        lock.lock()
-        let saved: DeviceSettingsSnapshot
-        do { saved = try updateSettingsLocked(update) }
-        catch { lock.unlock(); throw error }
-        lock.unlock()
-        onChange?()
-        return saved
+        return try managementTransaction {
+            let saved = try updateSettingsLocked(update)
+            notifyLocked()
+            return saved
+        }
     }
 
     /// The UI/runtime calls this only after consuming this exact revision.
     /// A late acknowledgement can never mark a newer edit as applied.
-    public func markSettingsApplied(revision: String) {
-        lock.lock()
-        guard settings.revision == revision, settings.appliedRevision != revision else { lock.unlock(); return }
-        settings.appliedRevision = revision
-        lock.unlock()
-        onChange?()
+    public func markSettingsApplied(revision: String) throws {
+        try managementTransaction {
+            guard settings.revision == revision, settings.appliedRevision != revision else { return }
+            settings.appliedRevision = revision
+            notifyLocked()
+        }
     }
 
     /// Suspension or runtime failure clears the live acknowledgement without
     /// changing the persisted desired configuration or its conflict token.
-    public func markSettingsUnapplied(revision: String) {
-        lock.lock()
-        guard settings.revision == revision, settings.appliedRevision != nil else { lock.unlock(); return }
-        settings.appliedRevision = nil
-        lock.unlock()
-        onChange?()
+    public func markSettingsUnapplied(revision: String) throws {
+        try managementTransaction {
+            guard settings.revision == revision, settings.appliedRevision != nil else { return }
+            settings.appliedRevision = nil
+            notifyLocked()
+        }
     }
 
     private func updateSettingsLocked(_ update: DeviceSettingsUpdate) throws -> DeviceSettingsSnapshot {
@@ -570,14 +630,27 @@ public final class DeviceLANServer: @unchecked Sendable {
         )
     }
 
-    private func accept(_ connection: NWConnection) {
-        guard startAndWaitReady(connection) else {
+    private func accept(_ connection: NWConnection, listenerAttempt attempt: UUID) {
+        let identifier = ObjectIdentifier(connection)
+        defer {
+            lock.lock(); connections.removeValue(forKey: identifier); lock.unlock()
             connection.cancel()
-            return
         }
-        let peerPin = LANChannel.observedPeerPin(connection)
-        let link = LANLink(connection: connection, queue: queue)
-        serve(link, peerPin: peerPin)
+        do {
+            let connectionGeneration = try managementTransaction {
+                guard listenerAttempt == attempt, listener != nil else { throw TransferFailure.interrupted }
+                connections[identifier] = connection
+                return managementGeneration
+            }
+            guard startAndWaitReady(connection) else { return }
+            observeManagementBoundary(.handshakeReady)
+            try managementTransaction {
+                guard listenerAttempt == attempt, connections[identifier] != nil else { throw TransferFailure.interrupted }
+            }
+            let peerPin = LANChannel.observedPeerPin(connection)
+            let link = LANLink(connection: connection, queue: queue)
+            serve(link, peerPin: peerPin, listenerAttempt: attempt, managementGeneration: connectionGeneration)
+        } catch { return }
     }
 
     /// Installs the state handler before `start` so a fast handshake cannot be
@@ -617,15 +690,16 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// deadline. Everyone else counts against `maxUntrustedConnections` and
     /// idles out after `untrustedIdleTimeout`; a connection that becomes the
     /// owner mid-way (pairing just completed) leaves the untrusted pool.
-    private func serve(_ link: LANLink, peerPin: [UInt8]?) {
+    private func serve(_ link: LANLink, peerPin: [UInt8]?, listenerAttempt attempt: UUID, managementGeneration: UUID) {
         defer { link.cancel() }
-        lock.lock()
         var connectionGeneration = managementGeneration
-        lock.unlock()
         var countedUntrusted = false
         defer { if countedUntrusted { releaseUntrustedSlot() } }
         while true {
             do {
+                try managementTransaction {
+                    guard listenerAttempt == attempt else { throw TransferFailure.interrupted }
+                }
                 let owner = ownerPin()
                 let trusted = owner != nil && peerPin == owner
                 if trusted {
@@ -638,7 +712,8 @@ public final class DeviceLANServer: @unchecked Sendable {
                     idleTimeout: trusted ? nil : untrustedIdleTimeout,
                     bodyTimeout: trusted ? requestBodyTimeout : min(requestBodyTimeout, 15),
                     maximumBytes: trusted ? LANProtocolLimits.maxMessageBytes : LANProtocolLimits.legacyMessageBytes)
-                let reply = handle(request, peerPin: peerPin, managementGeneration: &connectionGeneration)
+                observeManagementBoundary(.requestReceived(request.method))
+                let reply = handle(request, peerPin: peerPin, managementGeneration: &connectionGeneration, listenerAttempt: attempt)
                 try link.send(reply)
             } catch {
                 break
@@ -658,12 +733,27 @@ public final class DeviceLANServer: @unchecked Sendable {
         untrustedConnections = max(0, untrustedConnections - 1)
     }
 
-    private func handle(_ request: LANEnvelope, peerPin: [UInt8]?, managementGeneration requestGeneration: inout UUID) -> LANEnvelope {
+    private func handle(_ request: LANEnvelope, peerPin: [UInt8]?, managementGeneration requestGeneration: inout UUID, listenerAttempt attempt: UUID) -> LANEnvelope {
         if request.method == LANMethod.pairConfirm.rawValue {
+            observeManagementBoundary(.pairingWaitStarted)
             _ = waitUntilDeviceConfirmed(timeout: 60)
         }
-        lock.lock()
-        defer { lock.unlock() }
+        do { return try managementTransaction {
+            guard listenerAttempt == attempt, listener != nil else { throw TransferFailure.interrupted }
+            return handleLocked(request, peerPin: peerPin, managementGeneration: &requestGeneration)
+        } }
+        catch { return failureReply(request, error: error) }
+    }
+
+    private func failureReply(_ request: LANEnvelope, error: Error) -> LANEnvelope {
+        LANEnvelope(requestId: request.requestId, method: request.method, ok: false,
+            error: (error as? DeviceSettingsFailure)?.rawValue ?? (error as? PairingFailure)?.rawValue
+                ?? (error as? TransferFailure)?.rawValue ?? (error as? ConnectionFailure)?.rawValue
+                ?? (error is DeviceManagementAuthority.Failure ? TransferFailure.notPaired.rawValue : "failed"))
+    }
+
+    /// Caller holds authority and server locks.
+    private func handleLocked(_ request: LANEnvelope, peerPin: [UInt8]?, managementGeneration requestGeneration: inout UUID) -> LANEnvelope {
         do {
             guard request.protocolVersion == LANProtocolLimits.version else {
                 throw TransferFailure.validationFailed
@@ -691,7 +781,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 try requireOwner(peerPin)
                 let update = try LANCodec.decodePayload(DeviceSettingsUpdate.self, json: request.payloadJSON)
                 let saved = try updateSettingsLocked(update)
-                onChange?()
+                notifyLocked()
                 return ok(request, payload: saved)
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
@@ -718,7 +808,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 completedPairingSessionNonceHex = nil
                 deviceConfirmed = false
                 schedulePairingExpiryLocked()
-                onChange?()
+                notifyLocked()
                 return ok(
                     request,
                     payload: LANPairBeginResult(code: code, devicePinHex: PeerPin.hex(identity.pin))
@@ -752,7 +842,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 // `runtime.pairingCode` set and the code view on screen.
                 clearPendingPairingLocked()
                 persist()
-                onChange?()
+                notifyLocked()
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, temporaryActivation: temporaryActivationStatus))
             case .deploySet:
                 try requireOwner(peerPin)
@@ -796,10 +886,10 @@ public final class DeviceLANServer: @unchecked Sendable {
                     // Retire their secrets as well; a failed deployment never reaches here.
                     if before.activeRevision != runtime.activeRevision || activeStoredRevision?.dashboardId != body.revision.dashboardId {
                         clearPublicSession()
-        try? homeAssistantVault.revoke()
-        try? homeAssistantVault.revokePublic()
+                        try? homeAssistantVault.revoke()
+                        try? homeAssistantVault.revokePublic()
                         let service = homeAssistantRuntime
-                        Task { await service.cancelPending() }
+                        afterCommitLocked { Task { await service.cancelPending() } }
                     }
                     screenSet = nil
                     screenPackages = [:]
@@ -809,7 +899,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     authorityGeneration = UUID()
                     genericConnectionGeneration = UUID()
                     persist()
-                    onChange?()
+                    notifyLocked()
                 } else {
                     if let store, let stagedDirectory {
                         store.discardStaged(stagedDirectory)
@@ -830,8 +920,8 @@ public final class DeviceLANServer: @unchecked Sendable {
                 guard body.entries.allSatisfy({ inventory.entries.contains($0) && $0.kind == "Service integration" }) else { throw ConnectionFailure.permissionRequired }
                 try homeAssistantVault.update(body, owner: owner, grantSet: screenSet?.grantSet)
                 let service = homeAssistantRuntime
-                Task { await service.cancelPending() }
-                onChange?()
+                afterCommitLocked { Task { await service.cancelPending() } }
+                notifyLocked()
                 return ok(request, payload: try connectionInventory(owner: owner))
             case .connectionsProvision:
                 try requireOwner(peerPin)
@@ -840,14 +930,14 @@ public final class DeviceLANServer: @unchecked Sendable {
                       body.dashboardId == activeStoredRevision?.dashboardId else { throw TransferFailure.validationFailed }
                 try genericConnectionVault.provision(body, owner: PeerPin.hex(peerPin!))
                 genericConnectionGeneration = UUID()
-                onChange?()
+                notifyLocked()
                 return ok(request, payload: ConnectionProvisioningReceipt(deviceId: runtime.profile.deviceId,
                     dashboardId: body.dashboardId, revision: body.revision, provisioningId: body.provisioningId))
             case .connectionsRevoke:
                 try requireOwner(peerPin)
                 try genericConnectionVault.revoke()
                 genericConnectionGeneration = UUID()
-                onChange?()
+                notifyLocked()
                 return ok(request, payload: ["revoked": true])
             case .homeAssistantProvision:
                 try requireOwner(peerPin)
@@ -859,7 +949,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 } else {
                     try homeAssistantVault.provision(body, owner: PeerPin.hex(peerPin!))
                 }
-                onChange?()
+                notifyLocked()
                 return ok(request, payload: HomeAssistantProvisioningReceipt(
                     deviceId: runtime.profile.deviceId, dashboardId: body.dashboardId, revision: body.revision,
                     connectionId: body.connectionId, provisioningId: body.provisioningId))
@@ -867,8 +957,8 @@ public final class DeviceLANServer: @unchecked Sendable {
                 try requireOwner(peerPin)
                 try homeAssistantVault.revoke()
                 let service = homeAssistantRuntime
-                Task { await service.cancelPending() }
-                onChange?()
+                afterCommitLocked { Task { await service.cancelPending() } }
+                notifyLocked()
                 return ok(request, payload: ["revoked": true])
             case .queryActive:
                 try requireOwner(peerPin)
@@ -893,8 +983,23 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     /// Selection changes only after persistence succeeds; swiping never changes installed membership.
     public func selectScreen(_ dashboardId: String) throws {
-        lock.lock()
-        defer { lock.unlock() }
+        try managementTransaction { try selectScreenLocked(dashboardId) }
+    }
+
+    /// Checkpoint writes and selection share the same captured admission and declaration scope.
+    func commitTemporaryActivationSelection(_ selection: String?, expectedScope: HomeAssistantDeviceRuntime.Scope,
+        beforeSelection: () throws -> Void, afterSelection: () throws -> Void) throws -> Bool {
+        try managementTransaction {
+            guard temporaryActivationScopeLocked() == expectedScope else { throw ConnectionFailure.permissionRequired }
+            try beforeSelection()
+            let exists = selection.map { id in screenSet?.screens.contains { $0.revision.dashboardId == id } == true } ?? false
+            if let selection, exists { try selectScreenLocked(selection) }
+            try afterSelection()
+            return exists
+        }
+    }
+
+    private func selectScreenLocked(_ dashboardId: String) throws {
         guard var next = screenSet, next.screens.contains(where: { $0.revision.dashboardId == dashboardId }) else { return }
         guard next.selectedDashboardId != dashboardId else { return }
         next.selectedDashboardId = dashboardId
@@ -914,8 +1019,8 @@ public final class DeviceLANServer: @unchecked Sendable {
         clearPublicSession()
         activateSelectionLocked(dashboardId)
         let service = homeAssistantRuntime
-        Task { await service.cancelPending() }
-        onChange?()
+        afterCommitLocked { Task { await service.cancelPending() } }
+        notifyLocked()
     }
 
     private func activateSelectionLocked(_ dashboardId: String) {
@@ -1010,12 +1115,12 @@ public final class DeviceLANServer: @unchecked Sendable {
         screenPackages = packages
         activateSelectionLocked(body.selectedDashboardId)
         let service = homeAssistantRuntime
-        Task { await service.cancelPending() }
+        afterCommitLocked { Task { await service.cancelPending() } }
         // Cleanup after the commit cannot invalidate the newly selected generation.
         try? homeAssistantVault.retainGeneration(generation)
         try? homeAssistantVault.prunePublic(keeping: generation)
         store?.prunePackageGenerations(keeping: Set(screens.map(\.packageDirectory)))
-        onChange?()
+        notifyLocked()
         return .init(deploymentId: body.deploymentId, deviceId: body.deviceId,
                      screens: screens.map(\.entry), selectedDashboardId: body.selectedDashboardId)
     }
@@ -1043,8 +1148,8 @@ public final class DeviceLANServer: @unchecked Sendable {
     private func waitUntilDeviceConfirmed(timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
+            do { try expirePairingIfNeeded() } catch { return false }
             lock.lock()
-            expirePairingIfNeededLocked()
             let done = deviceConfirmed
             let cancelled = pairingCode == nil
             lock.unlock()

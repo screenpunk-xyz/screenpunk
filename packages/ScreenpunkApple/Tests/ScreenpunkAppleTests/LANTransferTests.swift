@@ -23,7 +23,7 @@ final class LANTransferTests: XCTestCase {
         let store = DeviceStateStore(root: FileManager.default.temporaryDirectory
             .appendingPathComponent("sp-lan-device-\(UUID().uuidString)", isDirectory: true))
         defer { try? store.erase() }
-        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity, store: store, homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity, store: store, homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
         try server.start()
         XCTAssertGreaterThan(server.port, 0)
         defer { server.stop() }
@@ -192,7 +192,7 @@ final class LANTransferTests: XCTestCase {
         // Relaunch: a fresh server over the same store comes back paired and rendering.
         client.cancel()
         server.stop()
-        let relaunched = DeviceLANServer(
+        let relaunched = try DeviceLANServer(management: testManagementContext(),
             runtime: DeviceRuntime(
                 identity: deviceIdentity.pairingIdentity,
                 profile: DeviceProfile(deviceId: "lan-phone", name: "LAN iPhone"),
@@ -228,13 +228,13 @@ final class LANTransferTests: XCTestCase {
             // TLS pin rejects the second controller: the persisted owner still holds.
         }
 
-        relaunched.unlink()
+        try relaunched.unlink()
         XCTAssertFalse(relaunched.runtime.isPaired)
         XCTAssertNil(relaunched.runtime.activeRevision)
         XCTAssertNil(relaunched.activePackage, "Unlink erases the delivered package")
         XCTAssertFalse(store.hasState, "Unlink erases persisted pairing")
         XCTAssertFalse(store.hasPackage, "Unlink erases persisted package bytes")
-        let coldStart = DeviceLANServer(runtime: runtime, identity: deviceIdentity, store: store)
+        let coldStart = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity, store: store)
         XCTAssertFalse(coldStart.runtime.isPaired, "after Unlink a relaunch is unpaired")
         XCTAssertNil(coldStart.activePackage)
     }
@@ -252,7 +252,7 @@ final class LANTransferTests: XCTestCase {
             advertisement: AdvertisedDevice(deviceId: "pause-phone", host: "127.0.0.1", port: 0, source: .advertised)
         )
         // Body timeout far below the pause so the old idle limit would trip.
-        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity, requestBodyTimeout: 0.3)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity, requestBodyTimeout: 0.3)
         try server.start()
         defer { server.stop() }
 
@@ -304,7 +304,7 @@ final class LANTransferTests: XCTestCase {
         let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-claim")
         let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-claim")
         let otherController = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-other")
-        let server = DeviceLANServer(
+        let server = try DeviceLANServer(management: testManagementContext(),
             runtime: DeviceRuntime(
                 identity: deviceIdentity.pairingIdentity,
                 profile: DeviceProfile(deviceId: "claim-phone", name: "Claim"),
@@ -351,7 +351,7 @@ final class LANTransferTests: XCTestCase {
         let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-lock")
         let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-lock")
         let intruderIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-intruder")
-        let server = DeviceLANServer(
+        let server = try DeviceLANServer(management: testManagementContext(),
             runtime: DeviceRuntime(
                 identity: deviceIdentity.pairingIdentity,
                 profile: DeviceProfile(deviceId: "lock-phone", name: "Lock"),
@@ -401,7 +401,7 @@ final class LANTransferTests: XCTestCase {
         _ = try restarted.hello()
         XCTAssertNoThrow(try restarted.beginPairing(nonce: PairingIdentityFactory.nonce()))
         XCTAssertNoThrow(try restarted.beginPairing(nonce: PairingIdentityFactory.nonce()))
-        server.cancelPairing()
+        try server.cancelPairing()
     }
 
     /// Any LAN peer can open a TLS connection to an unpaired device. Idle
@@ -410,7 +410,7 @@ final class LANTransferTests: XCTestCase {
     func testUntrustedConnectionsAreBoundedAndIdleOut() throws {
         let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-slots")
         let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-slots")
-        let server = DeviceLANServer(
+        let server = try DeviceLANServer(management: testManagementContext(),
             runtime: DeviceRuntime(
                 identity: deviceIdentity.pairingIdentity,
                 profile: DeviceProfile(deviceId: "slots-phone", name: "Slots"),
@@ -451,7 +451,7 @@ final class LANTransferTests: XCTestCase {
     func testOwnerConnectionOutlivesUntrustedIdleTimeout() throws {
         let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-owner-idle")
         let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-owner-idle")
-        let server = DeviceLANServer(
+        let server = try DeviceLANServer(management: testManagementContext(),
             runtime: DeviceRuntime(
                 identity: deviceIdentity.pairingIdentity,
                 profile: DeviceProfile(deviceId: "owner-idle-phone", name: "Owner"),
@@ -485,7 +485,7 @@ final class LANTransferTests: XCTestCase {
         let store = DeviceStateStore(root: FileManager.default.temporaryDirectory
             .appendingPathComponent("sp-lan-replay-\(UUID().uuidString)", isDirectory: true))
         defer { try? store.erase() }
-        let server = DeviceLANServer(
+        let server = try DeviceLANServer(management: testManagementContext(),
             runtime: DeviceRuntime(
                 identity: deviceIdentity.pairingIdentity,
                 profile: DeviceProfile(deviceId: "replay-phone", name: "Replay"),
@@ -572,7 +572,7 @@ final class LANTransferTests: XCTestCase {
                 source: .advertised
             )
         )
-        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity)
         try server.start()
         defer { server.stop() }
 

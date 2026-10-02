@@ -12,7 +12,7 @@ final class LANDiscoveryRecoveryTests: XCTestCase {
             profile: DeviceProfile(deviceId: id, name: id),
             advertisement: AdvertisedDevice(deviceId: id, host: "127.0.0.1", port: 0, source: .advertised)
         )
-        let server = DeviceLANServer(runtime: runtime, identity: identity)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: identity)
         try server.start()
         defer { server.stop() }
         let hub = LoopbackDiscovery()

@@ -31,13 +31,13 @@ final class DeviceInstallIdentityTests: XCTestCase {
         try vault.provision(config, owner: PeerPin.hex(owner.publicKey))
         let generation = try vault.record(owner: PeerPin.hex(owner.publicKey), revision: saved.revision).generation
 
-        func makeServer(_ id: String) -> DeviceLANServer {
+        func makeServer(_ id: String) throws -> DeviceLANServer {
             let runtime = DeviceRuntime(identity: deviceIdentity.pairingIdentity,
                 profile: .init(deviceId: id, name: "iPad"),
                 advertisement: .init(deviceId: id, host: "127.0.0.1", port: 0, source: .advertised))
-            return DeviceLANServer(runtime: runtime, identity: deviceIdentity, store: store, homeAssistantVault: vault)
+            return try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity, store: store, homeAssistantVault: vault)
         }
-        let upgraded = makeServer("phone-local")
+        let upgraded = try makeServer("phone-local")
         let stableID = DeviceInstallIdentity.deviceID(for: deviceIdentity.pin)
         XCTAssertEqual(upgraded.runtime.profile.deviceId, stableID)
         XCTAssertEqual(upgraded.runtime.advertisement.deviceId, stableID)
@@ -50,7 +50,7 @@ final class DeviceInstallIdentityTests: XCTestCase {
         XCTAssertEqual(store.load()?.activeStoredRevision, saved)
         XCTAssertEqual(upgraded.activePackage?.assets["index.html"]?.data, files.first { $0.path == "index.html" }?.data)
         XCTAssertEqual(try vault.record(owner: PeerPin.hex(owner.publicKey), revision: saved.revision).generation, generation)
-        let reloaded = makeServer(DeviceInstallIdentity.pendingID)
+        let reloaded = try makeServer(DeviceInstallIdentity.pendingID)
         XCTAssertEqual(reloaded.runtime.profile.deviceId, stableID)
         XCTAssertEqual(reloaded.runtime.pairing.owner, owner)
         XCTAssertEqual(reloaded.runtime.activeRevision, saved.revision)
@@ -60,15 +60,15 @@ final class DeviceInstallIdentityTests: XCTestCase {
     func testFreshDevicesDifferAndExplicitFixtureIDsRemainUnchanged() throws {
         let one = try TLSIdentity.make(role: .device, commonName: "fresh-phone")
         let two = try TLSIdentity.make(role: .device, commonName: "fresh-ipad")
-        func server(_ identity: TLSIdentityMaterial, id: String = DeviceInstallIdentity.pendingID) -> DeviceLANServer {
-            DeviceLANServer(runtime: .init(identity: identity.pairingIdentity, profile: .init(deviceId: id, name: "Test"),
+        func server(_ identity: TLSIdentityMaterial, id: String = DeviceInstallIdentity.pendingID) throws -> DeviceLANServer {
+            try DeviceLANServer(management: testManagementContext(), runtime: .init(identity: identity.pairingIdentity, profile: .init(deviceId: id, name: "Test"),
                 advertisement: .init(deviceId: id, host: "127.0.0.1", port: 0, source: .advertised)), identity: identity,
                 homeAssistantVault: .init(store: MemoryCredentialStore()))
         }
-        let phone = server(one), tablet = server(two)
+        let phone = try server(one), tablet = try server(two)
         XCTAssertNotEqual(phone.runtime.profile.deviceId, tablet.runtime.profile.deviceId)
         XCTAssertFalse(phone.runtime.isPaired)
         XCTAssertNil(tablet.runtime.activeRevision)
-        XCTAssertEqual(server(one, id: "fixture-device").runtime.profile.deviceId, "fixture-device")
+        XCTAssertEqual(try server(one, id: "fixture-device").runtime.profile.deviceId, "fixture-device")
     }
 }

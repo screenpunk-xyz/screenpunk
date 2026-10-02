@@ -19,7 +19,7 @@ final class PairingOverlayTests: XCTestCase {
             revision: revision.revision, origin: "https://ha.example", token: "fixture-token"), owner: PeerPin.hex(ownerIdentity.pin))
         let savedGrant = try vault.record(owner: PeerPin.hex(ownerIdentity.pin), revision: revision.revision)
         let clock = PairingTestClock()
-        let server = DeviceLANServer(runtime: .init(identity: deviceIdentity.pairingIdentity,
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: .init(identity: deviceIdentity.pairingIdentity,
             profile: .init(deviceId: "overlay-phone", name: "iPhone"),
             advertisement: .init(deviceId: "overlay-phone", host: "127.0.0.1", port: 0, source: .advertised)),
             identity: deviceIdentity, clock: clock, store: store, homeAssistantVault: vault)
@@ -40,13 +40,13 @@ final class PairingOverlayTests: XCTestCase {
         let first = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
         XCTAssertEqual(server.pairingCode, first.code, "Pending code must coexist with the active screen for overlay presentation")
         try assertContentPreserved()
-        server.cancelPairing()
+        try server.cancelPairing()
         XCTAssertNil(server.pairingCode)
         XCTAssertNil(server.runtime.pairing.session)
         try assertContentPreserved()
         _ = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
         clock.advance(PairingLimits.expirySeconds + 1)
-        server.expirePairingIfNeeded()
+        try server.expirePairingIfNeeded()
         XCTAssertNil(server.pairingCode)
         XCTAssertThrowsError(try server.confirmLocally())
         try assertContentPreserved()
@@ -54,7 +54,7 @@ final class PairingOverlayTests: XCTestCase {
         let finalNonce = PairingIdentityFactory.nonce()
         let final = try client.beginPairing(nonce: finalNonce)
         XCTAssertThrowsError(try server.confirmLocally(expectedSessionNonceHex: staleNonce))
-        server.cancelPairing(expectedSessionNonceHex: staleNonce)
+        try server.cancelPairing(expectedSessionNonceHex: staleNonce)
         XCTAssertEqual(server.pendingPairingSessionNonceHex, PeerPin.hex(finalNonce))
         try server.confirmLocally(expectedSessionNonceHex: PeerPin.hex(finalNonce))
         XCTAssertTrue(server.awaitingControllerConfirm)
@@ -72,7 +72,7 @@ final class PairingOverlayTests: XCTestCase {
         defer { try? store.erase() }
         let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "approval", name: "Test"),
             advertisement: .init(deviceId: "approval", host: "127.0.0.1", port: 0, source: .advertised))
-        let server = DeviceLANServer(runtime: runtime, identity: device, store: store)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store)
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: owner); defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port)

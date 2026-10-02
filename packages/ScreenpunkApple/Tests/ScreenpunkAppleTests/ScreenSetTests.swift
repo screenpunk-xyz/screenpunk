@@ -15,7 +15,7 @@ final class ScreenSetTests: XCTestCase {
         let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test phone"),
             advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised),
             pairing: .init(owner: owner.pairingIdentity))
-        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: owner)
         defer { client.cancel() }
@@ -37,7 +37,7 @@ final class ScreenSetTests: XCTestCase {
         XCTAssertEqual(try client.deployScreenSet(body), receipt, "Retry returns original receipt after swipe")
         XCTAssertEqual(server.runtime.activeRevision, "second-revision")
         XCTAssertEqual(server.activePackage?.assets["index.html"]?.data, Data("<html>second</html>".utf8))
-        let restored = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let restored = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         XCTAssertEqual(restored.screenSet?.screens.count, 2)
         XCTAssertEqual(restored.runtime.activeRevision, "second-revision")
         XCTAssertEqual(restored.activePackage?.assets["index.html"]?.data, server.activePackage?.assets["index.html"]?.data)
@@ -66,7 +66,7 @@ final class ScreenSetTests: XCTestCase {
         // Simulate process loss after package/credential preparation but before the state commit.
         _ = try store.stagePackage([(path: "index.html", data: Data("uncommitted".utf8))])
         try vault.stage([body.screens[0].homeAssistant!], owner: pin, generation: "uncommitted")
-        let afterCrash = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let afterCrash = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         XCTAssertEqual(afterCrash.runtime.activeRevision, "second-revision")
         XCTAssertEqual(afterCrash.screenSet?.grantSet, generation)
         let stateBytes = try Data(contentsOf: store.stateURL)
@@ -77,7 +77,7 @@ final class ScreenSetTests: XCTestCase {
         _ = try client.deployScreenSet(single)
         XCTAssertEqual(server.screenSet?.screens.count, 1)
         XCTAssertThrowsError(try vault.record(owner: pin, revision: "second-revision", grantSet: generation))
-        server.unlink()
+        try server.unlink()
         XCTAssertNil(server.screenSet)
         XCTAssertFalse(store.hasState)
     }
@@ -90,7 +90,7 @@ final class ScreenSetTests: XCTestCase {
         let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
         let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test phone"),
             advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
-        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: owner); defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
@@ -128,13 +128,13 @@ final class ScreenSetTests: XCTestCase {
         try server.selectScreen(id)
         let newSession = try XCTUnwrap(server.publicReadSession())
         XCTAssertThrowsError(try newSession.resources.asset(url: handle))
-        let restored = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let restored = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         XCTAssertNotNil(restored.publicReadSession())
         var invalid = body; invalid.deploymentId = "mismatched-public-grant"
         invalid.screens[0].publicReads?.connections[0].publicHTTP?.origin = "https://unapproved.example.org"
         XCTAssertThrowsError(try client.deployScreenSet(invalid))
         XCTAssertEqual(server.screenSet?.grantSet, generation)
-        server.unlink()
+        try server.unlink()
         XCTAssertThrowsError(try vault.publicConfiguration(owner: PeerPin.hex(owner.pin), dashboardId: id, revision: revisionId, generation: generation))
     }
 
@@ -147,7 +147,7 @@ final class ScreenSetTests: XCTestCase {
         let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test"),
             advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised),
             pairing: .init(owner: owner.pairingIdentity))
-        let server = DeviceLANServer(runtime: runtime, identity: device, store: store,
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store,
             homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: owner)
@@ -162,7 +162,7 @@ final class ScreenSetTests: XCTestCase {
         let receipt = try client.deployScreenSet(body)
         XCTAssertEqual(receipt.screens.count, 2)
         XCTAssertEqual(server.activePackage?.assets["generic.bin"]?.data, asset)
-        let restored = DeviceLANServer(runtime: runtime, identity: device, store: store,
+        let restored = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store,
             homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
         XCTAssertEqual(restored.activePackage?.assets["generic.bin"]?.data, asset)
     }
@@ -201,7 +201,7 @@ final class ScreenSetTests: XCTestCase {
         let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
         let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test"),
             advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
-        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: owner); defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
@@ -242,7 +242,7 @@ final class ScreenSetTests: XCTestCase {
         let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
         let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test"),
             advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
-        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: owner); defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
@@ -286,7 +286,7 @@ final class ScreenSetTests: XCTestCase {
         let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())
         let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test"),
             advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
-        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: owner); defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
@@ -304,7 +304,7 @@ final class ScreenSetTests: XCTestCase {
         var configured = try makeBody(activationTargets: ["second"]); configured.deploymentId = "configured"
         _ = try client.deployScreenSet(configured)
         XCTAssertEqual(server.temporaryActivationScope()?.temporaryActivation?.entityId, "sensor.notice")
-        let restored = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let restored = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         XCTAssertEqual(contentScope(restored.temporaryActivationScope()), contentScope(server.temporaryActivationScope()))
         var invalid = configured; invalid.deploymentId = "invalid"
         let index = try XCTUnwrap(invalid.screens[1].deployment.files.firstIndex(where: { $0.path == "manifest.json" }))
@@ -327,7 +327,7 @@ final class ScreenSetTests: XCTestCase {
         let vault = HomeAssistantDeviceVault(store: secrets)
         let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "set-phone", name: "Test phone"),
             advertisement: .init(deviceId: "set-phone", host: "127.0.0.1", port: 0, source: .advertised), pairing: .init(owner: owner.pairingIdentity))
-        let server = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: owner); defer { client.cancel() }
         try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.pin)
@@ -362,7 +362,7 @@ final class ScreenSetTests: XCTestCase {
         XCTAssertNoThrow(try repairedClient.queryActiveState())
         XCTAssertThrowsError(try client.queryActiveState(), "Same-pin repair never revives the old management channel")
         try server.disconnect(keepScreens: true)
-        let restored = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let restored = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         XCTAssertFalse(restored.runtime.isPaired)
         XCTAssertEqual(restored.screenSet?.screens.count, 2)
         XCTAssertEqual(restored.settingsSnapshot, settings)
@@ -370,7 +370,7 @@ final class ScreenSetTests: XCTestCase {
         var reassigned = try XCTUnwrap(store.load())
         reassigned.owner = PairingIdentityFactory.make(role: .controller, bytes: [UInt8](repeating: 0x91, count: 32))
         try store.save(reassigned)
-        let newManager = DeviceLANServer(runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
+        let newManager = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
         XCTAssertNil(newManager.temporaryActivationScope(), "A new manager never inherits old content capabilities")
         reassigned.owner = nil
         try store.save(reassigned)

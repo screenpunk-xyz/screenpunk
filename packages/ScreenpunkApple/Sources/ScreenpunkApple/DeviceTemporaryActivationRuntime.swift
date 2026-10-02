@@ -11,7 +11,7 @@ import ScreenpunkCore
     private var engine = TemporaryActivationNavigation()
     private var enabled = false
     private var status = DeviceTemporaryActivationStatus() {
-        didSet { server?.updateTemporaryActivationStatus(status) }
+        didSet { try? server?.updateTemporaryActivationStatus(status) }
     }
     private var pendingSelection: String?
     private var service: HomeAssistantDeviceRuntime?
@@ -102,19 +102,19 @@ import ScreenpunkCore
         guard next != engine || selection != nil || pendingSelection != nil else { return }
         do {
             let pending = selection ?? pendingSelection
-            if let url = checkpointURL {
-                let saved = Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: next, pendingSelection: pending)
-                try JSONEncoder().encode(saved).write(to: url, options: .atomic)
-            }
-            engine = next; pendingSelection = pending
-            if let selection = pending, server.screenSet?.screens.contains(where: { $0.revision.dashboardId == selection }) == true {
-                try server.selectScreen(selection)
-                status.selectionCount += 1
-            }
-            pendingSelection = nil
-            if let url = checkpointURL {
-                try JSONEncoder().encode(Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: engine, pendingSelection: nil)).write(to: url, options: .atomic)
-            }
+            let selected = try server.commitTemporaryActivationSelection(pending, expectedScope: scope, beforeSelection: {
+                if let url = checkpointURL {
+                    let saved = Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: next, pendingSelection: pending)
+                    try JSONEncoder().encode(saved).write(to: url, options: .atomic)
+                }
+                engine = next; pendingSelection = pending
+            }, afterSelection: {
+                pendingSelection = nil
+                if let url = checkpointURL {
+                    try JSONEncoder().encode(Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: engine, pendingSelection: nil)).write(to: url, options: .atomic)
+                }
+            })
+            if selected { status.selectionCount += 1 }
         } catch {
             status.phase = "selection_failed"
             let e = error as NSError; status.lastError = "\(e.domain):\(e.code)"

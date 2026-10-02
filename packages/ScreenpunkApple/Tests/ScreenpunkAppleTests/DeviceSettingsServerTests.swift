@@ -3,8 +3,8 @@ import ScreenpunkCore
 @testable import ScreenpunkApple
 #if canImport(Network) && canImport(Security)
 final class DeviceSettingsServerTests: XCTestCase {
-    private func makeServer(identity: TLSIdentityMaterial, store: DeviceStateStore) -> DeviceLANServer {
-        DeviceLANServer(runtime: DeviceRuntime(identity: identity.pairingIdentity,
+    private func makeServer(identity: TLSIdentityMaterial, store: DeviceStateStore) throws -> DeviceLANServer {
+        try DeviceLANServer(management: testManagementContext(), runtime: DeviceRuntime(identity: identity.pairingIdentity,
             profile: DeviceProfile(deviceId: "settings-phone", name: "Settings Phone"),
             advertisement: AdvertisedDevice(deviceId: "settings-phone", host: "127.0.0.1", port: 0, source: .advertised)),
             identity: identity, store: store,
@@ -16,29 +16,29 @@ final class DeviceSettingsServerTests: XCTestCase {
         let identity = try TLSIdentity.make(role: .device, commonName: "settings-local-test")
         let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         defer { try? store.erase() }
-        let server = makeServer(identity: identity, store: store)
+        let server = try makeServer(identity: identity, store: store)
         let original = server.settingsSnapshot
         let saved = try server.updateSettingsLocally(.init(expectedRevision: original.revision,
             value: .init(brightness: .init(mode: .fixed, fixedLevel: 0.7))))
         XCTAssertEqual(store.load()?.settings, saved)
         XCTAssertFalse(saved.isApplied)
-        server.markSettingsApplied(revision: original.revision)
+        try server.markSettingsApplied(revision: original.revision)
         XCTAssertFalse(server.settingsSnapshot.isApplied, "late apply cannot acknowledge a newer edit")
-        server.markSettingsApplied(revision: saved.revision)
+        try server.markSettingsApplied(revision: saved.revision)
         XCTAssertTrue(server.settingsSnapshot.isApplied)
-        server.markSettingsUnapplied(revision: original.revision)
+        try server.markSettingsUnapplied(revision: original.revision)
         XCTAssertTrue(server.settingsSnapshot.isApplied, "a stale background callback cannot clear newer runtime state")
-        server.markSettingsUnapplied(revision: saved.revision)
+        try server.markSettingsUnapplied(revision: saved.revision)
         XCTAssertFalse(server.settingsSnapshot.isApplied)
-        server.markSettingsApplied(revision: saved.revision)
+        try server.markSettingsApplied(revision: saved.revision)
         XCTAssertThrowsError(try server.updateSettingsLocally(.init(expectedRevision: original.revision, value: .init()))) {
             XCTAssertEqual($0 as? DeviceSettingsFailure, .conflict)
         }
-        let relaunched = makeServer(identity: identity, store: store)
+        let relaunched = try makeServer(identity: identity, store: store)
         XCTAssertEqual(relaunched.settingsSnapshot.revision, saved.revision)
         XCTAssertEqual(relaunched.settingsSnapshot.value, saved.value)
         XCTAssertFalse(relaunched.settingsSnapshot.isApplied, "app relaunch needs fresh runtime acknowledgement")
-        relaunched.unlink()
+        try relaunched.unlink()
         XCTAssertEqual(relaunched.settingsSnapshot.value, DeviceSettings())
         XCTAssertFalse(store.hasState)
     }
@@ -48,7 +48,7 @@ final class DeviceSettingsServerTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data("not a directory".utf8).write(to: root)
         defer { try? FileManager.default.removeItem(at: root) }
-        let server = makeServer(identity: identity, store: DeviceStateStore(root: root))
+        let server = try makeServer(identity: identity, store: DeviceStateStore(root: root))
         let original = server.settingsSnapshot
         XCTAssertThrowsError(try server.updateSettingsLocally(.init(expectedRevision: original.revision,
             value: .init(brightness: .init(mode: .fixed, fixedLevel: 0.1))))) {
@@ -61,7 +61,7 @@ final class DeviceSettingsServerTests: XCTestCase {
         let identity = try TLSIdentity.make(role: .device, commonName: "settings-page-test")
         let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         defer { try? store.erase() }
-        let server = makeServer(identity: identity, store: store)
+        let server = try makeServer(identity: identity, store: store)
         let original = server.settingsSnapshot
         XCTAssertThrowsError(try server.updateSettingsLocally(.init(expectedRevision: original.revision,
             value: .init(startingPageByDashboard: ["not-installed": "page"])))) {
@@ -77,7 +77,7 @@ final class DeviceSettingsServerTests: XCTestCase {
         var state = DevicePersistedState(owner: nil, activeRevision: nil, activeStoredRevision: nil, lastDeployment: nil)
         state.settings = .init(value: .init(startingPageByDashboard: ["removed-dashboard": "removed-page"]))
         try store.save(state)
-        let server = makeServer(identity: identity, store: store)
+        let server = try makeServer(identity: identity, store: store)
         var desired = server.settingsSnapshot.value
         desired.brightness = .init(mode: .fixed, fixedLevel: 0.6)
         let saved = try server.updateSettingsLocally(.init(expectedRevision: server.settingsSnapshot.revision, value: desired))
@@ -95,7 +95,7 @@ final class DeviceSettingsServerTests: XCTestCase {
         let owner = try TLSIdentity.make(role: .controller, commonName: "settings-lan-owner")
         let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         defer { try? store.erase() }
-        let server = makeServer(identity: identity, store: store)
+        let server = try makeServer(identity: identity, store: store)
         try server.start()
         defer { server.stop() }
         let client = ControllerLANClient(identity: owner)

@@ -19,6 +19,9 @@ public final class DeviceLANHost: ObservableObject {
     @Published public var settingsSnapshot: DeviceSettingsSnapshot?
     @Published public var genericConnectionGeneration = UUID()
     public let server: DeviceLANServer?
+    private let management: DeviceManagementContext
+    private let lifecycleLock = NSLock()
+    private var managementSuspended = false
     private let recoveryQueue = DispatchQueue(label: "xyz.screenpunk.lan.recovery")
     private var recoveryTimer: DispatchSourceTimer?
     private var listenerError: String?
@@ -33,32 +36,44 @@ public final class DeviceLANHost: ObservableObject {
 
     /// `store` defaults to the per-user device home so pairing and the active
     /// package survive a relaunch. Tests pass a temporary store.
-    public init(runtime: DeviceRuntime, store: DeviceStateStore? = nil) {
-        if let identity = try? TLSIdentity.loadOrCreate(role: .device) {
-            var runtime = runtime
-            runtime.identity = identity.pairingIdentity
-            let server = DeviceLANServer(
-                runtime: runtime,
-                identity: identity,
-                store: store ?? DeviceStateStore(root: DeviceStateStore.defaultRoot())
-            )
-            self.runtime = server.runtime
-            self.activePackage = server.activePackage
-            self.screenSet = server.screenSet
-            self.settingsSnapshot = server.settingsSnapshot
-            self.server = server
-            server.onChange = { [weak self] in
-                DispatchQueue.main.async { self?.refresh() }
-            }
-        } else {
-            self.runtime = runtime
-            self.server = nil
-            self.errorMessage = "tls-identity-failed"
+    public convenience init(runtime: DeviceRuntime, management: DeviceManagementContext, store: DeviceStateStore? = nil) throws {
+        try self.init(runtime: runtime, management: management, store: store, identityProvider: { try TLSIdentity.loadOrCreate(role: .device) })
+    }
+    init(runtime: DeviceRuntime, management: DeviceManagementContext, store: DeviceStateStore?,
+         identityProvider: () throws -> TLSIdentityMaterial) throws {
+        self.management = management
+        let identity = try management.withAuthority(identityProvider)
+        var runtime = runtime
+        runtime.identity = identity.pairingIdentity
+        let server = try DeviceLANServer(management: management, runtime: runtime, identity: identity,
+            store: store ?? DeviceStateStore(root: DeviceStateStore.defaultRoot()))
+        self.runtime = server.runtime
+        self.activePackage = server.activePackage
+        self.screenSet = server.screenSet
+        self.settingsSnapshot = server.settingsSnapshot
+        self.server = server
+        server.onChange = { [weak self] in DispatchQueue.main.async { self?.refresh() } }
+        server.onManagementSuspended = { [weak self] in self?.suspendManagement() }
+    }
+
+    private func suspendManagement() {
+        lifecycleLock.lock()
+        guard !managementSuspended else { lifecycleLock.unlock(); return }
+        managementSuspended = true
+        recoveryTimer?.cancel(); recoveryTimer = nil
+        lifecycleLock.unlock()
+        server?.suspendManagement()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.errorMessage = "Local management is unavailable. Restart to check recovery."
+            self.refresh()
         }
     }
 
     public func start() {
-        guard recoveryTimer == nil else { return }
+        do { try management.validate() } catch { suspendManagement(); return }
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        guard !managementSuspended, recoveryTimer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: recoveryQueue)
         timer.schedule(deadline: .now(), repeating: 5)
         timer.setEventHandler { [weak self] in self?.ensureListener() }
@@ -77,10 +92,14 @@ public final class DeviceLANHost: ObservableObject {
     }
 
     private func ensureListener() {
-        guard let server else { return }
+        lifecycleLock.lock(); let suspended = managementSuspended; lifecycleLock.unlock()
+        guard !suspended, let server else { return }
         let result = Result { try server.start() }
+        if case .failure(let error) = result, error is DeviceManagementAuthority.Failure { suspendManagement(); return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.lifecycleLock.lock(); let suspended = self.managementSuspended; self.lifecycleLock.unlock()
+            guard !suspended else { self.refresh(); return }
             switch result {
             case .success:
                 if self.errorMessage == self.listenerError { self.errorMessage = nil }
@@ -109,9 +128,10 @@ public final class DeviceLANHost: ObservableObject {
     }
 
     public func cancelPairing(expectedSessionNonceHex: String? = nil) {
-        server?.cancelPairing(expectedSessionNonceHex: expectedSessionNonceHex)
-        errorMessage = nil
-        refresh()
+        do {
+            try server?.cancelPairing(expectedSessionNonceHex: expectedSessionNonceHex)
+            errorMessage = nil; refresh()
+        } catch { errorMessage = "Local management is unavailable." }
     }
 
     @MainActor public func advanceScreen(by offset: Int) {
@@ -140,14 +160,14 @@ public final class DeviceLANHost: ObservableObject {
 
     public func markSettingsApplied(revision: String) {
         guard settingsSnapshot?.revision == revision, settingsSnapshot?.isApplied == false else { return }
-        server?.markSettingsApplied(revision: revision)
-        refresh()
+        do { try server?.markSettingsApplied(revision: revision); refresh() }
+        catch { errorMessage = "Local management is unavailable." }
     }
 
     public func markSettingsUnapplied(revision: String) {
         guard settingsSnapshot?.revision == revision, settingsSnapshot?.isApplied == true else { return }
-        server?.markSettingsUnapplied(revision: revision)
-        refresh()
+        do { try server?.markSettingsUnapplied(revision: revision); refresh() }
+        catch { errorMessage = "Local management is unavailable." }
     }
 
     public func disconnect(keepScreens: Bool) throws {
@@ -170,11 +190,13 @@ public final class DeviceLANHost: ObservableObject {
 
     @MainActor public func unlink() {
         do {
-            try ScreenPreferenceStore.shared.erase()
-            try GoogleCalendarDeviceService.shared.erase()
+            try management.withAuthority {
+                try ScreenPreferenceStore.shared.erase()
+                try GoogleCalendarDeviceService.shared.erase()
+            }
+            try server?.unlink()
         }
         catch { errorMessage = "Could not remove saved device data. Unlock the device and try disconnecting again."; return }
-        server?.unlink()
         refresh()
     }
 
