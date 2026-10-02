@@ -16,7 +16,7 @@ final class CloudConnectionCoordinatorTests: XCTestCase {
         return .init(authenticate: authenticate, cancelIdentityFlow: {}, signOutIdentity: signOut, makeClient: { tokens in
             let transport = transports[index]; index += 1
             return try CloudNativeClient(baseURL: URL(string: "https://cloud.example.invalid")!, tokenProvider: tokens, transport: transport)
-        })
+        }, journal: TestWorkspaceJournal())
     }
 
     func testImmediateCancelPreventsQueuedProviderPresentation() async {
