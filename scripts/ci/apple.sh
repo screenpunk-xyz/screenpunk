@@ -40,6 +40,7 @@ fi
 )
 (cd tools/screenpunk-distribution && swift test)
 (cd packages/ScreenpunkController && swift test)
+(cd packages/ScreenpunkAppleController && swift test)
 # Match the release workflow: the pinned MCP dependency requires Swift 5 mode
 # on Xcode 26; app and package tests above retain their normal settings.
 (cd tools/screenpunk-mcp && swift build -Xswiftc -swift-version -Xswiftc 5)

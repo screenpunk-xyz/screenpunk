@@ -16,15 +16,15 @@ public struct TLSIdentityMaterial: @unchecked Sendable {
 public enum TLSIdentity {
     static let controllerTag = "xyz.screenpunk.tls.controller"
     static let deviceTag = "xyz.screenpunk.tls.device"
+    private static let lifecycleLock = NSLock()
 
     /// Persistent per-user identity. The Mac workbench and `screenpunk-mcp`
     /// share the controller tag, so a device sees one owner whichever client paired it.
     public static func loadOrCreate(role: PairingRole) throws -> TLSIdentityMaterial {
         let tag = role == .controller ? controllerTag : deviceTag
-        if let existing = try? load(role: role, tag: tag) {
-            return existing
-        }
-        return try generate(role: role, commonName: tag, tag: Data(tag.utf8))
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        return try TLSIdentityLifecycle.loadOrCreate(role: role, tag: tag, store: KeychainIdentityStore())
     }
 
     static func make(role: PairingRole, commonName: String) throws -> TLSIdentityMaterial {
@@ -32,24 +32,50 @@ public enum TLSIdentity {
         return try generate(role: role, commonName: unique, tag: Data(unique.utf8))
     }
 
-    private static func load(role: PairingRole, tag: String) throws -> TLSIdentityMaterial {
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching([
+    private struct KeychainIdentityStore: TLSIdentityStore {
+        func load(role: PairingRole, tag: String) throws -> TLSIdentityMaterial? {
+            try TLSIdentity.load(role: role, tag: tag)
+        }
+        func create(role: PairingRole, tag: String) throws -> TLSIdentityMaterial {
+            try generate(role: role, commonName: tag, tag: Data(tag.utf8))
+        }
+    }
+
+    /// Keep the original application tag and default Keychain/access-group
+    /// scope. Only absence of this exact private-key query permits creation.
+    static func persistentKeyQuery(tag: String) -> [String: Any] {
+        [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: Data(tag.utf8),
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
             kSecReturnRef as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ] as CFDictionary, &item)
-        guard status == errSecSuccess, let item, let privateKey = secKey(item) else {
-            throw TransferFailure.validationFailed
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+    }
+
+    /// Never turn access denial, a locked Keychain, or an invalid query into absence.
+    static func lookupFound(status: OSStatus) throws -> Bool {
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else { throw TLSIdentityLoadError.keychain(status: status) }
+        return true
+    }
+
+    private static func load(role: PairingRole, tag: String) throws -> TLSIdentityMaterial? {
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(persistentKeyQuery(tag: tag) as CFDictionary, &item)
+        guard try lookupFound(status: status) else { return nil }
+        guard let item else { throw TLSIdentityLoadError.corruptMaterial }
+        let matches = (item as? [AnyObject]) ?? [item as AnyObject]
+        guard matches.count == 1, let privateKey = secKey(matches[0]) else {
+            throw TLSIdentityLoadError.corruptMaterial
         }
         guard let publicKey = SecKeyCopyPublicKey(privateKey),
               let publicData = SecKeyCopyExternalRepresentation(publicKey, nil) as Data?
         else {
-            throw TransferFailure.validationFailed
+            throw TLSIdentityLoadError.corruptMaterial
         }
-        if let identity = findIdentity(matchingPublic: publicData) {
+        if let identity = try findIdentity(matchingPublic: publicData) {
             return TLSIdentityMaterial(identity: identity, pin: PeerPin.sha256(publicData), role: role)
         }
         let certificate = try makeCertificate(
@@ -113,10 +139,8 @@ public enum TLSIdentity {
         publicData: Data,
         label: String
     ) throws -> SecIdentity {
-        SecItemDelete([
-            kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: label
-        ] as CFDictionary)
+        // Do not delete an existing certificate to recover from a failed load.
+        // A missing certificate may be associated with the existing private key.
         let add: [String: Any] = [
             kSecClass as String: kSecClassCertificate,
             kSecValueRef as String: certificate,
@@ -124,17 +148,17 @@ public enum TLSIdentity {
         ]
         let certStatus = SecItemAdd(add as CFDictionary, nil)
         guard certStatus == errSecSuccess || certStatus == errSecDuplicateItem else {
-            throw TransferFailure.validationFailed
+            throw TLSIdentityLoadError.keychain(status: certStatus)
         }
 #if os(macOS)
         var created: SecIdentity?
-        if SecIdentityCreateWithCertificate(nil, certificate, &created) == errSecSuccess,
-           let created
-        {
-            return created
+        let identityStatus = SecIdentityCreateWithCertificate(nil, certificate, &created)
+        if try lookupFound(status: identityStatus) {
+            guard let created else { throw TLSIdentityLoadError.corruptMaterial }
+            return try verified(identity: created, matchingPublic: publicData)
         }
 #endif
-        if let identity = findIdentity(matchingPublic: publicData) {
+        if let identity = try findIdentity(matchingPublic: publicData) {
             return identity
         }
         var item: CFTypeRef?
@@ -144,20 +168,31 @@ public enum TLSIdentity {
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecAttrLabel as String: label
         ] as CFDictionary, &item)
-        if status == errSecSuccess, let item, let identity = secIdentity(item) {
-            return identity
+        guard try lookupFound(status: status), let item, let identity = secIdentity(item) else {
+            throw TLSIdentityLoadError.corruptMaterial
         }
-        throw TransferFailure.validationFailed
+        return try verified(identity: identity, matchingPublic: publicData)
     }
 
-    private static func findIdentity(matchingPublic publicData: Data) -> SecIdentity? {
+    private static func verified(identity: SecIdentity, matchingPublic publicData: Data) throws -> SecIdentity {
+        var certificate: SecCertificate?
+        guard SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess,
+              let certificate,
+              let key = SecCertificateCopyKey(certificate),
+              let data = SecKeyCopyExternalRepresentation(key, nil) as Data?,
+              data == publicData else { throw TLSIdentityLoadError.corruptMaterial }
+        return identity
+    }
+
+    private static func findIdentity(matchingPublic publicData: Data) throws -> SecIdentity? {
         var items: CFTypeRef?
         let status = SecItemCopyMatching([
             kSecClass as String: kSecClassIdentity,
             kSecReturnRef as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll
         ] as CFDictionary, &items)
-        guard status == errSecSuccess, let items else { return nil }
+        guard try lookupFound(status: status) else { return nil }
+        guard let items else { throw TLSIdentityLoadError.corruptMaterial }
         let candidates: [AnyObject]
         if let array = items as? [AnyObject] {
             candidates = array
@@ -165,16 +200,16 @@ public enum TLSIdentity {
             candidates = [items as AnyObject]
         }
         for candidate in candidates {
-            guard let identity = secIdentity(candidate) else { continue }
+            guard let identity = secIdentity(candidate) else { throw TLSIdentityLoadError.corruptMaterial }
             var certificate: SecCertificate?
             guard SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess,
                   let certificate,
                   let key = SecCertificateCopyKey(certificate),
-                  let data = SecKeyCopyExternalRepresentation(key, nil) as Data?,
-                  data == publicData
+                  let data = SecKeyCopyExternalRepresentation(key, nil) as Data?
             else {
-                continue
+                throw TLSIdentityLoadError.corruptMaterial
             }
+            guard data == publicData else { continue }
             return identity
         }
         return nil

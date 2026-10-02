@@ -14,17 +14,22 @@ public final class ControllerService: @unchecked Sendable {
     public var connectionInspection: (@Sendable (String?) throws -> Data)?
     private var reviewedRevisions: Set<String> = []
     private let lock = NSLock()
+    private let rendererFactory: @Sendable () -> PreviewRenderer?
 
     public init(
         store: DashboardPackageStore,
         helper: HelperSupervisor = HelperSupervisor(),
         renderer: PreviewRenderer? = nil,
-        devices: DeviceCoordinator? = nil
+        devices: DeviceCoordinator? = nil,
+        rendererFactory: (@Sendable () -> PreviewRenderer?)? = nil,
+        authoringKit: URL? = nil
     ) {
         self.store = store
-        self.authoring = ScreenAuthoring(root: store.root)
+        self.authoring = ScreenAuthoring(root: store.root, kit: authoringKit)
         self.helper = helper
         self.renderer = renderer
+        self.helperStarted = renderer != nil
+        self.rendererFactory = rendererFactory ?? { helper.makeRenderer() }
         self.devices = devices ?? DeviceCoordinator(
             directory: DeviceDirectory(url: DeviceDirectory.defaultURL(controllerHome: store.root))
         )
@@ -34,16 +39,31 @@ public final class ControllerService: @unchecked Sendable {
         linkFactory: DeviceLinkFactory? = nil,
         hub: LoopbackDiscovery = LoopbackDiscovery.shared
     ) throws -> ControllerService {
-        let store = try DashboardPackageStore(root: DashboardPackageStore.defaultRoot())
-        let helper = HelperSupervisor()
+        let root = DashboardPackageStore.defaultRoot()
+        return try bootstrap(root: root, deviceDirectoryURL: DeviceDirectory.defaultURL(controllerHome: root),
+                             hub: hub, linkFactory: linkFactory)
+    }
+
+    /// Creates the domain without resolving a preview helper, loading identity,
+    /// or starting LAN discovery. The broker supplies its machine-local device
+    /// directory separately from its authoring/package store.
+    public static func bootstrap(
+        root: URL,
+        deviceDirectoryURL: URL,
+        hub: LoopbackDiscovery = LoopbackDiscovery(),
+        linkFactory: DeviceLinkFactory? = nil,
+        helper: HelperSupervisor = HelperSupervisor(),
+        rendererFactory: (@Sendable () -> PreviewRenderer?)? = nil,
+        authoringKit: URL? = nil
+    ) throws -> ControllerService {
+        let store = try DashboardPackageStore(root: root)
         let devices = DeviceCoordinator(
-            directory: DeviceDirectory(url: DeviceDirectory.defaultURL(controllerHome: store.root)),
+            directory: DeviceDirectory(url: deviceDirectoryURL),
             hub: hub,
             linkFactory: linkFactory
         )
-        let service = ControllerService(store: store, helper: helper, renderer: helper.makeRenderer(), devices: devices)
-        service.ensureHelper()
-        return service
+        return ControllerService(store: store, helper: helper, devices: devices,
+                                 rendererFactory: rendererFactory, authoringKit: authoringKit)
     }
 
     /// Revisions rendered through `previewDashboard` in this controller process.
@@ -65,7 +85,7 @@ public final class ControllerService: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         if renderer == nil {
-            renderer = helper.makeRenderer()
+            renderer = rendererFactory()
         }
         helperStarted = renderer != nil
         return helperStarted
