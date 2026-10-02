@@ -3,8 +3,8 @@ import XCTest
 
 final class DeviceManagementTransitionStoreTests: XCTestCase {
     private func directory() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("management-test-\(UUID().uuidString)", isDirectory: true) }
-    private func intent() throws -> DeviceManagementTransitionRecord {
-        try .init(transitionID: UUID(), credentialReference: "cloud-installation-\(UUID().uuidString)")
+    private func intent() throws -> DeviceManagementTransitionHistory {
+        try .intent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "cloud-installation-\(UUID().uuidString)")
     }
 
     func testConfirmedAbsenceRequiresExternalEmptyKeychainForLegacyLocal() throws {
@@ -27,11 +27,10 @@ final class DeviceManagementTransitionStoreTests: XCTestCase {
         try store.save(fenced)
         let restarted = DeviceManagementTransitionStore(directory: root)
         XCTAssertEqual(try restarted.load(), fenced)
-        XCTAssertEqual(try restarted.localState(cloudCredentialsConfirmedEmpty: false), .fenced(credentialReference: pending.credentialReference))
+        XCTAssertEqual(try restarted.localState(cloudCredentialsConfirmedEmpty: false), .fenced(credentialReferences: pending.credentials.map(\.credentialReference)))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: store.recordURL)) as? [String: Any])
-        XCTAssertEqual(Set(object.keys), ["schemaVersion", "transitionID", "credentialReference", "phase"])
-        XCTAssertEqual(object["schemaVersion"] as? Int, 1)
-        XCTAssertEqual(object["phase"] as? String, "locallyFenced")
+        XCTAssertEqual(Set(object.keys), ["schemaVersion", "transitions", "credentials"])
+        XCTAssertEqual(object["schemaVersion"] as? Int, 2)
         let mode = try FileManager.default.attributesOfItem(atPath: store.recordURL.path)[.posixPermissions] as? NSNumber
         XCTAssertEqual(mode?.intValue, 0o600)
     }
@@ -44,7 +43,7 @@ final class DeviceManagementTransitionStoreTests: XCTestCase {
         XCTAssertNil(try store.load())
         try store.save(pending)
         XCTAssertThrowsError(try store.save(intent())) { XCTAssertEqual($0 as? DeviceManagementTransitionStoreError, .transitionConflict) }
-        let otherRef = try DeviceManagementTransitionRecord(transitionID: pending.transitionID, credentialReference: "other")
+        let otherRef = try DeviceManagementTransitionHistory.intent(transitionID: pending.transitions[0].transitionID, credentialGenerationID: pending.credentials[0].credentialGenerationID, credentialReference: "other")
         XCTAssertThrowsError(try store.save(otherRef)) { XCTAssertEqual($0 as? DeviceManagementTransitionStoreError, .transitionConflict) }
         XCTAssertEqual(try store.load(), pending)
         try store.save(pending.fenced())
@@ -64,9 +63,9 @@ final class DeviceManagementTransitionStoreTests: XCTestCase {
             XCTAssertThrowsError(try store.localState(cloudCredentialsConfirmedEmpty: true))
             XCTAssertEqual(try Data(contentsOf: store.recordURL), data)
         }
-        let unsupported = Data(#"{"schemaVersion":2,"futureField":true}"#.utf8)
+        let unsupported = Data(#"{"schemaVersion":3,"futureField":true}"#.utf8)
         try unsupported.write(to: store.recordURL)
-        XCTAssertThrowsError(try store.load()) { XCTAssertEqual($0 as? DeviceManagementTransitionStoreError, .unsupportedVersion(2)) }
+        XCTAssertThrowsError(try store.load()) { XCTAssertEqual($0 as? DeviceManagementTransitionStoreError, .unsupportedVersion(3)) }
         XCTAssertThrowsError(try store.save(intent()))
         XCTAssertEqual(try Data(contentsOf: store.recordURL), unsupported, "A future record must never be overwritten by a fallback")
         let large = Data(repeating: 32, count: DeviceManagementTransitionStore.maximumRecordBytes + 1)
@@ -81,10 +80,10 @@ final class DeviceManagementTransitionStoreTests: XCTestCase {
         }
         XCTAssertNoThrow(try DeviceManagementTransitionRecord(transitionID: UUID(), credentialReference: String(repeating: "a", count: 128)))
         let value = try intent()
-        XCTAssertEqual(try JSONDecoder().decode(DeviceManagementTransitionRecord.self, from: JSONEncoder().encode(value)), value)
+        XCTAssertEqual(try JSONDecoder().decode(DeviceManagementTransitionHistory.self, from: JSONEncoder().encode(value)), value)
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
         object["token"] = "must-not-be-journal-content"
-        XCTAssertThrowsError(try JSONDecoder().decode(DeviceManagementTransitionRecord.self, from: JSONSerialization.data(withJSONObject: object)))
+        XCTAssertThrowsError(try JSONDecoder().decode(DeviceManagementTransitionHistory.self, from: JSONSerialization.data(withJSONObject: object)))
     }
 
     func testIOFailureAndSymlinkNeverFallBackToAbsentOrDeleteExistingData() throws {
@@ -159,6 +158,90 @@ final class DeviceManagementTransitionStoreTests: XCTestCase {
         try second.save(pending.fenced())
         XCTAssertThrowsError(try first.save(pending)) { XCTAssertEqual($0 as? DeviceManagementTransitionStoreError, .transitionConflict) }
         XCTAssertEqual(try first.load(), try pending.fenced())
+    }
+
+
+    func testRepeatedCyclesAndMultipleCredentialGenerationsRetainAllBindings() throws {
+        let root = directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = DeviceManagementTransitionStore(directory: root)
+        var history = try intent(); try store.save(history)
+        history = try history.appendingCredential(credentialGenerationID: UUID(), credentialReference: "second-generation")
+        try store.save(history)
+        history = try history.fenced(); try store.save(history)
+        let firstBindings = history.credentials
+        history = try history.appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "next-transition")
+        try store.save(history)
+        XCTAssertEqual(try store.localState(cloudCredentialsConfirmedEmpty: false), .blocked)
+        history = try history.fenced(); try store.save(history)
+        XCTAssertEqual(try DeviceManagementTransitionStore(directory: root).load(), history)
+        XCTAssertEqual(Array(history.credentials.prefix(2)), firstBindings)
+        XCTAssertEqual(try store.localState(cloudCredentialsConfirmedEmpty: false), .fenced(credentialReferences: history.credentials.map(\.credentialReference)))
+        let dropped = try DeviceManagementTransitionHistory(transitions: [history.transitions[1]], credentials: [history.credentials[2]])
+        XCTAssertThrowsError(try store.save(dropped))
+        XCTAssertThrowsError(try history.appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "second-generation"))
+        XCTAssertThrowsError(try history.appendingCredential(credentialGenerationID: UUID(), credentialReference: "late-generation"))
+    }
+
+    func testWholeHistoryUncertainAppendRequiresExactRecommitAndRejectsNestedTampering() throws {
+        let root = directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let initial = try intent()
+        let ordinary = DeviceManagementTransitionStore(directory: root)
+        try ordinary.save(initial); let fenced = try initial.fenced(); try ordinary.save(fenced)
+        let appended = try fenced.appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "next")
+        let fault = ManagementBoundaryFault(.afterReplace)
+        let store = DeviceManagementTransitionStore(directory: root, boundary: { try fault.visit($0) })
+        XCTAssertThrowsError(try store.save(appended))
+        XCTAssertEqual(try store.diagnosticReadback(), appended)
+        XCTAssertThrowsError(try ordinary.load())
+        XCTAssertThrowsError(try store.save(appended.fenced()))
+        XCTAssertThrowsError(try store.save(fenced))
+        fault.disable(); try store.save(appended)
+        XCTAssertEqual(try store.load(), appended)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(appended)) as? [String: Any])
+        var bindings = try XCTUnwrap(object["credentials"] as? [[String: Any]])
+        bindings[0]["secret"] = "forbidden"; object["credentials"] = bindings
+        XCTAssertThrowsError(try JSONDecoder().decode(DeviceManagementTransitionHistory.self, from: JSONSerialization.data(withJSONObject: object)))
+        XCTAssertThrowsError(try DeviceManagementTransitionHistory.intent(transitionID: initial.transitions[0].transitionID, credentialGenerationID: initial.transitions[0].transitionID, credentialReference: "same-id"))
+    }
+
+    func testVersionOneMigrationPreservesIntentAndFenceAndUpgradesOnSave() throws {
+        for phase in [DeviceManagementTransitionPhase.intent, .locallyFenced] {
+            let root = directory(); defer { try? FileManager.default.removeItem(at: root) }
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let store = DeviceManagementTransitionStore(directory: root)
+            let old = try DeviceManagementTransitionRecord(transitionID: UUID(), credentialReference: "legacy-ref", phase: phase)
+            try JSONEncoder().encode(old).write(to: store.recordURL)
+            let migrated = try XCTUnwrap(store.load())
+            XCTAssertEqual(migrated.transitions, [.init(transitionID: old.transitionID, phase: phase)])
+            XCTAssertEqual(migrated.credentials[0].credentialReference, old.credentialReference)
+            XCTAssertNotEqual(migrated.credentials[0].credentialGenerationID, old.transitionID)
+            XCTAssertEqual(try store.load(), migrated)
+            try store.save(migrated)
+            let data = try Data(contentsOf: store.recordURL)
+            XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["schemaVersion"] as? Int, 2)
+            XCTAssertEqual(try store.load(), migrated)
+        }
+    }
+
+    func testCapacityFailsClosedWithoutPruningAndRejectsReorder() throws {
+        var history = try intent()
+        for i in 1..<DeviceManagementTransitionHistory.maximumTransitions {
+            history = try history.fenced().appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "ref-\(i)")
+        }
+        history = try history.fenced()
+        XCTAssertThrowsError(try history.appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "overflow")) { XCTAssertEqual($0 as? DeviceManagementTransitionStoreError, .capacityExceeded) }
+        var generations = try intent()
+        for i in 1..<DeviceManagementTransitionHistory.maximumCredentials { generations = try generations.appendingCredential(credentialGenerationID: UUID(), credentialReference: "generation-\(i)") }
+        XCTAssertThrowsError(try generations.appendingCredential(credentialGenerationID: UUID(), credentialReference: "overflow"))
+        let root = directory(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = DeviceManagementTransitionStore(directory: root)
+        var value = try intent(); try store.save(value)
+        value = try value.fenced(); try store.save(value)
+        value = try value.appendingIntent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "new"); try store.save(value)
+        value = try value.fenced(); try store.save(value)
+        let reordered = try DeviceManagementTransitionHistory(transitions: value.transitions.reversed(), credentials: value.credentials.reversed())
+        XCTAssertThrowsError(try store.save(reordered))
+        XCTAssertEqual(try store.load(), value)
     }
 
     func testSiblingJournalSurvivesLegacyDeviceStateErase() throws {
