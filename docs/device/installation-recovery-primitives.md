@@ -29,3 +29,13 @@ The classifier returns a snapshot, not a lock or an activation capability. The f
 The history now supports storage for repeated Local → Cloud → Local → Cloud transitions and multiple credential generations while retaining earlier fences and possible remote cleanup obligations. The actual enrollment and rotation protocols remain unimplemented. Account-owned active installation authority must not depend solely on the original human claimant. Future remote request UUIDs must be persisted separately from authority transition UUIDs; their wire representations are not defined here.
 
 Successor validation protects updates made through this store against history loss. Plain filesystem storage does not provide trusted antirollback protection against external replacement with an older valid history. Tests cover repeated cycles, multiple generations, migration, capacity, stale updates, and uncertain commits; they do not qualify live enrollment or physical power loss.
+
+## Serialized Local authority checks
+
+`DeviceManagementAuthority` provides an in-process owner for Local eligibility checks. It starts blocked and issues an opaque, revocable lease only after checking the journal and dedicated credential inventory. Every synchronous gated operation rechecks the full evidence. Refresh and revocation invalidate older leases; reentrant owner calls are rejected. A history change observed after a lease was issued quarantines that owner instance, so removing or rolling back known evidence cannot restore legacy Local permission within its lifetime.
+
+The owner currently exposes only classification, revocation, and short synchronous gated operations. It does not stage credentials, write fences, or recover uncertain writes. Those mutation APIs require a separate exact-write recovery design before Cloud transitions can use this owner. All production Cloud transition writers remain disabled. The existing standalone recovery primitives are unchanged.
+
+Future callers must share one owner, acquire authority before the server lock, and keep network waits outside the gated operation. Listener readiness, peer handshakes, and pairing approval must recheck their captured lease before committing a side effect. A lease must not authorize queued work without another check. External processes and direct filesystem or Keychain writers are not excluded by this lock; it is not a persistent antirollback mechanism.
+
+This owner is not yet connected to production bootstrap, listeners, request handlers, or erase. The next integration must avoid constructing a management host when blocked, separate read-only retained rendering, reject stale channels and delayed callbacks, and make reset failures explicit while preserving the journal and Cloud keys.
