@@ -38,6 +38,7 @@ fi
   test_bundle="$(swift build --show-bin-path)/ScreenpunkApplePackageTests.xctest"
   python3 "$ROOT/scripts/ci/run-xctest.py" "$test_bundle"
 )
+(cd tools/screenpunk-distribution && swift test)
 (cd packages/ScreenpunkController && swift test)
 # Match the release workflow: the pinned MCP dependency requires Swift 5 mode
 # on Xcode 26; app and package tests above retain their normal settings.
