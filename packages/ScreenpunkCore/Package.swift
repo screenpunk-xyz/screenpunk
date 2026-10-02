@@ -12,6 +12,6 @@ let package = Package(
     ],
     targets: [
         .target(name: "ScreenpunkCore"),
-        .testTarget(name: "ScreenpunkCoreTests", dependencies: ["ScreenpunkCore"])
+        .testTarget(name: "ScreenpunkCoreTests", dependencies: ["ScreenpunkCore"], resources: [.copy("Fixtures/native-sign-in-fixtures.json")])
     ]
 )
