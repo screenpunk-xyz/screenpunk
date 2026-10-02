@@ -12,6 +12,9 @@ public final class DeviceLANHost: ObservableObject {
     @Published public var port: UInt16 = 0
     @Published public var errorMessage: String?
     @Published public var activePackage: PackageAssetStore?
+    @Published public var completedPairingSessionNonceHex: String?
+    @Published public var pendingPairingSessionNonceHex: String?
+    @Published public var pendingPairingRequest: DevicePendingPairingRequest?
     @Published public var screenSet: DeviceInstalledScreenSet?
     @Published public var settingsSnapshot: DeviceSettingsSnapshot?
     @Published public var genericConnectionGeneration = UUID()
@@ -95,9 +98,9 @@ public final class DeviceLANHost: ObservableObject {
         server?.stop()
     }
 
-    public func confirm() {
+    public func confirm(expectedSessionNonceHex: String? = nil) {
         do {
-            try server?.confirmLocally()
+            try server?.confirmLocally(expectedSessionNonceHex: expectedSessionNonceHex)
             refresh()
             errorMessage = nil
         } catch {
@@ -105,8 +108,8 @@ public final class DeviceLANHost: ObservableObject {
         }
     }
 
-    public func cancelPairing() {
-        server?.cancelPairing()
+    public func cancelPairing(expectedSessionNonceHex: String? = nil) {
+        server?.cancelPairing(expectedSessionNonceHex: expectedSessionNonceHex)
         errorMessage = nil
         refresh()
     }
@@ -147,6 +150,24 @@ public final class DeviceLANHost: ObservableObject {
         refresh()
     }
 
+    public func disconnect(keepScreens: Bool) throws {
+        guard let server else { throw DeviceSettingsFailure.persistenceFailed }
+        try server.disconnect(keepScreens: keepScreens)
+        refresh()
+    }
+
+    public func removeScreen(_ dashboardId: String) throws {
+        guard let server else { throw DeviceSettingsFailure.persistenceFailed }
+        try server.removeScreen(dashboardId)
+        refresh()
+    }
+
+    public func removeAllScreens() throws {
+        guard let server else { throw DeviceSettingsFailure.persistenceFailed }
+        try server.removeAllScreens()
+        refresh()
+    }
+
     @MainActor public func unlink() {
         do {
             try ScreenPreferenceStore.shared.erase()
@@ -160,9 +181,13 @@ public final class DeviceLANHost: ObservableObject {
     public func refresh() {
         if let server {
             runtime = server.runtime
+            completedPairingSessionNonceHex = server.completedPairingSessionNonceHex
+            let pairingRequest = server.pendingPairingRequest
+            pendingPairingRequest = pairingRequest
+            pendingPairingSessionNonceHex = pairingRequest?.sessionNonceHex
             // `server.pairingCode` is the LAN pairing state of record; the
             // runtime session may outlive it and must not resurrect the code.
-            pairingCode = server.pairingCode
+            pairingCode = pairingRequest?.code
             awaitingControllerConfirm = server.awaitingControllerConfirm
             port = server.port
             activePackage = server.activePackage

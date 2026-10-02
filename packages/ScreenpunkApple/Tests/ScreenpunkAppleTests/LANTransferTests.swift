@@ -377,10 +377,22 @@ final class LANTransferTests: XCTestCase {
         XCTAssertEqual(server.pairingCode, begin.code, "the code on screen did not change")
         XCTAssertEqual(server.runtime.pairing.session?.candidateOwner, controllerIdentity.pairingIdentity)
 
-        // The tap binds the device to the controller whose code is on screen.
-        try server.confirmLocally()
-        XCTAssertEqual(server.runtime.pairing.owner, controllerIdentity.pairingIdentity)
+        // The tap approves this candidate; ownership commits only after its authenticated confirmation.
+        let approvedNonce = try XCTUnwrap(server.pendingPairingRequest?.sessionNonceHex)
+        try server.confirmLocally(expectedSessionNonceHex: approvedNonce)
+        XCTAssertNil(server.runtime.pairing.owner)
+        XCTAssertFalse(server.runtime.isPaired)
+        XCTAssertNil(server.completedPairingSessionNonceHex)
+        XCTAssertTrue(server.awaitingControllerConfirm)
+        XCTAssertThrowsError(try intruder.confirmPairing(code: begin.code)) { error in
+            XCTAssertEqual(error as? PairingFailure, .identityChanged)
+        }
+        XCTAssertNil(server.runtime.pairing.owner, "another controller cannot consume local approval")
+        XCTAssertEqual(server.pendingPairingRequest?.sessionNonceHex, approvedNonce)
+        XCTAssertEqual(server.runtime.pairing.session?.candidateOwner, controllerIdentity.pairingIdentity)
         XCTAssertNoThrow(try client.confirmPairing(code: begin.code))
+        XCTAssertEqual(server.runtime.pairing.owner, controllerIdentity.pairingIdentity)
+        XCTAssertEqual(server.completedPairingSessionNonceHex, approvedNonce)
         XCTAssertTrue(server.runtime.isPaired)
 
         // The same controller may always restart its own session.

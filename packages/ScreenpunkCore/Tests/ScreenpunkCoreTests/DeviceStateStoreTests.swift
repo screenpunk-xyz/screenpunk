@@ -19,6 +19,39 @@ final class DeviceStateStoreTests: XCTestCase {
         )
     }
 
+    func testPruneKeepsReferencedLegacyPackageAndDeletesUnreferencedBytes() throws {
+        let store = makeStore()
+        defer { try? store.erase() }
+        try store.activatePackage(staged: store.stagePackage([(path: "index.html", data: Data("kept".utf8))]))
+        let staging = try store.stagePackage([(path: "index.html", data: Data("unused".utf8))])
+        store.prunePackageGenerations(keeping: ["package"])
+        XCTAssertTrue(store.hasPackage)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))
+        store.prunePackageGenerations(keeping: [])
+        XCTAssertFalse(store.hasPackage)
+    }
+
+    func testDisconnectedContentAuthorityRoundTripsIndependentlyOfManager() throws {
+        let store = makeStore()
+        defer { try? store.erase() }
+        var state = DevicePersistedState(owner: nil, activeRevision: "retained", activeStoredRevision: .offlineFixture, lastDeployment: nil)
+        state.contentOwner = owner
+        state.settings = DeviceSettingsSnapshot()
+        try store.save(state)
+        let restored = try XCTUnwrap(store.load())
+        XCTAssertNil(restored.owner)
+        XCTAssertEqual(restored.contentOwner, owner)
+        XCTAssertEqual(restored.settings, state.settings)
+        var phone = makePhone()
+        phone.restore(restored)
+        XCTAssertFalse(phone.isPaired)
+        XCTAssertEqual(phone.activeRevision, "retained")
+        var replacement = restored
+        replacement.owner = stranger
+        try store.save(replacement)
+        XCTAssertEqual(store.load()?.contentOwner, owner, "Changing manager never changes content ownership")
+    }
+
     func testStateRoundTripsAndSecondSaveReplacesAtomically() throws {
         let store = makeStore()
         defer { try? store.erase() }

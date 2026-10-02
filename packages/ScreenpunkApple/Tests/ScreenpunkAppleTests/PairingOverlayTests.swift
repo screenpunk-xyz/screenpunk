@@ -50,14 +50,54 @@ final class PairingOverlayTests: XCTestCase {
         XCTAssertNil(server.pairingCode)
         XCTAssertThrowsError(try server.confirmLocally())
         try assertContentPreserved()
-        let final = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
-        try server.confirmLocally()
+        let staleNonce = PeerPin.hex(PairingIdentityFactory.nonce())
+        let finalNonce = PairingIdentityFactory.nonce()
+        let final = try client.beginPairing(nonce: finalNonce)
+        XCTAssertThrowsError(try server.confirmLocally(expectedSessionNonceHex: staleNonce))
+        server.cancelPairing(expectedSessionNonceHex: staleNonce)
+        XCTAssertEqual(server.pendingPairingSessionNonceHex, PeerPin.hex(finalNonce))
+        try server.confirmLocally(expectedSessionNonceHex: PeerPin.hex(finalNonce))
         XCTAssertTrue(server.awaitingControllerConfirm)
         XCTAssertEqual(server.pairingCode, final.code)
         try client.confirmPairing(code: final.code)
         XCTAssertNil(server.pairingCode)
         XCTAssertFalse(server.awaitingControllerConfirm)
+        XCTAssertEqual(server.completedPairingSessionNonceHex, PeerPin.hex(finalNonce))
         try assertContentPreserved()
+    }
+    func testLocalApprovalDoesNotCommitAndPersistenceFailureLeavesUnpaired() throws {
+        let device = try TLSIdentity.make(role: .device, commonName: "approval-device")
+        let owner = try TLSIdentity.make(role: .controller, commonName: "approval-owner")
+        let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? store.erase() }
+        let runtime = DeviceRuntime(identity: device.pairingIdentity, profile: .init(deviceId: "approval", name: "Test"),
+            advertisement: .init(deviceId: "approval", host: "127.0.0.1", port: 0, source: .advertised))
+        let server = DeviceLANServer(runtime: runtime, identity: device, store: store)
+        try server.start(); defer { server.stop() }
+        let client = ControllerLANClient(identity: owner); defer { client.cancel() }
+        try client.connect(host: "127.0.0.1", port: server.port)
+        let nonce = PairingIdentityFactory.nonce()
+        let pending = try client.beginPairing(nonce: nonce)
+        try server.confirmLocally(expectedSessionNonceHex: PeerPin.hex(nonce))
+        XCTAssertFalse(server.runtime.isPaired)
+        XCTAssertEqual(server.pendingPairingRequest?.code, pending.code)
+        XCTAssertEqual(server.pendingPairingRequest?.sessionNonceHex, PeerPin.hex(nonce))
+        let wrongCode = pending.code == "000000" ? "111111" : "000000"
+        XCTAssertThrowsError(try client.confirmPairing(code: wrongCode))
+        XCTAssertFalse(server.runtime.isPaired, "Wrong code never commits ownership")
+        XCTAssertEqual(server.runtime.pairing.session?.failures, 1)
+        XCTAssertNil(store.load()?.owner)
+        try FileManager.default.createDirectory(at: store.stateURL, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try client.confirmPairing(code: pending.code))
+        XCTAssertFalse(server.runtime.isPaired)
+        XCTAssertNil(server.completedPairingSessionNonceHex)
+        XCTAssertEqual(server.pendingPairingSessionNonceHex, PeerPin.hex(nonce))
+        try FileManager.default.removeItem(at: store.stateURL)
+        try client.confirmPairing(code: pending.code)
+        XCTAssertTrue(server.runtime.isPaired)
+        XCTAssertEqual(store.load()?.owner, owner.pairingIdentity)
+        XCTAssertNoThrow(try client.queryActiveState(), "Completing channel advances its manager generation")
+        XCTAssertEqual(server.completedPairingSessionNonceHex, PeerPin.hex(nonce))
     }
 }
 
