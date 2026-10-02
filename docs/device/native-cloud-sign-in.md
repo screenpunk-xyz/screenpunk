@@ -23,3 +23,11 @@ The enrollment slice requires a durable pending/switching journal alongside Keyc
 ## Qualification
 
 Automated qualification covers accepted fixture decoding, request construction, pagination, transport isolation, cancellation, and configuration rejection. App compilation verifies SDK integration but cannot qualify real sign-in. Live Google/Apple authorization, token refresh and revocation, account continuity, zero-workspace onboarding, installation recovery, physical devices, and accessibility remain release gates before Cloud onboarding is enabled.
+
+## First-workspace setup
+
+Native first-workspace setup targets accepted Cloud PR 31, commit `eda8d5091d80a04c448e7a30ec0bb5a5248d97ef`, and its generated contract and eight sanitized response fixtures. After explicit sign-in and complete empty account discovery, a user may explicitly request workspace/default-location creation. The app saves a nonsecret user-bound operation UUID and exact names atomically before POST. Valid names retain their original Unicode representation and whitespace.
+
+Cancellation, timeout, malformed replies, server errors, and ambiguous recovery 404s retain the saved operation. Explicit same-user recovery or retry uses its original UUID and names; no automatic replay, key rotation, or cross-user replay occurs. A receipt is saved before publication and invalidates the earlier empty discovery result. It never establishes device management authority.
+
+The current journal conservatively retains one unresolved operation across account switches: another user cannot overwrite it or start a replacement setup. Corrupt/unreadable storage blocks creation instead of discarding recovery information. A future user-facing recovery design must address an unavailable original account without silently abandoning an uncertain operation. The coordinator is not yet connected to onboarding UI; enrollment and installation remain separate integration dependencies.

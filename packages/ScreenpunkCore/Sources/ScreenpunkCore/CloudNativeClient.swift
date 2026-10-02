@@ -5,12 +5,13 @@ public protocol CloudNativeTokenProvider: Sendable {
     func idToken() async throws -> String
 }
 
-/// Only the three accepted human identity endpoints. No enrollment, cookie session, or default IDs.
+/// Accepted native human identity and first-workspace setup endpoints. No enrollment, cookie session, or default IDs.
 public struct CloudNativeClient: Sendable {
     private let origin: URL
     private let tokenProvider: any CloudNativeTokenProvider
     private let transport: any HTTPTransport
     public static let maximumResponseBytes = 1_048_576
+    public static let maximumWorkspaceSetupBodyBytes = 4096
 
     public init(baseURL: URL, tokenProvider: any CloudNativeTokenProvider, transport: any HTTPTransport) throws {
         guard let parts = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
@@ -24,6 +25,21 @@ public struct CloudNativeClient: Sendable {
 
     public func signIn() async throws -> CloudNativeSignInResponse {
         try await request(path: "/v1/native/sign-in", method: "POST", body: Data("{}".utf8))
+    }
+    /// The caller persists the exact user-bound request before sending. No automatic retry or generic Idempotency-Key.
+    public func setupWorkspace(request setup: CloudNativeWorkspaceSetupRequest) async throws -> CloudNativeWorkspaceSetupReceipt {
+        try setup.validate()
+        let body = try JSONEncoder().encode(setup)
+        guard body.count <= Self.maximumWorkspaceSetupBodyBytes else { throw CloudNativeFailure.requestTooLarge }
+        let receipt: CloudNativeWorkspaceSetupReceipt = try await request(path: "/v1/native/workspace-setup", method: "POST", body: body)
+        guard receipt.requestId == setup.requestId else { throw CloudNativeFailure.workspaceSetupReceiptMismatch }
+        return receipt
+    }
+    /// An unavailable lookup is a structured API error and does not prove the operation never committed.
+    public func workspaceSetup(requestID: UUID) async throws -> CloudNativeWorkspaceSetupReceipt {
+        let receipt: CloudNativeWorkspaceSetupReceipt = try await request(path: "/v1/native/workspace-setup/\(requestID.uuidString.lowercased())")
+        guard receipt.requestId == requestID else { throw CloudNativeFailure.workspaceSetupReceiptMismatch }
+        return receipt
     }
     public func accounts(limit: Int? = nil, cursor: String? = nil) async throws -> CloudNativePage<CloudNativeAccount> {
         try await request(path: "/v1/native/accounts", query: pagination(limit: limit, cursor: cursor))
