@@ -1,6 +1,6 @@
 # Native installation recovery primitives
 
-These local primitives support the agreed recovery requirements without defining an enrollment wire contract. Production iOS startup now uses them to check Local eligibility before constructing a management host. Continuous Local management enforcement, Cloud onboarding, and Cloud network requests remain unconnected. A workspace receipt and a human sign-in generation still confer no installation authority.
+These local primitives support the agreed recovery requirements without defining an enrollment wire contract. Production iOS startup now uses them to check Local eligibility before constructing a management host. Local listener and management operations also carry captured admission. Cloud onboarding and Cloud network requests remain unconnected. A workspace receipt and a human sign-in generation still confer no installation authority.
 
 ## Durable local evidence
 
@@ -22,7 +22,7 @@ Legacy Local eligibility requires a confirmed absent journal and confirmed empty
 
 ## Remaining integration
 
-Accepted backend schemas and recovery fixtures must define candidate claim, activation/status proof, promotion, terminal recovery, remote cleanup, and subsequent transitions. Continuous runtime/reset integration, queued-command rejection, live Keychain qualification, physical-device testing, and hardware power-loss qualification remain separate work. Tests here inject credential backends and filesystem commit failures; they do not access personal Keychain items or enroll a real device.
+Accepted backend schemas and recovery fixtures must define candidate claim, activation/status proof, promotion, terminal recovery, remote cleanup, and subsequent transitions. Durable reset recovery, Cloud command integration, live Keychain qualification, physical-device testing, and hardware power-loss qualification remain separate work. Tests here inject credential backends and filesystem commit failures; they do not access personal Keychain items or enroll a real device.
 
 The classifier returns a snapshot, not a lock or an activation capability. The future bootstrap/management owner must serialize classification with transition writes and keep its generation guard across subsequent startup and asynchronous work. Journal and Keychain operations are not one transaction; passing classification must never be cached across a later transition or used to bypass a fresh authority check.
 
@@ -40,4 +40,6 @@ Future callers must share one owner, acquire authority before the server lock, a
 
 Production iOS bootstrap now classifies through one lifetime owner before creating TLS or a management host. Blocked startup uses a separate read-only retained-content loader and a Retry action. It preserves package bytes and grants, validates manifest metadata when present, and permits in-memory screen switching. Connector-backed data is unavailable in this fallback because it constructs no connector runtimes. A host whose TLS setup failed returns to the blocked state.
 
-This is startup admission only. The admitted host does not yet carry its lease through listener restarts, accepted requests, or erase. Cloud transition writers remain disabled. The next integration must reject stale channels and delayed callbacks and make reset failures explicit while preserving the journal and Cloud keys. Focused tests verify blocked factory exclusion and eligible factory admission using a throwing factory; they do not verify successful host construction or physical-device Keychain behavior.
+The admitted host now carries a mandatory captured context into the server. Listener restarts, accepted requests, local mutations, temporary-selection checkpoint writes and erase admission validate that context. Revocation cancels pending/current listeners and accepted connections while preserving retained content authority. Network readiness and pairing approval waits occur outside authority/server locks, then recheck before commit. Invalidation observers and transaction callbacks run after releasing locks. Cloud transition writers remain disabled.
+
+Erase admission is enforced, but reset durability is not yet repaired: legacy unlink still suppresses some vault/disk failures and can have partial effects. Legacy silent persistence paths also remain. Those paths require separate work before claiming recoverable reset. The journal and dedicated Cloud credential service must remain outside destructive Local cleanup. Focused tests verify blocked factory exclusion and eligible factory admission using a throwing factory; they do not verify successful host construction or physical-device Keychain behavior.

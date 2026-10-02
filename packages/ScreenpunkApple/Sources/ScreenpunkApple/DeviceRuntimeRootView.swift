@@ -31,10 +31,11 @@ public struct DeviceRuntimeRootView: View {
     @StateObject private var host: DeviceLANHost
 #endif
 
-    public init(runtime: DeviceRuntime) {
+    public init(runtime: DeviceRuntime, management: DeviceManagementContext) throws {
         _fallback = State(initialValue: runtime)
 #if canImport(Network) && canImport(Security)
-        _host = StateObject(wrappedValue: DeviceLANHost(runtime: runtime))
+        let admittedHost = try DeviceLANHost(runtime: runtime, management: management)
+        _host = StateObject(wrappedValue: admittedHost)
 #endif
     }
 
@@ -56,8 +57,8 @@ public struct DeviceRuntimeRootView: View {
 #endif
     }
 
-    public static func unpairedLoopback() -> DeviceRuntimeRootView {
-        DeviceRuntimeRootView(runtime: unpairedRuntime())
+    public static func unpairedLoopback(management: DeviceManagementContext) throws -> DeviceRuntimeRootView {
+        try DeviceRuntimeRootView(runtime: unpairedRuntime(), management: management)
     }
 
     public static func unpairedRuntime() -> DeviceRuntime {

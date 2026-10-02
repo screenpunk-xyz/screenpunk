@@ -26,6 +26,8 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     private var evidence: Evidence?
     private var permitted = false
     private var executing = false
+    private var invalidationObservers: [UUID: () -> Void] = [:]
+    private var invalidationActions: [() -> Void] = []
     private let journal: any CloudInstallationTransitionJournal
     private let credentials: CloudInstallationCredentialStore
 
@@ -91,14 +93,50 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         } catch { return nil }
     }
 
-    private func invalidate() { permitted = false; generation = UUID() }
+    private func invalidate() {
+        permitted = false; generation = UUID()
+        invalidationActions.append(contentsOf: invalidationObservers.values)
+        invalidationObservers = [:]
+    }
+    fileprivate func observeInvalidation(_ lease: Lease, _ action: @escaping () -> Void) throws -> UUID {
+        try serialized {
+            guard permitted, lease.owner == identity, lease.generation == generation else { throw Failure.staleLease }
+            let identifier = UUID(); invalidationObservers[identifier] = action; return identifier
+        }
+    }
+    fileprivate func removeInvalidationObserver(_ identifier: UUID) {
+        lock.lock(); invalidationObservers.removeValue(forKey: identifier); lock.unlock()
+    }
 
     private func serialized<T>(_ operation: () throws -> T) throws -> T {
         lock.lock()
-        defer { lock.unlock() }
-        guard !executing else { throw Failure.reentrantOperation }
+        guard !executing else { lock.unlock(); throw Failure.reentrantOperation }
         executing = true
-        defer { executing = false }
+        defer {
+            executing = false
+            let actions = invalidationActions; invalidationActions = []
+            lock.unlock()
+            for action in actions { action() }
+        }
         return try operation()
+    }
+}
+
+/// Captured Local admission. A context never refreshes or mints a lease.
+public struct DeviceManagementContext: @unchecked Sendable {
+    private let authority: DeviceManagementAuthority
+    private let lease: DeviceManagementAuthority.Lease
+    public init(authority: DeviceManagementAuthority, lease: DeviceManagementAuthority.Lease) {
+        self.authority = authority; self.lease = lease
+    }
+    public func validate() throws { try authority.withLocalAuthority(lease) {} }
+    public func revoke() throws { try authority.revoke() }
+    func observeInvalidation(_ action: @escaping () -> Void) throws -> UUID { try authority.observeInvalidation(lease, action) }
+    func removeInvalidationObserver(_ identifier: UUID) { authority.removeInvalidationObserver(identifier) }
+    // The synchronous closure is internal: callers cannot obtain an escaping unchecked capability.
+    func withAuthority<T>(_ operation: () throws -> T) throws -> T {
+        var result: Result<T, Error>?
+        try authority.withLocalAuthority(lease) { result = Result { try operation() } }
+        return try result!.get()
     }
 }
