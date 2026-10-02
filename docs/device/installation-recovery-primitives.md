@@ -1,6 +1,6 @@
 # Native installation recovery primitives
 
-These local primitives support the agreed recovery requirements without defining an enrollment wire contract. They are not connected to production startup, Local management, Cloud onboarding, or network requests. A workspace receipt and a human sign-in generation still confer no installation authority.
+These local primitives support the agreed recovery requirements without defining an enrollment wire contract. Production iOS startup now uses them to check Local eligibility before constructing a management host. Continuous Local management enforcement, Cloud onboarding, and Cloud network requests remain unconnected. A workspace receipt and a human sign-in generation still confer no installation authority.
 
 ## Durable local evidence
 
@@ -22,7 +22,7 @@ Legacy Local eligibility requires a confirmed absent journal and confirmed empty
 
 ## Remaining integration
 
-Accepted backend schemas and recovery fixtures must define candidate claim, activation/status proof, promotion, terminal recovery, remote cleanup, and subsequent transitions. Startup/reset integration, queued-command rejection, live Keychain behavior, physical-device testing, and hardware power-loss qualification remain separate work. Tests here inject credential backends and filesystem commit failures; they do not access personal Keychain items or enroll a real device.
+Accepted backend schemas and recovery fixtures must define candidate claim, activation/status proof, promotion, terminal recovery, remote cleanup, and subsequent transitions. Continuous runtime/reset integration, queued-command rejection, live Keychain qualification, physical-device testing, and hardware power-loss qualification remain separate work. Tests here inject credential backends and filesystem commit failures; they do not access personal Keychain items or enroll a real device.
 
 The classifier returns a snapshot, not a lock or an activation capability. The future bootstrap/management owner must serialize classification with transition writes and keep its generation guard across subsequent startup and asynchronous work. Journal and Keychain operations are not one transaction; passing classification must never be cached across a later transition or used to bypass a fresh authority check.
 
@@ -38,4 +38,6 @@ The owner currently exposes only classification, revocation, and short synchrono
 
 Future callers must share one owner, acquire authority before the server lock, and keep network waits outside the gated operation. Listener readiness, peer handshakes, and pairing approval must recheck their captured lease before committing a side effect. A lease must not authorize queued work without another check. External processes and direct filesystem or Keychain writers are not excluded by this lock; it is not a persistent antirollback mechanism.
 
-This owner is not yet connected to production bootstrap, listeners, request handlers, or erase. The next integration must avoid constructing a management host when blocked, separate read-only retained rendering, reject stale channels and delayed callbacks, and make reset failures explicit while preserving the journal and Cloud keys.
+Production iOS bootstrap now classifies through one lifetime owner before creating TLS or a management host. Blocked startup uses a separate read-only retained-content loader and a Retry action. It preserves package bytes and grants, validates manifest metadata when present, and permits in-memory screen switching. Connector-backed data is unavailable in this fallback because it constructs no connector runtimes. A host whose TLS setup failed returns to the blocked state.
+
+This is startup admission only. The admitted host does not yet carry its lease through listener restarts, accepted requests, or erase. Cloud transition writers remain disabled. The next integration must reject stale channels and delayed callbacks and make reset failures explicit while preserving the journal and Cloud keys. Focused tests verify blocked factory exclusion and eligible factory admission using a throwing factory; they do not verify successful host construction or physical-device Keychain behavior.

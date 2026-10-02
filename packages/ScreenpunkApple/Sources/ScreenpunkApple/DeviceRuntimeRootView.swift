@@ -38,6 +38,13 @@ public struct DeviceRuntimeRootView: View {
 #endif
     }
 
+#if canImport(Network) && canImport(Security)
+    public init(host: DeviceLANHost) {
+        _fallback = State(initialValue: host.runtime)
+        _host = StateObject(wrappedValue: host)
+    }
+#endif
+
     /// Name the Mac shows for this device. iOS 16+ returns the generic model
     /// name ("iPhone", "iPad") unless the app holds the user-assigned-name
     /// entitlement; either is a human label, never an address.
@@ -50,6 +57,10 @@ public struct DeviceRuntimeRootView: View {
     }
 
     public static func unpairedLoopback() -> DeviceRuntimeRootView {
+        DeviceRuntimeRootView(runtime: unpairedRuntime())
+    }
+
+    public static func unpairedRuntime() -> DeviceRuntime {
         let identity = PairingIdentityFactory.make(role: .device)
         var profile = DeviceProfile(deviceId: DeviceInstallIdentity.pendingID, name: localDeviceName(), model: DeviceModelName.current)
 #if os(iOS)
@@ -67,7 +78,7 @@ public struct DeviceRuntimeRootView: View {
 #if !canImport(Network) || !canImport(Security)
         runtime.advertise(on: LoopbackDiscovery.shared)
 #endif
-        return DeviceRuntimeRootView(runtime: runtime)
+        return runtime
     }
 
     public var body: some View {
