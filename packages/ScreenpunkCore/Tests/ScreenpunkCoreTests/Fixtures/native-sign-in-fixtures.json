@@ -1,0 +1,229 @@
+{
+  "fixtureVersion": 1,
+  "description": "Synthetic native response examples for decoding and contract validation. No token or credential is included. Timestamps and UUIDs are fixed example data, not live server state.",
+  "cases": [
+    {
+      "name": "sign-in-google",
+      "operationId": "nativeSignIn",
+      "statusCode": 200,
+      "response": {
+        "user": {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "displayName": "Example person",
+          "email": null
+        },
+        "signInProvider": "google.com",
+        "authTime": "2026-10-02T16:00:00.000Z",
+        "tokenExpiresAt": "2026-10-02T17:00:00.000Z"
+      }
+    },
+    {
+      "name": "sign-in-apple",
+      "operationId": "nativeSignIn",
+      "statusCode": 200,
+      "response": {
+        "user": {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "displayName": "Example person",
+          "email": null
+        },
+        "signInProvider": "apple.com",
+        "authTime": "2026-10-02T16:00:00.000Z",
+        "tokenExpiresAt": "2026-10-02T17:00:00.000Z"
+      }
+    },
+    {
+      "name": "no-workspaces",
+      "operationId": "nativeListAccounts",
+      "statusCode": 200,
+      "response": {
+        "items": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "owner-workspace",
+      "operationId": "nativeListAccounts",
+      "statusCode": 200,
+      "response": {
+        "items": [
+          {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "name": "Example workspace",
+            "createdAt": "2026-10-02T16:00:00.000Z",
+            "updatedAt": "2026-10-02T16:00:00.000Z",
+            "capabilities": {
+              "owner": true,
+              "administrator": true,
+              "canEnroll": true
+            }
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "administrator-workspace",
+      "operationId": "nativeListAccounts",
+      "statusCode": 200,
+      "response": {
+        "items": [
+          {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "name": "Example workspace",
+            "createdAt": "2026-10-02T16:00:00.000Z",
+            "updatedAt": "2026-10-02T16:00:00.000Z",
+            "capabilities": {
+              "owner": false,
+              "administrator": true,
+              "canEnroll": true
+            }
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "member-workspace",
+      "operationId": "nativeListAccounts",
+      "statusCode": 200,
+      "response": {
+        "items": [
+          {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "name": "Example workspace",
+            "createdAt": "2026-10-02T16:00:00.000Z",
+            "updatedAt": "2026-10-02T16:00:00.000Z",
+            "capabilities": {
+              "owner": false,
+              "administrator": false,
+              "canEnroll": false
+            }
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "sparse-workspace-page",
+      "operationId": "nativeListAccounts",
+      "statusCode": 200,
+      "response": {
+        "items": [],
+        "nextCursor": "WyIyMDI2LTEwLTAyVDE2OjAwOjAwLjAwMDAwMVoiLCIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiXQ"
+      }
+    },
+    {
+      "name": "administrator-location",
+      "operationId": "nativeListLocations",
+      "statusCode": 200,
+      "response": {
+        "items": [
+          {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "name": "Example location",
+            "createdAt": "2026-10-02T16:00:00.000Z",
+            "updatedAt": "2026-10-02T16:00:00.000Z",
+            "capabilities": {
+              "canView": true,
+              "canOperate": true,
+              "canEnroll": true
+            }
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "operator-location",
+      "operationId": "nativeListLocations",
+      "statusCode": 200,
+      "response": {
+        "items": [
+          {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "name": "Example location",
+            "createdAt": "2026-10-02T16:00:00.000Z",
+            "updatedAt": "2026-10-02T16:00:00.000Z",
+            "capabilities": {
+              "canView": true,
+              "canOperate": true,
+              "canEnroll": false
+            }
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "viewer-location",
+      "operationId": "nativeListLocations",
+      "statusCode": 200,
+      "response": {
+        "items": [
+          {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "name": "Example location",
+            "createdAt": "2026-10-02T16:00:00.000Z",
+            "updatedAt": "2026-10-02T16:00:00.000Z",
+            "capabilities": {
+              "canView": true,
+              "canOperate": false,
+              "canEnroll": false
+            }
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "no-visible-locations",
+      "operationId": "nativeListLocations",
+      "statusCode": 200,
+      "response": {
+        "items": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "sign-in-required",
+      "operationId": "nativeSignIn",
+      "statusCode": 401,
+      "response": {
+        "code": "identity_required",
+        "message": "A native identity token is required",
+        "requestId": "example-request-id"
+      }
+    },
+    {
+      "name": "recent-sign-in-required",
+      "operationId": "nativeSignIn",
+      "statusCode": 401,
+      "response": {
+        "code": "fresh_identity_required",
+        "message": "Sign in again to supply a recent identity proof",
+        "requestId": "example-request-id"
+      }
+    },
+    {
+      "name": "identity-unavailable",
+      "operationId": "nativeListAccounts",
+      "statusCode": 401,
+      "response": {
+        "code": "invalid_identity",
+        "message": "Identity is unavailable or expired",
+        "requestId": "example-request-id"
+      }
+    },
+    {
+      "name": "workspace-unavailable",
+      "operationId": "nativeListLocations",
+      "statusCode": 404,
+      "response": {
+        "code": "not_found",
+        "message": "Account not found",
+        "requestId": "example-request-id"
+      }
+    }
+  ]
+}

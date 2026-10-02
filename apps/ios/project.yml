@@ -12,6 +12,7 @@ settings:
     SWIFT_VERSION: "5.9"
     TARGETED_DEVICE_FAMILY: "1,2"
     CODE_SIGNING_ALLOWED: "NO"
+    SCREENPUNK_CLOUD_GOOGLE_CALLBACK_SCHEME: ""
     GENERATE_INFOPLIST_FILE: YES
     INFOPLIST_KEY_UILaunchScreen_Generation: YES
     INFOPLIST_KEY_CFBundleDisplayName: Screenpunk
@@ -30,6 +31,12 @@ settings:
       SCREENPUNK_GOOGLE_CALENDAR_CLIENT_ID: ""
       SCREENPUNK_GOOGLE_CALENDAR_REVERSED_CLIENT_ID: ""
 packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    exactVersion: 12.19.2
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    exactVersion: 10.0.0
   ScreenpunkCore:
     path: ../../packages/ScreenpunkCore
   ScreenpunkApple:
@@ -46,6 +53,12 @@ targets:
     dependencies:
       - package: ScreenpunkCore
       - package: ScreenpunkApple
+      - package: Firebase
+        product: FirebaseCore
+      - package: Firebase
+        product: FirebaseAuth
+      - package: GoogleSignIn
+        product: GoogleSignIn
       - sdk: WebKit.framework
     settings:
       base:
@@ -57,6 +70,7 @@ targets:
     platform: iOS
     sources:
       - path: ../../packages/ScreenpunkApple/Tests/ScreenpunkAppleTests/BundledAudioTests.swift
+      - path: Tests
     dependencies:
       - target: ScreenpunkiOS
       - package: ScreenpunkApple

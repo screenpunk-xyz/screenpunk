@@ -6,8 +6,31 @@
   <string>Show your current position alongside the destination when you tap Show my location in a fullscreen map.</string>
   <key>ScreenpunkGoogleCalendarClientID</key>
   <string>$(SCREENPUNK_GOOGLE_CALENDAR_CLIENT_ID)</string>
+  <!-- Dedicated Cloud values must be supplied together; empty configuration fails closed. -->
+  <key>ScreenpunkCloudFirebaseProjectID</key>
+  <string></string>
+  <key>ScreenpunkCloudFirebaseAPIKey</key>
+  <string></string>
+  <key>ScreenpunkCloudFirebaseAppID</key>
+  <string></string>
+  <key>ScreenpunkCloudFirebaseSenderID</key>
+  <string></string>
+  <key>ScreenpunkCloudGoogleClientID</key>
+  <string></string>
+  <key>ScreenpunkCloudGoogleCallbackScheme</key>
+  <string></string>
+  <key>ScreenpunkCloudBundleID</key>
+  <string></string>
+  <key>ScreenpunkCloudAPIOrigin</key>
+  <string></string>
   <key>CFBundleURLTypes</key>
   <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>Screenpunk Cloud OAuth</string>
+      <key>CFBundleURLSchemes</key>
+      <array><string>$(SCREENPUNK_CLOUD_GOOGLE_CALLBACK_SCHEME)</string></array>
+    </dict>
     <dict>
       <key>CFBundleURLName</key>
       <string>Google Calendar OAuth</string>
