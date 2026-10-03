@@ -6,11 +6,39 @@ import ScreenpunkCore
 /// archives. Process-local only; external filesystem writers are not excluded.
 private final class ScreenPreferenceResetGate: @unchecked Sendable {
     private let lock = NSLock()
-    private var suspended: Set<String> = []
-    func suspend(_ root: String) { lock.lock(); defer { lock.unlock() }; suspended.insert(root) }
-    func access<T>(_ root: String, operation: () throws -> T) throws -> T {
+    private struct Domain { var generation = UUID(); var suspended = false }
+    private var domains: [String: Domain] = [:]
+    func generation(_ root: String) -> UUID {
         lock.lock(); defer { lock.unlock() }
-        guard !suspended.contains(root) else { throw ConnectionFailure.permissionRequired }
+        if domains[root] == nil { domains[root] = Domain() }
+        return domains[root]!.generation
+    }
+    func suspend(_ root: String, generation: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        guard domains[root]?.generation == generation else { return }
+        domains[root]?.suspended = true
+    }
+    func isCurrent(_ root: String, generation: UUID) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return domains[root]?.generation == generation
+    }
+    func isRetired(_ root: String, generation: UUID) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return domains[root]?.generation == generation && domains[root]?.suspended == true
+    }
+    @MainActor func reopen(_ root: String, generation: UUID, capability: DeviceLocalResetReopeningCapability,
+                retirement: DeviceLocalResetWriterRetirement, nextGeneration: UUID, commitOtherDomain: () -> Void) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard capability.isConsuming(retirement), retirement.preferenceRoot.path == root, retirement.preferenceGeneration == generation, domains[root]?.generation == generation,
+              domains[root]?.suspended == true else { throw ConnectionFailure.permissionRequired }
+        // No throwing work, IO, await or external callback after this boundary.
+        let next = Domain(generation: nextGeneration, suspended: false)
+        commitOtherDomain()
+        domains[root] = next
+    }
+    func access<T>(_ root: String, generation: UUID, operation: () throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        guard domains[root]?.generation == generation, domains[root]?.suspended == false else { throw ConnectionFailure.permissionRequired }
         return try operation()
     }
 }
@@ -19,26 +47,52 @@ private final class ScreenPreferenceResetGate: @unchecked Sendable {
 /// A lock plus atomic replacement also coordinates the Mac preview helper.
 @MainActor
 public final class ScreenPreferenceStore {
-    public static let shared = ScreenPreferenceStore(root: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("xyz.screenpunk.preferences", isDirectory: true))
+    private static var currentShared = ScreenPreferenceStore(root: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("xyz.screenpunk.preferences", isDirectory: true))
+    public static var shared: ScreenPreferenceStore { currentShared }
+    static func installShared(_ store: ScreenPreferenceStore, capability: DeviceLocalResetReopeningCapability, retirement: DeviceLocalResetWriterRetirement) {
+        precondition(capability.isConsuming(retirement) && currentShared.canonicalRoot == retirement.preferenceRoot && currentShared.writerGeneration == retirement.preferenceGeneration)
+        currentShared = store
+    }
     static let valueLimit = 16 * 1024
     static let screenLimit = 128 * 1024
     static let totalLimit = 4 * 1024 * 1024
     private nonisolated static let resetGate = ScreenPreferenceResetGate()
     private nonisolated let root: URL
+    nonisolated let writerGeneration: UUID
+    nonisolated var canonicalRoot: URL { root }
     private let beforeMutation: (() -> Void)?
     private struct Archive: Codable {
         var version = 1
         var generation = UUID()
         var screens: [String: [String: String]] = [:]
     }
+    private static func canonicalPreferenceRoot(_ root: URL) -> URL {
+        var path = root.standardizedFileURL.resolvingSymlinksInPath().path
+        // Foundation may shorten a resolved /private/var path after its child is created.
+        // Normalize trusted system aliases after resolution so a new object cannot escape the gate.
+        if path == "/var" || path.hasPrefix("/var/") || path == "/tmp" || path.hasPrefix("/tmp/") { path = "/private" + path }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
     public init(root: URL) {
-        self.root = root.standardizedFileURL.resolvingSymlinksInPath(); beforeMutation = nil
+        self.root = Self.canonicalPreferenceRoot(root); beforeMutation = nil
+        writerGeneration = Self.resetGate.generation(self.root.path)
     }
     init(root: URL, beforeMutation: @escaping () -> Void) {
-        self.root = root.standardizedFileURL.resolvingSymlinksInPath(); self.beforeMutation = beforeMutation
+        self.root = Self.canonicalPreferenceRoot(root); self.beforeMutation = beforeMutation
+        writerGeneration = Self.resetGate.generation(self.root.path)
     }
-    /// Terminal for every current/new store sharing this canonical root. No resume.
-    public nonisolated func suspendForReset() { Self.resetGate.suspend(root.path) }
+    /// Terminal for this generation, including stores constructed before qualified reopening.
+    public nonisolated func suspendForReset() { Self.resetGate.suspend(root.path, generation: writerGeneration) }
+
+    private init(canonicalRoot: URL, generation: UUID) {
+        root = canonicalRoot; writerGeneration = generation; beforeMutation = nil
+    }
+    func preparedFreshStore() -> ScreenPreferenceStore { .init(canonicalRoot: root, generation: UUID()) }
+    nonisolated var isCurrentWriter: Bool { Self.resetGate.isCurrent(root.path, generation: writerGeneration) }
+    nonisolated var isRetired: Bool { Self.resetGate.isRetired(root.path, generation: writerGeneration) }
+    func reopen(capability: DeviceLocalResetReopeningCapability, retirement: DeviceLocalResetWriterRetirement, nextGeneration: UUID, commitCalendar: () -> Void) throws {
+        try Self.resetGate.reopen(root.path, generation: writerGeneration, capability: capability, retirement: retirement, nextGeneration: nextGeneration, commitOtherDomain: commitCalendar)
+    }
 
     func generation() throws -> UUID { try access { $0.generation } }
     func get(dashboard: String, key: String, generation: UUID) throws -> Any {
@@ -89,7 +143,7 @@ public final class ScreenPreferenceStore {
         else { throw ConnectionFailure.validationFailed }
     }
     private func access<T>(write: Bool = false, reset: Bool = false, _ operation: (inout Archive) throws -> T) throws -> T {
-        try Self.resetGate.access(root.path) {
+        try Self.resetGate.access(root.path, generation: writerGeneration) {
             beforeMutation?()
             let fm = FileManager.default
             try fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

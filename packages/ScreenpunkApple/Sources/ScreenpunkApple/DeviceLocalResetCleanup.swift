@@ -24,6 +24,16 @@ struct DeviceLocalResetKeychainCleanup: DeviceLocalResetCredentialCleanup {
     func isAbsent(_ item: DeviceLocalResetScope.CredentialItem) throws -> Bool { try KeychainCredentialStore(service: item.service).secret(for: item.account) == nil }
 }
 
+/// Proof of this adapter's synchronous, fully verified cleanup; constructor stays in this file.
+@MainActor final class DeviceLocalResetCleanupReceipt {
+    let scopeDigest: String
+    let resetID: UUID
+    let driverID: UUID
+    fileprivate init(_ permit: DeviceLocalResetCleanupPermit) {
+        scopeDigest = permit.scopeDigest; resetID = permit.resetID; driverID = permit.driverID
+    }
+}
+
 /// No public raw execution API. Unknown legacy preference temporary files remain untouched.
 @MainActor final class DeviceLocalResetCleanup {
     enum Failure: Error { case credentialStillPresent }
@@ -32,7 +42,7 @@ struct DeviceLocalResetKeychainCleanup: DeviceLocalResetCredentialCleanup {
     init(scope: DeviceLocalResetCleanupScope, credentials: any DeviceLocalResetCredentialCleanup = DeviceLocalResetKeychainCleanup()) {
         self.scope = scope; self.credentials = credentials
     }
-    func execute(_ permit: DeviceLocalResetCleanupPermit) throws {
+    @discardableResult func execute(_ permit: DeviceLocalResetCleanupPermit) throws -> DeviceLocalResetCleanupReceipt {
         try scope.authorityScope.validateCurrentPaths()
         try DeviceLocalFilesystemCleanup(plan: scope.plan).execute(withDestructiveStep: { operation in
             try permit.withStep(scopeDigest: scope.authorityScope.digest, operation: operation)
@@ -43,5 +53,12 @@ struct DeviceLocalResetKeychainCleanup: DeviceLocalResetCredentialCleanup {
                 guard try credentials.isAbsent(item) else { throw Failure.credentialStillPresent }
             }
         }
+        var receipt: DeviceLocalResetCleanupReceipt?
+        try permit.withStep(scopeDigest: scope.authorityScope.digest) {
+            try scope.authorityScope.validateCurrentPaths()
+            receipt = DeviceLocalResetCleanupReceipt(permit)
+        }
+        guard let receipt else { throw DeviceLocalResetCoordinator.Failure.invalidOperation }
+        return receipt
     }
 }

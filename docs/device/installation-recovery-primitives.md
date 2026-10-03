@@ -86,3 +86,13 @@ An opt-in version-2 scope now binds the complete filesystem plan and exact five 
 The internal Apple adapter requires a coordinator-issued synchronous permit. The permit checks the current driver, successful suspension, exact pending record and matching scope for each destructive step, with the operation executed under authority serialization. It expires when the callback returns. An existing asynchronous test session cannot upgrade into a qualified cleanup session. Core authorization wrappers must invoke each operation exactly once and cannot hide operation failures.
 
 Each exact Keychain deletion is followed by a throwing absence check; unrelated accounts and Cloud credentials are preserved. No production bootstrap/UI caller or suspension-domain reopening is connected. Scope migration, unknown temporary-file policy and qualified fresh-root reopening remain separate release work.
+
+## Qualified writer reopening
+
+An internal writer bundle now retires Calendar and the canonical preferences domain together. Its opaque retirement evidence covers only those two domains: callers must separately suspend hosts, temporary activation, bridges and WebViews before cleanup. Existing instances retain their original generation permanently; bridges capture their Calendar service at construction so queued work cannot acquire a replacement service.
+
+The Apple adapter returns a receipt only after all cleanup and a final matching pending-evidence check. A qualified coordinator retains that receipt and retirement across exact completion retries, then issues a one-use reopening capability after verified durable completion and driver exit. Cancellation during completion retains the session for explicit recovery without repeating cleanup. Arbitrary completed records and generic cleanup callbacks cannot mint a capability.
+
+Opening validates the exact bundle, scope, roots, retired generations and current completion before atomically replacing both domains. Mixed default/custom bindings are rejected. Failed preparation leaves both domains retired; old objects and replayed capabilities remain unusable. Preferences normalize trusted system aliases consistently before consulting the process-wide gate.
+
+Sixty focused tests and an iOS Simulator build passed for this slice. Production reset/root/UI callers, deterministic preference temporary files, full writer detachment and physical-device qualification remain separate work. Unknown historical preference temporary files remain preserved.

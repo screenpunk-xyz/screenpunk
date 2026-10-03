@@ -12,7 +12,7 @@ public final class HomeAssistantPreviewBridge {
     public convenience init(configuration: WKWebViewConfiguration, provisioning: HomeAssistantProvisioning) throws {
         try self.init(configuration: configuration, connections: .init(homeAssistant: provisioning), revision: provisioning.revision)
     }
-    public init(configuration: WKWebViewConfiguration, connections: NativePreviewConnections, revision: String, manifest: DashboardManifest? = nil, preferenceStore: ScreenPreferenceStore = .shared, stateReadOnly: Bool = true, publicTransport: any HTTPTransport = HomeAssistantHTTPTransport(), publicResolver: any DestinationResolver = LiteralOrResolvedDestinationResolver()) throws {
+    public init(configuration: WKWebViewConfiguration, connections: NativePreviewConnections, revision: String, manifest: DashboardManifest? = nil, preferenceStore: ScreenPreferenceStore? = nil, stateReadOnly: Bool = true, publicTransport: any HTTPTransport = HomeAssistantHTTPTransport(), publicResolver: any DestinationResolver = LiteralOrResolvedDestinationResolver()) throws {
         let runtime: HomeAssistantDeviceRuntime?
         if let provisioning = connections.homeAssistant {
             let vault = HomeAssistantDeviceVault(store: MemoryCredentialStore())

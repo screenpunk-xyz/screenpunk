@@ -27,11 +27,16 @@ struct GoogleCalendarState: Codable {
     var selections: [String: [GoogleCalendarSelection]] = [:]
 }
 
-/// Terminal process-local domain. Production instances always share the default;
-/// isolated domains are injected by tests. No resume/clear capability is provided.
+/// Terminal process-local generation. Production instances capture the current default;
+/// isolated domains are injected by tests. Retired domains are never resumed.
 @MainActor
 final class GoogleCalendarSuspensionDomain {
-    static let production = GoogleCalendarSuspensionDomain()
+    private(set) static var production = GoogleCalendarSuspensionDomain()
+    let identity = UUID()
+    static func install(_ domain: GoogleCalendarSuspensionDomain, capability: DeviceLocalResetReopeningCapability, retirement: DeviceLocalResetWriterRetirement) {
+        precondition(capability.isConsuming(retirement) && production === retirement.calendarDomain)
+        production = domain
+    }
     private struct WeakService { weak var value: GoogleCalendarDeviceService? }
     private var services: [WeakService] = []
     private(set) var suspended = false
@@ -49,12 +54,17 @@ final class GoogleCalendarSuspensionDomain {
 /// stored in a device-only Keychain item. Screen packages never receive tokens.
 @MainActor
 final class GoogleCalendarDeviceService {
-    static let shared = GoogleCalendarDeviceService()
+    private static var currentShared = GoogleCalendarDeviceService()
+    static var shared: GoogleCalendarDeviceService { currentShared }
+    static func installShared(_ service: GoogleCalendarDeviceService, capability: DeviceLocalResetReopeningCapability, retirement: DeviceLocalResetWriterRetirement) {
+        precondition(capability.isConsuming(retirement) && currentShared.suspension === retirement.calendarDomain)
+        currentShared = service
+    }
     nonisolated static let storageService = "xyz.screenpunk.google-calendar"
     nonisolated static let storageKey = "google-calendar-v1"
     private let store: any CredentialStore
     private let transport: any HTTPTransport
-    private let suspension: GoogleCalendarSuspensionDomain
+    let suspension: GoogleCalendarSuspensionDomain
     private let clock: any PairingClock
     private(set) var generation = UUID()
     private var refreshing: [String: Task<GoogleCalendarAccount, Error>] = [:]
@@ -69,6 +79,9 @@ final class GoogleCalendarDeviceService {
         self.suspension.register(self)
     }
     func suspendForReset() { suspension.suspend() }
+    func fresh(in domain: GoogleCalendarSuspensionDomain) -> GoogleCalendarDeviceService {
+        .init(store: store, transport: transport, clock: clock, suspension: domain)
+    }
     fileprivate func invalidateForReset() { invalidate() }
     private func ensureAvailable() throws {
         guard !suspension.suspended else { throw GoogleCalendarError.permission }

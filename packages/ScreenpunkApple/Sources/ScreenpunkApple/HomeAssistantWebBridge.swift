@@ -24,6 +24,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private let interactiveMaps = InteractiveMapController()
     private let mapApproval = MapPreviewApproval()
     private let mapManifest: DashboardManifest?
+    let calendarService: GoogleCalendarDeviceService
     private let preferenceStore: ScreenPreferenceStore
     private let preferenceGeneration: UUID?
     private let stateReadOnly: Bool
@@ -49,11 +50,13 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     }
 
     init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime? = nil, navigation: DashboardEventRuntime? = nil,
-         revision: String, mapManifest: DashboardManifest? = nil, preferenceStore: ScreenPreferenceStore = .shared, stateReadOnly: Bool = false, publicReads: PublicReadRuntime? = nil, resources: PublicRasterResources? = nil, onHealth: @escaping (Bool) -> Void) {
+         revision: String, mapManifest: DashboardManifest? = nil, preferenceStore: ScreenPreferenceStore? = nil, calendarService: GoogleCalendarDeviceService? = nil, stateReadOnly: Bool = false, publicReads: PublicReadRuntime? = nil, resources: PublicRasterResources? = nil, onHealth: @escaping (Bool) -> Void) {
         self.cameras = runtime.map { CameraPlaybackController(resolver: $0, revision: revision) }
         self.publicReads = publicReads; self.resources = resources
         self.runtime = runtime; self.connections = connections; self.navigation = navigation
         self.mapManifest = mapManifest
+        let preferenceStore = preferenceStore ?? .shared
+        self.calendarService = calendarService ?? .shared
         self.preferenceStore = preferenceStore; self.stateReadOnly = stateReadOnly
         self.preferenceGeneration = try? preferenceStore.generation()
         self.revision = revision; self.onHealth = onHealth
@@ -205,7 +208,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
                       manifest.connections.contains(where: { $0.alias == alias && ($0.operations == nil || $0.operations?.contains(where: { $0.name == "events" && $0.kind == "http" }) == true) }) else {
                     reply(id: id, error: "permission_required"); return
                 }
-                let service = GoogleCalendarDeviceService.shared
+                let service = calendarService
                 let accessGeneration = service.generation
                 tasks[id] = Task { @MainActor [weak self] in
                     guard let self, self.current(generation) else { return }
