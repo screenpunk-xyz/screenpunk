@@ -3,6 +3,58 @@ import ScreenpunkCore
 @testable import ScreenpunkApple
 
 @MainActor final class DeviceLocalResetLifecycleTests: XCTestCase {
+    func testLegacyCloudEvidenceBlocksFreshAndPendingCleanupAndRetry() async throws {
+        for pending in [false, true] {
+            for kind in ["valid", "invalid", "symlink", "dangling-symlink"] {
+                let f = try LifecycleFixture()
+                let root = f.scope.authorityScope.deviceRoot
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                let content = root.appendingPathComponent("screen-sentinel")
+                try Data("retained".utf8).write(to: content)
+                let legacy = root.appendingPathComponent("native-workspace-setup.json")
+                if kind.contains("symlink") {
+                    try FileManager.default.createSymbolicLink(at: legacy, withDestinationURL: kind == "symlink" ? f.sentinel : root.appendingPathComponent("missing-target"))
+                } else {
+                    // Reset must not decode either valid-looking or malformed evidence.
+                    try Data((kind == "valid" ? "{\"userID\":\"\(UUID().uuidString)\",\"request\":{\"requestId\":\"\(UUID().uuidString)\",\"workspaceName\":\"Workspace\",\"locationName\":\"Room\"}}" : "invalid").utf8).write(to: legacy)
+                }
+                let originalLink = kind.contains("symlink") ? try FileManager.default.destinationOfSymbolicLink(atPath: legacy.path) : nil
+                let originalBytes = originalLink == nil ? try Data(contentsOf: legacy) : nil
+                if pending {
+                    f.evidence.record = try .init(resetID: UUID(), scopeDigest: f.scope.authorityScope.digest)
+                    do { try await f.lifecycle.recover(progress: {}); XCTFail("blocked") } catch {}
+                } else {
+                    let context = try f.context()
+                    do { try await f.lifecycle.begin(context: context, resetID: UUID(), progress: {}); XCTFail("blocked") } catch {}
+                }
+                do { try await f.lifecycle.recover(progress: {}); XCTFail("retry blocked") } catch {}
+                XCTAssertEqual(f.keys.deletes, 0)
+                XCTAssertEqual(f.evidence.record?.phase, .pending)
+                XCTAssertEqual(try String(contentsOf: content), "retained")
+                XCTAssertEqual(try String(contentsOf: f.sentinel), "protected")
+                if let originalLink {
+                    XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: legacy.path), originalLink)
+                } else { XCTAssertEqual(try Data(contentsOf: legacy), originalBytes) }
+            }
+        }
+    }
+    func testLegacyCloudGuardRejectsAmbiguousLookupAndAncestorLinks() throws {
+        let f = try LifecycleFixture(), root = f.scope.authorityScope.deviceRoot
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        XCTAssertNoThrow(try DeviceLocalResetLegacyCloudGuard.requireAbsent(deviceRoot: root))
+        XCTAssertThrowsError(try DeviceLocalResetLegacyCloudGuard.inspect(deviceRoot: root, beforeLookup: { throw DeviceLocalResetLegacyCloudGuard.Failure.lookup(EACCES) }))
+        let link = f.base.appendingPathComponent("linked-device")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root)
+        XCTAssertThrowsError(try DeviceLocalResetLegacyCloudGuard.requireAbsent(deviceRoot: link))
+        XCTAssertNoThrow(try DeviceLocalResetLegacyCloudGuard.requireAbsent(deviceRoot: root.deletingLastPathComponent().appendingPathComponent("absent-device")))
+    }
+    func testLegacyCloudGuardRejectsActualInaccessibleDirectory() throws {
+        let f = try LifecycleFixture(), root = f.scope.authorityScope.deviceRoot
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: root.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path) }
+        XCTAssertThrowsError(try DeviceLocalResetLegacyCloudGuard.requireAbsent(deviceRoot: root))
+    }
     func testRepeatedResetReplacesDomainsAndRetainsExcludedFiles() async throws {
         let f = try LifecycleFixture()
         let old = f.provider.preferences

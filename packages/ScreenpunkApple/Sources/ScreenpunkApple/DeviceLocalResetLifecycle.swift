@@ -61,6 +61,9 @@ import ScreenpunkCore
         }, receiptCleanup: { [weak self] permit in
             guard let self, self.retiredResetID == permit.resetID,
                   self.host == nil || self.host?.lifetime.isRetired == true else { throw Failure.recoveryBlocked }
+            try permit.withStep(scopeDigest: self.scope.digest) {
+                try DeviceLocalResetLegacyCloudGuard.requireAbsent(deviceRoot: self.scope.deviceRoot)
+            }
             return try self.cleanup.execute(permit)
         })
         coordinator = created; return created
