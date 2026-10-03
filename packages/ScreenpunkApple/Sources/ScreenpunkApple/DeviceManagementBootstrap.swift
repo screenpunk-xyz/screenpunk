@@ -28,13 +28,13 @@ public final class DeviceManagementBootstrap: ObservableObject {
         if case .localReady = state { return }
         state = .checking
         do {
-            guard let lease = try authority.refresh() else { state = .blocked(retained()); return }
+            guard let lease = try authority.refresh() else { state = .blocked(authority.resetRenderingAllowed() ? retained() : .empty); return }
             let management = DeviceManagementContext(authority: authority, lease: lease)
             try management.validate()
             let host = try hostFactory(management)
             try management.validate()
-            guard host.server != nil else { state = .blocked(retained()); return }
+            guard host.server != nil else { state = .blocked(authority.resetRenderingAllowed() ? retained() : .empty); return }
             state = .localReady(host)
-        } catch { state = .blocked(retained()) }
+        } catch { state = .blocked(authority.resetRenderingAllowed() ? retained() : .empty) }
     }
 }

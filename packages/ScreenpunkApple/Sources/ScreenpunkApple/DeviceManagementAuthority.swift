@@ -2,7 +2,7 @@ import Foundation
 import ScreenpunkCore
 
 /// In-process authority only. External filesystem/Keychain writers are not excluded.
-/// No mutation APIs are provided. Production Cloud transition writers must remain
+/// Only internal Local reset bookkeeping writes are provided. Production Cloud writers remain
 /// disabled until owner-mediated exact uncertain-write recovery is implemented.
 /// All future management callers must share this owner and acquire it before their
 /// server lock. Do not wait for asynchronous callbacks from a gated operation.
@@ -12,7 +12,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         fileprivate let generation: UUID
     }
     public enum Failure: Error, Equatable {
-        case staleLease, reentrantOperation
+        case staleLease, reentrantOperation, resetConflict, noResetAttempt
     }
     private let lock = NSRecursiveLock()
     private let identity = UUID()
@@ -20,6 +20,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     private struct Evidence: Equatable {
         let history: DeviceManagementTransitionHistory?
         let references: Set<String>
+        let reset: DeviceLocalResetRecord?
     }
     private var quarantined = false
     private var observedHistory: DeviceManagementTransitionHistory?
@@ -28,12 +29,18 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     private var executing = false
     private var invalidationObservers: [UUID: () -> Void] = [:]
     private var invalidationActions: [() -> Void] = []
+    private let reset: any DeviceLocalResetEvidence
+    private struct ResetAttempt { let record: DeviceLocalResetRecord; let beginsNew: Bool }
+    private var resetAttempt: ResetAttempt?
+    private var resetQuarantined = false
+    private var observedReset: DeviceLocalResetRecord?
     private let journal: any CloudInstallationTransitionJournal
     private let credentials: CloudInstallationCredentialStore
 
-    public init(journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore) {
+    public init(journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore, reset: any DeviceLocalResetEvidence = DeviceLocalResetEvidenceAdapter.production()) {
         self.journal = journal
         self.credentials = credentials
+        self.reset = reset
     }
 
     /// Starts blocked and revokes previous leases even when classification fails.
@@ -71,7 +78,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     }
 
     // Future in-process transition writes must route through this owner after exact
-    // uncertain-write recovery is implemented. This slice exposes no write API. Fresh entry
+    // uncertain-write recovery is implemented. This slice exposes no Cloud write API. Fresh entry
     // checks detect external changes, but do not exclude external TOCTOU writers.
     private func verifiedEvidence() -> Evidence? {
         guard !quarantined else { return nil }
@@ -81,16 +88,71 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
             // This lifetime high-water guard is not persistent rollback protection.
             if let observedHistory, history != observedHistory { quarantined = true; return nil }
             if let history { observedHistory = history }
-            let before = Evidence(history: history, references: try credentials.references())
+            guard let resetEvidence = try permittedReset() else { return nil }
+            let before = Evidence(history: history, references: try credentials.references(), reset: resetEvidence.record)
             if let evidence, before != evidence { quarantined = true; return nil }
             switch CloudInstallationRecovery.localEligibility(journal: journal, credentials: credentials) {
             case .blocked: return nil
             case .legacyLocal, .locallyFenced: break
             }
-            let after = Evidence(history: try journal.load(), references: try credentials.references())
+            guard let resetAfter = try permittedReset() else { return nil }
+            let after = Evidence(history: try journal.load(), references: try credentials.references(), reset: resetAfter.record)
             guard before == after else { quarantined = true; return nil }
             return after
         } catch { return nil }
+    }
+
+    /// Snapshot only: future reset coordinator must serialize presentation/suspension.
+    /// Pending/corrupt reset must suppress retained WebViews as well as management.
+    public func resetRenderingAllowed() -> Bool {
+        (try? serialized { try permittedReset() != nil }) ?? false
+    }
+    private struct PermittedReset { let record: DeviceLocalResetRecord? }
+    private func permittedReset() throws -> PermittedReset? {
+        guard resetAttempt == nil else { return nil }
+        let digest = try reset.scopeDigest
+        let record = try reset.load()
+        if let observedReset, record != observedReset { resetQuarantined = true; quarantined = true; return nil }
+        if let evidence, record != evidence.reset { resetQuarantined = true; quarantined = true; return nil }
+        if let record { observedReset = record }
+        guard !resetQuarantined, record == nil || (record?.scopeDigest == digest && record?.phase == .completed) else { return nil }
+        return .init(record: record)
+    }
+
+    /// Internal, explicit Local reset only. No cleanup is executed here.
+    func beginLocalReset(_ lease: Lease, record: DeviceLocalResetRecord) throws {
+        try serialized {
+            defer { invalidate() }
+            guard permitted, lease.owner == identity, lease.generation == generation,
+                  verifiedEvidence() == evidence, record.phase == .pending,
+                  record.scopeDigest == (try reset.scopeDigest), resetAttempt == nil else { throw Failure.resetConflict }
+            let previous = try reset.load()
+            guard previous == nil || (previous?.phase == .completed && previous?.resetID != record.resetID) else { throw Failure.resetConflict }
+            resetAttempt = .init(record: record, beginsNew: previous != nil)
+            try writeResetAttempt()
+        }
+    }
+    func recommitResetAttempt() throws {
+        try serialized { defer { invalidate() }; try writeResetAttempt() }
+    }
+    /// Completion is solely the future cleanup caller's assertion; no Cloud meaning.
+    func completeLocalReset(expected pending: DeviceLocalResetRecord) throws {
+        try serialized {
+            defer { invalidate() }
+            guard resetAttempt == nil, pending.phase == .pending, pending.scopeDigest == (try reset.scopeDigest),
+                  try reset.load() == pending else { throw Failure.resetConflict }
+            resetAttempt = .init(record: try pending.completed(), beginsNew: false)
+            try writeResetAttempt()
+        }
+    }
+    private func writeResetAttempt() throws {
+        guard let attempt = resetAttempt else { throw Failure.noResetAttempt }
+        if attempt.beginsNew { try reset.beginNewReset(attempt.record) } else { try reset.save(attempt.record) }
+        guard try reset.load() == attempt.record else { throw Failure.resetConflict }
+        observedReset = attempt.record
+        resetAttempt = nil
+        // Owner-mediated reset changes require new classification, never stale contexts.
+        evidence = nil
     }
 
     private func invalidate() {
@@ -131,6 +193,7 @@ public struct DeviceManagementContext: @unchecked Sendable {
     }
     public func validate() throws { try authority.withLocalAuthority(lease) {} }
     public func revoke() throws { try authority.revoke() }
+    func beginLocalReset(record: DeviceLocalResetRecord) throws { try authority.beginLocalReset(lease, record: record) }
     func observeInvalidation(_ action: @escaping () -> Void) throws -> UUID { try authority.observeInvalidation(lease, action) }
     func removeInvalidationObserver(_ identifier: UUID) { authority.removeInvalidationObserver(identifier) }
     // The synchronous closure is internal: callers cannot obtain an escaping unchecked capability.

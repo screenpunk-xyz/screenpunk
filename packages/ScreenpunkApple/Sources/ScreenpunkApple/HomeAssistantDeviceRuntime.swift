@@ -5,10 +5,12 @@ import ScreenpunkCore
 public final class HomeAssistantDeviceVault: @unchecked Sendable {
     private let lock = NSLock()
     private let store: any CredentialStore
-    private let account = "provisioning-v1"
-    private let setsAccount = "screen-set-grants-v1"
-    private let publicAccount = "public-read-grants-v1"
-    public init(store: any CredentialStore = KeychainCredentialStore(service: "xyz.screenpunk.device.home-assistant")) {
+    public static let storageService = "xyz.screenpunk.device.home-assistant"
+    static let storageKeys = ["provisioning-v1", "screen-set-grants-v1", "public-read-grants-v1"]
+    private var account: String { Self.storageKeys[0] }
+    private var setsAccount: String { Self.storageKeys[1] }
+    private var publicAccount: String { Self.storageKeys[2] }
+    public init(store: any CredentialStore = KeychainCredentialStore(service: HomeAssistantDeviceVault.storageService)) {
         self.store = store
     }
     struct Record: Codable, Equatable {

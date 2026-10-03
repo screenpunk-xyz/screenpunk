@@ -15,7 +15,7 @@ final class DeviceManagementBootstrapTests: XCTestCase {
                 if mode == 4 { backend.values["candidate"] = Data(repeating: 1, count: 32) }
             }
             var creations = 0, retainedLoads = 0
-            let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { XCTFail("unexpected generation"); return Data() })), retained: { retainedLoads += 1; return .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
+            let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { XCTFail("unexpected generation"); return Data() }), reset: ManagementTestResetEvidence()), retained: { retainedLoads += 1; return .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
             bootstrap.start(); bootstrap.start()
             XCTAssertEqual(creations, 0); XCTAssertEqual(retainedLoads, 2)
             guard case .blocked = bootstrap.state else { return XCTFail("expected blocked") }
@@ -29,7 +29,7 @@ final class DeviceManagementBootstrapTests: XCTestCase {
                 backend.values["candidate"] = Data(repeating: 1, count: 32)
             }
             var creations = 0
-            let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { Data() })), retained: { .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
+            let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { Data() }), reset: ManagementTestResetEvidence()), retained: { .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
             bootstrap.start()
             XCTAssertEqual(creations, 1)
         }
@@ -38,7 +38,7 @@ final class DeviceManagementBootstrapTests: XCTestCase {
         let journal = BootstrapJournal(), backend = BootstrapBackend()
         journal.value = try .intent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "candidate")
         var creations = 0
-        let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { Data() })), retained: { .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
+        let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { Data() }), reset: ManagementTestResetEvidence()), retained: { .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
         bootstrap.start(); journal.value = nil; bootstrap.start()
         XCTAssertEqual(creations, 0)
     }

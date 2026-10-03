@@ -7,7 +7,7 @@ final class DeviceManagementAuthorityTests: XCTestCase {
         try .intent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: UUID().uuidString)
     }
     private func owner(_ journal: AuthorityJournal, _ backend: AuthorityBackend) -> DeviceManagementAuthority {
-        .init(journal: journal, credentials: .init(backend: backend, random: { Data(repeating: 9, count: 32) }))
+        .init(journal: journal, credentials: .init(backend: backend, random: { Data(repeating: 9, count: 32) }), reset: ManagementTestResetEvidence())
     }
     func testRefreshRevokesPriorLeaseAndForeignLeaseRejected() throws {
         let journal = AuthorityJournal(), backend = AuthorityBackend(), authority = owner(journal, backend)

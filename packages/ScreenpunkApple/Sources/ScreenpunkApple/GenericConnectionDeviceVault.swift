@@ -20,8 +20,10 @@ public final class GenericConnectionDeviceVault: @unchecked Sendable {
     }
     private let lock = NSLock()
     private let store: any CredentialStore
-    private let account = "approved-grants-v1"
-    public init(store: any CredentialStore = KeychainCredentialStore(service: "xyz.screenpunk.device.connections")) {
+    public static let storageService = "xyz.screenpunk.device.connections"
+    static let storageKey = "approved-grants-v1"
+    private var account: String { Self.storageKey }
+    public init(store: any CredentialStore = KeychainCredentialStore(service: GenericConnectionDeviceVault.storageService)) {
         self.store = store
     }
     public func provision(_ configuration: ConnectionProvisioning, owner: String) throws {
