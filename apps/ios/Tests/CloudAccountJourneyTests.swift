@@ -18,7 +18,7 @@ final class CloudAccountJourneyTests: XCTestCase {
     }
 
     func testUnconfiguredExplicitFactoryFailsClosedWithoutInstalling() {
-        let lifecycle = CloudHumanSessionLifecycle()
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         var resolutions = 0
         let presentation = CloudProviderPresentation(testResolve: { resolutions += 1; return .init(controller: UIViewController(), window: UIWindow()) })
         let actions = CloudAccountJourneyActions(lifecycle: lifecycle, presentation: presentation, availability: .qualified)
@@ -194,7 +194,7 @@ final class CloudAccountJourneyTests: XCTestCase {
 
 @MainActor
 private final class JourneyFixture {
-    let lifecycle = CloudHumanSessionLifecycle()
+    let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
     let journal = JourneyJournal()
     let transport = JourneyTransport()
     let availability: CloudJourneyAvailability

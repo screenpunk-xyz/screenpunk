@@ -12,20 +12,16 @@ struct CloudAccountJourneyActions {
     let lifecycle: CloudHumanSessionLifecycle
     let presentation: CloudProviderPresentation
     let availability: CloudJourneyAvailability
-    let makeSession: (CloudProviderPresentation) throws -> CloudHumanSession
+    let makeSession: ((CloudProviderPresentation) throws -> CloudHumanSession)?
     var enabled: Bool { if case .qualified = availability { return true }; return false }
     init(lifecycle: CloudHumanSessionLifecycle, presentation: CloudProviderPresentation,
          availability: CloudJourneyAvailability,
-         makeSession: @escaping (CloudProviderPresentation) throws -> CloudHumanSession = CloudAccountJourneyActions.productionSession) {
+         makeSession: ((CloudProviderPresentation) throws -> CloudHumanSession)? = nil) {
         self.lifecycle = lifecycle; self.presentation = presentation; self.availability = availability; self.makeSession = makeSession
-    }
-    static func productionSession(_ presentation: CloudProviderPresentation) throws -> CloudHumanSession {
-        try CloudHumanSession.make(googlePresentation: { try presentation.resolve().controller },
-                                  applePresentation: { try presentation.resolve().window }, transport: CloudNativeURLSessionTransport())
     }
     @discardableResult func signIn(_ provider: CloudNativeSignInProvider) throws -> Task<Void, Never>? {
         guard enabled else { throw CloudNativeIdentityError.notConfigured }
-        if lifecycle.coordinator == nil { try lifecycle.install(makeSession(presentation)) }
+        if lifecycle.coordinator == nil { try lifecycle.installExplicit(presentation: presentation, testFactory: makeSession) }
         guard let coordinator = lifecycle.coordinator else { throw CloudNativeIdentityError.providerFailed }
         return coordinator.signIn(provider: provider)
     }
@@ -52,7 +48,7 @@ struct CloudAccountJourneyView: View {
     @State private var dismissalCancellation = CloudJourneyDismissalCancellation()
     init(lifecycle: CloudHumanSessionLifecycle, presentation: CloudProviderPresentation,
          availability: CloudJourneyAvailability = .unavailable("Cloud sign-in is not available in this version."),
-         makeSession: @escaping (CloudProviderPresentation) throws -> CloudHumanSession = CloudAccountJourneyActions.productionSession) {
+         makeSession: ((CloudProviderPresentation) throws -> CloudHumanSession)? = nil) {
         self.lifecycle = lifecycle
         actions = .init(lifecycle: lifecycle, presentation: presentation, availability: availability, makeSession: makeSession)
     }
