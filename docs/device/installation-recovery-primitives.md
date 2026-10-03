@@ -106,3 +106,11 @@ A failed attempt retains its exact encoded bytes and original/installed file ide
 On iOS, protection is assigned before writing content and verified against the required policy. Simulator builds alone tolerate missing protection readback after successful assignment and unchanged empty-file verification; explicit mismatches still fail. Physical-device builds require an exact readback. This accommodates observed Simulator metadata behavior and does not qualify device encryption.
 
 Validation: 80 focused tests, production iOS Simulator build, and an isolated iOS 26.5 Simulator create/set/get runtime smoke passed. Physical-device protection and actual crash/power-loss qualification remain outstanding. No production reset orchestration or UI caller is added.
+
+## Terminal runtime retirement
+
+Each running host/root now owns a terminal lifetime. Retirement stops host recovery/listening and temporary activation, fences existing Home Assistant, generic and public-read capabilities at operation time, and retires registered WebView coordinators. Navigation, deferred settings acknowledgments, foreground re-entry and late asynchronous runtime construction cannot revive that generation. Root brightness stops and current generic runtime credentials are cleared only from its in-memory store; persistent credential vaults and installed content remain unchanged.
+
+A fresh root must use a new lifetime. Ordinary backgrounding, coordinator stop and management revocation retain their previous behavior. Requests admitted before retirement cannot be undone; late results and local publication are rejected. These primitives do not initiate a reset, change scope defaults or replace the root after cleanup. Production lifecycle orchestration remains the next step.
+
+Validation: full Apple suite executed 320 tests with four existing opt-in skips and zero failures, including nine new lifetime/retirement tests. The iOS Simulator app build passed.

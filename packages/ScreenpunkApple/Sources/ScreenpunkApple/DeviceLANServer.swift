@@ -39,6 +39,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     private var postCommitActions: [() -> Void] = []
     public var onManagementSuspended: (() -> Void)?
     private var managementSuspended = false
+    private var runtimeRetired = false
     private var invalidationObserver: UUID?
     private var listenerAttempt = UUID()
     private var pendingListener: NWListener?
@@ -102,13 +103,18 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     public func makeGenericConnectionRuntime() async throws -> ConnectionRuntime {
         guard let scope = genericConnectionScope() else { throw ConnectionFailure.permissionRequired }
-        return try await genericConnectionVault.makeRuntime(scope: scope, currentScope: { [weak self] in self?.genericConnectionScope() })
+        let result = try await genericConnectionVault.makeRuntime(scope: scope, currentScope: { [weak self] in self?.genericConnectionScope() })
+        guard genericConnectionScope() == scope, !Task.isCancelled else {
+            try? await result.clearCredentials(); throw ConnectionFailure.permissionRequired
+        }
+        return result
     }
     private var publicSession: (scope: HomeAssistantDeviceRuntime.Scope, session: PublicReadSession)?
     public func publicReadSession() -> PublicReadSession? {
         guard let scope = homeAssistantScope(), let generation = scope.grantSet else { return nil }
         var retired: PublicReadSession?
         lock.lock(); defer { lock.unlock(); retired?.cancel() }
+        guard !runtimeRetired else { return nil }
         if let existing = publicSession, existing.scope == scope { return existing.session }
         retired = publicSession?.session; publicSession = nil
         guard let config = try? homeAssistantVault.publicConfiguration(owner: scope.owner, dashboardId: scope.dashboardId,
@@ -132,6 +138,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Content capabilities belong to their installer, independently of management.
     private var executionOwner: PairingIdentity? {
         let owner = contentOwner
+        guard !runtimeRetired else { return nil }
         guard runtime.pairing.owner == nil || runtime.pairing.owner == owner else { return nil }
         return owner
     }
@@ -228,7 +235,7 @@ public final class DeviceLANServer: @unchecked Sendable {
             return try management.withAuthority {
                 lock.lock()
                 defer { actions = postCommitActions; postCommitActions = []; lock.unlock() }
-                guard !managementSuspended else { throw DeviceManagementAuthority.Failure.staleLease }
+                guard !managementSuspended, !runtimeRetired else { throw DeviceManagementAuthority.Failure.staleLease }
                 return try operation()
             }
         } catch {
@@ -250,6 +257,19 @@ public final class DeviceLANServer: @unchecked Sendable {
         lock.unlock()
         stop()
         return true
+    }
+
+    /// Terminal content/management fence. Persisted content and credential records stay intact.
+    public func retireForReset() {
+        lock.lock()
+        guard !runtimeRetired else { lock.unlock(); return }
+        runtimeRetired = true; authorityGeneration = UUID()
+        let session = publicSession?.session; publicSession = nil
+        lock.unlock()
+        _ = suspendManagement()
+        session?.cancel()
+        let service = homeAssistantRuntime
+        Task { await service.cancelPending() }
     }
 
     /// Recreate a failed listener without touching pairing or installed content.
