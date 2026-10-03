@@ -21,5 +21,16 @@
     "ajv-formats": "3.0.1",
     "tsx": "4.19.3",
     "typescript": "5.8.2"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./native-package": {
+      "types": "./dist/native-package.d.ts",
+      "node": "./dist/native-package.js"
+    },
+    "./*": "./*"
   }
 }
