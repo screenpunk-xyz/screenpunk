@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import AuthenticationServices
 @testable import Screenpunk
 
 final class CloudNativeIdentityTests: XCTestCase {
@@ -60,4 +61,140 @@ final class CloudNativeIdentityTests: XCTestCase {
         identity.cancelActiveFlow()
         XCTAssertThrowsError(try identity.tokenProvider())
     }
+    @MainActor func testCanceledEntryNeverConfiguresOrPresentsEitherProvider() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        for apple in [false, true] {
+            let task = Task { @MainActor in
+                do {
+                    if apple { try await identity.signInWithApple(presentationAnchor: UIWindow()) }
+                    else { try await identity.signInWithGoogle(presenting: UIViewController()) }
+                    XCTFail("Canceled entry succeeded")
+                } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+            }
+            task.cancel(); await task.value
+        }
+        XCTAssertEqual(probe.configurations, 0); XCTAssertEqual(probe.presentations, 0)
+    }
+
+    @MainActor func testProviderScopedCallbackAndRevokedLateGoogleResult() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        let callback = URL(string: "com.googleusercontent.apps.fixture-client:/oauth2callback?code=fixture")!
+        let apple = Task { try await identity.signInWithApple(presentationAnchor: UIWindow()) }
+        while probe.presentations == 0 { await Task.yield() }
+        XCTAssertFalse(identity.handleGoogleCallback(callback)); XCTAssertEqual(probe.callbacks, 0)
+        identity.cancelActiveFlow(); probe.resolve(.apple(idToken: "fixture", rawNonce: "fixture", fullName: nil))
+        do { try await apple.value; XCTFail("Revoked Apple result accepted") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+        let google = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations < 2 { await Task.yield() }
+        XCTAssertTrue(identity.handleGoogleCallback(callback)); XCTAssertEqual(probe.callbacks, 1)
+        identity.cancelActiveFlow()
+        XCTAssertFalse(identity.handleGoogleCallback(callback)); XCTAssertEqual(probe.callbacks, 1)
+        do { try await identity.signInWithApple(presentationAnchor: UIWindow()); XCTFail("Overlapping flow") }
+        catch { XCTAssertEqual(error as? CloudNativeIdentityError, .flowInProgress) }
+        probe.resolve(.google(idToken: "fixture", accessToken: "fixture"))
+        do { try await google.value; XCTFail("Revoked Google result accepted") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+        XCTAssertEqual(probe.exchanges, 0); XCTAssertNil(identity.interactiveUserID)
+    }
+
+    @MainActor func testTaskCancelClosesCallbacksAndDelayedDeliveryCannotRevokeNewFlow() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        probe.delayCancellation = true
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        let callback = URL(string: "com.googleusercontent.apps.fixture-client:/oauth2callback")!
+        let old = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations == 0 { await Task.yield() }
+        old.cancel()
+        XCTAssertFalse(identity.handleGoogleCallback(callback)) // No actor delivery or provider reply needed.
+        do { try await identity.signInWithGoogle(presenting: UIViewController()); XCTFail("Duplicate flow") }
+        catch { XCTAssertEqual(error as? CloudNativeIdentityError, .flowInProgress) }
+        while probe.delayedCancellations.isEmpty { await Task.yield() }
+        probe.resolve(.google(idToken: "old-fixture", accessToken: "fixture"))
+        do { try await old.value; XCTFail("Canceled result") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+        XCTAssertEqual(probe.exchanges, 0)
+        let fresh = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations < 2 { await Task.yield() }
+        probe.delayedCancellations.removeFirst()()
+        XCTAssertTrue(identity.handleGoogleCallback(callback))
+        probe.resolve(.google(idToken: "new-fixture", accessToken: "fixture"))
+        try await fresh.value
+        XCTAssertEqual(probe.exchanges, 1); XCTAssertEqual(identity.interactiveUserID, "fixture-uid")
+    }
+
+    @MainActor func testTaskCancelDuringExchangeRejectsLateUID() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        probe.holdExchange = true
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        let task = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations == 0 { await Task.yield() }
+        probe.resolve(.google(idToken: "fixture", accessToken: "fixture"))
+        while probe.exchanges == 0 { await Task.yield() }
+        task.cancel()
+        XCTAssertFalse(identity.handleGoogleCallback(URL(string: "com.googleusercontent.apps.fixture-client:/oauth2callback")!))
+        probe.resolveExchange()
+        do { try await task.value; XCTFail("Canceled exchange published") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+        XCTAssertNil(identity.interactiveUserID)
+    }
+
+    @MainActor func testAcceptedFakeProviderExchangesAndPublishesOnlyCurrentResult() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        let task = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations == 0 { await Task.yield() }
+        probe.resolve(.google(idToken: "fixture", accessToken: "fixture"))
+        try await task.value
+        XCTAssertEqual(probe.exchanges, 1); XCTAssertEqual(identity.interactiveUserID, "fixture-uid")
+        identity.cancelActiveFlow(); XCTAssertNil(identity.interactiveUserID)
+    }
+
+    @MainActor func testApplePrecancelAndDelegateRaceFinishExactlyOnce() async {
+        var presentations = 0, cancellations = 0
+        let pre = CloudAppleAuthorization(testPerform: { _ in presentations += 1 }, testCancel: {})
+        pre.cancel()
+        do { _ = try await pre.authorize(); XCTFail("Precancel presented") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+        XCTAssertEqual(presentations, 0)
+        var held: CloudAppleAuthorization?
+        let flow = CloudAppleAuthorization(testPerform: { held = $0; presentations += 1 }, testCancel: { cancellations += 1 })
+        let task = Task { try await flow.authorize() }
+        while held == nil { await Task.yield() }
+        flow.cancel()
+        let controller = ASAuthorizationController(authorizationRequests: [ASAuthorizationAppleIDProvider().createRequest()])
+        flow.authorizationController(controller: controller, didCompleteWithError: NSError(domain: ASAuthorizationError.errorDomain, code: ASAuthorizationError.canceled.rawValue))
+        flow.cancel()
+        do { _ = try await task.value; XCTFail("Cancellation replaced") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+        XCTAssertEqual(cancellations, 1); XCTAssertEqual(presentations, 1)
+    }
+
+}
+
+
+@MainActor
+private final class IdentityProbe {
+    let configuration: CloudNativeConfiguration
+    var configurations = 0, presentations = 0, exchanges = 0, callbacks = 0
+    var delayCancellation = false, holdExchange = false
+    var delayedCancellations: [() -> Void] = []
+    private var pendingExchange: CheckedContinuation<String, Never>?
+    private var pending: CheckedContinuation<CloudProviderCredential, Error>?
+    init(configuration: CloudNativeConfiguration) { self.configuration = configuration }
+    var drivers: CloudIdentityTestDrivers {
+        .init(configure: { self.configurations += 1; return self.configuration },
+              google: { _ in try await self.present() }, apple: { _ in try await self.present() },
+              exchange: { _ in
+                  self.exchanges += 1
+                  if self.holdExchange { return await withCheckedContinuation { self.pendingExchange = $0 } }
+                  return "fixture-uid"
+              },
+              callback: { _ in self.callbacks += 1; return true }, cancel: {},
+              cancellationDelivery: { delivery in
+                  if self.delayCancellation { self.delayedCancellations.append(delivery) } else { delivery() }
+              })
+    }
+    func present() async throws -> CloudProviderCredential {
+        presentations += 1
+        return try await withCheckedThrowingContinuation { pending = $0 }
+    }
+    func resolveExchange() { let saved = pendingExchange; pendingExchange = nil; saved?.resume(returning: "late-fixture-uid") }
+    func resolve(_ credential: CloudProviderCredential) { let saved = pending; pending = nil; saved?.resume(returning: credential) }
 }
