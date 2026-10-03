@@ -10,8 +10,10 @@ import ScreenpunkCore
     private var scope: HomeAssistantDeviceRuntime.Scope?
     private var engine = TemporaryActivationNavigation()
     private var enabled = false
+    private(set) var isSuspendedForReset = false
+    private var generation = UUID()
     private var status = DeviceTemporaryActivationStatus() {
-        didSet { try? server?.updateTemporaryActivationStatus(status) }
+        didSet { if !isSuspendedForReset { try? server?.updateTemporaryActivationStatus(status) } }
     }
     private var pendingSelection: String?
     private var service: HomeAssistantDeviceRuntime?
@@ -28,6 +30,7 @@ import ScreenpunkCore
     }
 
     func update(active: Bool) {
+        guard !isSuspendedForReset else { return }
         enabled = active
         status.foreground = active
         let next = server?.temporaryActivationScope()
@@ -49,22 +52,24 @@ import ScreenpunkCore
         let service = makeService(server)
         self.service = service
         let pollNanoseconds = self.pollNanoseconds
+        let generation = self.generation
         task = Task { [weak self] in
             var retrySeconds: UInt64 = 1
             while !Task.isCancelled {
+                guard self?.current(generation) == true, self?.enabled == true, self?.scope == scope else { return }
                 var wait = pollNanoseconds
                 do {
                     self?.status.phase = "checking"
                     let data = try await service.readTemporaryActivationState(revision: scope.revision)
-                    guard !Task.isCancelled, let self, self.enabled, self.scope == scope else { return }
+                    guard let self, self.current(generation), self.enabled, self.scope == scope else { return }
                     let state = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
                     self.receive(state: state, now: Date())
                     retrySeconds = 1
                 } catch {
-                    if Task.isCancelled { return }
-                    self?.status.phase = "retrying"
+                    guard let self, self.current(generation) else { return }
+                    self.status.phase = "retrying"
                     let e = error as NSError
-                    self?.status.lastError = "\(e.domain):\(e.code)"
+                    self.status.lastError = "\(e.domain):\(e.code)"
                     wait = retrySeconds * 1_000_000_000
                     retrySeconds = min(retrySeconds * 2, 30)
                 }
@@ -74,14 +79,14 @@ import ScreenpunkCore
         timer = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
-                guard let self, self.scope == scope else { return }
+                guard let self, self.current(generation), self.scope == scope else { return }
                 self.apply { $0.expire(selected: server.screenSet?.selectedDashboardId ?? "", now: Date()) }
             }
         }
     }
 
     func receive(state: [String: Any], now: Date) {
-        guard let scope, let configuration = scope.temporaryActivation, let server else { return }
+        guard !isSuspendedForReset, let scope, let configuration = scope.temporaryActivation, let server else { return }
         guard state["entity_id"] as? String == configuration.entityId else { return }
         status.phase = "receiving"; status.lastReceivedAt = now
         status.lastState = state["state"] as? String; status.lastError = nil; status.receivedCount += 1
@@ -89,35 +94,56 @@ import ScreenpunkCore
     }
 
     func expire(now: Date) {
-        guard let server else { return }
+        guard !isSuspendedForReset, let server else { return }
         apply { $0.expire(selected: server.screenSet?.selectedDashboardId ?? "", now: now) }
     }
 
-    func manualSelection() { pendingSelection = nil; apply { $0.manualSelection(); return nil } }
+    func manualSelection() { guard !isSuspendedForReset else { return }; pendingSelection = nil; apply { $0.manualSelection(); return nil } }
 
     private func apply(_ change: (inout TemporaryActivationNavigation) -> String?) {
-        guard let server, let scope, let configuration = scope.temporaryActivation, server.temporaryActivationScope() == scope else { return }
+        guard !isSuspendedForReset, let server, let scope, let configuration = scope.temporaryActivation, server.temporaryActivationScope() == scope else { return }
+        let generation = self.generation
         var next = engine
         let selection = change(&next)
         guard next != engine || selection != nil || pendingSelection != nil else { return }
         do {
             let pending = selection ?? pendingSelection
-            let selected = try server.commitTemporaryActivationSelection(pending, expectedScope: scope, beforeSelection: {
-                if let url = checkpointURL {
+            let selected = try server.commitTemporaryActivationSelection(pending, expectedScope: scope, beforeSelection: checkpointMutation {
+                if let url = self.checkpointURL {
                     let saved = Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: next, pendingSelection: pending)
                     try JSONEncoder().encode(saved).write(to: url, options: .atomic)
                 }
-                engine = next; pendingSelection = pending
-            }, afterSelection: {
-                pendingSelection = nil
-                if let url = checkpointURL {
-                    try JSONEncoder().encode(Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: engine, pendingSelection: nil)).write(to: url, options: .atomic)
+                self.engine = next; self.pendingSelection = pending
+            }, afterSelection: checkpointMutation {
+                self.pendingSelection = nil
+                if let url = self.checkpointURL {
+                    try JSONEncoder().encode(Checkpoint(owner: scope.owner, grantSet: scope.grantSet, target: scope.dashboardId, configuration: configuration, navigation: self.engine, pendingSelection: nil)).write(to: url, options: .atomic)
                 }
             })
-            if selected { status.selectionCount += 1 }
+            if current(generation), selected { status.selectionCount += 1 }
         } catch {
+            guard current(generation) else { return }
             status.phase = "selection_failed"
             let e = error as NSError; status.lastError = "\(e.domain):\(e.code)"
+        }
+    }
+
+    /// Terminal local writer fence; a new runtime instance is required after reset.
+    func suspendForReset() {
+        guard !isSuspendedForReset else { return }
+        isSuspendedForReset = true; generation = UUID(); enabled = false
+        stop(); scope = nil; pendingSelection = nil; engine = .init()
+    }
+
+    private func current(_ generation: UUID) -> Bool {
+        !isSuspendedForReset && self.generation == generation && !Task.isCancelled
+    }
+    /// Each callback carries the lifetime in which it was prepared.
+    func checkpointMutation(_ operation: @escaping () throws -> Void) -> () throws -> Void {
+        let generation = self.generation
+        return { [weak self] in
+            guard let self, self.current(generation) else { throw ConnectionFailure.permissionRequired }
+            try operation()
         }
     }
 

@@ -19,6 +19,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private var tasks: [String: Task<Void, Never>] = [:]
     private var documentGeneration = UUID()
     private var active = true
+    private(set) var isSuspendedForReset = false
     private let maps = AppleMapPreview()
     private let interactiveMaps = InteractiveMapController()
     private let mapApproval = MapPreviewApproval()
@@ -29,8 +30,9 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private let googleTV = GoogleTVScreenConnection()
     private let googleTVADB = GoogleTVADBScreenConnection()
     private var voiceTapAt: TimeInterval?
-    fileprivate func recordVoiceTap() { if active { voiceTapAt = ProcessInfo.processInfo.systemUptime } }
+    fileprivate func recordVoiceTap() { if !isSuspendedForReset, active { voiceTapAt = ProcessInfo.processInfo.systemUptime } }
     func installVoiceTapGate(_ controller: WKUserContentController) {
+        guard !isSuspendedForReset else { return }
         let world = WKContentWorld.world(name: "ScreenpunkVoiceTap")
         controller.add(GoogleTVTapHandler(self), contentWorld: world, name: "screenpunkVoiceTap")
         controller.addUserScript(WKUserScript(source: """
@@ -40,7 +42,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world))
     }
     func setActive(_ value: Bool) {
-        guard active != value else { return }
+        guard !isSuspendedForReset, active != value else { return }
         active = value
         if !value { voiceTapAt = nil; googleTV.close(); googleTVADB.close() }
         status(navigation?.status ?? [:])
@@ -56,14 +58,21 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
         self.preferenceGeneration = try? preferenceStore.generation()
         self.revision = revision; self.onHealth = onHealth
     }
-    func attach(to webView: WKWebView) { self.webView = webView; cameras?.attach(webView); interactiveMaps.attach(webView)
+    func attach(to webView: WKWebView) { guard !isSuspendedForReset else { return }; self.webView = webView; cameras?.attach(webView); interactiveMaps.attach(webView)
         interactiveMaps.onTap = { [weak self] id in
-            guard let self, self.active else { return }
+            guard let self, !self.isSuspendedForReset, self.active else { return }
             self.webView?.callAsyncJavaScript(
                 "window.dispatchEvent(new CustomEvent('screenpunk:appleMapsTap', {detail: {id: id}}));",
                 arguments: ["id": id], in: nil, in: .page, completionHandler: { _ in })
         }
     }
+    /// Terminal writer fence. Navigation cancellation cannot reactivate this bridge.
+    func suspendForReset() {
+        guard !isSuspendedForReset else { return }
+        isSuspendedForReset = true; active = false
+        cancel(); interactiveMaps.onTap = nil; webView = nil
+    }
+
     func cancel() {
         voiceTapAt = nil; googleTV.close(); googleTVADB.close(); maps.cancel(); interactiveMaps.close()
         documentGeneration = UUID()
@@ -81,12 +90,18 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     deinit { let cameras = cameras; let interactiveMaps = interactiveMaps; Task { @MainActor in cameras?.cancel(); interactiveMaps.cancel() } }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.frameInfo.isMainFrame,
+        guard !isSuspendedForReset, message.frameInfo.isMainFrame,
               let url = message.frameInfo.request.url?.absoluteString,
               IsolationEvaluator.isLocalPackageURL(url),
               let body = message.body as? [String: Any], let id = body["id"] as? String, (1...128).contains(id.utf8.count),
               JSONSerialization.isValidJSONObject(body),
               let data = try? JSONSerialization.data(withJSONObject: body), data.count <= 64 * 1024 else { return }
+        handleValidatedBody(body, id: id)
+    }
+
+    // Frame/origin/size validation remains at the sole script-message entry point.
+    func handleValidatedBody(_ body: [String: Any], id: String) {
+        guard !isSuspendedForReset else { return }
         guard body["protocolVersion"] as? Int == 1, body["kind"] as? String == "request" else {
             reply(id: id, error: "validation_failed"); return
         }
@@ -163,7 +178,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
                     reply(id: id, error: "permission_required"); return
                 }
                 tasks[id] = Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, self.current(generation) else { return }
                     defer { if self.documentGeneration == generation { self.tasks.removeValue(forKey: id) } }
                     let deadline = Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 12_000_000_000)
@@ -193,7 +208,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
                 let service = GoogleCalendarDeviceService.shared
                 let accessGeneration = service.generation
                 tasks[id] = Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, self.current(generation) else { return }
                     defer { if self.documentGeneration == generation { self.tasks.removeValue(forKey: id) } }
                     do {
                         let result = try await service.events(dashboard: manifest.dashboardId, parameters: parameters)
@@ -216,7 +231,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
                     }
                 }
                 tasks[id] = Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, self.current(generation) else { return }
                     defer { if self.documentGeneration == generation { self.tasks.removeValue(forKey: id) } }
                     do {
                         let value: [String: Any]
@@ -235,10 +250,11 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
             if !subscribe, let publicReads, publicReads.aliases.contains(alias) {
                 guard publicTasks.count < 16, publicTasks[id] == nil else { reply(id: id, error: "size_limit"); return }
                 publicTasks[id] = Task { @MainActor [weak self] in
-                    defer { if self?.documentGeneration == generation { self?.publicTasks.removeValue(forKey: id) } }
+                    guard let self, self.current(generation) else { return }
+                    defer { if self.documentGeneration == generation { self.publicTasks.removeValue(forKey: id) } }
                     do {
                         let result = try await publicReads.request(alias: alias, operation: operation, parameters: parameters)
-                        guard let self, self.current(generation) else { return }
+                        guard self.current(generation) else { return }
                         var value: [String: Any] = ["state": result.state, "status": result.status]
                         if let date = result.fetchedAt { value["fetchedAt"] = ISO8601DateFormatter().string(from: date) }
                         if let valid = result.lastModified { value["lastModified"] = valid }
@@ -252,8 +268,8 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
                         self.onHealth(result.state == "fresh" || result.state == "unavailable")
                         self.reply(id: id, value: value, stale: result.state == "stale")
                     } catch {
-                        guard self?.current(generation) == true else { return }
-                        self?.reply(id: id, error: (error as? ConnectionFailure)?.rawValue ?? "device_offline")
+                        guard self.current(generation) else { return }
+                        self.reply(id: id, error: (error as? ConnectionFailure)?.rawValue ?? "device_offline")
                     }
                 }
                 return
@@ -265,7 +281,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
                 return
             }
             tasks[id] = Task { [weak self] in
-                guard let self else { return }
+                guard let self, self.current(generation) else { return }
                 defer { if self.documentGeneration == generation { self.tasks.removeValue(forKey: id) } }
                 do {
                     if subscribe { try await self.subscribe(id: id, alias: alias, operation: operation, parameters: parameters, generation: generation) }
@@ -290,9 +306,10 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private func current(_ generation: UUID) -> Bool { generation == documentGeneration && !Task.isCancelled }
+    private func current(_ generation: UUID) -> Bool { !isSuspendedForReset && generation == documentGeneration && !Task.isCancelled }
 
     private func subscribe(id: String, alias: String, operation: String, parameters: [String: String], generation: UUID) async throws {
+        guard current(generation) else { return }
         if alias == "home", let runtime {
             let stream = try await runtime.subscribeStates(revision: revision, alias: alias, operation: operation, parameters: parameters)
             guard current(generation) else { return }
@@ -334,6 +351,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     }
 
     private func dispatch(_ message: [String: Any]) {
+        guard !isSuspendedForReset else { return }
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: .fragmentsAllowed),
               let json = String(data: data, encoding: .utf8) else { return }
         webView?.callAsyncJavaScript("if (typeof globalThis.__screenpunkDispatch === 'function') globalThis.__screenpunkDispatch(JSON.parse(message));",

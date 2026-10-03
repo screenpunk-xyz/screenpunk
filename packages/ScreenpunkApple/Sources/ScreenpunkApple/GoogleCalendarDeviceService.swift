@@ -27,6 +27,24 @@ struct GoogleCalendarState: Codable {
     var selections: [String: [GoogleCalendarSelection]] = [:]
 }
 
+/// Terminal process-local domain. Production instances always share the default;
+/// isolated domains are injected by tests. No resume/clear capability is provided.
+@MainActor
+final class GoogleCalendarSuspensionDomain {
+    static let production = GoogleCalendarSuspensionDomain()
+    private struct WeakService { weak var value: GoogleCalendarDeviceService? }
+    private var services: [WeakService] = []
+    private(set) var suspended = false
+    func register(_ service: GoogleCalendarDeviceService) {
+        services.removeAll { $0.value == nil }; services.append(.init(value: service))
+    }
+    func suspend() {
+        guard !suspended else { return }
+        suspended = true
+        for service in services { service.value?.invalidateForReset() }
+    }
+}
+
 /// All persistent Calendar data, including account metadata and selections, is
 /// stored in a device-only Keychain item. Screen packages never receive tokens.
 @MainActor
@@ -36,6 +54,7 @@ final class GoogleCalendarDeviceService {
     nonisolated static let storageKey = "google-calendar-v1"
     private let store: any CredentialStore
     private let transport: any HTTPTransport
+    private let suspension: GoogleCalendarSuspensionDomain
     private let clock: any PairingClock
     private(set) var generation = UUID()
     private var refreshing: [String: Task<GoogleCalendarAccount, Error>] = [:]
@@ -44,14 +63,23 @@ final class GoogleCalendarDeviceService {
     private var retryAt = Date.distantPast
 
     init(store: any CredentialStore = KeychainCredentialStore(service: GoogleCalendarDeviceService.storageService),
-         transport: any HTTPTransport = HomeAssistantHTTPTransport(), clock: any PairingClock = SystemClock()) {
-        self.store = store; self.transport = transport; self.clock = clock
+         transport: any HTTPTransport = HomeAssistantHTTPTransport(), clock: any PairingClock = SystemClock(),
+         suspension: GoogleCalendarSuspensionDomain? = nil) {
+        self.store = store; self.transport = transport; self.clock = clock; self.suspension = suspension ?? .production
+        self.suspension.register(self)
+    }
+    func suspendForReset() { suspension.suspend() }
+    fileprivate func invalidateForReset() { invalidate() }
+    private func ensureAvailable() throws {
+        guard !suspension.suspended else { throw GoogleCalendarError.permission }
     }
     func snapshot() throws -> GoogleCalendarState {
+        try ensureAvailable()
         guard let data = try store.secret(for: Self.storageKey) else { return .init() }
         return try JSONDecoder().decode(GoogleCalendarState.self, from: data)
     }
     private func save(_ value: GoogleCalendarState) throws {
+        try ensureAvailable()
         try store.put(JSONEncoder().encode(value), for: Self.storageKey)
     }
     func isReady(dashboard: String) -> Bool {
@@ -80,19 +108,23 @@ final class GoogleCalendarDeviceService {
         // which could disconnect other independently authorized devices.
     }
     func erase() throws {
+        try ensureAvailable()
         try store.delete(Self.storageKey); invalidate()
     }
     private func check(_ expected: UUID) throws {
+        try ensureAvailable()
         try Task.checkCancellation()
         guard generation == expected else { throw GoogleCalendarError.permission }
     }
     private func json(url: URL, method: String = "GET", fields: [String: String]? = nil, token: String? = nil) async throws -> [String: Any] {
+        try ensureAvailable()
         guard Date() >= retryAt else { throw GoogleCalendarError.rateLimited }
         var headers: [String: String] = [:]
         if let token { headers["Authorization"] = "Bearer " + token }
         if fields != nil { headers["Content-Type"] = "application/x-www-form-urlencoded" }
         let response = try await transport.send(.init(url: url, method: method, headers: headers,
             body: fields.map(GoogleCalendarOAuth.form), timeout: 15, maxBytes: 2 * 1024 * 1024))
+        try ensureAvailable()
         try Task.checkCancellation()
         if response.status == 429 || response.status >= 500 {
             let delay = Double(response.headers["retry-after"] ?? "") ?? 60
@@ -154,11 +186,14 @@ final class GoogleCalendarDeviceService {
         }
         refreshing[id] = task
         defer { if generation == expected { refreshing.removeValue(forKey: id) } }
-        return try await task.value
+        let result = try await task.value
+        try check(expected)
+        return result
     }
     private func pages(path: String, query: [String: String], accountID: String) async throws -> [[String: Any]] {
         let expected = generation
         var account = try await account(accountID)
+        try check(expected)
         var values: [[String: Any]] = []
         var pageToken: String?
         for _ in 0..<20 {
@@ -173,6 +208,7 @@ final class GoogleCalendarDeviceService {
                 guard let index = state.accounts.firstIndex(where: { $0.id == accountID }) else { throw GoogleCalendarError.permission }
                 state.accounts[index].expiresAt = .distantPast; try save(state)
                 account = try await self.account(accountID)
+                try check(expected)
                 result = try await json(url: parts.url!, token: account.accessToken)
             }
             try check(expected)
@@ -184,6 +220,7 @@ final class GoogleCalendarDeviceService {
         throw GoogleCalendarError.tooLarge
     }
     func reloadCalendars(accountID: String) async throws {
+        try ensureAvailable()
         let expected = generation
         let items = try await pages(path: "users/me/calendarList", query: ["maxResults": "250", "minAccessRole": "reader"], accountID: accountID)
         try check(expected)
@@ -213,6 +250,7 @@ final class GoogleCalendarDeviceService {
         return formatter.date(from: value)
     }
     func events(dashboard: String, parameters: [String: String]) async throws -> (value: [String: Any], stale: Bool) {
+        try ensureAvailable()
         guard Set(parameters.keys) == Set(["timeMin", "timeMax"]),
               let startText = parameters["timeMin"], let endText = parameters["timeMax"],
               let start = Self.date(startText), let end = Self.date(endText), end > start,
