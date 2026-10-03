@@ -5,6 +5,28 @@ import ScreenpunkCore
 
 @MainActor
 final class CloudHumanSessionBrokerTests: XCTestCase {
+    func testDispatchNeverConstructsAndRevalidatesExactOwnerAfterHandler() throws {
+        let broker = CloudHumanSessionBroker()
+        let url = URL(string: "com.googleusercontent.apps.fixture:/oauth2callback")!
+        XCTAssertFalse(broker.dispatchGoogleCallback(url))
+        var lease: CloudHumanSessionBroker.Lease?
+        var successor: CloudHumanSessionBroker.Lease?
+        var calls = 0
+        lease = try broker.acquire(owner: UUID()) { _ in
+            XCTAssertFalse(broker.dispatchGoogleCallback(url))
+            return CloudHumanSession(testCallback: { _ in
+                calls += 1
+                _ = broker.retire(lease!)
+                successor = try! broker.acquire(owner: UUID()) { _ in CloudHumanSession(testCallback: { _ in false }, testRevoke: {}) }
+                return true
+            }, testRevoke: {})
+        }
+        XCTAssertFalse(broker.dispatchGoogleCallback(url))
+        XCTAssertEqual(calls, 1)
+        XCTAssertFalse(lease!.isCurrent)
+        XCTAssertTrue(successor!.isCurrent)
+    }
+
     func testDormantAndOccupiedLoserHaveNoFactoryOrSDKEffects() throws {
         let broker = CloudHumanSessionBroker(), first = BrokerFixture(), second = BrokerFixture()
         XCTAssertEqual(broker.state, .vacant); XCTAssertEqual(first.factories, 0)

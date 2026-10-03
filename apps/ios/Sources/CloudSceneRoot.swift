@@ -7,7 +7,7 @@ struct CloudSceneRoot: View {
     var body: some View {
         KioskLaunchView()
             .environmentObject(cloud)
-            .onOpenURL { _ = cloud.handleCallback($0) }
+            .onOpenURL { _ = cloud.dispatchGoogleCallback($0) }
             .onChange(of: scenePhase) { phase in
                 cloud.scenePhaseChanged(phase)
             }

@@ -6,6 +6,24 @@ import ScreenpunkCore
 @testable import Screenpunk
 
 final class CloudHumanSessionLifecycleTests: XCTestCase {
+    @MainActor func testWrongSceneOnlyTransportsToAttachedOwner() throws {
+        let broker = CloudHumanSessionBroker()
+        let owner = CloudHumanSessionLifecycle(broker: broker)
+        let receiver = CloudHumanSessionLifecycle(broker: broker)
+        let context = FakeHumanContext()
+        try owner.install(CloudHumanSession(testCallback: { context.callback($0) }, testRevoke: { context.revoke() }))
+        let url = URL(string: "com.googleusercontent.apps.fixture:/oauth2callback")!
+        XCTAssertFalse(receiver.handleCallback(url))
+        XCTAssertTrue(receiver.dispatchGoogleCallback(url))
+        receiver.cancelPresentation(); receiver.scenePhaseChanged(.background)
+        XCTAssertEqual(context.revocations, 0)
+        receiver.retirePresentationContext()
+        XCTAssertFalse(receiver.dispatchGoogleCallback(url))
+        XCTAssertTrue(owner.dispatchGoogleCallback(url))
+        owner.cancelPresentation()
+        XCTAssertFalse(owner.dispatchGoogleCallback(url))
+    }
+
     @MainActor func testDormantCallbacksAndPhasesNeverConstructSession() {
         let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         XCTAssertNil(lifecycle.coordinator)
