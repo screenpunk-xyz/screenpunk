@@ -1,7 +1,8 @@
+import { types } from "node:util";
 import { fail } from "./native-package-json.js";
 import { nativeManifestSchema } from "./native-package-schema.js";
 
-type Schema = {
+export type Schema = {
   type?: string;
   const?: unknown;
   enum?: readonly unknown[];
@@ -48,7 +49,14 @@ export function copyData(
   path = "$manifest",
   seen = new Set<object>(),
   schema: Schema = manifestSchema,
+  rejectProxy = false,
 ): unknown {
+  if (rejectProxy && types.isProxy(value))
+    fail(
+      "representation",
+      path,
+      "proxy input cannot be snapshotted reproducibly",
+    );
   if (schema.anyOf) {
     if (typeof value === "string") string(value, path);
     return validate(value, schema, path, false);
@@ -157,7 +165,7 @@ export function copyData(
       !(schema.required ?? []).includes(key) &&
       (descriptor.value === null || descriptor.value === undefined)
         ? descriptor.value
-        : copyData(descriptor.value, childPath, seen, child);
+        : copyData(descriptor.value, childPath, seen, child, rejectProxy);
   }
   seen.delete(value);
   if (!array) return result;
@@ -322,8 +330,22 @@ function validate(
   return value;
 }
 
+export function projectNativeValue(
+  value: unknown,
+  schema: Schema,
+  path: string,
+  rejectProxy = false,
+): unknown {
+  return validate(
+    copyData(value, path, new Set(), schema, rejectProxy),
+    schema,
+    path,
+    true,
+  );
+}
+
 export function projectNativeManifest(value: unknown): unknown {
-  return validate(copyData(value), manifestSchema, "$manifest", true);
+  return projectNativeValue(value, manifestSchema, "$manifest");
 }
 
 export function integerField(path: string[]): boolean {
