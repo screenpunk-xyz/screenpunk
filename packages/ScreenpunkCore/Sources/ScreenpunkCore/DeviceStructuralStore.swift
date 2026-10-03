@@ -17,6 +17,7 @@ import Glibc
 final class DeviceStructuralStore {
     enum Kind: Equatable { case binding, intent, envelope, terminal }
     enum Boundary: Equatable { case afterWrite(Kind), afterFileSync(Kind), beforeReplace(Kind), afterReplace(Kind), afterDirectorySync(Kind) }
+    enum StagingIdentitySite: Equatable { case candidateCreated, replacementRetried(Kind) }
     enum Recovery: Equatable {
         case terminalNeedsDurability(DeviceStructuralOperationRecord)
         case oldObserved(DeviceStructuralOperationRecord)
@@ -46,9 +47,12 @@ final class DeviceStructuralStore {
     private let mutex = NSLock()
     private var bindingQualified = false
     private let boundary: (Boundary) throws -> Void
+    private let stagingIdentityProbe: (Int32, StagingIdentitySite) throws -> Void
     private let envelopeName = "structural-envelope.json"
-    init(root: URL, rootID: UUID, boundary: @escaping (Boundary) throws -> Void = { _ in }) {
+    init(root: URL, rootID: UUID, stagingIdentityProbe: @escaping (Int32, StagingIdentitySite) throws -> Void = { _, _ in },
+         boundary: @escaping (Boundary) throws -> Void = { _ in }) {
         self.root = root.standardizedFileURL; self.rootID = rootID; self.boundary = boundary
+        self.stagingIdentityProbe = stagingIdentityProbe
     }
 
     /// Root already exists; its UUID and every content identity/selection are caller chosen.
@@ -142,6 +146,8 @@ final class DeviceStructuralStore {
         if record.phase == .unresolved {
             let temporary = envelopeName + ".pending"
             var fd = openat(context.root, temporary, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_NONBLOCK, 0o600)
+            // This scope owns either successful open, including a retry, before any throwing check/write.
+            defer { if fd >= 0 { close(fd) } }
             if fd < 0 && errno == EEXIST {
                 guard let retained = stagedIdentities[record.operationID],
                       let existing = try readFile(context.root, temporary, limit: StructuralStoreCodec.envelopeLimit),
@@ -149,10 +155,11 @@ final class DeviceStructuralStore {
                 fd = openat(context.root, temporary, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
             } else {
                 guard fd >= 0 else { throw failure() }
+                try stagingIdentityProbe(fd, .candidateCreated)
                 stagedIdentities[record.operationID] = try identity(fd, directory: false)
-                do { try writeAll(fd, record.candidate) } catch { close(fd); throw error }
+                try writeAll(fd, record.candidate)
             }
-            guard fd >= 0 else { throw failure() }; defer { close(fd) }
+            guard fd >= 0 else { throw failure() }
             let candidateIdentity = try identity(fd, directory: false)
             try boundary(.afterWrite(.envelope)); try sync(fd); try boundary(.afterFileSync(.envelope)); try check(context)
             guard let staged = try readFile(context.root, temporary, limit: StructuralStoreCodec.envelopeLimit),
@@ -358,24 +365,25 @@ final class DeviceStructuralStore {
     private func replace(_ context: Context, parent: Int32, name: String, bytes: Data, expected: Node?, kind: Kind) throws {
         let temporary = name + ".pending"
         var fd = openat(parent, temporary, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_NONBLOCK, 0o600)
+        // Own the initial or retry descriptor before identity checks and writes can throw.
+        defer { if fd >= 0 { close(fd) } }
         if fd < 0 && errno == EEXIST {
             guard let previous = try readFile(parent, temporary, limit: StructuralStoreCodec.operationLimit), previous.bytes == bytes else { throw DeviceStructuralStoreError.conflict }
             fd = openat(parent, temporary, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
-            guard fd >= 0, try identity(fd, directory: false) == previous.identity else { if fd >= 0 { close(fd) }; throw DeviceStructuralStoreError.conflict }
+            guard fd >= 0 else { throw DeviceStructuralStoreError.conflict }
+            try stagingIdentityProbe(fd, .replacementRetried(kind))
+            guard try identity(fd, directory: false) == previous.identity else { throw DeviceStructuralStoreError.conflict }
         } else {
             guard fd >= 0 else { throw failure() }
-            do {
-                try bytes.withUnsafeBytes { data in
-                    var offset = 0
-                    while offset < data.count {
-                        let count = write(fd, data.baseAddress!.advanced(by: offset), data.count - offset)
-                        if count < 0 { if errno == EINTR { continue }; throw failure() }
-                        guard count > 0 else { throw failure() }; offset += count
-                    }
+            try bytes.withUnsafeBytes { data in
+                var offset = 0
+                while offset < data.count {
+                    let count = write(fd, data.baseAddress!.advanced(by: offset), data.count - offset)
+                    if count < 0 { if errno == EINTR { continue }; throw failure() }
+                    guard count > 0 else { throw failure() }; offset += count
                 }
-            } catch { close(fd); throw error }
+            }
         }
-        defer { close(fd) }
         let temporaryIdentity = try identity(fd, directory: false)
         do {
             try boundary(.afterWrite(kind)); try check(context)

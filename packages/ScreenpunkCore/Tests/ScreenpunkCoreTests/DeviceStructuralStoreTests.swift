@@ -182,6 +182,39 @@ final class DeviceStructuralStoreTests: XCTestCase {
             XCTAssertThrowsError(try DeviceStructuralStore(root: root, rootID: rootID).recommitExact(operationID: first.operationID))
         }
     }
+    func testCandidateIdentityFailureClosesOwnedDescriptorAndPreservesEvidence() throws {
+        let root = try directory(); let first = try record(1)
+        var captured: Int32 = -1
+        let store = DeviceStructuralStore(root: root, rootID: rootID, stagingIdentityProbe: { fd, site in
+            if site == .candidateCreated { captured = fd; throw DeviceStructuralStoreError.io(EIO) }
+        })
+        try store.initializeExplicit(); try store.prepare(first)
+        XCTAssertThrowsError(try store.attempt(operationID: first.operationID))
+        XCTAssertGreaterThanOrEqual(captured, 0)
+        errno = 0; XCTAssertEqual(fcntl(captured, F_GETFD), -1); XCTAssertEqual(errno, EBADF)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("structural-envelope.json.pending").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("structural-envelope.json").path))
+        XCTAssertEqual(try store.recover(operationID: first.operationID), .oldObserved(first))
+        XCTAssertThrowsError(try DeviceStructuralStore(root: root, rootID: rootID).recommitExact(operationID: first.operationID))
+    }
+    func testReplacementRetryIdentityFailureClosesDescriptorAndPreservesStage() throws {
+        let root = try directory(); let first = try record(1)
+        let interrupted = DeviceStructuralStore(root: root, rootID: rootID) { if $0 == .afterWrite(.intent) { throw DeviceStructuralStoreError.io(EIO) } }
+        try interrupted.initializeExplicit(); XCTAssertThrowsError(try interrupted.prepare(first))
+        let stagedURL = root.appendingPathComponent("operations/" + first.operationID.uuidString.lowercased() + ".json.pending")
+        let evidence = try Data(contentsOf: stagedURL)
+        var captured: Int32 = -1
+        let retry = DeviceStructuralStore(root: root, rootID: rootID, stagingIdentityProbe: { fd, site in
+            if site == .replacementRetried(.intent) { captured = fd; throw DeviceStructuralStoreError.io(EIO) }
+        })
+        XCTAssertThrowsError(try retry.prepare(first))
+        XCTAssertGreaterThanOrEqual(captured, 0)
+        errno = 0; XCTAssertEqual(fcntl(captured, F_GETFD), -1); XCTAssertEqual(errno, EBADF)
+        XCTAssertEqual(try Data(contentsOf: stagedURL), evidence)
+        let repaired = DeviceStructuralStore(root: root, rootID: rootID)
+        try repaired.prepare(first)
+        XCTAssertTrue(try repaired.attempt(operationID: first.operationID).record.sameIntent(as: first))
+    }
     func testMalformedSurrogatesAndEnvelopePayloadBounds() throws {
         XCTAssertThrowsError(try StructuralStoreCodec.object(Data("{\"x\":\"\\uD800\"}".utf8), limit: 8192))
         XCTAssertThrowsError(try StructuralStoreCodec.object(Data("{\"x\":\"\\uDC00\"}".utf8), limit: 8192))
