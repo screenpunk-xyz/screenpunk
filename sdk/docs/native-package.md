@@ -183,3 +183,60 @@ and assets and handles ZIP transport only. Legacy records retain their original
 validator profile and digest; explicit conversion creates a new immutable native
 package/revision. This entry point enables no private cloud import or delivery
 path automatically.
+
+## Capturing authored source metadata
+
+The Node-only `captureNativeSourceMetadata(sourceJSON, identity)` export on
+`@screenpunk/sdk/native-package` captures an explicit construction snapshot before
+compilation. It returns deeply frozen `metadata`, its native `canonicalJSON` and
+SHA256 `sha256`, plus `sourceSha256` over the exact supplied bytes. It does not
+produce a manifest, invent an asset inventory, inherit a previous revision, or
+approve a device or permission. Use `createNativePackage(result.metadata, assets)`
+with real compiled assets to check entrypoint/page existence and compute the
+finished manifest and digest.
+
+`sourceJSON` is a synchronously copied `Uint8Array` (including a Buffer slice),
+limited to 5 MiB. Intrinsic storage reads ignore caller accessors and iterators;
+proxy views and shared backing storage are rejected. Decode is fatal UTF-8, with
+no BOM stripping: a UTF-8 BOM is rejected. The source document must have `name`
+and `connections`; optional fields are `target`, `pages`, `defaultPageId`,
+`eventRules`, and `deviceBehavior`. Unknown and computed fields are rejected.
+Omitted or null optional Codable fields project to absence, without defaults or
+inheritance. Explicit empty values remain subject to the existing native schema
+and semantic validation. `screenpunk-screen.json` is a separate asset; this API
+does not infer or copy it.
+
+`NativeConstructionIdentity` explicitly supplies schemaVersion 1, dashboardId
+and revision UUIDs, sdkVersion `"1"`, `entrypoint: "index.html"`, and the resolved
+native target. A supplied source target must match the target's native canonical
+projection exactly. No fixture target, connection, or permission is synthesized.
+The header is copied through the same schema-directed data-property snapshot;
+accessors, proxies, unknown keys, and unsupported representations are rejected.
+
+The strict JSON decoder detects duplicate **decoded** object keys, including
+escaped aliases, before either value could be overwritten. Existing native
+projection also rejects ambiguous NFC-equivalent dictionary keys and unpaired
+surrogates. The parser follows the derived manifest schema: unknown branches and
+unexpected scalar containers are rejected without recursive traversal, collection
+bounds apply while decoding, and a defensive nesting ceiling of 32 exceeds the
+current finite schema depth. The 5 MiB byte ceiling bounds tokens and total work.
+Numbers use finite binary64 representation for Double fields, preserving negative
+zero. Int fields additionally require the original decimal lexeme to be an exact
+mathematical integer in the safe JavaScript integer range: a rounded token such
+as `1.0000000000000001` is rejected. There is no string/boolean/number coercion.
+
+Canonical metadata reuses the existing native JSON serializer and schema-derived
+Int paths. Its hash is distinct from the raw source hash: optional null omission,
+JSON whitespace, and equivalent number spellings can yield identical projected
+metadata but different source bytes. Store the exact source snapshot/hash as well
+as the canonical construction snapshot/hash; JSONB or `JSON.stringify` is not a
+lossless canonical identity. For a durable build, resolve/allocate its identity
+once before construction and recover that same identity on retry. Caller intent
+hashes should not include newly allocated server IDs. This API does not implement
+that persistence or authorization policy, and old records missing a snapshot must
+not reconstruct it from a mutable project/head during publication.
+
+This additive boundary does not change the Mac controller's old source parser,
+fallbacks, or inheritance behavior. The native canonical profile remains qualified
+only within the Foundation/toolchain scope described above, not on every supported
+older iOS/iPadOS release.
