@@ -36,6 +36,9 @@ class ReleaseMetadataTests(unittest.TestCase):
             for key, wrong in [('CFBundleVersion', '1'), ('CFBundleShortVersionString', '1.1'), ('UIDeviceFamily', [1]), ('MinimumOSVersion', '17.0'), ('CFBundleIdentifier', 'other')]:
                 write(dict(info, **{key: wrong}))
                 with self.assertRaises(ValueError): metadata.validate_ipa(path, '1.0', '2')
+            for wrong in [[True, 2], [1.0, 2.0], [1, False], '1,2']:
+                write(dict(info, UIDeviceFamily=wrong))
+                with self.assertRaises(ValueError): metadata.validate_ipa(path, '1.0', '2')
             for malformed in [[1, 2], "not a dictionary"]:
                 write(malformed)
                 with self.assertRaises(ValueError): metadata.validate_ipa(path, '1.0', '2')

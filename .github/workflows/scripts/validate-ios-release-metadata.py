@@ -27,6 +27,9 @@ def validate_ipa(path, version, build):
         info = plistlib.loads(archive.read(names[0]))
     if not isinstance(info, dict):
         raise ValueError('Main application Info.plist must be a dictionary')
+    families = info.get('UIDeviceFamily')
+    if type(families) is not list or any(type(value) is not int for value in families):
+        raise ValueError('Exported IPA UIDeviceFamily must be a list of integers')
     expected = {'CFBundleIdentifier': 'xyz.screenpunk.ios',
                 'CFBundleShortVersionString': version, 'CFBundleVersion': build,
                 'MinimumOSVersion': '16.0', 'UIDeviceFamily': [1, 2]}
