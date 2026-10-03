@@ -11,7 +11,7 @@ final class CloudConnectionCoordinatorTests: XCTestCase {
     private var accounts: Data { Data(#"{"items":[{"id":"11111111-1111-4111-8111-111111111111","name":"Fixture workspace","createdAt":"2026-10-02","updatedAt":"2026-10-02","capabilities":{"owner":true,"administrator":true,"canEnroll":true}}],"nextCursor":null}"#.utf8) }
     private var locations: Data { Data(#"{"items":[{"id":"33333333-3333-4333-8333-333333333333","name":"Fixture location","createdAt":"2026-10-02","updatedAt":"2026-10-02","capabilities":{"canView":true,"canOperate":false,"canEnroll":false}}],"nextCursor":null}"#.utf8) }
 
-    private func coordinator(_ transports: [CoordinatorTransport], journal: (any CloudWorkspaceSetupJournal)? = nil, authenticate: @escaping (CloudNativeSignInProvider) async throws -> any CloudNativeTokenProvider = { _ in CoordinatorTokens() }, signOut: @escaping () throws -> Void = {}) -> CloudConnectionCoordinator {
+    private func coordinator(_ transports: [CoordinatorTransport], journal: (any CloudWorkspaceSetupJournal)? = nil, authenticate: @escaping (CloudNativeSignInProvider) async throws -> any CloudNativeTokenProvider = { _ in CoordinatorTokens() }, signOut: @escaping () async throws -> Void = {}) -> CloudConnectionCoordinator {
         var index = 0
         return .init(authenticate: authenticate, cancelIdentityFlow: {}, signOutIdentity: signOut, makeClient: { tokens in
             let transport = transports[index]; index += 1
@@ -28,7 +28,7 @@ final class CloudConnectionCoordinatorTests: XCTestCase {
         await coordinator.signIn(provider: .google)?.value
         XCTAssertNil(coordinator.createFirstWorkspace(workspaceName: "Workspace", locationName: "Location"))
         let original = try XCTUnwrap(journal.attemptedRecord)
-        coordinator.signOut(); XCTAssertNil(coordinator.pendingWorkspaceSetup)
+        await coordinator.signOut()?.value; XCTAssertNil(coordinator.pendingWorkspaceSetup)
         await coordinator.signIn(provider: .apple)?.value
         XCTAssertEqual(coordinator.failure, .pendingOtherUser)
         XCTAssertFalse(coordinator.canCreateFirstWorkspace); XCTAssertNil(coordinator.retryWorkspaceSetup())
@@ -126,7 +126,7 @@ final class CloudConnectionCoordinatorTests: XCTestCase {
         let oldTask = coordinator.signIn(provider: .google)
         await old.waitUntilHeld()
         XCTAssertNil(coordinator.signIn(provider: .apple))
-        coordinator.signOut()
+        await coordinator.signOut()?.value
         XCTAssertEqual(signOuts, 1)
         XCTAssertNil(coordinator.humanIdentity)
         XCTAssertFalse(coordinator.isWorking)
@@ -154,10 +154,43 @@ final class CloudConnectionCoordinatorTests: XCTestCase {
         XCTAssertFalse(coordinator.isWorking)
         await coordinator.signIn(provider: .google)?.value
         XCTAssertEqual(coordinator.accounts.count, 1)
-        coordinator.signOut()
+        await coordinator.signOut()?.value
         XCTAssertEqual(coordinator.failure, .signOut)
         XCTAssertNil(coordinator.humanIdentity)
         XCTAssertTrue(coordinator.accounts.isEmpty)
+    }
+
+    func testPendingSignOutSurvivesCancelAndRepeatedRequestsJoinWithoutNewLogin() async {
+        let gate = CoordinatorGate()
+        var clears = 0
+        let instance = coordinator([], signOut: { clears += 1; await gate.wait() })
+        let first = instance.signOut()
+        await gate.waitUntilEntered()
+        let joined = instance.signOut()
+        XCTAssertEqual(instance.signOutState, .pending)
+        XCTAssertNil(instance.signIn(provider: .google))
+        instance.cancel()
+        XCTAssertEqual(instance.signOutState, .pending)
+        await gate.release()
+        await first?.value; await joined?.value
+        XCTAssertEqual(clears, 1); XCTAssertEqual(instance.signOutState, .succeeded)
+        XCTAssertNil(instance.failure); XCTAssertNil(instance.signOut())
+    }
+
+    func testSignOutFailureRequiresExplicitRetryThenAllowsFreshLogin() async {
+        var clears = 0
+        let instance = coordinator([CoordinatorTransport([.reply(identity), .reply(empty)])], signOut: {
+            clears += 1
+            if clears == 1 { throw CloudNativeIdentityError.providerFailed }
+        })
+        await instance.signOut()?.value
+        XCTAssertEqual(instance.signOutState, .failed); XCTAssertEqual(instance.failure, .signOut)
+        XCTAssertNil(instance.signIn(provider: .google)); XCTAssertNil(instance.signOut())
+        XCTAssertEqual(clears, 1)
+        await instance.retrySignOut()?.value
+        XCTAssertEqual(clears, 2); XCTAssertEqual(instance.signOutState, .succeeded)
+        await instance.signIn(provider: .google)?.value
+        XCTAssertEqual(instance.signOutState, .idle); XCTAssertNotNil(instance.humanIdentity)
     }
 
     func testLateProviderCompletionAfterCancelCannotStartAPIRequest() async {

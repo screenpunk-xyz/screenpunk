@@ -6,6 +6,11 @@ import ScreenpunkApple
 /// Human identity and workspace discovery only. It never enrolls or manages this installation.
 @MainActor
 final class CloudConnectionCoordinator: ObservableObject {
+    enum SignOutState: Equatable { case idle, pending, failed, succeeded }
+    @Published private(set) var signOutState: SignOutState = .idle
+    private var signOutIntent: UUID?
+    private var signOutAttempt: UUID?
+    private var signOutOperation: Task<Void, Never>?
     enum Failure: Equatable { case authentication, discovery, signOut, persistence, workspaceSetup, pendingOtherUser, setupNotEligible }
     @Published private(set) var humanIdentity: CloudNativeSignInResponse?
     @Published private(set) var accounts: [CloudNativeAccount] = []
@@ -31,7 +36,8 @@ final class CloudConnectionCoordinator: ObservableObject {
 
     private let authenticate: (CloudNativeSignInProvider) async throws -> any CloudNativeTokenProvider
     private let cancelIdentityFlow: () -> Void
-    private let signOutIdentity: () throws -> Void
+    private let signOutIdentity: () async throws -> Void
+    private let retrySignOutIdentity: () async throws -> Void
     private let makeClient: (any CloudNativeTokenProvider) throws -> CloudNativeClient
     private var client: CloudNativeClient?
     private var generation = UUID()
@@ -39,20 +45,23 @@ final class CloudConnectionCoordinator: ObservableObject {
 
     /// The explicit provider operation captures its presentation context outside this coordinator.
     init(authenticate: @escaping (CloudNativeSignInProvider) async throws -> any CloudNativeTokenProvider,
-         cancelIdentityFlow: @escaping () -> Void, signOutIdentity: @escaping () throws -> Void,
+         cancelIdentityFlow: @escaping () -> Void, signOutIdentity: @escaping () async throws -> Void,
+         retrySignOutIdentity: (() async throws -> Void)? = nil,
          makeClient: @escaping (any CloudNativeTokenProvider) throws -> CloudNativeClient,
          journal: (any CloudWorkspaceSetupJournal)? = nil) {
         self.journal = journal ?? CloudWorkspaceSetupFileJournal.applicationJournal()
         self.authenticate = authenticate
         self.cancelIdentityFlow = cancelIdentityFlow
         self.signOutIdentity = signOutIdentity
+        self.retrySignOutIdentity = retrySignOutIdentity ?? signOutIdentity
         self.makeClient = makeClient
     }
 
     /// A duplicate request is rejected while the current operation is running.
     @discardableResult
     func signIn(provider: CloudNativeSignInProvider) -> Task<Void, Never>? {
-        guard !isWorking else { return nil }
+        guard !isWorking, signOutState != .pending, signOutState != .failed else { return nil }
+        signOutIntent = nil; signOutAttempt = nil; signOutState = .idle
         revoke()
         let generation = self.generation
         isWorking = true
@@ -261,9 +270,37 @@ final class CloudConnectionCoordinator: ObservableObject {
 
     /// Clear all identity-dependent presentation synchronously, before SDK or network completion.
     func cancel() { revoke() }
-    func signOut() {
+    /// Explicit sign-out settlement is retained separately from cancelable discovery work.
+    @discardableResult
+    func signOut() -> Task<Void, Never>? {
+        if let signOutOperation { return signOutOperation }
+        guard signOutState != .failed, signOutState != .succeeded else { return nil }
+        return startSignOut(retrying: false)
+    }
+    @discardableResult
+    func retrySignOut() -> Task<Void, Never>? {
+        if let signOutOperation { return signOutOperation }
+        guard signOutState == .failed else { return signOut() }
+        return startSignOut(retrying: true)
+    }
+    private func startSignOut(retrying: Bool) -> Task<Void, Never> {
+        let intent = signOutIntent ?? UUID()
+        signOutIntent = intent
+        let attempt = UUID()
+        signOutAttempt = attempt
+        let clear = retrying ? retrySignOutIdentity : signOutIdentity
+        let task = Task { [self] in
+            var failed = false
+            do { try await clear() } catch { failed = true }
+            guard signOutIntent == intent, signOutAttempt == attempt else { return }
+            signOutOperation = nil
+            failure = failed ? .signOut : nil
+            signOutState = failed ? .failed : .succeeded
+        }
+        signOutOperation = task
+        signOutState = .pending
         revoke()
-        do { try signOutIdentity() } catch { failure = .signOut }
+        return task
     }
 
     private func revoke() {

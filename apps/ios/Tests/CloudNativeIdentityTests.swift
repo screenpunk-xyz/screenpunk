@@ -137,6 +137,92 @@ final class CloudNativeIdentityTests: XCTestCase {
         XCTAssertNil(identity.interactiveUserID)
     }
 
+    @MainActor func testSignOutJoinsWhileIgnoredProviderAwaitSettlesForBothProviders() async throws {
+        for apple in [false, true] {
+            let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+            let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+            let provider = Task {
+                if apple { try await identity.signInWithApple(presentationAnchor: UIWindow()) }
+                else { try await identity.signInWithGoogle(presenting: UIViewController()) }
+            }
+            while probe.presentations == 0 { await Task.yield() }
+            let first = Task { try await identity.requestSignOut() }
+            while identity.signOutState != .waiting { await Task.yield() }
+            let joined = Task { try await identity.requestSignOut() }
+            first.cancel() // Losing an awaiter must not abandon the explicit human intent.
+            XCTAssertFalse(identity.handleGoogleCallback(URL(string: "com.googleusercontent.apps.fixture-client:/oauth2callback")!))
+            XCTAssertEqual(probe.firebaseClears, 0); XCTAssertEqual(probe.googleClears, 0)
+            do { try await identity.signInWithGoogle(presenting: UIViewController()); XCTFail("Pending sign-out admitted login") }
+            catch { XCTAssertEqual(error as? CloudNativeIdentityError, .flowInProgress) }
+            probe.resolve(apple ? .apple(idToken: "fixture", rawNonce: "fixture", fullName: nil) : .google(idToken: "fixture", accessToken: "fixture"))
+            do { try await provider.value; XCTFail("Revoked provider succeeded") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+            try await first.value; try await joined.value
+            XCTAssertEqual(probe.exchanges, 0)
+            XCTAssertEqual(probe.firebaseClears, 1); XCTAssertEqual(probe.googleClears, 1)
+            XCTAssertEqual(identity.signOutState, .succeeded); XCTAssertNil(identity.interactiveUserID)
+        }
+    }
+
+    @MainActor func testSignOutWaitsForLateExchangeBeforeClearingSDKs() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        probe.holdExchange = true
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        let provider = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations == 0 { await Task.yield() }
+        probe.resolve(.google(idToken: "fixture", accessToken: "fixture"))
+        while probe.exchanges == 0 { await Task.yield() }
+        let signOut = Task { try await identity.requestSignOut() }
+        while identity.signOutState != .waiting { await Task.yield() }
+        XCTAssertEqual(probe.firebaseClears, 0); XCTAssertEqual(probe.googleClears, 0)
+        probe.resolveExchange()
+        do { try await provider.value; XCTFail("Late exchange published") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .cancelled) }
+        try await signOut.value
+        XCTAssertEqual(probe.events, ["exchange-start", "exchange-finish", "firebase-clear", "google-clear"])
+        XCTAssertNil(identity.interactiveUserID); XCTAssertEqual(identity.signOutState, .succeeded)
+    }
+
+    @MainActor func testPartialSDKClearFailureBlocksLoginUntilExplicitRetry() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        probe.failFirebaseClear = true
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        do { try await identity.requestSignOut(); XCTFail("Partial clearing succeeded") } catch { XCTAssertEqual(error as? CloudNativeIdentityError, .providerFailed) }
+        XCTAssertEqual(identity.signOutState, .failed)
+        XCTAssertEqual(probe.firebaseClears, 1); XCTAssertEqual(probe.googleClears, 1)
+        do { try await identity.requestSignOut(); XCTFail("Failed intent silently retried") } catch {}
+        XCTAssertEqual(probe.firebaseClears, 1)
+        do { try await identity.signInWithApple(presentationAnchor: UIWindow()); XCTFail("Failed sign-out admitted login") }
+        catch { XCTAssertEqual(error as? CloudNativeIdentityError, .flowInProgress) }
+        XCTAssertEqual(probe.configurations, 0)
+        probe.failFirebaseClear = false
+        try await identity.retrySignOut()
+        XCTAssertEqual(identity.signOutState, .succeeded)
+        XCTAssertEqual(probe.firebaseClears, 2); XCTAssertEqual(probe.googleClears, 2)
+        try await identity.requestSignOut()
+        XCTAssertEqual(probe.firebaseClears, 2)
+    }
+
+    @MainActor func testOldCancellationDeliveryCannotAffectNewFlowAfterSignOut() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        probe.delayCancellation = true
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        let old = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations == 0 { await Task.yield() }
+        old.cancel()
+        while probe.delayedCancellations.isEmpty { await Task.yield() }
+        let signOut = Task { try await identity.requestSignOut() }
+        while identity.signOutState != .waiting { await Task.yield() }
+        probe.resolve(.google(idToken: "old-fixture", accessToken: "fixture"))
+        _ = try? await old.value; try await signOut.value
+        let fresh = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations < 2 { await Task.yield() }
+        probe.delayedCancellations.removeFirst()()
+        XCTAssertTrue(identity.handleGoogleCallback(URL(string: "com.googleusercontent.apps.fixture-client:/oauth2callback")!))
+        XCTAssertEqual(probe.firebaseClears, 1); XCTAssertEqual(probe.googleClears, 1)
+        probe.resolve(.google(idToken: "new-fixture", accessToken: "fixture"))
+        try await fresh.value
+        XCTAssertEqual(identity.interactiveUserID, "fixture-uid")
+    }
+
     @MainActor func testAcceptedFakeProviderExchangesAndPublishesOnlyCurrentResult() async throws {
         let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
         let identity = CloudNativeIdentity(testDrivers: probe.drivers)
@@ -173,6 +259,9 @@ final class CloudNativeIdentityTests: XCTestCase {
 private final class IdentityProbe {
     let configuration: CloudNativeConfiguration
     var configurations = 0, presentations = 0, exchanges = 0, callbacks = 0
+    var firebaseClears = 0, googleClears = 0
+    var failFirebaseClear = false
+    var events: [String] = []
     var delayCancellation = false, holdExchange = false
     var delayedCancellations: [() -> Void] = []
     private var pendingExchange: CheckedContinuation<String, Never>?
@@ -183,18 +272,23 @@ private final class IdentityProbe {
               google: { _ in try await self.present() }, apple: { _ in try await self.present() },
               exchange: { _ in
                   self.exchanges += 1
+                  self.events.append("exchange-start")
                   if self.holdExchange { return await withCheckedContinuation { self.pendingExchange = $0 } }
+                  self.events.append("exchange-finish")
                   return "fixture-uid"
               },
               callback: { _ in self.callbacks += 1; return true }, cancel: {},
               cancellationDelivery: { delivery in
                   if self.delayCancellation { self.delayedCancellations.append(delivery) } else { delivery() }
-              })
+              }, firebaseSignOut: {
+                  self.firebaseClears += 1; self.events.append("firebase-clear")
+                  if self.failFirebaseClear { throw CloudNativeIdentityError.providerFailed }
+              }, googleSignOut: { self.googleClears += 1; self.events.append("google-clear") })
     }
     func present() async throws -> CloudProviderCredential {
         presentations += 1
         return try await withCheckedThrowingContinuation { pending = $0 }
     }
-    func resolveExchange() { let saved = pendingExchange; pendingExchange = nil; saved?.resume(returning: "late-fixture-uid") }
+    func resolveExchange() { events.append("exchange-finish"); let saved = pendingExchange; pendingExchange = nil; saved?.resume(returning: "late-fixture-uid") }
     func resolve(_ credential: CloudProviderCredential) { let saved = pending; pending = nil; saved?.resume(returning: credential) }
 }
