@@ -154,6 +154,21 @@ final class DeviceGrantPreparationStore {
             return .init(identity:receipt.identity,publicMetadataBytes:entry.record.publicMetadata)
         }
     }
+    /// Read-only exact request binding. Newly verified package expectations replace caller expectations.
+    /// No private bytes escape; this does not synchronize, recommit, or renew qualification.
+    func verify(_ receipt: DevicePreparedGrantReceipt, exactRequest request: DeviceGrantPreparationRequest,
+                expectedEntries: [DeviceGrantEntryExpectation]) throws -> DeviceVerifiedGrantPreparation {
+        let fresh = try DeviceGrantRevisionQualifier.qualify(request.input, expectedEntries: expectedEntries)
+        guard fresh.exactlyMatches(request.qualified), receipt.operationID == request.operationID,
+              receipt.identity == request.input.identity, receipt.identity.rootID == rootID else { throw DeviceGrantPreparationError.conflict }
+        let rebound = DeviceGrantPreparationRequest(operationID: request.operationID, input: request.input,
+            qualified: fresh, expectedEntries: expectedEntries)
+        let attempted = try GrantPreparationCodec.attempt(rebound, rootID: rootID)
+        guard attempted == receipt.privateBytes else { throw DeviceGrantPreparationError.conflict }
+        let observed = try verify(receipt)
+        guard observed.publicMetadataBytes == fresh.publicMetadataBytes else { throw DeviceGrantPreparationError.conflict }
+        return observed
+    }
     private func requireQualification(_ tip: Node, head: Node?) throws {
         guard let qualified = qualification, qualified.epoch == epoch(), qualified.tip == tip, qualified.head == head else { throw DeviceGrantPreparationError.repairRequired }
     }
