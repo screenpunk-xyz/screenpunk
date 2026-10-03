@@ -32,7 +32,8 @@ struct GoogleCalendarState: Codable {
 @MainActor
 final class GoogleCalendarDeviceService {
     static let shared = GoogleCalendarDeviceService()
-    static let storageKey = "google-calendar-v1"
+    nonisolated static let storageService = "xyz.screenpunk.google-calendar"
+    nonisolated static let storageKey = "google-calendar-v1"
     private let store: any CredentialStore
     private let transport: any HTTPTransport
     private let clock: any PairingClock
@@ -42,7 +43,7 @@ final class GoogleCalendarDeviceService {
     private var cache: [String: Cache] = [:]
     private var retryAt = Date.distantPast
 
-    init(store: any CredentialStore = KeychainCredentialStore(service: "xyz.screenpunk.google-calendar"),
+    init(store: any CredentialStore = KeychainCredentialStore(service: GoogleCalendarDeviceService.storageService),
          transport: any HTTPTransport = HomeAssistantHTTPTransport(), clock: any PairingClock = SystemClock()) {
         self.store = store; self.transport = transport; self.clock = clock
     }

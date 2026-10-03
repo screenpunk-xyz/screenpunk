@@ -192,7 +192,7 @@ final class DeviceLANAuthorityEnforcementTests: XCTestCase {
 
     func testChangedCloudEvidenceQuarantinesServerWithoutLocalMutation() throws {
         let backend = EnforcementEvidenceBackend()
-        let authority = DeviceManagementAuthority(journal: ManagementTestJournal(), credentials: .init(backend: backend, random: { Data() }))
+        let authority = DeviceManagementAuthority(journal: ManagementTestJournal(), credentials: .init(backend: backend, random: { Data() }), reset: ManagementTestResetEvidence())
         let context = DeviceManagementContext(authority: authority, lease: try XCTUnwrap(authority.refresh()))
         let server = try server(context), settings = server.settingsSnapshot
         backend.setOrphan(true)
@@ -231,7 +231,7 @@ final class DeviceLANAuthorityEnforcementTests: XCTestCase {
     }
 
     @MainActor func testHostRetryAndUnlinkCannotEscapeCapturedAdmission() async throws {
-        let authority = DeviceManagementAuthority(journal: ManagementTestJournal(), credentials: .init(backend: ManagementTestCredentials(), random: { Data() }))
+        let authority = DeviceManagementAuthority(journal: ManagementTestJournal(), credentials: .init(backend: ManagementTestCredentials(), random: { Data() }), reset: ManagementTestResetEvidence())
         let context = DeviceManagementContext(authority: authority, lease: try XCTUnwrap(authority.refresh()))
         let identity = try TLSIdentity.make(role: .device, commonName: "host-admission")
         let store = temporaryStore(); defer { try? store.erase() }
