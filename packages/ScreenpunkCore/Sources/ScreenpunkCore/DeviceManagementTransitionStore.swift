@@ -179,6 +179,8 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
     private let lock = NSLock()
     // Reconstructing a store in this process must not bypass a previous writer's uncertainty.
     private static let uncertaintyLock = NSLock()
+    private struct MigrationAttempt: Equatable { let source: DeviceManagementTransitionHistory; let target: DeviceManagementFormatHistory }
+    private static var uncertainMigrations: [String: MigrationAttempt] = [:]
     private static var uncertainWrites: [String: DeviceManagementTransitionHistory] = [:]
     private var uncertaintyKey: String { directory.resolvingSymlinksInPath().standardizedFileURL.path }
     private let boundary: @Sendable (DeviceManagementCommitBoundary) throws -> Void
@@ -198,9 +200,9 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
     /// nil means confirmed ENOENT only; corruption, unsupported versions and IO are throwing blocked states.
     public func load() throws -> DeviceManagementTransitionHistory? {
         lock.lock(); defer { lock.unlock() }
-        guard uncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
+        guard uncertainty() == nil, migrationUncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
         return try withDiskLock(create: false) {
-            guard uncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
+            guard uncertainty() == nil, migrationUncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
             return try readRecord()
         }
     }
@@ -217,12 +219,14 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
 
     public func save(_ record: DeviceManagementTransitionHistory) throws {
         lock.lock(); defer { lock.unlock() }
+        if migrationUncertainty() != nil { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
         if let uncertainRecord = uncertainty(), uncertainRecord != record { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(record)
         guard data.count <= Self.maximumRecordBytes else { throw DeviceManagementTransitionStoreError.recordTooLarge }
         do {
             try withDiskLock(create: true) {
+                if migrationUncertainty() != nil { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
                 if let uncertainRecord = uncertainty(), uncertainRecord != record { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
                 if let previous = try readRecord() {
                     guard previous.permitsSuccessor(record) else {
@@ -292,7 +296,7 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
         defer { flock(descriptor, LOCK_UN) }
         return try operation()
     }
-    private func readRecord() throws -> DeviceManagementTransitionHistory? {
+    private func readRecordData() throws -> Data? {
         let descriptor = open(recordURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else {
             if errno == ENOENT { return nil }
@@ -312,11 +316,88 @@ public final class DeviceManagementTransitionStore: @unchecked Sendable {
             guard data.count + count <= Self.maximumRecordBytes else { throw DeviceManagementTransitionStoreError.recordTooLarge }
             data.append(contentsOf: buffer.prefix(count))
         }
-        do { return try JSONDecoder().decode(DeviceManagementTransitionHistory.self, from: data) }
+        return data
+    }
+    private func readRecord() throws -> DeviceManagementTransitionHistory? {
+        guard let data = try readRecordData() else { return nil }
+        return try decodeRecord(DeviceManagementTransitionHistory.self, data: data)
+    }
+    private func decodeRecord<T: Decodable>(_ type: T.Type, data: Data) throws -> T {
+        do { return try JSONDecoder().decode(type, from: data) }
         catch let error as DeviceManagementTransitionStoreError {
             if case .unsupportedVersion = error { throw error }
             throw DeviceManagementTransitionStoreError.corrupt
         } catch { throw DeviceManagementTransitionStoreError.corrupt }
+    }
+    private struct Version: Decodable { let schemaVersion: Int }
+    private func readEvidence() throws -> DeviceManagementEvidence? {
+        guard let data = try readRecordData() else { return nil }
+        let version = try decodeRecord(Version.self, data: data).schemaVersion
+        if version == 3 { return .formatted(try decodeRecord(DeviceManagementFormatHistory.self, data: data)) }
+        return .legacy(try decodeRecord(DeviceManagementTransitionHistory.self, data: data))
+    }
+    public func loadEvidence() throws -> DeviceManagementEvidence? {
+        lock.lock(); defer { lock.unlock() }
+        guard uncertainty() == nil, migrationUncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
+        return try withDiskLock(create: false) {
+            guard uncertainty() == nil, migrationUncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
+            return try readEvidence()
+        }
+    }
+    private func migrationUncertainty() -> MigrationAttempt? {
+        Self.uncertaintyLock.lock(); defer { Self.uncertaintyLock.unlock() }
+        return Self.uncertainMigrations[uncertaintyKey]
+    }
+    private func markMigration(_ attempt: MigrationAttempt?) {
+        Self.uncertaintyLock.lock(); defer { Self.uncertaintyLock.unlock() }
+        Self.uncertainMigrations[uncertaintyKey] = attempt
+    }
+    /// Reports retained exact in-process uncertainty only. It never infers commit acknowledgement from disk.
+    @_spi(ManagementMigration)
+    public func hasUncertainLegacyMigration(expected: DeviceManagementTransitionHistory) throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard uncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
+        let target = try DeviceManagementFormatHistory(legacy: expected)
+        guard let pending = migrationUncertainty() else { return false }
+        guard pending == MigrationAttempt(source: expected, target: target) else { throw DeviceManagementTransitionStoreError.transitionConflict }
+        return true
+    }
+    /// Narrow source-convention SPI, not a caller authorization boundary. No arbitrary target is accepted.
+    @_spi(ManagementMigration)
+    public func migrateLegacyHistory(expected: DeviceManagementTransitionHistory) throws -> DeviceManagementFormatHistory {
+        try migrate(expected: expected, recommit: false)
+    }
+    @_spi(ManagementMigration)
+    public func recommitLegacyMigration(expected: DeviceManagementTransitionHistory) throws -> DeviceManagementFormatHistory {
+        try migrate(expected: expected, recommit: true)
+    }
+    private func migrate(expected: DeviceManagementTransitionHistory, recommit: Bool) throws -> DeviceManagementFormatHistory {
+        lock.lock(); defer { lock.unlock() }
+        let validated = try DeviceManagementTransitionHistory(transitions: expected.transitions, credentials: expected.credentials)
+        let target = try DeviceManagementFormatHistory(legacy: validated)
+        let attempt = MigrationAttempt(source: validated, target: target)
+        guard uncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
+        if recommit {
+            guard migrationUncertainty() == attempt else { throw DeviceManagementTransitionStoreError.transitionConflict }
+        } else if migrationUncertainty() != nil { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(target)
+        guard data.count <= Self.maximumRecordBytes else { throw DeviceManagementTransitionStoreError.recordTooLarge }
+        return try withDiskLock(create: false) {
+            guard uncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
+            if recommit { guard migrationUncertainty() == attempt else { throw DeviceManagementTransitionStoreError.transitionConflict } }
+            else { guard migrationUncertainty() == nil else { throw DeviceManagementTransitionStoreError.writeOutcomeUncertain } }
+            switch try readEvidence() {
+            case .legacy(let actual) where actual == validated: break
+            case .formatted(let actual) where actual == target:
+                if !recommit { return target }
+            default: throw DeviceManagementTransitionStoreError.transitionConflict
+            }
+            markMigration(attempt)
+            try commit(data)
+            markMigration(nil)
+            return target
+        }
     }
     private func hit(_ point: DeviceManagementCommitBoundary) throws {
         do { try boundary(point) }

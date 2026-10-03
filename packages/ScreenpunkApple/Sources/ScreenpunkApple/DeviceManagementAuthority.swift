@@ -1,5 +1,5 @@
 import Foundation
-import ScreenpunkCore
+@_spi(ManagementMigration) import ScreenpunkCore
 
 /// In-process authority only. External filesystem/Keychain writers are not excluded.
 /// Only internal Local reset bookkeeping writes are provided. Production Cloud writers remain
@@ -18,12 +18,13 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     private let identity = UUID()
     private var generation = UUID()
     private struct Evidence: Equatable {
-        let history: DeviceManagementTransitionHistory?
+        let history: DeviceManagementEvidence?
         let references: Set<String>
+        let inventory: [String: CloudInstallationCredentialFormat]
         let reset: DeviceLocalResetRecord?
     }
     private var quarantined = false
-    private var observedHistory: DeviceManagementTransitionHistory?
+    private var observedHistory: DeviceManagementEvidence?
     private var evidence: Evidence?
     private var permitted = false
     private var executing = false
@@ -81,25 +82,83 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     // uncertain-write recovery is implemented. This slice exposes no Cloud write API. Fresh entry
     // checks detect external changes, but do not exclude external TOCTOU writers.
     private func verifiedEvidence() -> Evidence? {
-        guard !quarantined else { return nil }
+        guard !quarantined, migrationAttempt == nil else { return nil }
         do {
-            let history = try journal.load()
+            let history = try journal.loadEvidence()
             // Conservatively require owner-mediated writes after observing history.
             // This lifetime high-water guard is not persistent rollback protection.
             if let observedHistory, history != observedHistory { quarantined = true; return nil }
             if let history { observedHistory = history }
             guard let resetEvidence = try permittedReset() else { return nil }
-            let before = Evidence(history: history, references: try credentials.references(), reset: resetEvidence.record)
+            let references = try credentials.references()
+            if let evidence, evidence.history != history || evidence.references != references || evidence.reset != resetEvidence.record {
+                quarantined = true; return nil
+            }
+            let before = Evidence(history: history, references: references, inventory: try credentials.inventory(history: history?.formattedHistory), reset: resetEvidence.record)
             if let evidence, before != evidence { quarantined = true; return nil }
             switch CloudInstallationRecovery.localEligibility(journal: journal, credentials: credentials) {
             case .blocked: return nil
             case .legacyLocal, .locallyFenced: break
             }
             guard let resetAfter = try permittedReset() else { return nil }
-            let after = Evidence(history: try journal.load(), references: try credentials.references(), reset: resetAfter.record)
+            let afterHistory = try journal.loadEvidence()
+            let afterReferences = try credentials.references()
+            guard before.history == afterHistory, before.references == afterReferences, before.reset == resetAfter.record else {
+                quarantined = true; return nil
+            }
+            let after = Evidence(history: afterHistory, references: afterReferences, inventory: try credentials.inventory(history: afterHistory?.formattedHistory), reset: resetAfter.record)
             guard before == after else { quarantined = true; return nil }
             return after
         } catch { return nil }
+    }
+
+    private enum MigrationStage { case prepared, acknowledged }
+    private struct MigrationAttempt { let source: DeviceManagementTransitionHistory; var stage: MigrationStage }
+    private var migrationAttempt: MigrationAttempt?
+
+    /// Explicit schema upgrade only; never returns a lease. Call refresh separately after acknowledgement.
+    public func migrateLegacyHistory(expected: DeviceManagementTransitionHistory) throws {
+        try serialized { try performMigration(expected: expected, recommit: false) }
+    }
+    public func recommitLegacyMigration(expected: DeviceManagementTransitionHistory) throws {
+        try serialized { try performMigration(expected: expected, recommit: true) }
+    }
+    private func performMigration(expected: DeviceManagementTransitionHistory, recommit: Bool) throws {
+        invalidate()
+        guard !quarantined, let store = journal as? DeviceManagementTransitionStore,
+              try permittedReset() != nil else { throw Failure.staleLease }
+        let target = try DeviceManagementFormatHistory(legacy: expected)
+        if recommit {
+            guard migrationAttempt?.source == expected else { throw Failure.staleLease }
+        } else {
+            guard migrationAttempt == nil else { throw Failure.staleLease }
+            let actual = try journal.loadEvidence()
+            guard actual == .legacy(expected) || actual == .formatted(target) else { quarantined = true; throw Failure.staleLease }
+            if let observedHistory, observedHistory != actual { quarantined = true; throw Failure.staleLease }
+            if let evidence, evidence.history != actual { quarantined = true; throw Failure.staleLease }
+        }
+        let migrationReferences = try credentials.references()
+        if let evidence, evidence.references != migrationReferences { quarantined = true; throw Failure.staleLease }
+        let before = try credentials.inventory(history: target)
+        if !recommit { migrationAttempt = MigrationAttempt(source: expected, stage: .prepared) }
+        if migrationAttempt?.stage == .prepared {
+            if recommit, try store.hasUncertainLegacyMigration(expected: expected) {
+                _ = try store.recommitLegacyMigration(expected: expected)
+            } else {
+                _ = try store.migrateLegacyHistory(expected: expected)
+            }
+            // Retain actual method acknowledgement before any potentially failing post-commit inspection.
+            migrationAttempt?.stage = .acknowledged
+        }
+        guard try permittedReset() != nil else { throw Failure.staleLease }
+        let afterReferences = try credentials.references()
+        guard afterReferences == migrationReferences else { quarantined = true; throw Failure.staleLease }
+        let after = try credentials.inventory(history: target)
+        guard before == after, try journal.loadEvidence() == .formatted(target) else { quarantined = true; throw Failure.staleLease }
+        observedHistory = .formatted(target)
+        evidence = nil
+        migrationAttempt = nil
+        // permitted stays false. Only explicit fresh classification can issue authority.
     }
 
     /// Snapshot only: future reset coordinator must serialize presentation/suspension.
