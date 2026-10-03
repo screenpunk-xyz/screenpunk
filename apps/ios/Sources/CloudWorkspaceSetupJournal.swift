@@ -1,47 +1,35 @@
 import Foundation
 import ScreenpunkCore
+import ScreenpunkApple
 
-/// Nonsecret durable operation identity. Names are preserved exactly across every retry.
-struct CloudWorkspaceSetupJournalRecord: Codable, Equatable, Sendable {
-    let userID: UUID
-    let request: CloudNativeWorkspaceSetupRequest
-    let receipt: CloudNativeWorkspaceSetupReceipt?
-    init(userID: UUID, request: CloudNativeWorkspaceSetupRequest, receipt: CloudNativeWorkspaceSetupReceipt? = nil) throws {
-        guard receipt == nil || receipt?.requestId == request.requestId else { throw CloudWorkspaceSetupJournalError.invalidRecord }
-        self.userID = userID; self.request = request; self.receipt = receipt
-    }
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(userID: values.decode(UUID.self, forKey: .userID),
-                      request: values.decode(CloudNativeWorkspaceSetupRequest.self, forKey: .request),
-                      receipt: values.decodeIfPresent(CloudNativeWorkspaceSetupReceipt.self, forKey: .receipt))
-    }
-}
-enum CloudWorkspaceSetupJournalError: Error { case invalidRecord }
+/// Local operation evidence only; Core validates exact inputs and matching receipts.
+typealias CloudWorkspaceSetupJournalRecord = CloudWorkspaceSetupOperationRecord
 
 @MainActor
 protocol CloudWorkspaceSetupJournal {
     func load() throws -> CloudWorkspaceSetupJournalRecord?
     func save(_ record: CloudWorkspaceSetupJournalRecord) throws
+    func beginSuccessor(_ record: CloudWorkspaceSetupJournalRecord) throws
+    func retryPendingWrite(expectedUserID: UUID) throws -> CloudWorkspaceSetupJournalRecord
 }
 
-/// One unresolved operation cannot be overwritten, including after an account switch.
+/// Protected sibling storage, never a fallback to or migration of the old plaintext file.
 @MainActor
 final class CloudWorkspaceSetupFileJournal: CloudWorkspaceSetupJournal {
-    private let url: URL
-    init(url: URL) { self.url = url }
+    private let store: Result<CloudWorkspaceSetupOperationStore, Error>
+    init(directory: URL, legacyJournal: URL) {
+        store = Result { try .init(directory: directory, legacyJournal: legacyJournal) }
+    }
+    init(store: CloudWorkspaceSetupOperationStore) { self.store = .success(store) }
     static func applicationJournal() -> CloudWorkspaceSetupFileJournal {
-        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("xyz.screenpunk.device", isDirectory: true)
-        return .init(url: root.appendingPathComponent("native-workspace-setup.json"))
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return .init(directory: base.appendingPathComponent("xyz.screenpunk.cloud-operations", isDirectory: true),
+                     legacyJournal: base.appendingPathComponent("xyz.screenpunk.device/native-workspace-setup.json"))
     }
-    func load() throws -> CloudWorkspaceSetupJournalRecord? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try JSONDecoder().decode(CloudWorkspaceSetupJournalRecord.self, from: Data(contentsOf: url))
-    }
-    func save(_ record: CloudWorkspaceSetupJournalRecord) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        try encoder.encode(record).write(to: url, options: .atomic)
+    func load() throws -> CloudWorkspaceSetupJournalRecord? { try store.get().load() }
+    func save(_ record: CloudWorkspaceSetupJournalRecord) throws { try store.get().save(record) }
+    func beginSuccessor(_ record: CloudWorkspaceSetupJournalRecord) throws { try store.get().beginSuccessor(record) }
+    func retryPendingWrite(expectedUserID: UUID) throws -> CloudWorkspaceSetupJournalRecord {
+        try store.get().retryPendingWrite(expectedUserID: expectedUserID)
     }
 }

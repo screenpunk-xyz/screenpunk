@@ -11,14 +11,44 @@ final class CloudConnectionCoordinatorTests: XCTestCase {
     private var accounts: Data { Data(#"{"items":[{"id":"11111111-1111-4111-8111-111111111111","name":"Fixture workspace","createdAt":"2026-10-02","updatedAt":"2026-10-02","capabilities":{"owner":true,"administrator":true,"canEnroll":true}}],"nextCursor":null}"#.utf8) }
     private var locations: Data { Data(#"{"items":[{"id":"33333333-3333-4333-8333-333333333333","name":"Fixture location","createdAt":"2026-10-02","updatedAt":"2026-10-02","capabilities":{"canView":true,"canOperate":false,"canEnroll":false}}],"nextCursor":null}"#.utf8) }
 
-    private func coordinator(_ transports: [CoordinatorTransport], authenticate: @escaping (CloudNativeSignInProvider) async throws -> any CloudNativeTokenProvider = { _ in CoordinatorTokens() }, signOut: @escaping () throws -> Void = {}) -> CloudConnectionCoordinator {
+    private func coordinator(_ transports: [CoordinatorTransport], journal: (any CloudWorkspaceSetupJournal)? = nil, authenticate: @escaping (CloudNativeSignInProvider) async throws -> any CloudNativeTokenProvider = { _ in CoordinatorTokens() }, signOut: @escaping () throws -> Void = {}) -> CloudConnectionCoordinator {
         var index = 0
         return .init(authenticate: authenticate, cancelIdentityFlow: {}, signOutIdentity: signOut, makeClient: { tokens in
             let transport = transports[index]; index += 1
             return try CloudNativeClient(baseURL: URL(string: "https://cloud.example.invalid")!, tokenProvider: tokens, transport: transport)
-        }, journal: TestWorkspaceJournal())
+        }, journal: journal ?? TestWorkspaceJournal())
     }
 
+    func testAccountSwitchPreservesUnresolvedPersistenceButClearsPresentation() async throws {
+        let journal = TestWorkspaceJournal(); journal.failSaveNumber = 1
+        let otherIdentity = Data(String(decoding: identity, as: UTF8.self).replacingOccurrences(of: "22222222-2222-4222-8222-222222222222", with: "44444444-4444-4444-8444-444444444444").utf8)
+        let first = CoordinatorTransport([.reply(identity), .reply(empty)])
+        let second = CoordinatorTransport([.reply(otherIdentity), .reply(empty)])
+        let coordinator = coordinator([first, second], journal: journal)
+        await coordinator.signIn(provider: .google)?.value
+        XCTAssertNil(coordinator.createFirstWorkspace(workspaceName: "Workspace", locationName: "Location"))
+        let original = try XCTUnwrap(journal.attemptedRecord)
+        coordinator.signOut(); XCTAssertNil(coordinator.pendingWorkspaceSetup)
+        await coordinator.signIn(provider: .apple)?.value
+        XCTAssertEqual(coordinator.failure, .pendingOtherUser)
+        XCTAssertFalse(coordinator.canCreateFirstWorkspace); XCTAssertNil(coordinator.retryWorkspaceSetup())
+        XCTAssertEqual(journal.attemptedRecord, original); XCTAssertEqual(journal.repairs, 0)
+        XCTAssertNil(coordinator.workspaceSetupReceipt); XCTAssertNil(coordinator.pendingWorkspaceSetup)
+        let requests = await second.requests
+        XCTAssertEqual(requests.map { $0.url.path }, ["/v1/native/sign-in", "/v1/native/accounts"])
+    }
+    func testRevocationInsideClientFactoryPreventsSignInRequest() async {
+        let transport = CoordinatorTransport([.reply(identity), .reply(empty)])
+        weak var reference: CloudConnectionCoordinator?
+        let instance = CloudConnectionCoordinator(authenticate: { _ in CoordinatorTokens() }, cancelIdentityFlow: {}, signOutIdentity: {}, makeClient: { tokens in
+            reference?.cancel()
+            return try CloudNativeClient(baseURL: URL(string: "https://cloud.example.invalid")!, tokenProvider: tokens, transport: transport)
+        }, journal: TestWorkspaceJournal())
+        reference = instance
+        await instance.signIn(provider: .google)?.value
+        XCTAssertNil(instance.humanIdentity); XCTAssertFalse(instance.isWorking)
+        let requests = await transport.requests; XCTAssertTrue(requests.isEmpty)
+    }
     func testImmediateCancelPreventsQueuedProviderPresentation() async {
         var authentications = 0
         let coordinator = coordinator([], authenticate: { _ in

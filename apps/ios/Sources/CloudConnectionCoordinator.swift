@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import ScreenpunkCore
+import ScreenpunkApple
 
 /// Human identity and workspace discovery only. It never enrolls or manages this installation.
 @MainActor
@@ -20,6 +21,13 @@ final class CloudConnectionCoordinator: ObservableObject {
     private var accountsDiscoveryComplete = false
     private var journalReadable = false
     private var journalRecord: CloudWorkspaceSetupJournalRecord?
+    private struct WorkspaceWriteAttempt {
+        enum Method { case save, beginSuccessor }
+        let record: CloudWorkspaceSetupJournalRecord
+        let method: Method
+    }
+    // Persistence context survives identity revocation; presentation and HTTP authority do not.
+    private var attemptedWrite: WorkspaceWriteAttempt?
 
     private let authenticate: (CloudNativeSignInProvider) async throws -> any CloudNativeTokenProvider
     private let cancelIdentityFlow: () -> Void
@@ -57,6 +65,7 @@ final class CloudConnectionCoordinator: ObservableObject {
                 let tokens = try await authenticate(provider)
                 try check(generation)
                 let client = try makeClient(tokens)
+                try check(generation)
                 let identity = try await client.signIn()
                 try check(generation)
                 failureKind = .discovery
@@ -110,27 +119,32 @@ final class CloudConnectionCoordinator: ObservableObject {
 
     /// Available only after complete successful empty discovery and resolved prior operations.
     var canCreateFirstWorkspace: Bool {
-        humanIdentity != nil && client != nil && accountsDiscoveryComplete && accounts.isEmpty && !isWorking && journalReadable && (journalRecord == nil || journalRecord?.receipt != nil)
+        humanIdentity != nil && client != nil && accountsDiscoveryComplete && accounts.isEmpty && !isWorking && journalReadable && attemptedWrite == nil && (journalRecord == nil || journalRecord?.receipt != nil)
     }
 
     @discardableResult
     func createFirstWorkspace(workspaceName: String, locationName: String) -> Task<Void, Never>? {
         guard !isWorking, let identity = humanIdentity, let client else { return nil }
         workspaceSetupFailure = nil
+        let generation = self.generation
         refreshJournal(userID: identity.user.id)
+        guard self.generation == generation, humanIdentity?.user.id == identity.user.id else { return nil }
         guard canCreateFirstWorkspace else { failure = failure ?? .setupNotEligible; return nil }
         let record: CloudWorkspaceSetupJournalRecord
         do {
             let request = try CloudNativeWorkspaceSetupRequest(requestId: UUID(), workspaceName: workspaceName, locationName: locationName)
             record = try .init(userID: identity.user.id, request: request)
         } catch { failure = .workspaceSetup; return nil }
-        do { try journal.save(record) } catch {
-            // A failed filesystem write may be uncertain; reload before allowing another operation.
-            refreshJournal(userID: identity.user.id)
-            failure = .persistence
+        let attempt = WorkspaceWriteAttempt(record: record, method: journalRecord?.receipt == nil ? .save : .beginSuccessor)
+        attemptedWrite = attempt
+        do { try persist(attempt) }
+        catch {
+            journalReadable = false
+            if self.generation == generation { failure = .persistence }
             return nil
         }
-        journalRecord = record; pendingWorkspaceSetup = record; workspaceSetupReceipt = nil
+        guard self.generation == generation, humanIdentity?.user.id == record.userID else { return nil }
+        journalRecord = record; journalReadable = true; pendingWorkspaceSetup = record; workspaceSetupReceipt = nil
         return submitWorkspaceSetup(record, client: client, lookup: false)
     }
 
@@ -144,9 +158,31 @@ final class CloudConnectionCoordinator: ObservableObject {
     private func resumeWorkspaceSetup(lookup: Bool) -> Task<Void, Never>? {
         guard !isWorking, let identity = humanIdentity, let client else { return nil }
         workspaceSetupFailure = nil
+        let generation = self.generation
+        if let attemptedWrite, attemptedWrite.record.userID != identity.user.id { failure = .pendingOtherUser; return nil }
         refreshJournal(userID: identity.user.id)
+        guard self.generation == generation, humanIdentity?.user.id == identity.user.id else { return nil }
+        if !journalReadable || attemptedWrite != nil {
+            do {
+                let durable = try journal.retryPendingWrite(expectedUserID: identity.user.id)
+                guard durable.userID == identity.user.id,
+                      attemptedWrite == nil || attemptedWrite?.record == durable else { throw CloudWorkspaceSetupOperationStoreError.conflict }
+                guard self.generation == generation, humanIdentity?.user.id == durable.userID else { return nil }
+                attemptedWrite = nil; journalRecord = durable; journalReadable = true
+            } catch {
+                guard self.generation == generation else { return nil }
+                failure = (error as? CloudWorkspaceSetupOperationStoreError) == .differentUser ? .pendingOtherUser : .persistence
+                return nil
+            }
+        }
         guard journalReadable, let record = journalRecord else { return nil }
         guard record.userID == identity.user.id else { failure = .pendingOtherUser; return nil }
+        if let receipt = record.receipt {
+            accountsDiscoveryComplete = false
+            pendingWorkspaceSetup = nil; workspaceSetupReceipt = receipt; failure = nil
+            return nil // A durable completed receipt requires no further GET or POST.
+        }
+        pendingWorkspaceSetup = record
         return submitWorkspaceSetup(record, client: client, lookup: lookup)
     }
 
@@ -158,6 +194,7 @@ final class CloudConnectionCoordinator: ObservableObject {
             defer { finish(generation) }
             do {
                 try check(generation)
+                guard humanIdentity?.user.id == record.userID else { throw CancellationError() }
                 let receipt: CloudNativeWorkspaceSetupReceipt
                 if lookup { receipt = try await client.workspaceSetup(requestID: record.request.requestId) }
                 else { receipt = try await client.setupWorkspace(request: record.request) }
@@ -165,7 +202,15 @@ final class CloudConnectionCoordinator: ObservableObject {
                 guard humanIdentity?.user.id == record.userID else { throw CancellationError() }
                 accountsDiscoveryComplete = false
                 let completed = try CloudWorkspaceSetupJournalRecord(userID: record.userID, request: record.request, receipt: receipt)
-                do { try journal.save(completed) } catch { failure = .persistence; return }
+                let attempt = WorkspaceWriteAttempt(record: completed, method: .save)
+                attemptedWrite = attempt
+                do { try persist(attempt) } catch {
+                    journalReadable = false
+                    if self.generation == generation { failure = .persistence }
+                    return
+                }
+                try check(generation)
+                guard humanIdentity?.user.id == completed.userID else { throw CancellationError() }
                 journalRecord = completed; pendingWorkspaceSetup = nil; workspaceSetupReceipt = receipt
                 // Receipt supplies discovery IDs, never enrollment or management authority.
             } catch {
@@ -180,9 +225,27 @@ final class CloudConnectionCoordinator: ObservableObject {
         return operation
     }
 
+    private func persist(_ attempt: WorkspaceWriteAttempt) throws {
+        switch attempt.method {
+        case .save: try journal.save(attempt.record)
+        case .beginSuccessor: try journal.beginSuccessor(attempt.record)
+        }
+        guard try journal.load() == attempt.record else { throw CloudWorkspaceSetupOperationStoreError.conflict }
+        attemptedWrite = nil
+    }
+
     private func refreshJournal(userID: UUID) {
+        let generation = self.generation
+        if let attemptedWrite {
+            journalReadable = false; workspaceSetupReceipt = nil
+            pendingWorkspaceSetup = attemptedWrite.record.userID == userID && attemptedWrite.record.receipt == nil ? attemptedWrite.record : nil
+            failure = attemptedWrite.record.userID == userID ? .persistence : .pendingOtherUser
+            return
+        }
         do {
-            journalRecord = try journal.load(); journalReadable = true
+            let record = try journal.load()
+            guard self.generation == generation, humanIdentity?.user.id == userID else { return }
+            journalRecord = record; journalReadable = true
             if let record = journalRecord, record.userID == userID {
                 pendingWorkspaceSetup = record.receipt == nil ? record : nil
                 workspaceSetupReceipt = record.receipt
@@ -191,6 +254,7 @@ final class CloudConnectionCoordinator: ObservableObject {
                 if journalRecord?.receipt == nil && journalRecord != nil { failure = .pendingOtherUser }
             }
         } catch {
+            guard self.generation == generation else { return }
             journalReadable = false; pendingWorkspaceSetup = nil; workspaceSetupReceipt = nil; failure = .persistence
         }
     }

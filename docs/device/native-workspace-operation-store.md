@@ -1,6 +1,12 @@
 # Unmounted workspace setup operation journal
 
-`CloudWorkspaceSetupOperationRecord` and `CloudWorkspaceSetupOperationStore` retain the exact user, request and optional matching receipt for the accepted workspace setup contract. A receipt is operation evidence, never device-management authority. The existing application journal and coordinator are not switched to this store by this slice.
+`CloudWorkspaceSetupOperationRecord` and `CloudWorkspaceSetupOperationStore` retain the exact user, request and optional matching receipt for the accepted workspace setup contract. A receipt is operation evidence, never device-management authority. The application journal uses this protected store, and the connection coordinator retains the exact attempted record and method before each write.
+
+`retryPendingWrite(expectedUserID:)` checks the actual retained or persisted target before replacing operation or acknowledgment records. A readable predecessor cannot authorize another user's pending target. Missing target evidence blocks repair. After an uncertain receipt write, recovery retries local persistence without issuing another HTTP request. Explicit recovery of a durable pending request uses GET or an identical POST with the original UUID and names; a completed receipt requires no network call.
+
+Signout clears presentation while preserving unresolved write context. The coordinator rechecks user and generation after journal reads, before repair or HTTP, and before publishing late results. A read-triggered revocation cannot perform repair writes. Failed intent writes retain the request rather than allowing a new operation to replace it. Existing legacy journal presence continues to block; this change does not migrate it or enable Cloud provider configuration or UI.
+
+Adapter validation: 19 store tests and full Apple 359 tests (four known opt-in skips, zero failures) passed on isolated `32384269` plus the six owned files. After the coordinator's read-revocation repair, all 28 isolated app tests and the iOS Simulator build passed; the four non-coordinator source/test files remained unchanged. Tests use temporary storage and fake transport, with no live HTTP or personal-data reset.
 
 The fixed new directory `xyz.screenpunk.cloud-operations` is a sibling of `xyz.screenpunk.device`. Any object or ambiguous lookup at the legacy `native-workspace-setup.json` blocks access without decoding, copying or deleting it. No migration is automatic. An ordinary 0755 legacy directory is valid for read-only absence lookup; the new owned directory and regular files require private permissions.
 
@@ -14,4 +20,4 @@ Files are opened relative to verified descriptors without following links. Coope
 
 On iOS, empty files receive complete-until-first-authentication protection before content is written. Devices require exact protection readback. Simulator builds permit unavailable readback only after successful assignment and empty-inode checks; an explicit mismatch still fails. This does not qualify physical-device protection or power-loss behavior.
 
-No HTTP, Keychain, provider configuration, UI, reset scope, existing application adapter or production caller is changed. Arbitrary same-UID mutation and rollback are outside the cooperating-writer model. Production integration must retain requests before HTTP and recover the same operation after uncertainty.
+The application journal and coordinator now use guarded durable persistence and retain exact requests for recovery. This change does not activate live HTTP, configure providers, change Keychain access, enable Cloud UI, or alter reset scope. Arbitrary same-UID mutation and rollback are outside the cooperating-writer model.
