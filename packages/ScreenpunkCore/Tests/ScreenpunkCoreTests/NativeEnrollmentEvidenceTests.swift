@@ -170,6 +170,7 @@ final class NativeEnrollmentEvidenceTests: XCTestCase {
         XCTAssertLessThan(try nativeEnrollmentBytes(g).count, NativeEnrollmentEvidence.reservedBytesPerRecord)
     }
     func testBoundedExactTimestampParsingWithoutFormatter() throws {
+        XCTAssertThrowsError(try nativeEnrollmentTime(String(repeating: "0", count: 4096)))
         XCTAssertEqual(try nativeEnrollmentTime("1970-01-01T00:00:00Z").seconds, 0)
         XCTAssertEqual(try nativeEnrollmentTime("1969-12-31T23:59:59Z").seconds, -1)
         XCTAssertEqual(try nativeEnrollmentTime("2000-03-01T00:00:00Z").seconds - (try nativeEnrollmentTime("2000-02-28T00:00:00Z").seconds), 172800)

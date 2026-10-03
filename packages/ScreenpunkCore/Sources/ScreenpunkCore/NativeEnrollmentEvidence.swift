@@ -98,7 +98,7 @@ func nativeEnrollmentInterval(_ after: String, _ before: String, seconds: Int64)
     return a.seconds - b.seconds == seconds && a.fraction == b.fraction
 }
 func nativeEnrollmentTime(_ value: String) throws -> NativeEnrollmentInstant {
-    let bytes = Array(value.utf8)
+    let bytes = Array(value.utf8.prefix(257))
     guard (20...256).contains(bytes.count) else { throw NativeEnrollmentFailure.invalidInput }
     func integer(_ start: Int, _ count: Int) throws -> Int {
         guard start >= 0, start + count <= bytes.count else { throw NativeEnrollmentFailure.invalidInput }
