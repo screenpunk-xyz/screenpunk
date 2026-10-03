@@ -1,0 +1,22 @@
+{
+  "acceptanceScope" : "Native model decoding, canonical encoding and PackageValidator observations only; no ZIP, compiler, rendering, or device acceptance",
+  "architecture" : "arm64",
+  "compiledGalleryQualified" : false,
+  "corpusSha256" : "9213204b2e6590a933a9dffa1fe71228ca7d564b463b8be739bae196b232bdde",
+  "generatedAtUTC" : "2026-10-03T01:08:56Z",
+  "generationCommand" : "CLANG_MODULE_CACHE_PATH=/absolute/owned/clang SWIFT_MODULECACHE_PATH=/absolute/owned/swift SWIFTPM_MODULECACHE_OVERRIDE=/absolute/owned/swift SCREENPUNK_EXPORT_NATIVE_PACKAGE_ORACLE=/absolute/new/owned/output swift test --package-path packages/ScreenpunkController --disable-sandbox --disable-automatic-resolution --scratch-path /absolute/owned/scratch --cache-path /absolute/owned/cache --filter PackageCompatibilityFixtureTests",
+  "generatorPath" : "packages/ScreenpunkController/Tests/ScreenpunkControllerTests/PackageCompatibilityFixtureTests.swift",
+  "generatorSha256" : "f4d4773385d042842a7ab298141d30f00f216dcf77b7b82954f661e8a91cd6d7",
+  "operatingSystem" : "Version 26.6.2 (Build 25G83)",
+  "parserRevisionNormalization" : "ControllerService creates a random revision. Actual persisted bytes are first compared with the unchanged native writer format; then only revision is replaced with the explicit fixture UUID and digest is recomputed through DeploymentDigest. Exported parser bytes are normalized native re-encoding, not the original persisted file.",
+  "prettyManifestSemantics" : "persistedManifestUTF8 records JSONEncoder with the native store's prettyPrinted/sortedKeys/withoutEscapingSlashes flags, sorted inventory, and native digest. Rejected vectors are encoding observations, never persisted or accepted packages.",
+  "renderingQualified" : false,
+  "schemaVersion" : 1,
+  "sourceCommit" : "276c94b89ac7c6feb0e742116eaf2ebf55775240",
+  "sourceInventorySha256" : "9640e0e519cbb394d64c0b61bb3ba27a8af7c004ce10df3cf6d6c0daf41f906b",
+  "sourceRepository" : "https://github.com/screenpunk-xyz/screenpunk",
+  "sourceVerificationPolicy" : "Ordinary verification pins historical SOURCE.json, corpus and generator integrity and recomputes exact native observations; only explicit export requires all current production source bytes to match the accepted historical inventory.",
+  "swiftVersion" : "swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "userSourceQualified" : false,
+  "zipBytesQualified" : false
+}
