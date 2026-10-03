@@ -27,6 +27,8 @@ public struct DeviceRuntimeRootView: View {
     @State private var brightnessSettingsRevision: String?
     @State private var genericConnections: ConnectionRuntime?
     @State private var genericRuntimeID = UUID()
+    @State private var brightnessRetirement: UUID?
+    @State private var genericRetirement: UUID?
 #if canImport(Network) && canImport(Security)
     @StateObject private var host: DeviceLANHost
 #endif
@@ -86,7 +88,12 @@ public struct DeviceRuntimeRootView: View {
         Group {
 #if canImport(Network) && canImport(Security)
             lanBody
-                .onAppear { host.start(); host.setForeground(scenePhase == .active); applyBrightness() }
+                .environment(\.deviceRuntimeLifetime, host.lifetime)
+                .onAppear {
+                    guard !host.lifetime.isRetired else { return }
+                    if brightnessRetirement == nil { brightnessRetirement = host.lifetime.register { [weak brightness] in brightness?.stop() } }
+                    host.start(); host.setForeground(scenePhase == .active); applyBrightness()
+                }
                 .onChange(of: host.settingsSnapshot?.revision) { _ in applyBrightness() }
                 .onChange(of: host.runtime.isPaired) { _ in applyBrightness() }
                 .onChange(of: scenePhase) { phase in
@@ -95,15 +102,19 @@ public struct DeviceRuntimeRootView: View {
                     applyBrightness()
                 }
                 .onReceive(brightness.$isApplied) { _ in
-                    Task { @MainActor in acknowledgeSettings() }
+                    Task { @MainActor in guard !host.lifetime.isRetired else { return }; acknowledgeSettings() }
                 }
-                .onDisappear { brightness.stop(); host.setForeground(false) }
+                .onDisappear {
+                    brightness.stop(); host.setForeground(false)
+                    host.lifetime.unregister(brightnessRetirement); brightnessRetirement = nil
+                }
 #if os(iOS)
                 .modifier(DeviceMenuContainer(isPresented: $showDeviceMenu, onDismiss: presentQueuedOnboarding) {
                     DeviceSetupMenu(host: host, initialPage: initialSetupPage, onConnectionsChanged: { connectorRevision = UUID() }, onConnect: queueOnboarding)
                         .onDisappear { initialSetupPage = nil; connectorRevision = UUID() }
                 })
                 .onAppear {
+                    guard !host.lifetime.isRetired else { return }
                     // Existing paired devices adopt the simplified capability model without re-pairing.
                     var basic = GoogleTVConfiguration.load()
                     if basic.pin.count == 32 { basic.automaticScreenAccess = true; try? basic.save() }
@@ -121,14 +132,20 @@ public struct DeviceRuntimeRootView: View {
                 .sheet(isPresented: $showScreens) { NavigationStack { DeviceProductionScreens(host: host, opened: { showScreens = false }).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showScreens = false } } } } }
 #endif
                 .task(id: "\(host.runtime.activeRevision ?? "none"):\(host.genericConnectionGeneration.uuidString)") {
+                    guard !host.lifetime.isRetired else { return }
+                    host.lifetime.unregister(genericRetirement); genericRetirement = nil
                     if let genericConnections { try? await genericConnections.clearCredentials() }
+                    guard !host.lifetime.isRetired, !Task.isCancelled else { return }
                     genericConnections = nil
                     genericRuntimeID = UUID()
                     guard let server = host.server else { return }
-                    let runtime = try? await server.makeGenericConnectionRuntime()
-                    guard !Task.isCancelled else {
+                    let runtime = try? await host.lifetime.accept(operation: { try await server.makeGenericConnectionRuntime() }, discard: { try? await $0.clearCredentials() })
+                    guard !host.lifetime.isRetired, !Task.isCancelled else {
                         if let runtime { try? await runtime.clearCredentials() }
                         return
+                    }
+                    if let runtime {
+                        genericRetirement = host.lifetime.register { Task { try? await runtime.clearCredentials() } }
                     }
                     genericConnections = runtime
                     genericRuntimeID = UUID()
@@ -361,7 +378,7 @@ public struct DeviceRuntimeRootView: View {
 #if canImport(Network) && canImport(Security)
         let revision = host.settingsSnapshot?.revision
         return { accepted in
-            guard revision == host.settingsSnapshot?.revision else { return }
+            guard !host.lifetime.isRetired, revision == host.settingsSnapshot?.revision else { return }
             renderedSettingsRevision = accepted ? revision : nil
             acknowledgeSettings()
         }
@@ -372,6 +389,7 @@ public struct DeviceRuntimeRootView: View {
 
 #if canImport(Network) && canImport(Security)
     private func applyBrightness() {
+        guard !host.lifetime.isRetired else { brightness.stop(); return }
         brightness.setActive(scenePhase == .active && host.runtime.isPaired)
         brightness.update(settings: currentSettings.brightness)
         brightnessSettingsRevision = host.settingsSnapshot?.revision
@@ -379,7 +397,7 @@ public struct DeviceRuntimeRootView: View {
     }
 
     private func acknowledgeSettings() {
-        guard let snapshot = host.settingsSnapshot else { return }
+        guard !host.lifetime.isRetired, let snapshot = host.settingsSnapshot else { return }
         let rendererAccepted = host.runtime.activeRevision == nil || renderedSettingsRevision == snapshot.revision
         if scenePhase == .active && brightness.isApplied && brightnessSettingsRevision == snapshot.revision && rendererAccepted {
             host.markSettingsApplied(revision: snapshot.revision)

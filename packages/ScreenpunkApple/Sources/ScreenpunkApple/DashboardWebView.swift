@@ -11,6 +11,7 @@ import AppKit
 
 #if os(iOS)
 public struct DashboardWebView: UIViewRepresentable {
+    @Environment(\.deviceRuntimeLifetime) private var runtimeLifetime
     public var store: PackageAssetStore
     public var onReady: () -> Void
     public var onUnlinkHold: () -> Void
@@ -36,7 +37,7 @@ public struct DashboardWebView: UIViewRepresentable {
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, lifetime: runtimeLifetime ?? DeviceRuntimeLifetime(), homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeUIView(context: Context) -> WKWebView {
@@ -53,6 +54,7 @@ public struct DashboardWebView: UIViewRepresentable {
 
 #elseif os(macOS)
 public struct DashboardWebView: NSViewRepresentable {
+    @Environment(\.deviceRuntimeLifetime) private var runtimeLifetime
     public var store: PackageAssetStore
     public var onReady: () -> Void
     public var onUnlinkHold: () -> Void
@@ -78,7 +80,7 @@ public struct DashboardWebView: NSViewRepresentable {
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, lifetime: runtimeLifetime ?? DeviceRuntimeLifetime(), homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -99,6 +101,9 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     let handler: PackageSchemeHandler
     var onReady: () -> Void
     var onUnlinkHold: () -> Void
+    private let lifetime: DeviceRuntimeLifetime
+    private var retirementRegistration: UUID?
+    private(set) var isRetired = false
     private var installedRules = false
     private var bridge: HomeAssistantWebBridge?
     private var events: DashboardEventRuntime?
@@ -110,12 +115,16 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     private var settingsValid = true
     private var allowsAudioAutoplay = false
 
-    init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+    init(store: PackageAssetStore, lifetime: DeviceRuntimeLifetime = DeviceRuntimeLifetime(), preferenceStore: ScreenPreferenceStore? = nil, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+        self.lifetime = lifetime
         let rasterResources = rasterResources ?? PublicRasterResources()
         self.handler = PackageSchemeHandler(store: store, rasterResources: rasterResources)
         self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold
         self.active = active; self.onSettingsApplied = onSettingsApplied
+        guard !lifetime.isRetired else {
+            super.init(); isRetired = true; self.active = false; self.onReady = {}; self.onUnlinkHold = {}; self.onSettingsApplied = { _ in }; return
+        }
         if let data = store.assets["manifest.json"]?.data {
             do {
                 let manifest = try JSONDecoder().decode(DashboardManifest.self, from: data)
@@ -126,15 +135,21 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
                 self.events = events; initialPath = events.page.path; settingsValid = events.settingsApplied
             } catch { settingsValid = false }
         }
-        self.bridge = HomeAssistantWebBridge(runtime: homeAssistant, connections: connections, navigation: events,
-                                              revision: revision, publicReads: publicReads, resources: rasterResources, onHealth: onConnectionHealth)
         super.init()
+        let health: (Bool) -> Void = { [weak self] value in
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            onConnectionHealth(value)
+        }
+        self.bridge = HomeAssistantWebBridge(runtime: homeAssistant, connections: connections, navigation: events,
+                                              revision: revision, preferenceStore: preferenceStore ?? .shared, publicReads: publicReads, resources: rasterResources, onHealth: health)
         events?.onPage = { [weak self] page in self?.load(path: page.path) }
         events?.onStatus = { [weak self] status in self?.bridge?.status(status) }
-        events?.onHealth = onConnectionHealth
+        events?.onHealth = health
+        retirementRegistration = lifetime.register { [weak self] in self?.retireForReset() }
     }
 
     func update(settings: DeviceSettings, active: Bool, onSettingsApplied: @escaping (Bool) -> Void) {
+        guard !isRetired, !lifetime.isRetired else { return }
         self.onSettingsApplied = onSettingsApplied
         events?.update(settings: settings)
         if let events { settingsValid = events.settingsApplied }
@@ -143,20 +158,50 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         if active { events?.start() } else { events?.stop(); bridge?.cancel(); webView?.pauseAllMediaPlayback(completionHandler: nil) }
         // Defer callback to avoid publishing SwiftUI state during view update.
         let valid = settingsValid
-        DispatchQueue.main.async { onSettingsApplied(valid) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            onSettingsApplied(valid)
+        }
+    }
+
+    func retireForReset() {
+        guard !isRetired else { return }
+        isRetired = true; active = false
+        lifetime.unregister(retirementRegistration); retirementRegistration = nil
+        bridge?.suspendForReset(); events?.stop()
+        events?.onPage = nil; events?.onStatus = nil; events?.onHealth = nil
+        onReady = {}; onUnlinkHold = {}; onSettingsApplied = { _ in }
+        if let webView {
+            webView.stopLoading(); webView.navigationDelegate = nil; webView.uiDelegate = nil
+            webView.pauseAllMediaPlayback(completionHandler: nil)
+            webView.configuration.userContentController.removeAllScriptMessageHandlers()
+#if os(iOS)
+            webView.scrollView.delegate = nil
+#endif
+        }
+        webView = nil; programmaticURL = nil
     }
 
     func stop() { bridge?.setActive(false); events?.stop(); bridge?.cancel(); webView?.pauseAllMediaPlayback(completionHandler: nil) }
 
     private func load(path: String) {
+        guard !isRetired, !lifetime.isRetired else { return }
         guard let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/\(path)") else { return }
         bridge?.cancel(); programmaticURL = url.absoluteString
         webView?.load(URLRequest(url: url))
     }
 
-    deinit { let bridge = bridge; Task { @MainActor in bridge?.cancel() } }
+    deinit {
+        let bridge = bridge, lifetime = lifetime, registration = retirementRegistration
+        Task { @MainActor in lifetime.unregister(registration); bridge?.cancel() }
+    }
 
     func makeWebView() -> WKWebView {
+        guard !isRetired, !lifetime.isRetired else {
+            let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
+            config.defaultWebpagePreferences.allowsContentJavaScript = false
+            return WKWebView(frame: .zero, configuration: config)
+        }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         BundledAudio.configure(config)
@@ -197,18 +242,19 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         installContentRules(on: webView)
         load(path: initialPath)
         if active { events?.start() }
-        DispatchQueue.main.async { [weak self] in guard let self else { return }; self.onSettingsApplied(self.settingsValid) }
+        DispatchQueue.main.async { [weak self] in guard let self, !self.isRetired, !self.lifetime.isRetired else { return }; self.onSettingsApplied(self.settingsValid) }
         return webView
     }
 
     private func installContentRules(on webView: WKWebView) {
-        guard !installedRules else { return }
+        guard !isRetired, !lifetime.isRetired, !installedRules else { return }
         installedRules = true
         let data = Data(IsolationPolicy.contentRuleListJSON.utf8)
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: "screenpunk-isolation",
             encodedContentRuleList: String(data: data, encoding: .utf8) ?? "[]"
-        ) { list, _ in
+        ) { [weak self, weak webView] list, _ in
+            guard let self, !self.isRetired, !self.lifetime.isRetired, let webView else { return }
             if let list {
                 webView.configuration.userContentController.add(list)
             }
@@ -218,13 +264,15 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     private func installUnlinkRecognizer(on webView: WKWebView) {
 #if os(iOS)
         let recognizer = TwoFingerHoldRecognizer { [weak self] in
-            self?.onUnlinkHold()
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            self.onUnlinkHold()
         }
         recognizer.cancelsTouchesInView = false
         webView.addGestureRecognizer(recognizer)
 #elseif os(macOS)
         let recognizer = TwoFingerHoldRecognizer { [weak self] in
-            self?.onUnlinkHold()
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            self.onUnlinkHold()
         }
         webView.addGestureRecognizer(recognizer)
 #endif
@@ -235,6 +283,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        guard !isRetired, !lifetime.isRetired else { decisionHandler(.cancel); return }
         let url = navigationAction.request.url?.absoluteString ?? ""
         guard IsolationEvaluator.isLocalPackageURL(url) else { decisionHandler(.cancel); return }
         if navigationAction.targetFrame?.isMainFrame == true, let events {
@@ -258,9 +307,10 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         nil
     }
 
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onReady() }
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { guard !isRetired, !lifetime.isRetired else { return }; onReady() }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !isRetired, !lifetime.isRetired else { return }
         bridge?.cancel()
         load(path: events?.page.path ?? initialPath)
     }
@@ -271,6 +321,7 @@ extension DashboardWebCoordinator: UIScrollViewDelegate {
     public func viewForZooming(in scrollView: UIScrollView) -> UIView? { nil }
 
     public func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        guard !isRetired, !lifetime.isRetired else { return }
         scrollView.pinchGestureRecognizer?.isEnabled = false
     }
 
