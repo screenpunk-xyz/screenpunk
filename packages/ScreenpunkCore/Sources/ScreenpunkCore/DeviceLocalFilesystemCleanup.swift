@@ -6,7 +6,7 @@ import Glibc
 #endif
 
 public enum DeviceLocalFilesystemCleanupError: Error, Equatable {
-    case invalidPlan, unsupportedNode, changedDirectory, crossedMount, capacityExceeded
+    case invalidAuthorization, invalidPlan, unsupportedNode, changedDirectory, crossedMount, capacityExceeded
     case io(operation: String, code: Int32)
 }
 
@@ -137,7 +137,25 @@ public final class DeviceLocalFilesystemCleanup {
         }
         return result.sorted()
     }
-    private func remove(_ name: String, from directory: Directory, depth: Int, allowDirectory: Bool, entries: inout Int, device: dev_t, protected: Set<String>) throws {
+    private func authorized(_ step: (() throws -> Void) throws -> Void, operation: () throws -> Void) throws {
+        var calls = 0
+        var repeated = false
+        var operationError: Error?
+        try withoutActuallyEscaping(operation) { operation in
+            try step {
+                calls += 1
+                guard calls == 1 else {
+                    repeated = true
+                    throw DeviceLocalFilesystemCleanupError.invalidAuthorization
+                }
+                do { try operation() }
+                catch { operationError = error; throw error }
+            }
+        }
+        guard calls == 1, !repeated else { throw DeviceLocalFilesystemCleanupError.invalidAuthorization }
+        if let operationError { throw operationError }
+    }
+    private func remove(_ name: String, from directory: Directory, depth: Int, allowDirectory: Bool, entries: inout Int, device: dev_t, protected: Set<String>, step: (() throws -> Void) throws -> Void) throws {
         entries += 1
         guard entries <= plan.maximumEntries, depth <= plan.maximumDepth else { throw DeviceLocalFilesystemCleanupError.capacityExceeded }
         let path = directory.path + "/" + name
@@ -151,21 +169,28 @@ public final class DeviceLocalFilesystemCleanup {
         if type == S_IFDIR {
             guard allowDirectory else { throw DeviceLocalFilesystemCleanupError.unsupportedNode }
             guard let child = try descend(directory, components: [name], device: device, protected: protected), child.identity.st_ino == value.st_ino else { throw DeviceLocalFilesystemCleanupError.changedDirectory }
-            for entry in try names(child) { try remove(entry, from: child, depth: depth + 1, allowDirectory: true, entries: &entries, device: device, protected: protected) }
+            for entry in try names(child) { try remove(entry, from: child, depth: depth + 1, allowDirectory: true, entries: &entries, device: device, protected: protected, step: step) }
             try sync(child); try verify(child)
             try boundary(.beforeUnlink, path); try verify(child)
-            guard unlinkat(directory.fd, name, AT_REMOVEDIR) == 0 else { throw failure("unlinkat") }
+            try authorized(step) { try verify(child); guard unlinkat(directory.fd, name, AT_REMOVEDIR) == 0 else { throw failure("unlinkat") } }
         } else {
             guard type == S_IFREG || type == S_IFLNK else { throw DeviceLocalFilesystemCleanupError.unsupportedNode }
             try boundary(.beforeUnlink, path); try verify(directory)
             var latest = stat()
             guard fstatat(directory.fd, name, &latest, AT_SYMLINK_NOFOLLOW) == 0,
                   latest.st_dev == value.st_dev, latest.st_ino == value.st_ino, latest.st_mode & S_IFMT == type else { throw DeviceLocalFilesystemCleanupError.changedDirectory }
-            guard unlinkat(directory.fd, name, 0) == 0 else { throw failure("unlinkat") }
+            try authorized(step) {
+                try verify(directory)
+                var observed = stat()
+                guard fstatat(directory.fd, name, &observed, AT_SYMLINK_NOFOLLOW) == 0, observed.st_dev == value.st_dev, observed.st_ino == value.st_ino, observed.st_mode & S_IFMT == type else { throw DeviceLocalFilesystemCleanupError.changedDirectory }
+                guard unlinkat(directory.fd, name, 0) == 0 else { throw failure("unlinkat") }
+            }
         }
         try boundary(.afterUnlink, path); try sync(directory)
     }
-    public func execute() throws {
+    public func execute() throws { try execute(withDestructiveStep: { try $0() }) }
+    /// Enforces exactly one synchronous invocation and propagates operation failure even if the wrapper swallows it.
+    public func execute(withDestructiveStep step: (() throws -> Void) throws -> Void) throws {
         let fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard fd >= 0 else { throw failure("open") }
         let filesystem = try Directory(fd: fd, path: "/")
@@ -181,9 +206,9 @@ public final class DeviceLocalFilesystemCleanup {
             guard let directory = try descend(anchor, components: relative.split(separator: "/").map(String.init), device: anchor.identity.st_dev, protected: protected) else { continue }
             switch root.mode {
             case .directoryContents:
-                for name in try names(directory) { try remove(name, from: directory, depth: 1, allowDirectory: true, entries: &entries, device: anchor.identity.st_dev, protected: protected) }
+                for name in try names(directory) { try remove(name, from: directory, depth: 1, allowDirectory: true, entries: &entries, device: anchor.identity.st_dev, protected: protected, step: step) }
             case .namedFiles(let names):
-                for name in names.sorted() { try remove(name, from: directory, depth: 1, allowDirectory: false, entries: &entries, device: anchor.identity.st_dev, protected: protected) }
+                for name in names.sorted() { try remove(name, from: directory, depth: 1, allowDirectory: false, entries: &entries, device: anchor.identity.st_dev, protected: protected, step: step) }
             }
             try sync(directory)
         }
