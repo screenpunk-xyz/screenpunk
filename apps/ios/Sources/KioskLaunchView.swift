@@ -9,8 +9,12 @@ struct KioskLaunchView: View {
         Group {
             switch bootstrap.state {
             case .checking: ProgressView()
-            case .localReady(let host): DeviceRuntimeRootView(host: host)
-            case .blocked(let snapshot): DeviceManagementBlockedView(snapshot: snapshot, retry: bootstrap.start)
+            case .resetting: ProgressView("Removing saved device data…")
+            case .localReady(let host): DeviceRuntimeRootView(host: host, onLocalReset: bootstrap.requestLocalReset).id(bootstrap.rootGeneration)
+            case .blocked(let snapshot): VStack {
+                if let message = bootstrap.statusMessage { Text(message).multilineTextAlignment(.center).padding() }
+                DeviceManagementBlockedView(snapshot: snapshot, retry: bootstrap.retry)
+            }
             }
         }
             .task { bootstrap.start() }

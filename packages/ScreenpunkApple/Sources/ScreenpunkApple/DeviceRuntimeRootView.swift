@@ -42,7 +42,10 @@ public struct DeviceRuntimeRootView: View {
     }
 
 #if canImport(Network) && canImport(Security)
-    public init(host: DeviceLANHost) {
+    private var onLocalReset: (() -> Void)? = nil
+
+    public init(host: DeviceLANHost, onLocalReset: (() -> Void)? = nil) {
+        self.onLocalReset = onLocalReset
         _fallback = State(initialValue: host.runtime)
         _host = StateObject(wrappedValue: host)
     }
@@ -194,8 +197,8 @@ public struct DeviceRuntimeRootView: View {
 #if !os(iOS)
         .overlay {
             if showDeviceMenu {
-                UnlinkPanelView(onUnlink: { showDeviceMenu = false; host.unlink() },
-                    onDismiss: { showDeviceMenu = false }, screens: host.screenSet?.screens.map(\.entry) ?? [],
+                UnlinkPanelView(onUnlink: { showDeviceMenu = false; onLocalReset?() },
+                    onDismiss: { showDeviceMenu = false }, allowUnlink: onLocalReset != nil, screens: host.screenSet?.screens.map(\.entry) ?? [],
                     selectedDashboardId: host.screenSet?.selectedDashboardId,
                     onSettings: { showDeviceMenu = false; showSettings = true }) { dashboardId in
                         host.selectScreen(dashboardId)
