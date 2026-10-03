@@ -114,3 +114,13 @@ Each running host/root now owns a terminal lifetime. Retirement stops host recov
 A fresh root must use a new lifetime. Ordinary backgrounding, coordinator stop and management revocation retain their previous behavior. Requests admitted before retirement cannot be undone; late results and local publication are rejected. These primitives do not initiate a reset, change scope defaults or replace the root after cleanup. Production lifecycle orchestration remains the next step.
 
 Validation: full Apple suite executed 320 tests with four existing opt-in skips and zero failures, including nine new lifetime/retirement tests. The iOS Simulator app build passed.
+
+## Production reset lifecycle
+
+Production bootstrap now deliberately selects the v3 cleanup scope. It inspects reset evidence before loading retained content or constructing a management host. A matching pending operation resumes with its original identity; corrupt, inaccessible or mismatched evidence shows an empty blocked state. Earlier v1/v2 scope records are not reinterpreted or migrated. A fresh process observing matching completion performs no cleanup.
+
+The lifecycle retains its exact authority, coordinator and writer bundle through uncertain intent or completion. It retires the host, WebViews and writer domains before qualified cleanup, then requires the cleanup receipt, durable completion and one-use reopening capability before creating a fresh authority, host and view identity. Failure to construct the replacement host retries construction only. Shared bootstrap instances reuse an admitted host; a second reset uses a new coordinator and writer generation. If uncertain evidence already fenced writers but later appears absent or merely completed without the retained capability, this process remains blocked; it cannot reopen those writers on that evidence alone.
+
+The existing non-iOS disconnect action accepts an explicit lifecycle callback and is hidden when none is supplied. The current production entry point is the iOS kiosk: it gains pending-reset recovery, with no new iOS reset-initiation control. The iOS screen disconnect/remove actions retain their separate behavior. Cleanup preserves Cloud authority/history/credentials, TLS, Google TV and ADB records, and unknown historical preference temporary files; it is not a claim of complete device erasure.
+
+Validation uses isolated roots, credential backends and test TLS identities. No reset of personal app data is part of implementation validation. Physical-device protection, power-loss recovery, live providers and accessibility qualification remain release gates.
