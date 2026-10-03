@@ -7,7 +7,7 @@ import ScreenpunkCore
 
 final class CloudHumanSessionLifecycleTests: XCTestCase {
     @MainActor func testDormantCallbacksAndPhasesNeverConstructSession() {
-        let lifecycle = CloudHumanSessionLifecycle()
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         XCTAssertNil(lifecycle.coordinator)
         XCTAssertFalse(lifecycle.handleCallback(URL(string: "calendar:/oauth2redirect")!))
         XCTAssertFalse(lifecycle.handleCallback(URL(string: "com.googleusercontent.apps.fixture:/oauth2callback")!))
@@ -18,18 +18,16 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
 
     @MainActor func testUnconfiguredExplicitFactoryFailsBeforePresentation() {
         var presentations = 0
-        XCTAssertThrowsError(try CloudHumanSession.make(googlePresentation: {
-            presentations += 1; return UIViewController()
-        }, applePresentation: {
-            presentations += 1; return UIWindow()
-        }, transport: LifecycleTransport())) { error in
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
+        let presentation = CloudProviderPresentation(testResolve: { presentations += 1; return .init(controller: UIViewController(), window: UIWindow()) })
+        XCTAssertThrowsError(try lifecycle.installExplicit(presentation: presentation)) { error in
             XCTAssertEqual(error as? CloudNativeIdentityError, .notConfigured)
         }
         XCTAssertEqual(presentations, 0)
     }
 
     @MainActor func testOnePairRetainedAndCallbacksUseItsCurrentAdmission() throws {
-        let lifecycle = CloudHumanSessionLifecycle()
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         var context: FakeHumanContext? = FakeHumanContext()
         weak var retained = context
         try lifecycle.install(CloudHumanSession(testCallback: { [context = context!] in context.callback($0) },
@@ -50,7 +48,7 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
     }
 
     @MainActor func testBackgroundOnlyRevokesAndActiveDoesNotReplay() throws {
-        let lifecycle = CloudHumanSessionLifecycle(), context = FakeHumanContext()
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker()), context = FakeHumanContext()
         try lifecycle.install(CloudHumanSession(testCallback: context.callback, testRevoke: context.revoke))
         lifecycle.scenePhaseChanged(.inactive); lifecycle.scenePhaseChanged(.active)
         XCTAssertEqual(context.revocations, 0)
@@ -70,7 +68,7 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
         await coordinator.signIn(provider: .google)?.value
         XCTAssertNil(coordinator.createFirstWorkspace(workspaceName: "Exact workspace", locationName: "Exact location"))
         let original = try XCTUnwrap(journal.attempt)
-        let lifecycle = CloudHumanSessionLifecycle()
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         try lifecycle.install(CloudHumanSession(testCoordinator: coordinator, testCallback: { _ in false }))
         XCTAssertTrue(lifecycle.coordinator === coordinator)
         let before = cancellations
@@ -95,7 +93,7 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
         await coordinator.signIn(provider: .google)?.value
         XCTAssertNil(coordinator.createFirstWorkspace(workspaceName: "Exact workspace", locationName: "Exact location"))
         let original = try XCTUnwrap(journal.attempt)
-        let lifecycle = CloudHumanSessionLifecycle()
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         try lifecycle.install(CloudHumanSession(testCoordinator: coordinator, testCallback: { _ in false }))
         let first = lifecycle.signOut()
         while !gate.entered { await Task.yield() }
@@ -111,7 +109,7 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
         await first?.value; await joined?.value
         XCTAssertEqual(clears, 1); XCTAssertEqual(coordinator.signOutState, .succeeded)
         XCTAssertEqual(journal.attempt, original)
-        XCTAssertTrue(lifecycle.coordinator === coordinator)
+        XCTAssertNil(lifecycle.coordinator)
     }
 
     @MainActor func testRetirementPublishesOneTerminalTransition() throws {
@@ -119,20 +117,21 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
             cancelIdentityFlow: {}, signOutIdentity: {},
             makeClient: { try CloudNativeClient(baseURL: URL(string: "https://fixture.invalid")!, tokenProvider: $0, transport: LifecycleTransport()) },
             journal: LifecycleJournal())
-        let lifecycle = CloudHumanSessionLifecycle()
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         try lifecycle.install(CloudHumanSession(testCoordinator: coordinator, testCallback: { _ in false }))
         XCTAssertTrue(lifecycle.coordinator === coordinator)
         var changes = 0
         let observation = lifecycle.objectWillChange.sink { changes += 1 }
         lifecycle.retirePresentationContext()
-        XCTAssertEqual(changes, 1); XCTAssertNil(lifecycle.coordinator)
+        XCTAssertGreaterThanOrEqual(changes, 1); XCTAssertNil(lifecycle.coordinator)
+        let terminalChanges = changes
         lifecycle.retirePresentationContext()
-        XCTAssertEqual(changes, 1)
+        XCTAssertEqual(changes, terminalChanges)
         withExtendedLifetime(observation) {}
     }
 
-    @MainActor func testRetirementTerminalAndIndependentScenesDoNotRevokeEachOther() throws {
-        let first = CloudHumanSessionLifecycle(), second = CloudHumanSessionLifecycle()
+    @MainActor func testRetirementTerminalAndInjectedBrokersDoNotRevokeEachOther() throws {
+        let first = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker()), second = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         let a = FakeHumanContext(), b = FakeHumanContext()
         try first.install(CloudHumanSession(testCallback: a.callback, testRevoke: a.revoke))
         try second.install(CloudHumanSession(testCallback: b.callback, testRevoke: b.revoke))

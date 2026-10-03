@@ -11,6 +11,7 @@ final class CloudHumanSession {
     let coordinator: CloudConnectionCoordinator?
     private let callback: (URL) -> Bool
     private let revoke: () -> Void
+    private var lease: CloudHumanSessionBroker.Lease?
 
     private init(identity: CloudNativeIdentity, coordinator: CloudConnectionCoordinator) {
         self.coordinator = coordinator
@@ -20,22 +21,25 @@ final class CloudHumanSession {
 
     /// Explicit future presentation entry only. Configuration is validated before creating
     /// the journal/coordinator; no SDK initializes until an explicit provider sign-in.
-    static func make(googlePresentation: @escaping () throws -> UIViewController,
+    static func make(lease: CloudHumanSessionBroker.Lease, googlePresentation: @escaping () throws -> UIViewController,
                      applePresentation: @escaping () throws -> ASPresentationAnchor,
                      transport: any HTTPTransport,
                      journal: (any CloudWorkspaceSetupJournal)? = nil) throws -> CloudHumanSession {
+        try lease.checkConstruction()
         let configuration = try CloudNativeConfiguration.load()
         let identity = CloudNativeIdentity()
         let coordinator = CloudConnectionCoordinator(authenticate: { provider in
+            try lease.checkHumanAction()
             switch provider {
             case .google: try await identity.signInWithGoogle(presenting: googlePresentation())
             case .apple: try await identity.signInWithApple(presentationAnchor: applePresentation())
             }
+            try lease.checkHumanAction()
             return try identity.tokenProvider()
-        }, cancelIdentityFlow: { identity.cancelActiveFlow() },
-           signOutIdentity: { try await identity.requestSignOut() },
-           retrySignOutIdentity: { try await identity.retrySignOut() },
-           makeClient: { try CloudNativeClient(baseURL: configuration.apiOrigin, tokenProvider: $0, transport: transport) },
+        }, cancelIdentityFlow: { if lease.isCurrent { identity.cancelActiveFlow() } },
+           signOutIdentity: { try lease.checkSettlement(); try await identity.requestSignOut() },
+           retrySignOutIdentity: { try lease.checkSettlement(); try await identity.retrySignOut() },
+           makeClient: { try lease.checkHumanAction(); return try CloudNativeClient(baseURL: configuration.apiOrigin, tokenProvider: $0, transport: transport) },
            journal: journal)
         return CloudHumanSession(identity: identity, coordinator: coordinator)
     }
@@ -48,42 +52,73 @@ final class CloudHumanSession {
         coordinator = testCoordinator; callback = testCallback
         revoke = { testCoordinator.cancel() }
     }
-    fileprivate func handleCallback(_ url: URL) -> Bool { callback(url) }
-    fileprivate func cancel() { revoke() }
-    fileprivate func signOut() -> Task<Void, Never>? { coordinator?.signOut() }
-    fileprivate func retrySignOut() -> Task<Void, Never>? { coordinator?.retrySignOut() }
+    func bind(_ lease: CloudHumanSessionBroker.Lease) { self.lease = lease }
+    func handleCallback(_ url: URL) -> Bool {
+        guard (try? lease?.checkHumanAction()) != nil else { return false }; return callback(url)
+    }
+    func cancel() { if lease?.isCurrent == true { revoke() } }
+    func signOut() -> Task<Void, Never>? { coordinator?.signOut() }
+    func retrySignOut() -> Task<Void, Never>? { coordinator?.retrySignOut() }
 }
 
-/// Scene-owned, dormant until explicit installation. It retains revoked persistence context.
-/// Multiple concurrent Cloud scenes would require separate Google SDK singleton arbitration.
+/// Scene attachment to one process-owned pair. Presentation revocation preserves
+/// unresolved workspace persistence; retirement cleanup outlives the scene.
 @MainActor
 final class CloudHumanSessionLifecycle: ObservableObject {
     enum Failure: Error { case alreadyInstalled, retired }
-    @Published private var session: CloudHumanSession?
+    private let broker: CloudHumanSessionBroker
+    private let owner = UUID()
+    @Published private var lease: CloudHumanSessionBroker.Lease?
     @Published private var retired = false
-    var coordinator: CloudConnectionCoordinator? { retired ? nil : session?.coordinator }
-
-    func install(_ session: CloudHumanSession) throws {
+    private var observation: AnyCancellable?
+    private var retirement: CloudSceneRetirement?
+    var coordinator: CloudConnectionCoordinator? { retired ? nil : lease.flatMap { broker.session(for: $0)?.coordinator } }
+    init(broker: CloudHumanSessionBroker? = nil) {
+        let resolved = broker ?? .shared
+        self.broker = resolved
+        observation = resolved.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+    }
+    /// Internal fake-only seam. Production installation reserves before invoking its factory.
+    func install(_ session: CloudHumanSession) throws { try install(factory: { _ in session }) }
+    func install(factory: (CloudHumanSessionBroker.Lease) throws -> CloudHumanSession) throws {
         guard !retired else { throw Failure.retired }
-        guard self.session == nil else { throw Failure.alreadyInstalled }
-        self.session = session
+        guard lease?.isCurrent != true else { throw Failure.alreadyInstalled }
+        let acquired = try broker.acquire(owner: owner, factory: factory)
+        lease = acquired
+        retirement = CloudSceneRetirement(broker: broker, lease: acquired)
+    }
+    func installExplicit(presentation: CloudProviderPresentation, testFactory: ((CloudProviderPresentation) throws -> CloudHumanSession)? = nil) throws {
+        try install { lease in
+            if let testFactory { return try testFactory(presentation) }
+            return try CloudHumanSession.make(lease: lease,
+                googlePresentation: { try presentation.resolve().controller },
+                applePresentation: { try presentation.resolve().window }, transport: CloudNativeURLSessionTransport())
+        }
     }
     func handleCallback(_ url: URL) -> Bool {
-        guard !retired else { return false }
-        return session?.handleCallback(url) ?? false
+        guard !retired, let lease else { return false }; return broker.session(for: lease)?.handleCallback(url) ?? false
     }
-    @discardableResult
-    func signOut() -> Task<Void, Never>? { retired ? nil : session?.signOut() }
-    @discardableResult
-    func retrySignOut() -> Task<Void, Never>? { retired ? nil : session?.retrySignOut() }
-    func cancelPresentation() { if !retired { session?.cancel() } }
-    func didEnterBackground() { if !retired { session?.cancel() } }
-    func scenePhaseChanged(_ phase: ScenePhase) {
-        if phase == .background { didEnterBackground() }
+    @discardableResult func signOut() -> Task<Void, Never>? {
+        guard !retired, let lease else { return nil }; return broker.signOut(lease)
     }
+    @discardableResult func retrySignOut() -> Task<Void, Never>? {
+        guard !retired, let lease else { return nil }; return broker.retrySignOut(lease)
+    }
+    func cancelPresentation() { if !retired, let lease { broker.cancel(lease) } }
+    func didEnterBackground() { cancelPresentation() }
+    func scenePhaseChanged(_ phase: ScenePhase) { if phase == .background { didEnterBackground() } }
     func retirePresentationContext() {
         guard !retired else { return }
         retired = true
-        session?.cancel()
+        if let lease { broker.retire(lease) }
     }
+}
+
+/// Last-resort actual attachment retirement, independent of SwiftUI cover disappearances.
+/// Its actor task retains cleanup ownership if the scene drops without an explicit callback.
+private final class CloudSceneRetirement: Sendable {
+    let broker: CloudHumanSessionBroker
+    let lease: CloudHumanSessionBroker.Lease
+    init(broker: CloudHumanSessionBroker, lease: CloudHumanSessionBroker.Lease) { self.broker = broker; self.lease = lease }
+    deinit { Task { @MainActor [broker, lease] in _ = broker.retire(lease) } }
 }
