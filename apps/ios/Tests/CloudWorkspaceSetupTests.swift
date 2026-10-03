@@ -27,7 +27,7 @@ final class CloudWorkspaceSetupTests: XCTestCase {
         XCTAssertNil(coordinator.createFirstWorkspace(workspaceName: " Cafe\u{301} ", locationName: " Home "))
         let exact = try XCTUnwrap(journal.attemptedRecord)
         XCTAssertNil(coordinator.createFirstWorkspace(workspaceName: "Different", locationName: "Different"))
-        coordinator.signOut(); XCTAssertNil(coordinator.pendingWorkspaceSetup)
+        await coordinator.signOut()?.value; XCTAssertNil(coordinator.pendingWorkspaceSetup)
         await coordinator.signIn(provider: .google)?.value
         XCTAssertFalse(coordinator.canCreateFirstWorkspace)
         await coordinator.retryWorkspaceSetup()?.value

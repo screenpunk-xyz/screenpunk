@@ -1,4 +1,5 @@
 import AuthenticationServices
+import Combine
 import CryptoKit
 import FirebaseCore
 import FirebaseAuth
@@ -9,7 +10,11 @@ import UIKit
 /// App-only adapter; it is not constructed by the current onboarding UI.
 /// Firebase configuration and interactive provider flows require an explicit caller.
 @MainActor
-final class CloudNativeIdentity {
+final class CloudNativeIdentity: ObservableObject {
+    enum SignOutState: Equatable { case idle, waiting, failed, succeeded }
+    @Published private(set) var signOutState: SignOutState = .idle
+    private var signOutIntent: UUID?
+    private var signOutWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
     private var auth: Auth?
     private var configuration: CloudNativeConfiguration?
     private var generation = UUID()
@@ -51,7 +56,7 @@ final class CloudNativeIdentity {
             exchange = { try await configured.1.signIn(with: $0.firebaseCredential()).user.uid }
         }
         let flow = beginFlow(.google)
-        defer { activeFlow = nil }
+        defer { finishFlow(flow.generation) }
         do {
             try await withFlowCancellation(flow) {
             try validateFlow(flow.generation)
@@ -84,7 +89,7 @@ final class CloudNativeIdentity {
             exchange = { try await configured.1.signIn(with: $0.firebaseCredential()).user.uid }
         }
         let flow = beginFlow(.apple)
-        defer { activeFlow = nil; appleFlow = nil }
+        defer { finishFlow(flow.generation) }
         do {
             try await withFlowCancellation(flow) {
             try validateFlow(flow.generation)
@@ -106,9 +111,10 @@ final class CloudNativeIdentity {
 
     private func checkEntry() throws {
         guard !Task.isCancelled else { throw CloudNativeIdentityError.cancelled }
-        guard !flowInProgress else { throw CloudNativeIdentityError.flowInProgress }
+        guard !flowInProgress, signOutState != .waiting, signOutState != .failed else { throw CloudNativeIdentityError.flowInProgress }
     }
     private func beginFlow(_ provider: CloudNativeSignInProvider) -> Flow {
+        signOutIntent = nil; signOutState = .idle
         generation = UUID(); interactiveUserID = nil
         let flow = Flow(provider: provider, generation: generation)
         activeFlow = flow
@@ -158,13 +164,66 @@ final class CloudNativeIdentity {
         return drivers?.callback(url) ?? GIDSignIn.sharedInstance.handle(url)
     }
 
-    /// Explicit human sign-out affects provider sessions only; installed screens are untouched.
-    func signOut() throws {
-        guard !flowInProgress else { throw CloudNativeIdentityError.flowInProgress }
-        generation = UUID()
-        interactiveUserID = nil
-        try auth?.signOut()
-        GIDSignIn.sharedInstance.signOut()
+    /// Explicit human intent is retained in this process, independently of waiter cancellation.
+    /// No restart durability is implied. A blocked SDK await remains waiting, never timed out as success.
+    func requestSignOut() async throws {
+        if signOutState == .succeeded { return }
+        if signOutState == .failed { throw CloudNativeIdentityError.providerFailed }
+        if let intent = signOutIntent { try await waitForSignOut(expected: intent); return }
+        let intent = UUID()
+        signOutIntent = intent
+        signOutState = .waiting
+        cancelActiveFlow()
+        if !flowInProgress { clearSDKs(expected: intent) }
+        try await waitForSignOut(expected: intent)
+    }
+
+    func retrySignOut() async throws {
+        guard signOutState == .failed, let intent = signOutIntent else {
+            try await requestSignOut(); return
+        }
+        signOutState = .waiting
+        if !flowInProgress { clearSDKs(expected: intent) }
+        try await waitForSignOut(expected: intent)
+    }
+
+    private func waitForSignOut(expected: UUID) async throws {
+        guard signOutIntent == expected else { throw CloudNativeIdentityError.cancelled }
+        switch signOutState {
+        case .succeeded: return
+        case .failed: throw CloudNativeIdentityError.providerFailed
+        case .waiting:
+            try await withCheckedThrowingContinuation { signOutWaiters.append((expected, $0)) }
+        case .idle: throw CloudNativeIdentityError.cancelled
+        }
+    }
+
+    private func finishFlow(_ expected: UUID) {
+        guard activeFlow?.generation == expected else { return }
+        activeFlow = nil; appleFlow = nil
+        if signOutState == .waiting, let intent = signOutIntent { clearSDKs(expected: intent) }
+    }
+
+    private func clearSDKs(expected: UUID) {
+        guard signOutIntent == expected, signOutState == .waiting, !flowInProgress else { return }
+        var failed = false
+        do {
+            if let drivers { try drivers.firebaseSignOut() }
+            else { try auth?.signOut() }
+        } catch { failed = true }
+        // Always attempt Google clearing even if Firebase clearing failed.
+        do {
+            if let drivers { try drivers.googleSignOut() }
+            else if configuration != nil { GIDSignIn.sharedInstance.signOut() }
+        } catch { failed = true }
+        guard signOutIntent == expected else { return }
+        let waiters = signOutWaiters.filter { $0.0 == expected }
+        signOutWaiters.removeAll { $0.0 == expected }
+        signOutState = failed ? .failed : .succeeded
+        for (_, waiter) in waiters {
+            if failed { waiter.resume(throwing: CloudNativeIdentityError.providerFailed) }
+            else { waiter.resume() }
+        }
     }
 
     private func configure() throws -> (CloudNativeConfiguration, Auth) {
@@ -280,6 +339,8 @@ struct CloudIdentityTestDrivers {
     let callback: (URL) -> Bool
     let cancel: () -> Void
     var cancellationDelivery: ((@escaping () -> Void) -> Void)? = nil
+    var firebaseSignOut: () throws -> Void = {}
+    var googleSignOut: () throws -> Void = {}
 }
 
 enum CloudProviderCredential {

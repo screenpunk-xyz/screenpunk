@@ -86,6 +86,34 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
         XCTAssertEqual(posts, [original.request])
     }
 
+    @MainActor func testSceneSignOutRetainsPairThroughBackgroundAndPresentationCancel() async throws {
+        let journal = LifecycleJournal(), transport = LifecycleTransport(), gate = LifecycleClearGate()
+        var clears = 0
+        let coordinator = CloudConnectionCoordinator(authenticate: { _ in LifecycleTokens() },
+            cancelIdentityFlow: {}, signOutIdentity: { clears += 1; await gate.wait() },
+            makeClient: { try CloudNativeClient(baseURL: URL(string: "https://fixture.invalid")!, tokenProvider: $0, transport: transport) }, journal: journal)
+        await coordinator.signIn(provider: .google)?.value
+        XCTAssertNil(coordinator.createFirstWorkspace(workspaceName: "Exact workspace", locationName: "Exact location"))
+        let original = try XCTUnwrap(journal.attempt)
+        let lifecycle = CloudHumanSessionLifecycle()
+        try lifecycle.install(CloudHumanSession(testCoordinator: coordinator, testCallback: { _ in false }))
+        let first = lifecycle.signOut()
+        while !gate.entered { await Task.yield() }
+        let joined = lifecycle.signOut()
+        lifecycle.didEnterBackground(); lifecycle.cancelPresentation()
+        XCTAssertTrue(lifecycle.coordinator === coordinator)
+        XCTAssertEqual(coordinator.signOutState, .pending)
+        XCTAssertNil(coordinator.humanIdentity); XCTAssertNil(coordinator.pendingWorkspaceSetup)
+        XCTAssertEqual(journal.attempt, original)
+        XCTAssertNil(coordinator.signIn(provider: .google))
+        first?.cancel() // Settlement is an explicit human intent, not presentation work.
+        gate.release()
+        await first?.value; await joined?.value
+        XCTAssertEqual(clears, 1); XCTAssertEqual(coordinator.signOutState, .succeeded)
+        XCTAssertEqual(journal.attempt, original)
+        XCTAssertTrue(lifecycle.coordinator === coordinator)
+    }
+
     @MainActor func testRetirementPublishesOneTerminalTransition() throws {
         let coordinator = CloudConnectionCoordinator(authenticate: { _ in throw CancellationError() },
             cancelIdentityFlow: {}, signOutIdentity: {},
@@ -164,4 +192,13 @@ private actor LifecycleTransport: HTTPTransport {
         posts.append(setup)
         return .init(status: 200, body: Data("{\"requestId\":\"\(setup.requestId.uuidString)\",\"accountId\":\"11111111-1111-4111-8111-111111111111\",\"locationId\":\"33333333-3333-4333-8333-333333333333\",\"createdAt\":\"2026-10-02T16:00:00Z\"}".utf8))
     }
+}
+
+
+@MainActor
+private final class LifecycleClearGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var entered = false
+    func wait() async { entered = true; await withCheckedContinuation { continuation = $0 } }
+    func release() { let saved = continuation; continuation = nil; saved?.resume() }
 }

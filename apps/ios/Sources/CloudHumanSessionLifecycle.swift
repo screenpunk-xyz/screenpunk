@@ -33,7 +33,8 @@ final class CloudHumanSession {
             }
             return try identity.tokenProvider()
         }, cancelIdentityFlow: { identity.cancelActiveFlow() },
-           signOutIdentity: { try identity.signOut() },
+           signOutIdentity: { try await identity.requestSignOut() },
+           retrySignOutIdentity: { try await identity.retrySignOut() },
            makeClient: { try CloudNativeClient(baseURL: configuration.apiOrigin, tokenProvider: $0, transport: transport) },
            journal: journal)
         return CloudHumanSession(identity: identity, coordinator: coordinator)
@@ -49,6 +50,8 @@ final class CloudHumanSession {
     }
     fileprivate func handleCallback(_ url: URL) -> Bool { callback(url) }
     fileprivate func cancel() { revoke() }
+    fileprivate func signOut() -> Task<Void, Never>? { coordinator?.signOut() }
+    fileprivate func retrySignOut() -> Task<Void, Never>? { coordinator?.retrySignOut() }
 }
 
 /// Scene-owned, dormant until explicit installation. It retains revoked persistence context.
@@ -69,6 +72,10 @@ final class CloudHumanSessionLifecycle: ObservableObject {
         guard !retired else { return false }
         return session?.handleCallback(url) ?? false
     }
+    @discardableResult
+    func signOut() -> Task<Void, Never>? { retired ? nil : session?.signOut() }
+    @discardableResult
+    func retrySignOut() -> Task<Void, Never>? { retired ? nil : session?.retrySignOut() }
     func cancelPresentation() { if !retired { session?.cancel() } }
     func didEnterBackground() { if !retired { session?.cancel() } }
     func scenePhaseChanged(_ phase: ScenePhase) {
