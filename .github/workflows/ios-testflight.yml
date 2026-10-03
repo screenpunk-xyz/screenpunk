@@ -3,6 +3,14 @@ name: iOS TestFlight
 on:
   workflow_dispatch:
     inputs:
+      ios_marketing_version:
+        description: Marketing version for this archive (for example 1.0).
+        type: string
+        required: true
+      ios_build_number:
+        description: Unused numeric build number verified in App Store Connect.
+        type: string
+        required: true
       upload_to_testflight:
         description: Upload the signed IPA to App Store Connect for TestFlight processing. Never submits an App Store release.
         type: boolean
@@ -32,6 +40,8 @@ jobs:
     timeout-minutes: 60
     environment: apple-release
     env:
+      IOS_MARKETING_VERSION: ${{ inputs.ios_marketing_version }}
+      IOS_BUILD_NUMBER: ${{ inputs.ios_build_number }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       IOS_SIGNING_CERT_P12_BASE64: ${{ secrets.IOS_SIGNING_CERT_P12_BASE64 }}
       IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
