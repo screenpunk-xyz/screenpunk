@@ -1,0 +1,496 @@
+{
+  "repository": "https://github.com/screenpunk-xyz/screenpunk",
+  "commit": "276c94b89ac7c6feb0e742116eaf2ebf55775240",
+  "entries": [
+    {
+      "path": "authoring/templates/gallery/screen.json",
+      "gitBlobSha1": "cc1873ac7beaa68b7c1002932681a6b4fea08a37",
+      "sha256": "67974dd1c245d8b05b20d12caafed76dc5c49dadcce806c6208186a853861fc0",
+      "bytes": 46,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Package.swift",
+      "gitBlobSha1": "13cee75abfdc547c9b6662c134a19859b677f5a3",
+      "sha256": "2912e9307e6c5e263b4253fffdc966d2a6025eccbafc4caf4bac812eb07b74f8",
+      "bytes": 738,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/AgentPresence.swift",
+      "gitBlobSha1": "c9f9970fa91d6ca31f2c14c9fd73a78f7828e4cc",
+      "sha256": "981b9b784bfe80bbb93d498c4cc33e1b37c65cab35568a1e6810a37e445271e8",
+      "bytes": 2349,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/AtomicJSONStore.swift",
+      "gitBlobSha1": "9065d382d8eece096208c85f70945bae57404fb2",
+      "sha256": "0a0d562ab430457273e226d00fb64102e326e318d7729d7492d4cb0f3a6fd5a8",
+      "bytes": 870,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/BundledResources.swift",
+      "gitBlobSha1": "2e9f3bac1b54e1302f40046d47abe2254dcdf6bf",
+      "sha256": "14ed94ed5eabf1e36bff48620708eefb29e163b3f475657aaa0d0532465a4f67",
+      "bytes": 2455,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/ControllerError.swift",
+      "gitBlobSha1": "48ac7373fa8cea8cfd26725a16a3d6814c62ddd9",
+      "sha256": "4302611c05d7c991a44143b27141bc4c4e600678eee8a019d73e66b1988d8618",
+      "bytes": 2026,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/ControllerService.swift",
+      "gitBlobSha1": "3d8434660c4e2819c5fe8e47e75bbb8ca7a8db00",
+      "sha256": "22727ba86563b6428acd8ae57f93a31ac5a38bef01bcc09cc8e766b89bbf1640",
+      "bytes": 20247,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/ControllerStore.swift",
+      "gitBlobSha1": "aa1496d9f511c942666c2d5c34ad54e6d49ba235",
+      "sha256": "c01779266c8d2670adcdb2209da54323e9c06e8cd34748b8a6411cabb8979e52",
+      "bytes": 1667,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/DashboardModels.swift",
+      "gitBlobSha1": "b84814ae573500ed54ed6ea0f948c58591bf792e",
+      "sha256": "c95b97b46667454a2530c2c4d883b80836feca6e3fde3aa6d279ca92cca59963",
+      "bytes": 5737,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/DashboardPackageStore.swift",
+      "gitBlobSha1": "dcc656537bb460ba930e982ac4a1a36adf87e78a",
+      "sha256": "20ede63dd844f062516748f3fca4284d2f82f1cd0a1822ad3906eba1483abd62",
+      "bytes": 20191,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/DeviceCoordinator.swift",
+      "gitBlobSha1": "a6822bb7816c0549a4d64da293c20dd9becd3762",
+      "sha256": "69f1e678a245b8e4d34cf6b7932e7a3c3a3b4233f2c73a6eac1cb4b8dbe84b32",
+      "bytes": 47690,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/DeviceLink.swift",
+      "gitBlobSha1": "1160bca894c5925ceed475e62a2fe29144124e99",
+      "sha256": "dff880efcc11777cdf38b4332d30f45a1132036b3405d7898446c39a080d01b6",
+      "bytes": 9510,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/DeviceScreenSelection.swift",
+      "gitBlobSha1": "14707b0110ca4809bdb78545f5f4f10461a5bfa1",
+      "sha256": "fd96d8ac30bde06cbebe898001cdafa9a334b16c0f35d61463bb6287cd70eff2",
+      "bytes": 1923,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/HelpCatalog.swift",
+      "gitBlobSha1": "9502a0f7c0c922d86a4761945f81a20c7f77b5a5",
+      "sha256": "701592703cf88939c751784db7d1fb1f8e6304e13381375941acedf5d500e6c1",
+      "bytes": 6377,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/HelperSupervisor.swift",
+      "gitBlobSha1": "358614c5b17795859855ca2b9a7ccd7a39f47e81",
+      "sha256": "c918ee51dc4ac6304813749f66641b020cb7fc312388451a6a1baf3e76000c8d",
+      "bytes": 2633,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/JSONValue.swift",
+      "gitBlobSha1": "5662b59ff6afe43aa9433ee0f8d3bee3931b2f11",
+      "sha256": "50f17290b46dff05369a6468d9e918e0a02f58e894b65a458e43e938517a1c57",
+      "bytes": 2824,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/MCPContent.swift",
+      "gitBlobSha1": "ca25e08f0a978d6d58f25a727baf352add37de57",
+      "sha256": "cac2fbd81babe1e03201c3e240290dbb5e3bb23bfb0703dd94e081ef9447ecb4",
+      "bytes": 1841,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/MCPJSONRPC.swift",
+      "gitBlobSha1": "3c943562dd1c1480cea3dee25a2f4b9c91127ebd",
+      "sha256": "801eaa7b0ccf6ff74c1a8a34171c9d71c7062d764c66ecd64b2519452bf68a33",
+      "bytes": 4952,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/MCPToolRouter.swift",
+      "gitBlobSha1": "f8625f6e16d3d6583d3ff709c0e0a133db019353",
+      "sha256": "2f5a5a5e241cb0f0c9b15951cab53a054fd0f3ae1d74ff1143daeebd229095f8",
+      "bytes": 21157,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/MCPToolSchemas.swift",
+      "gitBlobSha1": "b6ef45472368e5b608668813a971a0dc83db9396",
+      "sha256": "98177b2448bbcb1adb30f32abbdc7bcab2f4949d3e98139f2014d949783bcf17",
+      "bytes": 9545,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/PreviewRenderer.swift",
+      "gitBlobSha1": "ae9e79f6711599963c40e9d88d099946ce90fd37",
+      "sha256": "db2b4a3c682b45ada9aa5e7542381c8a5d28ad3f117c547de1bd0430397e55e0",
+      "bytes": 9208,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/PublicReadApproval.swift",
+      "gitBlobSha1": "413dae812bfe6fb81099049563143cb1abacf1ff",
+      "sha256": "6c61d553fb256320c15eecd68e883ca260e4bc7261676e5447389cb4750a19b8",
+      "bytes": 5146,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/ScreenAuthoring.swift",
+      "gitBlobSha1": "9abfd0f1121ddacab965c93f4fd8905ff1811a3b",
+      "sha256": "ed25a839b6a2ef9727f6699d47f8f3658b5a52ca0f7e074f0af04f8da2d38531",
+      "bytes": 15486,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/ScreenDesignSettings.swift",
+      "gitBlobSha1": "79d52134196ec55a401cab0b974c5e04c95fa00a",
+      "sha256": "c1f644495fa5ec8d7a281fa531d7a63d445a4ea268b1d2b5bf658cd7c1d5b46e",
+      "bytes": 1002,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/ScreenPackagePreparation.swift",
+      "gitBlobSha1": "7a5aad1c0f62640348b72d71d734f88eed1b8aa4",
+      "sha256": "1228eaf221586b1a91ad67cace03196f806f9b9071a4f4fd07840cfa31063b0b",
+      "bytes": 1537,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/ScreenPreviewProfile.swift",
+      "gitBlobSha1": "8e116cf5ec427ca926b9e062f1bca49b447ffc4e",
+      "sha256": "4d50698487c37cea0d36650102fb69b9db33533aea2e6e69e2ae6978b26646fc",
+      "bytes": 24972,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/Workbench/Workspace/WorkspaceJSON.swift",
+      "gitBlobSha1": "f7f393d97600cce754a9af7768048572efd5c863",
+      "sha256": "d5ebfb5803529996e8ab74501e063b82400e8b5384fc9a5d93289098dbb1f85b",
+      "bytes": 10130,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkController/Sources/ScreenpunkController/Workbench/Workspace/WorkspaceModels.swift",
+      "gitBlobSha1": "d3b7f468e73eee1cc27779bb48bc85e1db41346f",
+      "sha256": "aeec8feaba96f9397948d0adb5bfee3a078ec5e5f2f53f2cfb7b4fea73909232",
+      "bytes": 15894,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Package.swift",
+      "gitBlobSha1": "f79faa809611b2011ea04dd71d515fec7a047b94",
+      "sha256": "6cc97bb1f9a1d53c089d1e30adccd7a05a2a91767e310e97b3bd5f0f39dd7474",
+      "bytes": 472,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/CameraSource.swift",
+      "gitBlobSha1": "eb7e5b99d65b4faabdd4adb59132eb08d1741acc",
+      "sha256": "9055b5cd55e3d420e28976b7814092a6b2aea41f1c0cdca4f6c3433cc72ee327",
+      "bytes": 882,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/CloudNativeClient.swift",
+      "gitBlobSha1": "a9158e471cdccf1a00a83657b32bb38ff66154bb",
+      "sha256": "275892d5bbf1aab7a1457f765dcbc1166372f01dc79bc74f5243962c8955de77",
+      "bytes": 7221,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/CloudNativeModels.swift",
+      "gitBlobSha1": "e0e1c4d4a69ac7ce5590e11bfb509c89f8b874b3",
+      "sha256": "5e1977f76fa00d77c6cbd4b35d9d5f911c5564885d5dad923b89f476f8b2c4df",
+      "bytes": 9046,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/ConnectionGrant.swift",
+      "gitBlobSha1": "0d586d7c025bee632fdd4300de187b8c1399e24b",
+      "sha256": "19b5abc1cbbfc5a2875becad80f6e7f266083197947892960e18b07ba74f312e",
+      "bytes": 7054,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/ConnectionPolicy.swift",
+      "gitBlobSha1": "c1d5fd2ea8a361baf269975fd2739badfb9295fe",
+      "sha256": "0ba242e1be7d5b4a01e7e6201e90a7cb6532dd2144e6a45fadd561a66db83e83",
+      "bytes": 20219,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/ConnectionProvisioning.swift",
+      "gitBlobSha1": "8fc738d9238630f7c87f617e4b48402fd06332f7",
+      "sha256": "f2d0646011e535db0130188c89f5ea076cf3f831aee2bfd5a78206c49b3bb891",
+      "bytes": 3658,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/ConnectionRuntime.swift",
+      "gitBlobSha1": "439fc95496461a3e1ac45605336adff542c625b1",
+      "sha256": "208e7dd17375419250873823370b71629e672256fabb8a8f519d494a500769a9",
+      "bytes": 16569,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/ConnectionTransport.swift",
+      "gitBlobSha1": "d522bed07c49a07887974efefc9a464be2ccded7",
+      "sha256": "6f3f43643f19e95815aeb64a2b3ff1f5d878f364da34ffd96889be6edf4ebb06",
+      "bytes": 3111,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/CredentialStore.swift",
+      "gitBlobSha1": "36cdc3cdee34d473d60bf53946be3f54b41706f5",
+      "sha256": "d5a6889a0c0079a7ccf3d7df606cc138f975f3577eba89b7bc84edbd685b876f",
+      "bytes": 1211,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DashboardNavigation.swift",
+      "gitBlobSha1": "ab8691547bc6670ef21a4f4ad2adf8068167cc24",
+      "sha256": "fb99b763dd148262df44fb831a26516b9df94957dfd5b777e90f750502b3c3b5",
+      "bytes": 6880,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DashboardStore.swift",
+      "gitBlobSha1": "f19a94faea8937723a16c104730145e646dc2eb1",
+      "sha256": "55e678e174aa43144aad6a0fd2bccd602ccb6cecd2015cddfa494d4469b56f9f",
+      "bytes": 2790,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/Deployment.swift",
+      "gitBlobSha1": "c07667aa44ff41dbd560d9dd5ddecf614eb491f3",
+      "sha256": "2dde67c833cc0e052b8ba3c39fbea38de4d687d0f89aa7bf1bc157edfc955f47",
+      "bytes": 3914,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DeviceBehavior.swift",
+      "gitBlobSha1": "b85dc512814522a1f1fa2b9810bea7c8f124818b",
+      "sha256": "5a557416a85d9c42f307bf5d0058e5e6caf429cc04b82e043b9abbf01af5f8c7",
+      "bytes": 2740,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DeviceBrightnessSchedule.swift",
+      "gitBlobSha1": "2432070a48d0b8e4b81959f5a621dbe0bec1a2ff",
+      "sha256": "d8c5f9d0331213747eb2fe9fa8a2e4a82193ba4a86f4cb0d075b54aff27cf77a",
+      "bytes": 4480,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DeviceConnectionInventory.swift",
+      "gitBlobSha1": "73f89d205fdcaf0f3245307efab8491d23acd2bc",
+      "sha256": "0062d7f05f64ab39cf3ce5228913544720dc30eee0bc8f5a02e67a5d8ce90b64",
+      "bytes": 2535,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DeviceLocalResetStore.swift",
+      "gitBlobSha1": "3372a301bb2f16a1457a240b7359b5bc5541b7a8",
+      "sha256": "9d4356b749867f77e79542bfe53a3cc9198efef8a87ca6bbe8ec293d6e00d3eb",
+      "bytes": 15119,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DeviceManagementTransitionStore.swift",
+      "gitBlobSha1": "d443938df6e6a6ec5043712a0b74d26fd789ff72",
+      "sha256": "5bba63498c0803a30bbb7e8797c40d06d14c672a8bd7351b2fb28526467078a9",
+      "bytes": 23225,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DeviceRuntime.swift",
+      "gitBlobSha1": "c9abd6914bd93f40ff92e695602a50235d0453e1",
+      "sha256": "74f119f76f8fa836e87edb19d91322f8e1812e08eae459f4e0400a96bf8ea2ab",
+      "bytes": 3666,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DeviceSettings.swift",
+      "gitBlobSha1": "38df0dac4f39b5e5de2c095eaf3a5df9d2010762",
+      "sha256": "69d63da1e22d1d8ba3365366109f63b52485b528657a7e7c79bf45e50b2b5db3",
+      "bytes": 4442,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/DeviceStateStore.swift",
+      "gitBlobSha1": "2a2cf0c5b7dc7d2cbde742cbf125adb1b1c56c1d",
+      "sha256": "bc886947642b7bea2de6777a3f985ba63048d3a1454c1bb6ad317bafcbf0effc",
+      "bytes": 9610,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/Discovery.swift",
+      "gitBlobSha1": "fef26240fed2b6bbf20c4887ccacddcfb62494c2",
+      "sha256": "1e96f183c30e6d1edcffc3a0ab8e0e8e1940c4a97ae4b6dff5162b91d28f45c7",
+      "bytes": 2396,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/EventNavigation.swift",
+      "gitBlobSha1": "49cd3f9d78576aa6cc677e8357c058cce820582c",
+      "sha256": "c38dac6f5e6cc531ccd9903f4c35b5de0092da33d011a1f7d543bad1c50eb643",
+      "bytes": 11070,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/HomeAssistantProvisioning.swift",
+      "gitBlobSha1": "2daaa3d115f0a42c2a7a5d2ecd35bd3751944cc1",
+      "sha256": "fa247a044f9312367cd233e564b66868a3d62710c8055f6dec71431883bbba00",
+      "bytes": 8195,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/HomeAssistantServiceGrant.swift",
+      "gitBlobSha1": "f3b3f51323b64731cceb6ad945de5214540012cc",
+      "sha256": "e367ba794b5bd9dd327ba613521cdb6d4ac6c7a3ddc7708a92d279774f135b0c",
+      "bytes": 5398,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/Identity.swift",
+      "gitBlobSha1": "6a76545e515539ca40259d725a1259a7c07e139d",
+      "sha256": "73fd417cf7334a39c9045b135ee36a80194f77f89a4d91c7e1525df22250cf7f",
+      "bytes": 3404,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/IdentityKeys.swift",
+      "gitBlobSha1": "f3e3a035007ea7bac27685be8836e6e2953a6c9c",
+      "sha256": "9e803e42badbdcf3ea3acc074102c64a87c0483dbbfd215efc26bb2cc91eaa88",
+      "bytes": 818,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/Isolation.swift",
+      "gitBlobSha1": "197c1c1ffcbe66c7a743baa8a67ad0c6bda1b54d",
+      "sha256": "4b8ab084a2dbcdd6161999f0d01fc8d7cad026499755fc9ed31654a6db5a0ee2",
+      "bytes": 4830,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/LANProtocol.swift",
+      "gitBlobSha1": "27af6e4b0ff6eac25e6e5606497014f8fc2dc22c",
+      "sha256": "647eca7f93c2f5c9042ded9e1119c84416ec86c2a386cac3a695900d42f30ef6",
+      "bytes": 8988,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/Manifest.swift",
+      "gitBlobSha1": "686dced900d30d8664fed3450cc20bea3214900c",
+      "sha256": "490ac3b8b54d057f21bf3adfe972b83f9239d6c9e4211a9bc85adbb714e45cb8",
+      "bytes": 3835,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/NativeChrome.swift",
+      "gitBlobSha1": "a48cadd24315e6c2863384cc3a559211faf8f705",
+      "sha256": "aa5adcca5f93e85f563b14cfefaf57ae04111b7dd46409fd80865c9e7b43b457",
+      "bytes": 1545,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/NativePreviewConnections.swift",
+      "gitBlobSha1": "3f1891e5a2bc9b68babbfe0315c9df3da7e4bbaa",
+      "sha256": "6d1cf65430d7054acc6363b7b583a0c940dae6f378311bb29af73a4fb038a570",
+      "bytes": 382,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/PackageValidator.swift",
+      "gitBlobSha1": "c1b8ade9dc14170654d38dc2401f92f6ba3d426f",
+      "sha256": "e2bb6364d154d51842429a74326c13d6aa4efb1872a25093d1670fe9bc195bef",
+      "bytes": 5624,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/Pairing.swift",
+      "gitBlobSha1": "151b311e02db16bb3bccc9da04b0d55403c37a66",
+      "sha256": "de05d1b8b830cb87cafd8a6f7aca310fe1b2fc9dd4823b7571612be4c2643df4",
+      "bytes": 6214,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/PublicReadDeclaration.swift",
+      "gitBlobSha1": "260d5024e20f60852eec6dd74a020f092f5bf2b4",
+      "sha256": "92faf2d8942b5226418d2ee020f4de86bed8a93e1275b6a0b9ced1240ace1f8b",
+      "bytes": 9639,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/ScreenSet.swift",
+      "gitBlobSha1": "813bc81d94686b5c0fba3c1aa72dbda2444d5f3f",
+      "sha256": "26b44420b51cf9fd9f5271a4bd780eadfd379ce2eaf5a8ee2aa3ea352314cef1",
+      "bytes": 5284,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/TemporaryActivation.swift",
+      "gitBlobSha1": "7aee4715342336554a0ff1cf55ecd955bf83bf87",
+      "sha256": "5c400a759191bdd5bcdb208c06bf94254eb63682dcc3f69ef6749c393ae591f2",
+      "bytes": 2944,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/WorkbenchSession.swift",
+      "gitBlobSha1": "35192956906055fd7406651ebad4e97028a72b10",
+      "sha256": "f24069c2b72fd37a0038699f002db583545b34c4d4acd0087f017bb32c1214e6",
+      "bytes": 8236,
+      "gitMode": "100644"
+    },
+    {
+      "path": "packages/ScreenpunkCore/Sources/ScreenpunkCore/WorkbenchSidebar.swift",
+      "gitBlobSha1": "a0b837203478a64f382640c07058a8ced61067c4",
+      "sha256": "3068c95effdfb36bfeb00d3b4e7af1db75d9a72584f7ff99dd5eebc955103ad9",
+      "bytes": 10609,
+      "gitMode": "100644"
+    },
+    {
+      "path": "schemas/dashboard-manifest.schema.json",
+      "gitBlobSha1": "700f658ff8c9e7d5bce8c47017c6856a8267acd2",
+      "sha256": "5412a16a3f5d034f5e4735b0e5c132a2886359a46f0807b27becdb82fd5d8d87",
+      "bytes": 24660,
+      "gitMode": "100644"
+    },
+    {
+      "path": "sdk/src/limits.ts",
+      "gitBlobSha1": "33f0b3564a37a60c67dbc5185c00775a19169538",
+      "sha256": "53ba29241e4628039e52a70920f1d54712ac2854450290fb13c5dbf98ed2143c",
+      "bytes": 929,
+      "gitMode": "100644"
+    },
+    {
+      "path": "sdk/src/package.ts",
+      "gitBlobSha1": "a76c94b7893a258647b15d6dd5d62dfaa5f900a9",
+      "sha256": "21f464749b9519cc71d0665eb089c4ce903957706f38c9978e9af478d90cfd1f",
+      "bytes": 20984,
+      "gitMode": "100644"
+    }
+  ]
+}
