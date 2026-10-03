@@ -33,8 +33,8 @@ public struct NativeGenerationReceipt: Encodable, Sendable {
     public let generationId: UUID
     public let createdAt: String, renewAfter: String, expiresAt: String
     public init(generationId: UUID, createdAt: String, renewAfter: String, expiresAt: String) throws {
-        guard try nativeEnrollmentTime(renewAfter).timeIntervalSince(nativeEnrollmentTime(createdAt)) == 720 * 3600,
-              try nativeEnrollmentTime(expiresAt).timeIntervalSince(nativeEnrollmentTime(createdAt)) == 2160 * 3600 else { throw NativeEnrollmentFailure.mismatchedEvidence }
+        guard try nativeEnrollmentInterval(renewAfter, createdAt, seconds: 720 * 3600),
+              try nativeEnrollmentInterval(expiresAt, createdAt, seconds: 2160 * 3600) else { throw NativeEnrollmentFailure.mismatchedEvidence }
         self.generationId = generationId; self.createdAt = createdAt; self.renewAfter = renewAfter; self.expiresAt = expiresAt
     }
 }
@@ -44,7 +44,7 @@ public struct NativeClaimReceipt: Encodable, Sendable {
     public let createdAt: String, expiresAt: String
     public let outcome: Outcome
     public init(installationId: UUID, requestId: UUID, transitionId: UUID, challengeId: UUID, accountId: UUID, locationId: UUID, createdAt: String, expiresAt: String, outcome: Outcome) throws {
-        guard try nativeEnrollmentTime(expiresAt).timeIntervalSince(nativeEnrollmentTime(createdAt)) == 600 else { throw NativeEnrollmentFailure.mismatchedEvidence }
+        guard try nativeEnrollmentInterval(expiresAt, createdAt, seconds: 600) else { throw NativeEnrollmentFailure.mismatchedEvidence }
         self.installationId = installationId; self.requestId = requestId; self.transitionId = transitionId; self.challengeId = challengeId; self.accountId = accountId; self.locationId = locationId; self.createdAt = createdAt; self.expiresAt = expiresAt; self.outcome = outcome
     }
 }
@@ -88,21 +88,59 @@ public struct NativeEnrollmentEvidence: Encodable, Sendable {
 func nativeEnrollmentBytes<T: Encodable>(_ value: T) throws -> Data {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]; return try encoder.encode(value)
 }
-func nativeEnrollmentTime(_ value: String) throws -> Date {
-    guard value.utf8.count <= 256, value.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"#, options: .regularExpression) != nil else { throw NativeEnrollmentFailure.invalidInput }
-    let parts = Array(value.utf8)
-    func integer(_ start: Int, _ count: Int) -> Int { Int(String(bytes: parts[start..<(start + count)], encoding: .utf8)!)! }
-    let year = integer(0, 4), month = integer(5, 2), day = integer(8, 2)
-    let hour = integer(11, 2), minute = integer(14, 2), second = integer(17, 2)
+/// Exact comparison representation; never sends untrusted precision to ICU or Double.
+struct NativeEnrollmentInstant: Equatable {
+    let seconds: Int64
+    let fraction: String // trailing zeroes removed; empty means an integral second
+}
+func nativeEnrollmentInterval(_ after: String, _ before: String, seconds: Int64) throws -> Bool {
+    let a = try nativeEnrollmentTime(after), b = try nativeEnrollmentTime(before)
+    return a.seconds - b.seconds == seconds && a.fraction == b.fraction
+}
+func nativeEnrollmentTime(_ value: String) throws -> NativeEnrollmentInstant {
+    let bytes = Array(value.utf8)
+    guard (20...256).contains(bytes.count) else { throw NativeEnrollmentFailure.invalidInput }
+    func integer(_ start: Int, _ count: Int) throws -> Int {
+        guard start >= 0, start + count <= bytes.count else { throw NativeEnrollmentFailure.invalidInput }
+        var result = 0
+        for byte in bytes[start..<(start + count)] {
+            guard (48...57).contains(byte) else { throw NativeEnrollmentFailure.invalidInput }
+            result = result * 10 + Int(byte - 48)
+        }
+        return result
+    }
+    guard bytes[4] == 45, bytes[7] == 45, bytes[10] == 84,
+          bytes[13] == 58, bytes[16] == 58 else { throw NativeEnrollmentFailure.invalidInput }
+    let year = try integer(0, 4), month = try integer(5, 2), day = try integer(8, 2)
+    let hour = try integer(11, 2), minute = try integer(14, 2), second = try integer(17, 2)
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
     let days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    guard year > 0, (1...12).contains(month), day > 0, day <= days[month - 1], hour < 24, minute < 60, second < 60 else { throw NativeEnrollmentFailure.invalidInput }
-    if parts.last != 90 {
-        let offsetStart = parts.count - 6
-        guard integer(offsetStart + 1, 2) < 24, integer(offsetStart + 4, 2) < 60 else { throw NativeEnrollmentFailure.invalidInput }
+    guard year > 0, (1...12).contains(month), day > 0, day <= days[month - 1],
+          hour < 24, minute < 60, second < 60 else { throw NativeEnrollmentFailure.invalidInput }
+    var cursor = 19, fraction: [UInt8] = []
+    if bytes[cursor] == 46 {
+        cursor += 1
+        let start = cursor
+        while cursor < bytes.count, (48...57).contains(bytes[cursor]) { fraction.append(bytes[cursor]); cursor += 1 }
+        guard cursor > start else { throw NativeEnrollmentFailure.invalidInput }
     }
-    let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = formatter.date(from: value) { return date }
-    formatter.formatOptions = [.withInternetDateTime]
-    guard let date = formatter.date(from: value) else { throw NativeEnrollmentFailure.invalidInput }; return date
+    guard cursor < bytes.count else { throw NativeEnrollmentFailure.invalidInput }
+    var offset = 0
+    if bytes[cursor] == 90 {
+        guard cursor + 1 == bytes.count else { throw NativeEnrollmentFailure.invalidInput }
+    } else {
+        guard bytes[cursor] == 43 || bytes[cursor] == 45, cursor + 6 == bytes.count,
+              bytes[cursor + 3] == 58 else { throw NativeEnrollmentFailure.invalidInput }
+        let offsetHour = try integer(cursor + 1, 2), offsetMinute = try integer(cursor + 4, 2)
+        guard offsetHour < 24, offsetMinute < 60 else { throw NativeEnrollmentFailure.invalidInput }
+        offset = (offsetHour * 60 + offsetMinute) * 60 * (bytes[cursor] == 43 ? 1 : -1)
+    }
+    while fraction.last == 48 { fraction.removeLast() }
+    // Proleptic Gregorian day count relative to 1970-01-01. Four-digit years
+    // and bounded offsets keep every intermediate safely inside Int64.
+    let priorYears = year - 1
+    let priorDays = 365 * priorYears + priorYears / 4 - priorYears / 100 + priorYears / 400
+    let dayIndex = priorDays + days.prefix(month - 1).reduce(0, +) + day - 1 - 719162
+    let seconds = Int64(dayIndex) * 86400 + Int64(hour * 3600 + minute * 60 + second - offset)
+    return NativeEnrollmentInstant(seconds: seconds, fraction: String(decoding: fraction, as: UTF8.self))
 }

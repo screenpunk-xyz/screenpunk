@@ -169,6 +169,25 @@ final class NativeEnrollmentEvidenceTests: XCTestCase {
         let g = try NativeGenerationReceipt(generationId: UUID(), createdAt: "2026-10-01T00:00:00." + fraction + "Z", renewAfter: "2026-10-31T00:00:00." + fraction + "Z", expiresAt: "2026-12-30T00:00:00." + fraction + "Z")
         XCTAssertLessThan(try nativeEnrollmentBytes(g).count, NativeEnrollmentEvidence.reservedBytesPerRecord)
     }
+    func testBoundedExactTimestampParsingWithoutFormatter() throws {
+        XCTAssertEqual(try nativeEnrollmentTime("1970-01-01T00:00:00Z").seconds, 0)
+        XCTAssertEqual(try nativeEnrollmentTime("1969-12-31T23:59:59Z").seconds, -1)
+        XCTAssertEqual(try nativeEnrollmentTime("2000-03-01T00:00:00Z").seconds - (try nativeEnrollmentTime("2000-02-28T00:00:00Z").seconds), 172800)
+        XCTAssertEqual(try nativeEnrollmentTime("1900-03-01T00:00:00Z").seconds - (try nativeEnrollmentTime("1900-02-28T00:00:00Z").seconds), 86400)
+        for invalid in ["2026-10-01T00:00:00.Z", "2026-10-01T00:00:00.1", "2026-10-01T00:00:00Zextra", "2026-10-01T00:00:00+01", "2026-10-01T00:00:00.１Z", "2026-10-01T00:00:00Z\n", "0000-01-01T00:00:00Z", "2026-10-01T00:00:60Z"] {
+            XCTAssertThrowsError(try nativeEnrollmentTime(invalid))
+        }
+        let fraction = String(repeating: "0", count: 234) + "1"
+        let exact = "2026-10-01T00:00:00." + fraction + "Z"
+        XCTAssertEqual(exact.utf8.count, 256)
+        XCTAssertEqual(try nativeEnrollmentTime(exact).fraction.utf8.count, 235)
+        XCTAssertThrowsError(try nativeEnrollmentTime("2026-10-01T00:00:00." + fraction + "0Z"))
+        XCTAssertFalse(try nativeEnrollmentInterval("2026-10-01T00:10:00Z", exact, seconds: 600))
+        XCTAssertTrue(try nativeEnrollmentInterval("2026-10-01T00:10:00." + fraction + "Z", exact, seconds: 600))
+        XCTAssertEqual(try nativeEnrollmentTime("2026-10-01T00:00:00.125000Z"), try nativeEnrollmentTime("2026-10-01T01:00:00.125+01:00"))
+        XCTAssertEqual(try nativeEnrollmentTime("2026-09-30T23:00:00.125-01:00"), try nativeEnrollmentTime("2026-10-01T00:00:00.125Z"))
+        XCTAssertThrowsError(try NativeClaimReceipt(installationId: UUID(), requestId: UUID(), transitionId: UUID(), challengeId: UUID(), accountId: UUID(), locationId: UUID(), createdAt: exact, expiresAt: "2026-10-01T00:10:00Z", outcome: .pending))
+    }
     func testInvalidNamesAndTiming() throws {
         let (_,_,i,_) = try fixture()
         for name in ["\u{FEFF} ", "\n", String(repeating: "a", count: 129)] {
