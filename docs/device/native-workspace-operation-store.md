@@ -20,4 +20,4 @@ Files are opened relative to verified descriptors without following links. Coope
 
 On iOS, empty files receive complete-until-first-authentication protection before content is written. Devices require exact protection readback. Simulator builds permit unavailable readback only after successful assignment and empty-inode checks; an explicit mismatch still fails. This does not qualify physical-device protection or power-loss behavior.
 
-No HTTP, Keychain, provider configuration, UI, reset scope, existing application adapter or production caller is changed. Arbitrary same-UID mutation and rollback are outside the cooperating-writer model. Production integration must retain requests before HTTP and recover the same operation after uncertainty.
+The application journal and coordinator now use guarded durable persistence and retain exact requests for recovery. This change does not activate live HTTP, configure providers, change Keychain access, enable Cloud UI, or alter reset scope. Arbitrary same-UID mutation and rollback are outside the cooperating-writer model.
