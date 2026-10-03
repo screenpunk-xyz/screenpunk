@@ -2,12 +2,12 @@ import XCTest
 @testable import ScreenpunkCore
 
 final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
-    private func fixture() throws -> NativeEnrollmentPreparation {
+    private func fixture(finalReference: String = "native", stageReference: String = "stage") throws -> NativeEnrollmentPreparation {
         let old = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: "legacy", format: .legacyLocal32)
         let source = try DeviceManagementFormatHistory(transitions: [.init(transitionID: old.transitionID, phase: .locallyFenced)], credentials: [old])
-        let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: "native", format: .nativeInstallationV1)
+        let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: finalReference, format: .nativeInstallationV1)
         let input = try NativeClaimInput(requestId: UUID(), transitionId: binding.transitionID, accountId: UUID(), locationId: UUID(), name: "Cafe\u{301}", profile: " iPad ")
-        return try .proposing(preparationId: UUID(), enrollmentId: UUID(), stageReference: "stage", binding: binding, claimInput: input,
+        return try .proposing(preparationId: UUID(), enrollmentId: UUID(), stageReference: stageReference, binding: binding, claimInput: input,
             history: source, enrollment: .init(), retained: [], inventory: .init(finalItems: ["legacy": .legacy32], stageItems: [:]))
     }
     private func step(_ p: NativeEnrollmentPreparation, phase: Int, context: NativePreparationReconstructionContext = .empty(),
@@ -140,4 +140,44 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
         XCTAssertEqual(context.retainedDeclarationCount, 1)
         XCTAssertLessThanOrEqual(context.retainedCanonicalPayloadBytes, NativePreparationReconstructionContext.maximumRetainedCanonicalPayloadBytes)
     }
+    func testKelvinFinalInventoryAliasCannotSatisfyASCIIReference() throws {
+        let p = try fixture(finalReference: "K"), s = try step(p, phase: 6)
+        let stages: [String: NativeEnrollmentPreparation.StageItem] = ["stage": .descriptor(descriptor(p))]
+        let valid = NativeEnrollmentPreparation.Inventory(finalItems: ["legacy": .legacy32, "K": .native48], stageItems: stages)
+        let control = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: valid)
+        XCTAssertEqual(control.recovery, .completedEvidenceOnly)
+        XCTAssertEqual(control.native48ReferencesRequiringExternalQualification, ["K"])
+        let alias = NativeEnrollmentPreparation.Inventory(finalItems: ["legacy": .legacy32, "\u{212A}": .native48], stageItems: stages)
+        XCTAssertNotNil(alias.finalItems["K"]) // Actual stdlib normalized lookup.
+        XCTAssertFalse("K".utf8.elementsEqual("\u{212A}".utf8))
+        let rejected = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: alias)
+        XCTAssertEqual(rejected.recovery, .blocked)
+        XCTAssertTrue(rejected.native48ReferencesRequiringExternalQualification.isEmpty)
+        XCTAssertTrue(rejected.stagingEnvelopeReferencesRequiringExternalQualification.isEmpty)
+    }
+    func testKelvinStageInventoryAliasCannotSatisfyASCIIReference() throws {
+        let p = try fixture(stageReference: "K"), s = try step(p, phase: 6)
+        let finals: [String: NativeEnrollmentPreparation.FinalItem] = ["legacy": .legacy32, "native": .native48]
+        let valid = NativeEnrollmentPreparation.Inventory(finalItems: finals, stageItems: ["K": .descriptor(descriptor(p))])
+        let control = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: valid)
+        XCTAssertEqual(control.recovery, .completedEvidenceOnly)
+        XCTAssertEqual(control.stagingEnvelopeReferencesRequiringExternalQualification, ["K"])
+        let alias = NativeEnrollmentPreparation.Inventory(finalItems: finals, stageItems: ["\u{212A}": .descriptor(descriptor(p))])
+        XCTAssertNotNil(alias.stageItems["K"]) // Descriptor itself still declares ASCII K.
+        let rejected = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: alias)
+        XCTAssertEqual(rejected.recovery, .blocked)
+        XCTAssertTrue(rejected.stagingEnvelopeReferencesRequiringExternalQualification.isEmpty)
+        XCTAssertTrue(rejected.native48ReferencesRequiringExternalQualification.isEmpty)
+    }
+    func testInventoryReferenceGrammarIsBoundedForEveryKey() throws {
+        let p = try fixture(), s = try step(p, phase: 6)
+        for key in ["", "space key", "slash/key", String(repeating: "x", count: 129), "é"] {
+            var finals = inventory(p, staged: true, final: true).finalItems; finals[key] = .native48
+            XCTAssertEqual(assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: .init(finalItems: finals, stageItems: inventory(p, staged: true, final: true).stageItems)).recovery, .blocked)
+            var stages = inventory(p, staged: true, final: true).stageItems; stages[key] = .descriptor(descriptor(p))
+            XCTAssertEqual(assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: .init(finalItems: inventory(p, staged: true, final: true).finalItems, stageItems: stages)).recovery, .blocked)
+        }
+        XCTAssertEqual(p.classify(history: p.sourceHistory, enrollment: p.sourceEnrollment, inventory: .init(finalItems: ["legacy": .legacy32, "\u{212A}": .native48], stageItems: [:]), retained: []), .blocked)
+    }
+
 }

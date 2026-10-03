@@ -208,6 +208,11 @@ public struct NativeEnrollmentPreparation: Sendable {
               retained.count < Self.maximumPreparations, Set(retained.map(\.preparationId)).count == retained.count,
               Set(retained.map { $0.binding.credentialGenerationID }).count == retained.count,
               retained.allSatisfy({ $0.preparationId != preparationId }) else { throw NativePreparationFailure.inventoryBlocked }
+        // Swift String dictionary/Set equality normalizes Unicode (for example
+        // Kelvin sign equals ASCII K). All declared references use this exact
+        // ASCII grammar; qualify every inventory key before membership/lookups.
+        guard inventory.stageItems.keys.allSatisfy(Self.isExactInventoryReference),
+              inventory.finalItems.keys.allSatisfy(Self.isExactInventoryReference) else { throw NativePreparationFailure.inventoryBlocked }
         let historicalNative = sourceHistory.credentials.filter { $0.format == .nativeInstallationV1 }
         guard historicalNative.count == retained.count,
               historicalNative.allSatisfy({ key in retained.filter { $0.binding == key }.count == 1 }),
@@ -236,4 +241,11 @@ public struct NativeEnrollmentPreparation: Sendable {
             guard case .descriptor(let descriptor) = item, record.matches(descriptor) else { throw NativePreparationFailure.inventoryBlocked }
         }
     }
+    private static func isExactInventoryReference(_ reference: String) -> Bool {
+        let bytes = Array(reference.utf8.prefix(129))
+        return (1...128).contains(bytes.count) && bytes.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || [45, 46, 95].contains($0)
+        }
+    }
+
 }
