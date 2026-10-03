@@ -3,6 +3,37 @@ import Foundation
 /// Pure, nonsecret preparation proposals. No persistence, serialization, key
 /// insertion, envelope authentication, transport or authority is provided here.
 public enum NativePreparationFailure: Error, Equatable { case invalidProposal, illegalPhase, inventoryBlocked, capacityExceeded }
+/// Structural assessment only: caller-supplied inventory remains an observation,
+/// never an immutable-envelope/secret proof or a filesystem durability receipt.
+public struct NativePreparationReconstructionAssessment: Sendable {
+    public let recovery: NativeEnrollmentPreparation.Recovery
+    /// References from a structurally matching inventory only. A blocked result
+    /// lists none and still requires complete external inventory qualification.
+    public let stagingEnvelopeReferencesRequiringExternalQualification: [String]
+    public let native48ReferencesRequiringExternalQualification: [String]
+    public var requiresExternalInventoryQualification: Bool { true }
+    public var requiresPairedEvidenceDurabilityQualification: Bool { true }
+    public var requiresJournalDurabilityQualification: Bool { true }
+    private init(recovery: NativeEnrollmentPreparation.Recovery, stages: [String], finals: [String]) {
+        self.recovery = recovery
+        stagingEnvelopeReferencesRequiringExternalQualification = stages
+        native48ReferencesRequiringExternalQualification = finals
+    }
+    fileprivate static func make(recovery: NativeEnrollmentPreparation.Recovery,
+        inventory: NativeEnrollmentPreparation.Inventory) -> Self {
+        // A blocked assessment offers no adoption/qualification plan for orphan
+        // items. No caller-sized inventory is copied into the result.
+        guard recovery != .blocked else { return .init(recovery: .blocked, stages: [], finals: []) }
+        let stages = inventory.stageItems.compactMap { key, value in
+            if case .descriptor = value { return key }; return nil
+        }.sorted()
+        let finals = inventory.finalItems.compactMap { key, value in
+            if case .native48 = value { return key }; return nil
+        }.sorted()
+        return .init(recovery: recovery, stages: stages, finals: finals)
+    }
+}
+
 public struct NativeEnrollmentPreparation: Sendable {
     public enum Phase: Int, Sendable {
         case intent, stageAttempted, stageQualified, pairedEvidenceQualified
@@ -95,27 +126,52 @@ public struct NativeEnrollmentPreparation: Sendable {
         case exactPromotionQualificationRequired, completedEvidenceOnly, blocked
     }
     public func classify(history: DeviceManagementFormatHistory, enrollment: NativeEnrollmentEvidence, inventory: Inventory, retained: [NativeEnrollmentPreparation]) -> Recovery {
-        guard (try? validateInventory(inventory, retained: retained)) != nil else { return .blocked }
+        guard retained.count < Self.maximumPreparations else { return .blocked }
+        return classify(history: history, enrollment: enrollment, inventory: inventory,
+            declarations: retained.map(InventoryDeclaration.init), retainedPhasesValid: retained.allSatisfy { $0.phase == .complete })
+    }
+    /// Uses validated streamed provenance and actual caller-supplied current
+    /// observations. It returns no preparation handle and acknowledges no IO.
+    public static func assessingReconstruction(_ step: NativePreparationReconstructionStep,
+        currentHistory: DeviceManagementFormatHistory, currentEnrollment: NativeEnrollmentEvidence,
+        inventory: Inventory) -> NativePreparationReconstructionAssessment {
+        let p = step.proposal
+        let structural = Self(preparationId: p.preparationId, enrollmentId: p.enrollmentId, stageReference: p.stageReference,
+            binding: p.binding, sourceHistory: p.sourceHistory, targetHistory: p.targetHistory,
+            sourceEnrollment: p.sourceEnrollment, targetEnrollment: p.targetEnrollment,
+            claimInput: p.claimInput, phase: p.phase, reservedBytes: p.reservedBytes)
+        let recovery = structural.classify(history: currentHistory, enrollment: currentEnrollment, inventory: inventory,
+            declarations: step.priorDeclarations.map(InventoryDeclaration.init), retainedPhasesValid: true)
+        return .make(recovery: recovery, inventory: inventory)
+    }
+    private func classify(history: DeviceManagementFormatHistory, enrollment: NativeEnrollmentEvidence,
+        inventory: Inventory, declarations: [InventoryDeclaration], retainedPhasesValid: Bool) -> Recovery {
+        guard retainedPhasesValid, (try? validateInventory(inventory, declarations: declarations)) != nil else { return .blocked }
         guard let currentBytes = try? nativeEnrollmentBytes(enrollment),
               let sourceBytes = try? nativeEnrollmentBytes(sourceEnrollment),
-              let targetBytes = try? nativeEnrollmentBytes(targetEnrollment) else { return .blocked }
+              let targetBytes = try? nativeEnrollmentBytes(targetEnrollment),
+              let currentHistoryBytes = try? nativeEnrollmentBytes(history),
+              let sourceHistoryBytes = try? nativeEnrollmentBytes(sourceHistory),
+              let targetHistoryBytes = try? nativeEnrollmentBytes(targetHistory) else { return .blocked }
+        let sourceHistoryMatches = currentHistoryBytes == sourceHistoryBytes
+        let targetHistoryMatches = currentHistoryBytes == targetHistoryBytes
         let sourceMatches = currentBytes == sourceBytes, targetMatches = currentBytes == targetBytes
         switch phase {
         case .intent:
-            guard history == sourceHistory, sourceMatches, inventory.stageItems[stageReference] == nil else { return .blocked }
+            guard sourceHistoryMatches, sourceMatches, inventory.stageItems[stageReference] == nil else { return .blocked }
             return .confirmedPrestageAbsence
         case .stageAttempted:
-            guard history == sourceHistory, sourceMatches else { return .blocked }
+            guard sourceHistoryMatches, sourceMatches else { return .blocked }
             return inventory.stageItems[stageReference] == nil ? .ambiguousStageAttempt : .envelopeQualificationRequired
         case .stageQualified:
-            guard (history == sourceHistory || history == targetHistory), (sourceMatches || targetMatches) else { return .blocked }
+            guard (sourceHistoryMatches || targetHistoryMatches), (sourceMatches || targetMatches) else { return .blocked }
             return .pairedEvidenceQualificationRequired
         case .pairedEvidenceQualified:
-            guard history == targetHistory, targetMatches else { return .blocked }; return .exactPromotionQualificationRequired
+            guard targetHistoryMatches, targetMatches else { return .blocked }; return .exactPromotionQualificationRequired
         case .promotionAttempted, .promotionQualified:
-            guard history == targetHistory, targetMatches else { return .blocked }; return .exactPromotionQualificationRequired
+            guard targetHistoryMatches, targetMatches else { return .blocked }; return .exactPromotionQualificationRequired
         case .complete:
-            guard history == targetHistory, targetMatches else { return .blocked }; return .completedEvidenceOnly
+            guard targetHistoryMatches, targetMatches else { return .blocked }; return .completedEvidenceOnly
         }
     }
     /// A monotonic typed observation proposal, never an acknowledgment of IO.
@@ -128,19 +184,35 @@ public struct NativeEnrollmentPreparation: Sendable {
         guard result.classify(history: history, enrollment: enrollment, inventory: inventory, retained: retained) != .blocked else { throw NativePreparationFailure.inventoryBlocked }
         return result
     }
-    private func matches(_ d: StageDescriptor) -> Bool {
-        d.preparationId == preparationId && d.enrollmentId == enrollmentId && d.stageReference.utf8.elementsEqual(stageReference.utf8)
-            && d.binding == binding && d.claimInput == claimInput
+    private struct InventoryDeclaration {
+        let preparationId: UUID, enrollmentId: UUID
+        let stageReference: String
+        let binding: DeviceManagementFormatHistory.Binding
+        let claimInput: NativeClaimInput
+        init(_ p: NativeEnrollmentPreparation) {
+            preparationId = p.preparationId; enrollmentId = p.enrollmentId; stageReference = p.stageReference
+            binding = p.binding; claimInput = p.claimInput
+        }
+        init(_ p: PreparationDeclaration) {
+            preparationId = p.preparationId; enrollmentId = p.enrollmentId; stageReference = p.stageReference
+            binding = p.binding; claimInput = p.claimInput
+        }
+        func matches(_ d: StageDescriptor) -> Bool {
+            preparationId == d.preparationId && enrollmentId == d.enrollmentId && stageReference.utf8.elementsEqual(d.stageReference.utf8)
+                && binding == d.binding && claimInput == d.claimInput
+        }
     }
-    private func validateInventory(_ inventory: Inventory, retained: [NativeEnrollmentPreparation]) throws {
-        guard retained.count < Self.maximumPreparations, Set(retained.map(\.preparationId)).count == retained.count,
+    private func validateInventory(_ inventory: Inventory, declarations retained: [InventoryDeclaration]) throws {
+        guard inventory.stageItems.count <= Self.maximumPreparations,
+              inventory.finalItems.count <= DeviceManagementTransitionHistory.maximumCredentials,
+              retained.count < Self.maximumPreparations, Set(retained.map(\.preparationId)).count == retained.count,
               Set(retained.map { $0.binding.credentialGenerationID }).count == retained.count,
-              retained.allSatisfy({ $0.phase == .complete && $0.preparationId != preparationId }) else { throw NativePreparationFailure.inventoryBlocked }
+              retained.allSatisfy({ $0.preparationId != preparationId }) else { throw NativePreparationFailure.inventoryBlocked }
         let historicalNative = sourceHistory.credentials.filter { $0.format == .nativeInstallationV1 }
         guard historicalNative.count == retained.count,
               historicalNative.allSatisfy({ key in retained.filter { $0.binding == key }.count == 1 }),
               retained.allSatisfy({ historicalNative.contains($0.binding) }) else { throw NativePreparationFailure.inventoryBlocked }
-        let all = retained + [self]
+        let all = retained + [InventoryDeclaration(self)]
         guard Set(all.map(\.stageReference)).count == all.count else { throw NativePreparationFailure.inventoryBlocked }
         let declaredStages = Set(all.map(\.stageReference))
         let declaredFinals = Set(targetHistory.credentials.map(\.credentialReference))

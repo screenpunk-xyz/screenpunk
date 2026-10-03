@@ -60,19 +60,22 @@ public struct NativePreparationReconstructionStep: Sendable {
     public let proposal: NativeEnrollmentPreparationReconstructionProposal
     /// Available only for completed metadata. It is not an IO receipt.
     public let continuation: NativePreparationReconstructionContext?
+    // Validated prior declarations only; no additional source/target snapshots.
+    let priorDeclarations: [PreparationDeclaration]
     fileprivate init(_ proposal: NativeEnrollmentPreparationReconstructionProposal, context: NativePreparationReconstructionContext) throws {
         self.proposal = proposal
+        priorDeclarations = context.declarations
         continuation = proposal.phase == .complete ? try context.appending(proposal) : nil
     }
 }
 
-fileprivate struct PreparationDeclaration: Encodable, Sendable {
+struct PreparationDeclaration: Encodable, Sendable {
     let preparationId: UUID, enrollmentId: UUID
     let stageReference: String
     let binding: DeviceManagementFormatHistory.Binding
     let claimInput: NativeClaimInput
     let reservedBytes: Int
-    init(_ p: NativeEnrollmentPreparationReconstructionProposal) {
+    fileprivate init(_ p: NativeEnrollmentPreparationReconstructionProposal) {
         preparationId = p.preparationId; enrollmentId = p.enrollmentId; stageReference = p.stageReference
         binding = p.binding; claimInput = p.claimInput; reservedBytes = p.reservedBytes
     }
