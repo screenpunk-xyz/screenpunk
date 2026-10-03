@@ -46,6 +46,13 @@ public struct DeviceLocalResetScope: Sendable {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(Binding(version: 2, baseDigest: base.digest, cleanupMetadata: cleanupMetadata))))
     }
+    init(v3 base: Self, cleanupMetadata: Data) throws {
+        deviceRoot = base.deviceRoot; preferencesRoot = base.preferencesRoot
+        protectedDirectories = base.protectedDirectories; credentialItems = base.credentialItems
+        struct Binding: Encodable { let version: Int; let baseDigest: String; let cleanupMetadata: Data }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(Binding(version: 3, baseDigest: base.digest, cleanupMetadata: cleanupMetadata))))
+    }
     var managementDirectory: URL { protectedDirectories[0] }
     var resetDirectory: URL { protectedDirectories[1] }
     func validateResetStoreDirectory(_ directory: URL) throws {

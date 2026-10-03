@@ -21,6 +21,35 @@ import ScreenpunkCore
         XCTAssertEqual(Set(f.keys.deleted), Set(DeviceLocalResetScope.allowedCredentialItems))
         XCTAssertEqual(f.keys.remaining, [f.keys.protected, f.keys.unrelatedAccount])
     }
+    func testExplicitV3DeletesReservedPendingOnlyAndV2RetainsIt() async throws {
+        for v3 in [false, true] {
+            let f = try Fixture(v3: v3)
+            let root = f.scope.authorityScope.preferencesRoot
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            for name in [ScreenPreferenceAtomicWriter.archiveName, ScreenPreferenceAtomicWriter.pendingName, ScreenPreferenceAtomicWriter.lockName, "unknown-history.tmp"] {
+                try Data("sentinel".utf8).write(to: root.appendingPathComponent(name))
+            }
+            let coordinator = try f.coordinator { try f.adapter.execute($0) }
+            try await coordinator.begin(context: f.context(), resetID: UUID())
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(ScreenPreferenceAtomicWriter.archiveName).path))
+            XCTAssertEqual(FileManager.default.fileExists(atPath: root.appendingPathComponent(ScreenPreferenceAtomicWriter.pendingName).path), !v3)
+            for name in [ScreenPreferenceAtomicWriter.lockName, "unknown-history.tmp"] {
+                XCTAssertEqual(try String(contentsOf: root.appendingPathComponent(name)), "sentinel")
+            }
+        }
+    }
+    func testV3RejectsPendingAndCompletedV2RecordsWithoutMigration() async throws {
+        for phase in [DeviceLocalResetPhase.pending, .completed] {
+            let f = try Fixture(v3: true)
+            let v2 = try DeviceLocalResetCleanupScope(base: f.v1, anchor: f.base)
+            XCTAssertNotEqual(v2.authorityScope.digest, f.scope.authorityScope.digest)
+            f.reset.record = try .init(resetID: UUID(), scopeDigest: v2.authorityScope.digest, phase: phase)
+            let coordinator = try f.coordinator { _ in XCTFail("cleanup") }
+            do { try await coordinator.recover(); XCTFail("v2 migration forbidden") } catch {}
+            XCTAssertTrue(f.keys.deleted.isEmpty)
+            XCTAssertEqual(f.reset.record?.scopeDigest, v2.authorityScope.digest)
+        }
+    }
     func testEscapedPermitAndWrongScopeCannotAuthorize() async throws {
         let f = try Fixture(); var escaped: DeviceLocalResetCleanupPermit?
         let coordinator = try f.coordinator { permit in
@@ -93,10 +122,10 @@ import ScreenpunkCore
     let keys = Keys()
     var adapter: DeviceLocalResetCleanup { .init(scope: scope, credentials: keys) }
     deinit { try? FileManager.default.removeItem(at: base) }
-    init() throws {
+    init(v3: Bool = false) throws {
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         v1 = try .init(deviceRoot: base.appendingPathComponent("device"), preferencesRoot: base.appendingPathComponent("preferences"), managementDirectory: base.appendingPathComponent("management"), resetDirectory: base.appendingPathComponent("reset"), credentialItems: DeviceLocalResetScope.allowedCredentialItems)
-        scope = try .init(base: v1, anchor: base)
+        scope = try v3 ? .init(v3: v1, anchor: base) : .init(base: v1, anchor: base)
         reset = Evidence(scope.authorityScope.digest)
         owner = .init(journal: Journal(), credentials: .init(backend: Credentials(), random: { Data() }), reset: reset)
     }
