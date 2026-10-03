@@ -64,3 +64,9 @@ An internal `DeviceLocalResetCoordinator` now sequences injected suspension and 
 Recovery inspects only validated reset evidence and grants no management lease. It never generates a reset UUID. Cleanup requires confirmed durable pending intent and successful suspension, followed by another pending-evidence check. Failed work remains recoverable; uncertain completion retries the exact persistence operation without repeating cleanup. Confirmed completed state on fresh recovery performs no actions. Completed sessions retire after driver exit so a fresh root can use a new owner and callbacks; old handles remain terminal.
 
 Tests cover reattachment, cancellation-ignoring callbacks, failed suspension/cleanup, uncertain intent/completion, conflicting scopes, protected-root overlap and a second reset with a fresh owner. Production bridge suspension, durable filesystem cleanup and root replacement remain unimplemented.
+
+## Terminal writer suspension
+
+Calendar, screen preferences, temporary activation and WebView bridges now expose suspension primitives, with no production reset caller yet. Calendar's default domain covers existing and newly constructed services and rejects late responses before storage writes. Preferences serialize suspension with complete synchronous access, including reads that create archives, across all instances using the same canonical root. Temporary activation and bridges reject reactivation and stale queued callbacks; temporary checkpoint callbacks carry their original lifetime.
+
+Suspension is terminal in this slice. Cleanup adapters and any qualified fresh-root reopening remain separate work. Bridge suspension does not itself suspend shared Calendar/preferences domains; future orchestration must suspend every writer before deletion. These in-process gates do not exclude external filesystem writers. The polling regression verifies a discarded runtime can deinitialize while a transport ignores cancellation.
