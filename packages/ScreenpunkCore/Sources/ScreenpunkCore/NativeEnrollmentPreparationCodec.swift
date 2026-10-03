@@ -20,6 +20,72 @@ public struct NativeEnrollmentPreparationReconstructionProposal: Sendable {
     }
 }
 
+/// Validated structural continuation only; it retains no source snapshots and
+/// acknowledges neither durable completion nor inventory/secret qualification.
+public struct NativePreparationReconstructionContext: Sendable {
+    public static let maximumRetainedCanonicalPayloadBytes = 1_638_400
+    public static func empty() -> Self { .init(declarations: [], latest: nil, reserved: 0, bytes: 0) }
+    public var retainedDeclarationCount: Int { declarations.count }
+    public let totalReservedBytes: Int
+    /// Canonical payload bound, not an exact Swift heap allocation promise.
+    public let retainedCanonicalPayloadBytes: Int
+    fileprivate let declarations: [PreparationDeclaration]
+    fileprivate let latest: PreparationTarget?
+    private init(declarations: [PreparationDeclaration], latest: PreparationTarget?, reserved: Int, bytes: Int) {
+        self.declarations = declarations; self.latest = latest
+        totalReservedBytes = reserved; retainedCanonicalPayloadBytes = bytes
+    }
+    fileprivate func appending(_ proposal: NativeEnrollmentPreparationReconstructionProposal) throws -> Self {
+        let declaration = PreparationDeclaration(proposal)
+        let declarations = self.declarations + [declaration]
+        let declarationBytes = try declarations.reduce(0) { total, item in
+            let count = try nativeEnrollmentBytes(item).count
+            guard count <= NativeEnrollmentEvidence.reservedBytesPerRecord else { throw NativeEnrollmentPreparationCodec.Failure.capacityExceeded }
+            return total + count
+        }
+        let historyBytes = try nativeEnrollmentBytes(proposal.targetHistory).count
+        let enrollmentBytes = try nativeEnrollmentBytes(proposal.targetEnrollment).count
+        let total = declarationBytes + historyBytes + enrollmentBytes
+        let reserved = totalReservedBytes + proposal.reservedBytes
+        guard proposal.phase == .complete, declarations.count <= 64,
+            historyBytes <= DeviceManagementTransitionStore.maximumRecordBytes,
+            enrollmentBytes <= NativeEnrollmentEvidenceCodec.maximumBytes,
+            total <= Self.maximumRetainedCanonicalPayloadBytes,
+            reserved <= NativeEnrollmentPreparation.maximumTotalReservedBytes else { throw NativeEnrollmentPreparationCodec.Failure.capacityExceeded }
+        return .init(declarations: declarations, latest: .init(proposal), reserved: reserved, bytes: total)
+    }
+}
+
+public struct NativePreparationReconstructionStep: Sendable {
+    public let proposal: NativeEnrollmentPreparationReconstructionProposal
+    /// Available only for completed metadata. It is not an IO receipt.
+    public let continuation: NativePreparationReconstructionContext?
+    fileprivate init(_ proposal: NativeEnrollmentPreparationReconstructionProposal, context: NativePreparationReconstructionContext) throws {
+        self.proposal = proposal
+        continuation = proposal.phase == .complete ? try context.appending(proposal) : nil
+    }
+}
+
+fileprivate struct PreparationDeclaration: Encodable, Sendable {
+    let preparationId: UUID, enrollmentId: UUID
+    let stageReference: String
+    let binding: DeviceManagementFormatHistory.Binding
+    let claimInput: NativeClaimInput
+    let reservedBytes: Int
+    init(_ p: NativeEnrollmentPreparationReconstructionProposal) {
+        preparationId = p.preparationId; enrollmentId = p.enrollmentId; stageReference = p.stageReference
+        binding = p.binding; claimInput = p.claimInput; reservedBytes = p.reservedBytes
+    }
+}
+fileprivate struct PreparationTarget: Sendable {
+    let binding: DeviceManagementFormatHistory.Binding
+    let history: DeviceManagementFormatHistory
+    let enrollment: NativeEnrollmentEvidence
+    init(_ p: NativeEnrollmentPreparationReconstructionProposal) {
+        binding = p.binding; history = p.targetHistory; enrollment = p.targetEnrollment
+    }
+}
+
 /// Local schema 1, one nonsecret preparation record at a time. Retained proposals
 /// are structural context only; this codec does not qualify their phase as IO.
 public enum NativeEnrollmentPreparationCodec {
@@ -41,6 +107,18 @@ public enum NativeEnrollmentPreparationCodec {
     public static func decodeReconstructionProposal(_ data: Data,
         retained: [NativeEnrollmentPreparationReconstructionProposal] = []) throws -> NativeEnrollmentPreparationReconstructionProposal {
         guard retained.count < 64 else { throw Failure.capacityExceeded }
+        guard retained.allSatisfy({ $0.phase == .complete }) else { throw Failure.invalidContext }
+        return try decode(data, declarations: retained.map(PreparationDeclaration.init), targets: retained.map(PreparationTarget.init))
+    }
+    /// Chronological streaming validation. The context retains compact declarations
+    /// and only one latest target pair; each following source preserves that pair.
+    public static func decodeReconstructionProposal(_ data: Data,
+        context: NativePreparationReconstructionContext) throws -> NativePreparationReconstructionStep {
+        let proposal = try decode(data, declarations: context.declarations, targets: context.latest.map { [$0] } ?? [])
+        return try .init(proposal, context: context)
+    }
+    private static func decode(_ data: Data, declarations: [PreparationDeclaration], targets: [PreparationTarget]) throws -> NativeEnrollmentPreparationReconstructionProposal {
+        guard declarations.count < 64 else { throw Failure.capacityExceeded }
         var parser = PreparationJSONParser(data)
         let o = try fields(parser.parse(), ["schemaVersion", "preparationId", "enrollmentId", "stageReference", "binding", "claimInput", "phase", "sourceHistory", "targetHistory", "sourceEnrollment", "targetEnrollment"])
         guard case .integer(1) = o["schemaVersion"], case .integer(let p) = o["phase"], let phase = NativeEnrollmentPreparation.Phase(rawValue: p) else { throw Failure.invalidSchema }
@@ -53,7 +131,7 @@ public enum NativeEnrollmentPreparationCodec {
         let assertedEnrollment = try NativeEnrollmentEvidenceCodec.decode(bytes(o["targetEnrollment"], limit: NativeEnrollmentEvidenceCodec.maximumBytes), history: assertedTarget)
         _ = try DeviceManagementCredentialBinding(credentialGenerationID: binding.credentialGenerationID, transitionID: binding.transitionID, credentialReference: stage)
         let newIDs = [id, enrollmentId, binding.transitionID, binding.credentialGenerationID, input.requestId]
-        var oldIDs = Set(source.transitions.map(\.transitionID) + source.credentials.map(\.credentialGenerationID) + retained.map(\.preparationId))
+        var oldIDs = Set(source.transitions.map(\.transitionID) + source.credentials.map(\.credentialGenerationID))
         for r in enrollment.enrollments {
             oldIDs.formUnion([r.localEnrollmentId, r.claimInput.requestId])
             for event in r.events {
@@ -65,25 +143,39 @@ public enum NativeEnrollmentPreparationCodec {
                 }
             }
         }
+        guard Set(declarations.map(\.preparationId)).isDisjoint(with: oldIDs) else { throw Failure.invalidContext }
+        oldIDs.formUnion(declarations.map(\.preparationId))
         guard Set(newIDs).count == newIDs.count, Set(newIDs).isDisjoint(with: oldIDs),
             binding.format == .nativeInstallationV1, input.transitionId == binding.transitionID,
             source.transitions.allSatisfy({ $0.phase == .locallyFenced }),
             !source.credentials.contains(where: { $0.credentialReference.utf8.elementsEqual(binding.credentialReference.utf8) }),
             !stage.utf8.elementsEqual(binding.credentialReference.utf8),
-            Set(retained.map(\.preparationId)).count == retained.count,
-            retained.allSatisfy({ $0.phase == .complete && !$0.stageReference.utf8.elementsEqual(stage.utf8) }) else { throw Failure.invalidContext }
+            Set(declarations.map(\.preparationId)).count == declarations.count,
+            declarations.allSatisfy({ !$0.stageReference.utf8.elementsEqual(stage.utf8) }) else { throw Failure.invalidContext }
         let historical = source.credentials.filter { $0.format == .nativeInstallationV1 }
-        guard historical.count == retained.count,
-            historical.allSatisfy({ b in retained.filter { exactBinding($0.binding, b) }.count == 1 }) else { throw Failure.invalidContext }
+        guard historical.count == declarations.count,
+            historical.allSatisfy({ b in declarations.filter { exactBinding($0.binding, b) }.count == 1 }) else { throw Failure.invalidContext }
+        // Every historical declaration keeps its exact claim and roles, even
+        // though only the latest snapshot is retained. No lossy hash substitutes.
+        for declaration in declarations {
+            guard let old = enrollment.enrollments.first(where: { $0.localEnrollmentId == declaration.enrollmentId }),
+                exactBinding(old.binding, declaration.binding),
+                try nativeEnrollmentBytes(old.claimInput) == nativeEnrollmentBytes(declaration.claimInput) else { throw Failure.invalidContext }
+        }
+        var declarationIndex = -1
+        for declaration in declarations {
+            guard let index = source.transitions.firstIndex(where: { $0.transitionID == declaration.binding.transitionID }), index > declarationIndex else { throw Failure.invalidContext }
+            declarationIndex = index
+        }
         var previousIndex = -1
-        for r in retained {
+        for r in targets {
             guard let index = source.transitions.firstIndex(where: { $0.transitionID == r.binding.transitionID }), index > previousIndex,
-                r.targetHistory.transitions.count == index + 1,
-                r.targetHistory.transitions.map(\.transitionID) == Array(source.transitions.prefix(index + 1)).map(\.transitionID),
-                try nativeEnrollmentBytes(r.targetHistory.credentials) == nativeEnrollmentBytes(Array(source.credentials.prefix(r.targetHistory.credentials.count))),
-                r.targetEnrollment.enrollments.count <= enrollment.enrollments.count else { throw Failure.invalidContext }
+                r.history.transitions.count == index + 1,
+                r.history.transitions.map(\.transitionID) == Array(source.transitions.prefix(index + 1)).map(\.transitionID),
+                try nativeEnrollmentBytes(r.history.credentials) == nativeEnrollmentBytes(Array(source.credentials.prefix(r.history.credentials.count))),
+                r.enrollment.enrollments.count <= enrollment.enrollments.count else { throw Failure.invalidContext }
             previousIndex = index
-            for (old, current) in zip(r.targetEnrollment.enrollments, enrollment.enrollments) {
+            for (old, current) in zip(r.enrollment.enrollments, enrollment.enrollments) {
                 guard old.localEnrollmentId == current.localEnrollmentId, exactBinding(old.binding, current.binding),
                     try nativeEnrollmentBytes(old.claimInput) == nativeEnrollmentBytes(current.claimInput),
                     old.events.count <= current.events.count,
@@ -96,7 +188,7 @@ public enum NativeEnrollmentPreparationCodec {
             try nativeEnrollmentBytes(proposed) == nativeEnrollmentBytes(assertedEnrollment) else { throw Failure.invalidContext }
         let reservation = 2 * DeviceManagementTransitionStore.maximumRecordBytes + (enrollment.enrollments.count + proposed.enrollments.count) * NativeEnrollmentEvidence.reservedBytesPerRecord + 4096
         guard reservation <= NativeEnrollmentPreparation.maximumReservedBytes,
-            retained.reduce(reservation, { $0 + $1.reservedBytes }) <= NativeEnrollmentPreparation.maximumTotalReservedBytes else { throw Failure.capacityExceeded }
+            declarations.reduce(reservation, { $0 + $1.reservedBytes }) <= NativeEnrollmentPreparation.maximumTotalReservedBytes else { throw Failure.capacityExceeded }
         return .init(id: id, enrollmentId: enrollmentId, stage: stage, binding: binding, input: input, phase: phase, source: source, target: target, enrollment: enrollment, proposed: proposed, bytes: reservation)
     }
     private static func exactBinding(_ a: DeviceManagementFormatHistory.Binding, _ b: DeviceManagementFormatHistory.Binding) -> Bool {
