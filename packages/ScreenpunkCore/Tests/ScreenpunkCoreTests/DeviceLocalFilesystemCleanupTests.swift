@@ -35,6 +35,48 @@ final class DeviceLocalFilesystemCleanupTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: f.preferences.appendingPathComponent("preferences.lock")), "lock")
         XCTAssertEqual(try String(contentsOf: f.preferences.appendingPathComponent("unrelated")), "unrelated")
     }
+    func testDestructiveAuthorizationWrapsActualUnlinkAndFailureStopsFurtherDeletes() throws {
+        let f = try fixture(), file = f.device.appendingPathComponent("content")
+        try Data("retained".utf8).write(to: file)
+        let cleanup = DeviceLocalFilesystemCleanup(plan: try f.plan())
+        XCTAssertThrowsError(try cleanup.execute(withDestructiveStep: { _ in throw Injected.failure }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        var calls = 0
+        try cleanup.execute(withDestructiveStep: { operation in
+            calls += 1
+            XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+            try operation()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        })
+        XCTAssertEqual(calls, 1)
+        try sentinels(f)
+    }
+    func testSkippedAndRepeatedAuthorizationAreRejectedEvenWhenCaught() throws {
+        let f = try fixture(), file = f.device.appendingPathComponent("content")
+        try Data().write(to: file)
+        let cleanup = DeviceLocalFilesystemCleanup(plan: try f.plan())
+        XCTAssertThrowsError(try cleanup.execute(withDestructiveStep: { _ in })) {
+            XCTAssertEqual($0 as? DeviceLocalFilesystemCleanupError, .invalidAuthorization)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertThrowsError(try cleanup.execute(withDestructiveStep: { operation in
+            try operation()
+            do { try operation() } catch {}
+        })) { XCTAssertEqual($0 as? DeviceLocalFilesystemCleanupError, .invalidAuthorization) }
+    }
+    func testSwallowedUnlinkFailureCannotReportCompletion() throws {
+        let f = try fixture(), directory = f.device.appendingPathComponent("nested")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let cleanup = DeviceLocalFilesystemCleanup(plan: try f.plan())
+        XCTAssertThrowsError(try cleanup.execute(withDestructiveStep: { operation in
+            // The real rmdir fails because content arrived after enumeration.
+            try Data().write(to: directory.appendingPathComponent("late"))
+            do { try operation() } catch {}
+        })) { error in
+            guard case .io(operation: "unlinkat", code: _) = error as? DeviceLocalFilesystemCleanupError else { return XCTFail("expected actual unlink error") }
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.path))
+    }
     func testNestedCleanupExactNamesLinksAndIdempotentReplayPreserveRootsAndProtectedData() throws {
         let f = try fixture(), nested = f.device.appendingPathComponent("nested")
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: false)

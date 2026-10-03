@@ -1,9 +1,24 @@
 import Foundation
 import ScreenpunkCore
 
+/// Minted only during the synchronous qualified callback; cannot authorize async work.
+@MainActor final class DeviceLocalResetCleanupPermit {
+    private var active = true
+    let scopeDigest: String
+    private let authorize: (() throws -> Void) throws -> Void
+    fileprivate init(scopeDigest: String, authorize: @escaping (() throws -> Void) throws -> Void) {
+        self.scopeDigest = scopeDigest; self.authorize = authorize
+    }
+    fileprivate func expire() { active = false }
+    func withStep(scopeDigest: String, operation: () throws -> Void) throws {
+        guard active, self.scopeDigest == scopeDigest else { throw DeviceLocalResetCoordinator.Failure.invalidOperation }
+        try authorize(operation)
+    }
+}
+
 /// One process/root only. No filesystem exclusion against other processes.
 /// Registry retains exact owner/operation/actions across coordinator reconstruction.
-/// No production cleanup adapters or presentation callers are installed yet.
+/// Qualified adapters exist, but no production presentation callers are installed yet.
 @MainActor
 final class DeviceLocalResetCoordinator {
     enum State: Equatable {
@@ -21,24 +36,35 @@ final class DeviceLocalResetCoordinator {
         let cleanup: (DeviceLocalResetRecord) async throws -> Void
         var state: State = .idle
         var record: DeviceLocalResetRecord?
+        let qualifiedCleanup: ((DeviceLocalResetCleanupPermit) throws -> Void)?
+        var driverID: UUID?
+        var suspensionConfirmed = false
         var retired = false
         var driverActive = false
         var cleanupFinished = false
         var ownsCompletion = false
         init(scope: DeviceLocalResetScope, authority: DeviceManagementAuthority,
              suspend: @escaping (DeviceLocalResetRecord) async throws -> Void,
-             cleanup: @escaping (DeviceLocalResetRecord) async throws -> Void) {
+             cleanup: @escaping (DeviceLocalResetRecord) async throws -> Void,
+             qualifiedCleanup: ((DeviceLocalResetCleanupPermit) throws -> Void)?) {
             digest = scope.digest; roots = [scope.deviceRoot.path, scope.preferencesRoot.path, scope.resetDirectory.path, scope.managementDirectory.path]
-            self.authority = authority; self.suspend = suspend; self.cleanup = cleanup
+            self.authority = authority; self.suspend = suspend; self.cleanup = cleanup; self.qualifiedCleanup = qualifiedCleanup
         }
     }
     private static var sessions: [Session] = []
     private let session: Session
     var state: State { session.state }
 
-    init(scope: DeviceLocalResetScope, authority: DeviceManagementAuthority,
+    convenience init(scope: DeviceLocalResetScope, authority: DeviceManagementAuthority,
          suspend: @escaping (DeviceLocalResetRecord) async throws -> Void,
          cleanup: @escaping (DeviceLocalResetRecord) async throws -> Void) throws {
+        try self.init(scope: scope, authority: authority, suspend: suspend, cleanup: cleanup, qualifiedCleanup: nil)
+    }
+
+    private init(scope: DeviceLocalResetScope, authority: DeviceManagementAuthority,
+                 suspend: @escaping (DeviceLocalResetRecord) async throws -> Void,
+                 cleanup: @escaping (DeviceLocalResetRecord) async throws -> Void,
+                 qualifiedCleanup: ((DeviceLocalResetCleanupPermit) throws -> Void)?) throws {
         try scope.validateCurrentPaths()
         guard try authority.configuredResetScopeDigest() == scope.digest else { throw Failure.configurationConflict }
         let roots = [scope.deviceRoot.path, scope.preferencesRoot.path, scope.resetDirectory.path, scope.managementDirectory.path]
@@ -46,12 +72,19 @@ final class DeviceLocalResetCoordinator {
             existing.roots.contains { a in roots.contains { b in a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/") } }
         }
         if let existing = overlaps.first {
-            guard overlaps.count == 1, existing.digest == scope.digest, existing.roots == roots else { throw Failure.configurationConflict }
+            guard overlaps.count == 1, existing.digest == scope.digest, existing.roots == roots, (existing.qualifiedCleanup != nil) == (qualifiedCleanup != nil) else { throw Failure.configurationConflict }
             session = existing
         } else {
-            let created = Session(scope: scope, authority: authority, suspend: suspend, cleanup: cleanup)
+            let created = Session(scope: scope, authority: authority, suspend: suspend, cleanup: cleanup, qualifiedCleanup: qualifiedCleanup)
             Self.sessions.append(created); session = created
         }
+    }
+
+    convenience init(scope: DeviceLocalResetScope, authority: DeviceManagementAuthority,
+                     suspend: @escaping (DeviceLocalResetRecord) async throws -> Void,
+                     qualifiedCleanup: @escaping (DeviceLocalResetCleanupPermit) throws -> Void) throws {
+        try self.init(scope: scope, authority: authority, suspend: suspend,
+                      cleanup: { _ in throw Failure.invalidOperation }, qualifiedCleanup: qualifiedCleanup)
     }
 
     /// UUID comes solely from the explicit future human action, never recovery.
@@ -113,9 +146,12 @@ final class DeviceLocalResetCoordinator {
         guard !session.retired else { throw Failure.invalidOperation }
         guard !session.driverActive else { throw Failure.driverActive }
         session.driverActive = true
+        session.driverID = UUID()
     }
     private func releaseDriver() {
         session.driverActive = false
+        session.driverID = nil
+        session.suspensionConfirmed = false
         if case .completed = session.state {
             // Exact completed readback already succeeded; stale handles stay terminal.
             session.retired = true
@@ -127,14 +163,24 @@ final class DeviceLocalResetCoordinator {
               try session.authority.resetRecoverySnapshot() == .pending(record) else { throw Failure.invalidOperation }
         session.state = .pending(record)
         do {
+            session.suspensionConfirmed = false
             session.state = .suspending(record)
             try await session.suspend(record)
             try Task.checkCancellation()
             guard try session.authority.resetRecoverySnapshot() == .pending(record) else { throw Failure.invalidOperation }
+            session.suspensionConfirmed = true
         } catch { session.state = .failed(record, Task.isCancelled ? .cancelled : .suspension); throw error }
         do {
             session.state = .cleaning(record)
-            try await session.cleanup(record)
+            if let qualified = session.qualifiedCleanup, let driver = session.driverID {
+                let permit = DeviceLocalResetCleanupPermit(scopeDigest: session.digest) { [session] operation in
+                    guard session.driverActive, session.driverID == driver, session.suspensionConfirmed,
+                          session.record == record else { throw Failure.invalidOperation }
+                    try session.authority.withPendingResetStep(record, operation: operation)
+                }
+                defer { permit.expire() }
+                try qualified(permit)
+            } else { try await session.cleanup(record) }
             // A cancellation-ignoring callback must return before driver releases.
             try Task.checkCancellation()
             session.cleanupFinished = true

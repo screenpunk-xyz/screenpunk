@@ -143,6 +143,13 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         }
     }
 
+    func withPendingResetStep(_ record: DeviceLocalResetRecord, operation: () throws -> Void) throws {
+        try serialized {
+            guard !resetQuarantined, resetAttempt == nil, record.phase == .pending,
+                  record.scopeDigest == (try reset.scopeDigest), try reset.load() == record else { throw Failure.resetConflict }
+            try operation()
+        }
+    }
     /// Internal, explicit Local reset only. No cleanup is executed here.
     func beginLocalReset(_ lease: Lease, record: DeviceLocalResetRecord) throws {
         try serialized {

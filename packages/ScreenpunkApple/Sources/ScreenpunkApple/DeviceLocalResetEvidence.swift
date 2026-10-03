@@ -38,6 +38,14 @@ public struct DeviceLocalResetScope: Sendable {
         digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(Binding(version: 1, device: device.path, preferences: preferences.path, management: protected[0].path, reset: protected[1].path, items: items))))
         self.deviceRoot = device; self.preferencesRoot = preferences; self.credentialItems = items; self.protectedDirectories = protected
     }
+    /// Explicit opt-in only. Existing initializer/production binding remains v1.
+    init(v2 base: Self, cleanupMetadata: Data) throws {
+        deviceRoot = base.deviceRoot; preferencesRoot = base.preferencesRoot
+        protectedDirectories = base.protectedDirectories; credentialItems = base.credentialItems
+        struct Binding: Encodable { let version: Int; let baseDigest: String; let cleanupMetadata: Data }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(Binding(version: 2, baseDigest: base.digest, cleanupMetadata: cleanupMetadata))))
+    }
     var managementDirectory: URL { protectedDirectories[0] }
     var resetDirectory: URL { protectedDirectories[1] }
     func validateResetStoreDirectory(_ directory: URL) throws {
@@ -51,7 +59,7 @@ public struct DeviceLocalResetScope: Sendable {
     private static func overlap(_ a: URL, _ b: URL) -> Bool {
         a.path == b.path || a.path.hasPrefix(b.path + "/") || b.path.hasPrefix(a.path + "/")
     }
-    private static func canonical(_ url: URL) throws -> URL {
+    internal static func canonical(_ url: URL) throws -> URL {
         guard url.isFileURL else { throw Failure.invalidPath }
         var path = url.standardizedFileURL.path
         // Trusted macOS aliases only; arbitrary user-controlled symlinks remain rejected.

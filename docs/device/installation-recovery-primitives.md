@@ -78,3 +78,11 @@ Suspension is terminal in this slice. Cleanup adapters and any qualified fresh-r
 Traversal and deletion use held directory descriptors with no-follow checks. Descendant symlinks are unlinked without following them; root symlinks, special nodes, mount crossings and capacity overflow fail closed. Each modified parent is synchronized. Missing paths require synchronization of the nearest existing parent, so interrupted cleanup can replay the whole plan. Protected directory identities are excluded as well as their configured paths.
 
 There are no production callers, credential deletion, reset-record writes or completion assertions in this primitive. Application writers must already be suspended and cleanup exclusively owned. Identity checks detect tested replacements, but cannot provide atomic inode-conditional unlink against arbitrary concurrent same-UID mutation. Fault-injection tests do not qualify physical power loss. The future Apple adapter must preserve the preference lock, unrelated files, TLS/GoogleTV/ADB storage and all Cloud recovery evidence.
+
+## Explicit Apple cleanup configuration
+
+An opt-in version-2 scope now binds the complete filesystem plan and exact five Local credential items into its digest. Existing production configuration remains version 1; neither pending nor completed version-1 records are reinterpreted or rewritten. Preferences cleanup names only `preferences-v1.json`; unknown legacy temporary files remain untouched, so complete legacy preference erasure is not claimed.
+
+The internal Apple adapter requires a coordinator-issued synchronous permit. The permit checks the current driver, successful suspension, exact pending record and matching scope for each destructive step, with the operation executed under authority serialization. It expires when the callback returns. An existing asynchronous test session cannot upgrade into a qualified cleanup session. Core authorization wrappers must invoke each operation exactly once and cannot hide operation failures.
+
+Each exact Keychain deletion is followed by a throwing absence check; unrelated accounts and Cloud credentials are preserved. No production bootstrap/UI caller or suspension-domain reopening is connected. Scope migration, unknown temporary-file policy and qualified fresh-root reopening remain separate release work.
