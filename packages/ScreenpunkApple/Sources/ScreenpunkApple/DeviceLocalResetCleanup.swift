@@ -14,6 +14,17 @@ struct DeviceLocalResetCleanupScope {
             protectedRoots: [base.managementDirectory, base.resetDirectory], maximumDepth: maximumDepth, maximumEntries: maximumEntries)
         authorityScope = try .init(v2: base, cleanupMetadata: plan.canonicalMetadata)
     }
+    /// Explicit opt-in only. V2 remains archive-only, with its original digest unchanged.
+    init(v3 base: DeviceLocalResetScope, anchor: URL, maximumDepth: Int = 32, maximumEntries: Int = 10_000) throws {
+        guard Set(base.credentialItems) == Set(DeviceLocalResetScope.allowedCredentialItems) else { throw DeviceLocalResetScope.Failure.invalidCredentialBinding }
+        try base.validateCurrentPaths()
+        plan = try .init(anchor: try DeviceLocalResetScope.canonical(anchor), roots: [
+            .init(directory: base.deviceRoot, mode: .directoryContents),
+            .init(directory: base.preferencesRoot, mode: .namedFiles([ScreenPreferenceAtomicWriter.archiveName, ScreenPreferenceAtomicWriter.pendingName]))],
+            protectedRoots: [base.managementDirectory, base.resetDirectory], maximumDepth: maximumDepth, maximumEntries: maximumEntries)
+        authorityScope = try .init(v3: base, cleanupMetadata: plan.canonicalMetadata)
+    }
+
 }
 protocol DeviceLocalResetCredentialCleanup {
     func delete(_ item: DeviceLocalResetScope.CredentialItem) throws
