@@ -95,6 +95,12 @@ final class CloudHumanSessionLifecycle: ObservableObject {
                 applePresentation: { try presentation.resolve().window }, transport: CloudNativeURLSessionTransport())
         }
     }
+    /// A live scene may transport a callback to the process owner, without acquiring
+    /// cancellation or session rights. Retired scenes do not transport callbacks.
+    func dispatchGoogleCallback(_ url: URL) -> Bool {
+        guard !retired else { return false }
+        return broker.dispatchGoogleCallback(url)
+    }
     func handleCallback(_ url: URL) -> Bool {
         guard !retired, let lease else { return false }; return broker.session(for: lease)?.handleCallback(url) ?? false
     }

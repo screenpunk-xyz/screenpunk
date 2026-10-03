@@ -4,6 +4,44 @@ import AuthenticationServices
 @testable import Screenpunk
 
 final class CloudNativeIdentityTests: XCTestCase {
+    @MainActor func testCallbackAcceptanceIsPerFlowAndFalseAllowsRetry() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        let url = URL(string: "com.googleusercontent.apps.fixture-client:/oauth2callback")!
+        for index in 1...2 {
+            let task = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+            while probe.presentations < index { await Task.yield() }
+            probe.callbackResult = false
+            XCTAssertFalse(identity.handleGoogleCallback(url))
+            probe.callbackResult = true
+            XCTAssertTrue(identity.handleGoogleCallback(url))
+            XCTAssertFalse(identity.handleGoogleCallback(url))
+            identity.cancelActiveFlow(); probe.resolve(.google(idToken: "fixture", accessToken: "fixture"))
+            do { try await task.value; XCTFail("Revoked flow") } catch {}
+        }
+        XCTAssertEqual(probe.callbacks, 4)
+    }
+
+    @MainActor func testCallbackReentryAndRevocationCannotAcknowledgeFlow() async throws {
+        let probe = IdentityProbe(configuration: try CloudNativeConfiguration.load(info: configured, bundleID: "test.screenpunk"))
+        let identity = CloudNativeIdentity(testDrivers: probe.drivers)
+        let url = URL(string: "com.googleusercontent.apps.fixture-client:/oauth2callback")!
+        let task = Task { try await identity.signInWithGoogle(presenting: UIViewController()) }
+        while probe.presentations == 0 { await Task.yield() }
+        probe.callbackAction = { [weak identity] url in
+            XCTAssertFalse(identity!.handleGoogleCallback(url))
+            identity!.cancelActiveFlow()
+            return true
+        }
+        XCTAssertFalse(identity.handleGoogleCallback(url))
+        XCTAssertEqual(probe.callbacks, 1)
+        XCTAssertFalse(identity.handleGoogleCallback(url))
+        probe.callbackAction = nil
+        probe.resolve(.google(idToken: "fixture", accessToken: "fixture"))
+        do { try await task.value; XCTFail("Revoked flow") } catch {}
+        XCTAssertEqual(probe.exchanges, 0)
+    }
+
     private var configured: [String: Any] {
         ["ScreenpunkCloudFirebaseProjectID": "fixture-cloud-project",
          "ScreenpunkCloudFirebaseAPIKey": "fixture-api-key",
@@ -259,6 +297,8 @@ final class CloudNativeIdentityTests: XCTestCase {
 private final class IdentityProbe {
     let configuration: CloudNativeConfiguration
     var configurations = 0, presentations = 0, exchanges = 0, callbacks = 0
+    var callbackResult = true
+    var callbackAction: ((URL) -> Bool)?
     var firebaseClears = 0, googleClears = 0
     var failFirebaseClear = false
     var events: [String] = []
@@ -277,7 +317,7 @@ private final class IdentityProbe {
                   self.events.append("exchange-finish")
                   return "fixture-uid"
               },
-              callback: { _ in self.callbacks += 1; return true }, cancel: {},
+              callback: { url in self.callbacks += 1; return self.callbackAction?(url) ?? self.callbackResult }, cancel: {},
               cancellationDelivery: { delivery in
                   if self.delayCancellation { self.delayedCancellations.append(delivery) } else { delivery() }
               }, firebaseSignOut: {

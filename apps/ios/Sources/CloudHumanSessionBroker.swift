@@ -64,6 +64,16 @@ final class CloudHumanSessionBroker: ObservableObject {
     func session(for lease: Lease) -> CloudHumanSession? {
         guard owns(lease), slot?.retirement == false else { return nil }; return slot?.session
     }
+    /// URL transport is process-wide; it grants the delivering scene no ownership.
+    /// The attached identity still validates provider, configuration and active attempt.
+    func dispatchGoogleCallback(_ url: URL) -> Bool {
+        guard state == .attached, let current = slot, !current.retirement,
+              owns(current.lease), let session = current.session else { return false }
+        let accepted = session.handleCallback(url)
+        guard slot === current, owns(current.lease), state == .attached,
+              !current.retirement else { return false }
+        return accepted
+    }
     func owns(_ lease: Lease) -> Bool { slot?.lease === lease && lease.broker === self }
     private func validate(_ lease: Lease, construction: Bool = false, human: Bool = false) throws {
         guard owns(lease) else { throw Failure.staleOwnership }

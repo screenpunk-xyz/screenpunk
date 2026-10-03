@@ -18,7 +18,7 @@ final class CloudNativeIdentity: ObservableObject {
     private var auth: Auth?
     private var configuration: CloudNativeConfiguration?
     private var generation = UUID()
-    private struct Flow { let provider: CloudNativeSignInProvider; let generation: UUID; let cancellation = CloudFlowCancellation() }
+    private struct Flow { let provider: CloudNativeSignInProvider; let generation: UUID; let cancellation = CloudFlowCancellation(); var callbackInFlight = false; var callbackAccepted = false }
     private var activeFlow: Flow?
     private var flowInProgress: Bool { activeFlow != nil }
     private(set) var interactiveUserID: String?
@@ -160,8 +160,17 @@ final class CloudNativeIdentity: ObservableObject {
     /// Called by the app only for a whitelisted dedicated Cloud callback.
     func handleGoogleCallback(_ url: URL) -> Bool {
         guard let flow = activeFlow, flow.provider == .google, flow.generation == generation, !flow.cancellation.isRevoked,
+              !flow.callbackInFlight, !flow.callbackAccepted,
               let configuration, configuration.acceptsGoogleCallback(url) else { return false }
-        return drivers?.callback(url) ?? GIDSignIn.sharedInstance.handle(url)
+        activeFlow?.callbackInFlight = true
+        defer {
+            if activeFlow?.generation == flow.generation { activeFlow?.callbackInFlight = false }
+        }
+        let accepted = drivers?.callback(url) ?? GIDSignIn.sharedInstance.handle(url)
+        guard activeFlow?.generation == flow.generation, generation == flow.generation,
+              !flow.cancellation.isRevoked else { return false }
+        if accepted { activeFlow?.callbackAccepted = true }
+        return accepted
     }
 
     /// Explicit human intent is retained in this process, independently of waiter cancellation.
