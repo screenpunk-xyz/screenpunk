@@ -2,6 +2,8 @@
 # Archive and export a signed iOS IPA. Does not upload and does not submit.
 set +x
 set -euo pipefail
+python3 "$(dirname "${BASH_SOURCE[0]}")/validate-ios-release-metadata.py" inputs
+
 # shellcheck source=apple-signing-common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/apple-signing-common.sh"
 
@@ -56,6 +58,8 @@ xcodebuild archive \
   -destination 'generic/platform=iOS' \
   -archivePath "$archive_path" \
   -derivedDataPath "${RELEASE_DIR}/ios-derived" \
+  MARKETING_VERSION="${IOS_MARKETING_VERSION}" \
+  CURRENT_PROJECT_VERSION="${IOS_BUILD_NUMBER}" \
   CODE_SIGNING_ALLOWED=YES \
   CODE_SIGNING_REQUIRED=YES \
   CODE_SIGN_STYLE=Manual \
@@ -83,6 +87,7 @@ if [[ -z "$ipa" ]]; then
   echo "signed IPA export failed: no .ipa in export directory"
   exit 1
 fi
+python3 "$ROOT/.github/workflows/scripts/validate-ios-release-metadata.py" ipa "$ipa"
 cp "$ipa" "${RELEASE_DIR}/Screenpunk.ipa"
 echo "STATE: signed-ipa-export"
 echo "ipa=${RELEASE_DIR}/Screenpunk.ipa"

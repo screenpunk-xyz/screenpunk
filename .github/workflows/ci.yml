@@ -47,6 +47,8 @@ jobs:
           node-version: "24.21.0"
           cache: npm
           cache-dependency-path: sdk/package-lock.json
+      - name: iOS release metadata validation
+        run: python3 scripts/ci/test-ios-release-metadata.py
       - name: License, brand, and docs
         run: |
           test -f LICENSE && grep -q "Apache License" LICENSE
