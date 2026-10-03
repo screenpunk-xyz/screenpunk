@@ -82,12 +82,8 @@ public struct CloudNativeWorkspaceSetupReceipt: Codable, Equatable, Sendable {
         accountId = try values.decode(UUID.self, forKey: .accountId)
         locationId = try values.decode(UUID.self, forKey: .locationId)
         createdAt = try values.decode(String.self, forKey: .createdAt)
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fractional = formatter.date(from: createdAt.uppercased())
-        formatter.formatOptions = [.withInternetDateTime]
-        guard createdAt.range(of: #"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$"#, options: .regularExpression) != nil,
-              fractional != nil || formatter.date(from: createdAt.uppercased()) != nil else {
+        do { _ = try boundedRFC3339Time(createdAt, acceptsLowercaseSeparators: true) }
+        catch {
             throw DecodingError.dataCorruptedError(forKey: .createdAt, in: values, debugDescription: "Invalid setup receipt timestamp")
         }
     }
