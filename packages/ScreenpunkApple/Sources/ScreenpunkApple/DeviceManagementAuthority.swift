@@ -119,6 +119,30 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         return .init(record: record)
     }
 
+    enum ResetRecoverySnapshot: Equatable {
+        case absent, pending(DeviceLocalResetRecord), completed(DeviceLocalResetRecord), uncertain(DeviceLocalResetRecord)
+    }
+    func configuredResetScopeDigest() throws -> String {
+        try serialized { try reset.scopeDigest }
+    }
+    /// Recovery evidence only, never Local admission or a cleanup capability.
+    func resetRecoverySnapshot() throws -> ResetRecoverySnapshot {
+        try serialized {
+            guard !resetQuarantined else { throw Failure.resetConflict }
+            let digest = try reset.scopeDigest
+            if let attempt = resetAttempt {
+                guard attempt.record.scopeDigest == digest else { throw Failure.resetConflict }
+                return .uncertain(attempt.record)
+            }
+            let record = try reset.load()
+            if let observedReset, observedReset != record { resetQuarantined = true; invalidate(); throw Failure.resetConflict }
+            guard let record else { return .absent }
+            guard record.scopeDigest == digest else { throw Failure.resetConflict }
+            observedReset = record
+            return record.phase == .pending ? .pending(record) : .completed(record)
+        }
+    }
+
     /// Internal, explicit Local reset only. No cleanup is executed here.
     func beginLocalReset(_ lease: Lease, record: DeviceLocalResetRecord) throws {
         try serialized {
@@ -191,6 +215,7 @@ public struct DeviceManagementContext: @unchecked Sendable {
     public init(authority: DeviceManagementAuthority, lease: DeviceManagementAuthority.Lease) {
         self.authority = authority; self.lease = lease
     }
+    func belongs(to owner: DeviceManagementAuthority) -> Bool { authority === owner }
     public func validate() throws { try authority.withLocalAuthority(lease) {} }
     public func revoke() throws { try authority.revoke() }
     func beginLocalReset(record: DeviceLocalResetRecord) throws { try authority.beginLocalReset(lease, record: record) }

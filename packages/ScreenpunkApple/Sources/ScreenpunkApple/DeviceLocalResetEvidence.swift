@@ -38,6 +38,7 @@ public struct DeviceLocalResetScope: Sendable {
         digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(Binding(version: 1, device: device.path, preferences: preferences.path, management: protected[0].path, reset: protected[1].path, items: items))))
         self.deviceRoot = device; self.preferencesRoot = preferences; self.credentialItems = items; self.protectedDirectories = protected
     }
+    var managementDirectory: URL { protectedDirectories[0] }
     var resetDirectory: URL { protectedDirectories[1] }
     func validateResetStoreDirectory(_ directory: URL) throws {
         guard try Self.canonical(directory) == resetDirectory else { throw Failure.invalidPath }
