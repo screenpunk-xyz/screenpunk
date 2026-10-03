@@ -1,79 +1,105 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { build } from 'esbuild';
-import ts from 'typescript';
-import { notices } from './notices.mjs';
-export const kitRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-async function compileProject(source, output) {
-  source = await fs.realpath(source); output = path.resolve(output);
-  if (output === source || source.startsWith(output + path.sep)) throw Error('Output must not contain project source');
-  const files = [];
-  async function walk(dir) {
-    for (const item of await fs.readdir(dir, { withFileTypes: true })) {
-      const p = path.join(dir, item.name);
-      if (item.isSymbolicLink()) throw Error('Source symlinks are not allowed');
-      if (item.isDirectory()) { if (item.name !== 'node_modules' && item.name !== 'dist') await walk(p); }
-      else if (/\.(tsx?|css|json|svg|png|jpe?g|woff2?)$/.test(p)) files.push(p);
-    }
-  }
-  await walk(source);
-  if (files.length > 2000) throw Error('Too many source files');
-  const options = { strict: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, resolveJsonModule: true,
-    baseUrl: kitRoot, paths: { '@screenpunk/react': ['react/index.tsx'], '@screenpunk/ui': ['ui/index.tsx'], 'react': ['node_modules/@types/react/index.d.ts'], 'react/*': ['node_modules/@types/react/*'], 'react-dom/*': ['node_modules/@types/react-dom/*'], '*': ['node_modules/*'] }, typeRoots: [path.join(kitRoot, 'node_modules/@types')], types: ['react','react-dom'], lib: ['lib.es2022.d.ts','lib.dom.d.ts','lib.dom.iterable.d.ts'] };
-  const program = ts.createProgram(files.filter(f => /\.tsx?$/.test(f)), options);
-  for(const file of program.getSourceFiles().filter(f=>f.fileName.startsWith(source+path.sep))) {
-    const visit=node=>{
-      if(ts.isCallExpression(node) && node.expression.kind===ts.SyntaxKind.ImportKeyword && (!node.arguments[0] || !ts.isStringLiteral(node.arguments[0]))) throw Error('Dynamic imports must use a literal package-local path');
-      ts.forEachChild(node,visit);
-    };
-    visit(file);
-  }
-  const diagnostics = ts.getPreEmitDiagnostics(program);
-  if (diagnostics.length) throw Error(ts.formatDiagnosticsWithColorAndContext(diagnostics, { getCanonicalFileName: f => f, getCurrentDirectory: () => source, getNewLine: () => '\n' }));
-  await fs.mkdir(output, { recursive: true });
-  const result = await build({ absWorkingDir: kitRoot, entryPoints: [path.join(source,'src/main.tsx')], bundle: true, outfile: path.join(output,'screen.js'), format: 'iife', platform: 'browser', target: ['safari16','ios16'], jsx: 'automatic', minify: true, metafile: true, sourcemap: false, legalComments: 'none', define: { 'process.env.NODE_ENV': '"production"' }, assetNames: 'assets/[hash]', loader: { '.svg':'file','.png':'file','.jpg':'file','.jpeg':'file','.woff':'file','.woff2':'file' }, nodePaths: [path.join(kitRoot,'node_modules')], alias: { '@screenpunk/react': path.join(kitRoot,'react/index.tsx'), '@screenpunk/ui': path.join(kitRoot,'ui/index.tsx') }, plugins: [{ name:'screenpunk-local-only', setup(b) {
-    b.onResolve({filter:/^react-remove-scroll-bar$/},()=>({path:path.join(kitRoot,'ui/scrollbar.tsx')}));
-    b.onLoad({filter:/@radix-ui\/react-select\/dist\/index\.mjs$/},async args=>{
-      const text=await fs.readFile(args.path,'utf8');
-      const pattern=/jsx\(\s*"style",\s*\{\s*dangerouslySetInnerHTML:[\s\S]*?nonce\s*\}\s*\)/;
-      if(!pattern.test(text))throw Error('Pinned Radix Select stylesheet changed; review the static CSS adapter');
-      return {contents:text.replace(pattern,'null'),loader:'js'};
-    });
-    b.onResolve({ filter: /.*/ }, args => {
-      if (/^(https?:|data:|node:|\/\/)/.test(args.path)) return { errors:[{ text:'Only packaged browser dependencies and local assets are supported' }] };
-      if (args.path.startsWith('.') || path.isAbsolute(args.path)) {
-        const resolved = path.resolve(args.resolveDir || kitRoot,args.path);
-        if (![source,kitRoot].some(root => resolved.startsWith(root + path.sep))) return { errors:[{ text:'Import escapes the project or authoring kit' }] };
-      }
-    });
-  }}] });
-  try { await fs.access(path.join(output,'screen.css')); } catch { await fs.writeFile(path.join(output,'screen.css'),''); }
-  await fs.writeFile(path.join(output,'index.html'), '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="screen.css"><title>Screenpunk</title></head><body><div id="root"></div><script src="screen.js"></script></body></html>');
-  const inputs = [...new Set(Object.values(result.metafile.outputs).flatMap(o => Object.entries(o.inputs).filter(([,v]) => v.bytesInOutput > 0).map(([f]) => path.resolve(kitRoot,f))))];
-  await fs.writeFile(path.join(output,'THIRD-PARTY-NOTICES.txt'), await notices(inputs));
-  let bytes = 0; const assets = [];
-  async function inventory(dir) { for (const item of await fs.readdir(dir,{withFileTypes:true})) { const p=path.join(dir,item.name); if(item.isDirectory()) await inventory(p); else { const size=(await fs.stat(p)).size; bytes+=size; assets.push({path:path.relative(output,p),bytes:size}); } } }
-  await inventory(output);
-  if (assets.length > 2000 || bytes > 50*1024*1024) throw Error('Screenpunk package limits exceeded');
-  return { bytes, files:assets, dependencies:inputs.filter(f=>f.includes('/node_modules/')).length };
+import os from 'node:os';
+import {fileURLToPath} from 'node:url';
+import {phase} from './phase-driver.mjs';
+import {readInventory} from './captured-store.mjs';
+import {kitRoot,limits,assertRuntime,validPath,exactKeys} from './runtime.mjs';
+export {kitRoot};
+const html='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="screen.css"><title>Screenpunk</title></head><body><div id="root"></div><script src="screen.js"></script></body></html>';
+function capturedNotices(inventory,inputs,check) {
+ const roots=new Set();for(const input of inputs){const marker=input.lastIndexOf('/node_modules/');if(marker<0)continue;const tail=input.slice(marker+14).split('/');roots.add(input.slice(0,marker+14)+tail.slice(0,tail[0].startsWith('@')?2:1).join('/'));}
+ const sections=[];let total=0;
+ const decode=p=>{check();const b=inventory.read(p);if(!b)throw Error('Notice input is not captured');if(b.length>limits.outputBytes-total)throw Error('Screenpunk package limits exceeded');return b.toString('utf8');};
+ const add=s=>{total+=Buffer.byteLength(s);if(total>limits.outputBytes)throw Error('Screenpunk package limits exceeded');sections.push(s);};
+ const paths=[...inventory.files.keys()];
+ for(const root of [...roots].sort()){
+  check();const pkg=JSON.parse(decode(root+'/package.json')),licenses=paths.filter(p=>path.dirname(p)===root&&/^(licen[cs]e|notice|copying)/i.test(path.basename(p))).sort();
+  if(!licenses.length){add(`${pkg.name}@${pkg.version} (${pkg.license})\n${decode(kitRoot+'/licenses/'+pkg.name.replaceAll('/','__')+'.txt')}`);if(pkg.name==='victory-vendor'){const names=new Set(paths.filter(p=>p.startsWith(root+'/lib-vendor/')).map(p=>p.slice((root+'/lib-vendor/').length).split('/')[0]));for(const n of [...names].sort()){const p=root+'/lib-vendor/'+n+'/LICENSE';if(inventory.files.has(p))add(`${n} (vendored)\n${decode(p)}`);}}}
+  else add(`${pkg.name}@${pkg.version} (${pkg.license})\n${licenses.map(decode).join('\n')}`);
+ }
+ add(decode(kitRoot+'/ui/NOTICE.txt'));return sections.join('\n\n----------------------------------------\n\n');
 }
-export async function buildProject(source, output) {
-  source=await fs.realpath(source);output=path.resolve(output);
-  if(output===path.parse(output).root || output===source || source.startsWith(output+path.sep) || output===kitRoot || kitRoot.startsWith(output+path.sep) || (output.startsWith(source+path.sep) && !output.startsWith(path.join(source,'dist')+path.sep) && output!==path.join(source,'dist'))) throw Error('Unsafe output directory');
-  await fs.mkdir(path.dirname(output),{recursive:true});
-  const stage=await fs.mkdtemp(path.join(path.dirname(output),'.screenpunk-build-'));
-  try {
-    const result=await compileProject(source,stage);
-    const backup=output+'.previous-'+process.pid;
-    let replaced=false;
-    try { await fs.rename(output,backup);replaced=true; } catch(e) {if(e.code!=='ENOENT')throw e;}
-    try {await fs.rename(stage,output);} catch(e){if(replaced)await fs.rename(backup,output);throw e;}
-    if(replaced)await fs.rm(backup,{recursive:true,force:true});
-    return result;
-  } finally {await fs.rm(stage,{recursive:true,force:true});}
+export async function buildProject(source,output) {
+ const started=performance.now();let committed=false,commitMs,stage,capture,backup,oldMoved=false,published=false,primaryError;const cleanupErrors=[];
+ const check=()=>{if(performance.now()-started>=limits.jobMs)throw Error('Full build publication deadline exceeded');};
+ // Async filesystem operations cannot be cancelled by a JavaScript timer.
+ // Observe their completion and deadline before further work/publication.
+ const step=async operation=>{check();const result=await operation();check();return result;};
+ try {
+  assertRuntime();source=path.resolve(source);output=path.resolve(output);
+  if(!validPath(source)||!validPath(output))throw Error('Compiler path exceeds bounds');
+  const sourceStat=await step(()=>fs.lstat(source));if(!sourceStat.isDirectory()||sourceStat.isSymbolicLink())throw Error('Source symlinks and special files are not allowed');
+  // Parent aliases selected by the caller may resolve; bind the canonical root
+  // to the originally selected final directory entry before any content read.
+  const selected=source;source=await step(()=>fs.realpath(selected));
+  const selectedAgain=await step(()=>fs.lstat(selected)),canonical=await step(()=>fs.lstat(source));
+  if(!selectedAgain.isDirectory()||selectedAgain.isSymbolicLink()||!canonical.isDirectory()||['dev','ino','mode'].some(k=>sourceStat[k]!==selectedAgain[k]||sourceStat[k]!==canonical[k]))throw Error('Selected project root changed');
+  const sourceIdentity={dev:sourceStat.dev,ino:sourceStat.ino,mode:sourceStat.mode};
+  const unsafe=()=>output===path.parse(output).root||output===source||source.startsWith(output+path.sep)||output===kitRoot||kitRoot.startsWith(output+path.sep)||(output.startsWith(source+path.sep)&&!output.startsWith(path.join(source,'dist')+path.sep)&&output!==path.join(source,'dist'));
+  if(unsafe())throw Error('Unsafe output directory');
+  await step(()=>fs.mkdir(path.dirname(output),{recursive:true}));
+  output=path.join(await step(()=>fs.realpath(path.dirname(output))),path.basename(output));if(unsafe())throw Error('Unsafe output directory');
+  try{const s=await step(()=>fs.lstat(output));if(s.isSymbolicLink()||!s.isDirectory())throw Error('Unsafe output directory');}catch(e){if(e.code!=='ENOENT')throw e;}
+  // Set ownership before post-operation deadline checks so finally can remove a
+  // mkdtemp that completed after the deadline instead of leaking it.
+  check();stage=await fs.mkdtemp(path.join(path.dirname(output),'.screenpunk-build-'));check();
+  const temp=await step(()=>fs.realpath(os.tmpdir()));check();capture=await fs.mkdtemp(path.join(temp,'screenpunk-capture-'));check();
+  const store=path.join(capture,'snapshot'),common={source,store,output:stage};
+  const run=async(name,data)=>{check();const packet=await phase(name,data,limits.jobMs-(performance.now()-started));check();return packet;};
+  const snapshot=await run('snapshot',{source,sourceIdentity,store});
+  if(snapshot.manifest!==path.join(store,'manifest.ndjson'))throw Error('Invalid snapshot controller response');
+  const captured={...common,manifest:snapshot.manifest,manifestSha256:snapshot.manifestSha256,manifestIdentity:snapshot.manifestIdentity};
+  await run('typecheck',captured);
+  const bundled=await run('bundle',captured);
+  if(!exactKeys(bundled.result,['metafile','outputFiles'])||!Array.isArray(bundled.result.outputFiles))throw Error('Invalid compiler output response');
+  let bytes=0;const names=new Set();
+  for(const f of bundled.result.outputFiles){
+   check();if(!exactKeys(f,['path','contents'])||typeof f.path!=='string'||!Buffer.isBuffer(f.contents))throw Error('Invalid compiler output');
+   const relative=path.relative(stage,f.path);
+   if(!relative||relative.split(path.sep).includes('..')||path.isAbsolute(relative)||names.has(relative)||names.size>=limits.outputFiles||f.contents.length>limits.outputBytes-bytes)throw Error('Screenpunk package limits exceeded');
+   bytes+=f.contents.length;names.add(relative);await step(()=>fs.mkdir(path.dirname(f.path),{recursive:true}));await step(()=>fs.writeFile(f.path,f.contents,{flag:'wx'}));
+  }
+  if(!names.has('screen.js'))throw Error('Missing compiler output');
+  if(!names.has('screen.css'))await step(()=>fs.writeFile(path.join(stage,'screen.css'),'',{flag:'wx'}));
+  await step(()=>fs.writeFile(path.join(stage,'index.html'),html,{flag:'wx'}));
+  const inputs=[...new Set(Object.values(bundled.result.metafile.outputs).flatMap(o=>Object.entries(o.inputs).filter(([,v])=>v.bytesInOutput>0).map(([f])=>path.resolve(kitRoot,f))))];
+  check();const inventory=readInventory(snapshot.manifest,snapshot.manifestSha256,snapshot.manifestIdentity);check();
+  const notice=capturedNotices(inventory,inputs,check);check();await step(()=>fs.writeFile(path.join(stage,'THIRD-PARTY-NOTICES.txt'),notice,{flag:'wx'}));
+  const files=[];bytes=0;
+  async function walk(dir){for(const item of await step(()=>fs.readdir(dir,{withFileTypes:true}))){const p=path.join(dir,item.name);if(item.isDirectory())await walk(p);else{const s=await step(()=>fs.lstat(p));if(!s.isFile()||s.isSymbolicLink()||files.length>=limits.outputFiles||s.size>limits.outputBytes-bytes)throw Error('Screenpunk package limits exceeded');bytes+=s.size;files.push({path:path.relative(stage,p),bytes:s.size});}}}
+  await walk(stage);
+  // Captured-state teardown is completed and observed before publication.
+  await step(()=>fs.rm(capture,{recursive:true,force:true}));capture=undefined;
+  backup=stage+'.previous';check();
+  try{await fs.rename(output,backup);oldMoved=true;check();}catch(e){if(e.code!=='ENOENT')throw e;check();}
+  await fs.rename(stage,output);stage=undefined;published=true;check();
+  commitMs=performance.now()-started;committed=true;
+  // Commit occurred on time. Cleanup is awaited, but may cross the deadline;
+  // deletion of an old backup is not advertised as a cancellable transaction.
+  if(oldMoved){await fs.rm(backup,{recursive:true,force:true});oldMoved=false;}
+  return {bytes,files,dependencies:inputs.filter(f=>f.includes('/node_modules/')).length};
+ }catch(error){
+  primaryError=error;
+  if(!committed){
+   if(published)try{await fs.rm(output,{recursive:true,force:true});}catch(e){cleanupErrors.push({path:output,error:e});}
+   if(oldMoved)try{await fs.rename(backup,output);oldMoved=false;}catch(e){cleanupErrors.push({path:backup,error:e});}
+  }else{error.message='Output committed; owned cleanup failed: '+error.message;error.committed=true;error.commitMs=commitMs;}
+  throw error;
+ }finally{
+  // No background mutation. Cleanup/restoration is outside the120s commit
+  // bound and requires the separately enforced170s external hard deadline.
+  for(const owned of [stage,capture].filter(Boolean))try{await fs.rm(owned,{recursive:true,force:true});}catch(error){cleanupErrors.push({path:owned,error});}
+  if(cleanupErrors.length){
+   const cause=primaryError??cleanupErrors[0].error;
+   const message=((committed?'Output committed; ':'')+String(cause.message)+'; owned cleanup/restoration failed').slice(0,limits.diagnostics);
+   const error=new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors.map(e=>e.error)],message,{cause});
+   error.cleanupPaths=cleanupErrors.map(e=>e.path);
+   if(committed){error.committed=true;error.commitMs=commitMs;}
+   throw error;
+  }
+ }
 }
-if (process.argv[1] && await fs.realpath(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try { console.log(JSON.stringify(await buildProject(process.argv[2],process.argv[3]))); }
-  catch(error) { console.error(error.message); process.exitCode=1; }
+if(process.argv[1]&&await fs.realpath(process.argv[1])===fileURLToPath(import.meta.url)){
+ try{console.log(JSON.stringify(await buildProject(process.argv[2],process.argv[3])));}catch(error){console.error(String(error.message).slice(0,limits.diagnostics));process.exitCode=1;}
 }

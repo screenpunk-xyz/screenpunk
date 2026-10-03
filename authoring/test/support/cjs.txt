@@ -1,0 +1,1 @@
+const lib = require("lucide-react"); globalThis.SHAPE = { esm: lib.__esModule, defaultType: typeof lib.default, keys: Object.keys(lib).sort(), isFrozen: Object.isFrozen(lib), descriptor: Object.getOwnPropertyDescriptor(lib,"ArrowRight")?.get ? "getter" : "value" };

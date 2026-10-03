@@ -1,0 +1,98 @@
+{
+  "gallery": [
+    {
+      "path": "THIRD-PARTY-NOTICES.txt",
+      "bytes": 103405,
+      "sha256": "dae240bebc7877b1893faf8510a0b916a83320e8df7edb7feb753d9f7a6eb88e",
+      "baselineEqual": true
+    },
+    {
+      "path": "index.html",
+      "bytes": 273,
+      "sha256": "aa03cbfc3821727a029d5d5afe300fb49dd7bf6eb0ee9a9857cc94e1c1bc0b75",
+      "baselineEqual": true
+    },
+    {
+      "path": "screen.css",
+      "bytes": 2736,
+      "sha256": "2d96e38696161f8e2b41fdd2dd0c84c2bd69686363c7fb31071ab8c31806e230",
+      "baselineEqual": true
+    },
+    {
+      "path": "screen.js",
+      "bytes": 883031,
+      "sha256": "ffb8b2ad6a6ce80dc03e6db3450801a684fc8f2076c7568f379b6ded57924f07",
+      "baselineEqual": true
+    }
+  ],
+  "earthquakes": [
+    {
+      "path": "THIRD-PARTY-NOTICES.txt",
+      "bytes": 91881,
+      "sha256": "33e13d61ea6b54dd5797abc9c4f07161a54f2f05c0bf343981fc4a5bd7554092",
+      "baselineEqual": true
+    },
+    {
+      "path": "index.html",
+      "bytes": 273,
+      "sha256": "aa03cbfc3821727a029d5d5afe300fb49dd7bf6eb0ee9a9857cc94e1c1bc0b75",
+      "baselineEqual": true
+    },
+    {
+      "path": "screen.css",
+      "bytes": 2736,
+      "sha256": "2d96e38696161f8e2b41fdd2dd0c84c2bd69686363c7fb31071ab8c31806e230",
+      "baselineEqual": true
+    },
+    {
+      "path": "screen.js",
+      "bytes": 729617,
+      "sha256": "1fe6b28345ed0e00c556d9f63bf85b1f8eb272ecd1f5bc8909cf7bc1125e32d0",
+      "baselineEqual": true
+    }
+  ],
+  "cjs": [
+    {
+      "path": "THIRD-PARTY-NOTICES.txt",
+      "bytes": 5771,
+      "sha256": "a12af22c9e77aa68095d24e8da97551bb00ee0862b90ca53a8de70a0769ed116"
+    },
+    {
+      "path": "index.html",
+      "bytes": 273,
+      "sha256": "aa03cbfc3821727a029d5d5afe300fb49dd7bf6eb0ee9a9857cc94e1c1bc0b75"
+    },
+    {
+      "path": "screen.css",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen.js",
+      "bytes": 745489,
+      "sha256": "ef7f3e74a1cc0b667c2a152385f0505189ccade3c0ead9bdde10550ddf6bd231"
+    }
+  ],
+  "mixed": [
+    {
+      "path": "THIRD-PARTY-NOTICES.txt",
+      "bytes": 5771,
+      "sha256": "a12af22c9e77aa68095d24e8da97551bb00ee0862b90ca53a8de70a0769ed116"
+    },
+    {
+      "path": "index.html",
+      "bytes": 273,
+      "sha256": "aa03cbfc3821727a029d5d5afe300fb49dd7bf6eb0ee9a9857cc94e1c1bc0b75"
+    },
+    {
+      "path": "screen.css",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "screen.js",
+      "bytes": 745925,
+      "sha256": "f812e58185f8b2e0926d96bc13c879555fefa0303601b33ad452b66dfac5edb4"
+    }
+  ]
+}
