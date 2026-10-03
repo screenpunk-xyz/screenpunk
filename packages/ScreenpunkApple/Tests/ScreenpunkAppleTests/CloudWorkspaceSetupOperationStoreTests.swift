@@ -18,6 +18,52 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
         var fired = false
         return try .init(directory: f.1, legacyJournal: f.2, boundary: { if $0 == point && !fired { fired = true; throw Injected.failure } }, testOnlyProcessID: process)
     }
+    private func snapshot(_ root: URL) throws -> [String: Data] {
+        var result: [String: Data] = [:]
+        for name in try FileManager.default.contentsOfDirectory(atPath: root.path) {
+            let path = root.appendingPathComponent(name)
+            result[name] = try Data(contentsOf: path)
+            let inode = try FileManager.default.attributesOfItem(atPath: path.path)[.systemFileNumber] as? NSNumber
+            result[name + "#inode"] = Data((inode?.stringValue ?? "missing").utf8)
+        }
+        return result
+    }
+    func testGuardedRetryRejectsRetainedAndRestartedWrongUserWithoutReplacements() throws {
+        for restarted in [false, true] {
+            let f = try fixture(), target = try pending()
+            let first = try store(f, point: .afterPreparedAttempt, process: restarted ? UUID() : nil)
+            XCTAssertThrowsError(try first.save(target))
+            let retry = try store(f, process: restarted ? UUID() : nil), before = try snapshot(f.1)
+            XCTAssertThrowsError(try retry.retryPendingWrite(expectedUserID: UUID())) {
+                XCTAssertEqual($0 as? CloudWorkspaceSetupOperationStoreError, .differentUser)
+            }
+            XCTAssertEqual(try snapshot(f.1), before)
+            XCTAssertEqual(try retry.retryPendingWrite(expectedUserID: target.userID), target)
+        }
+    }
+    func testPredecessorUserNeverAuthorizesUncertainSuccessor() throws {
+        let f = try fixture(), original = try pending(), normal = try store(f, process: UUID())
+        try normal.save(original); try normal.save(complete(original))
+        let next = try pending(), failing = try store(f, point: .afterAttempt, process: UUID())
+        XCTAssertThrowsError(try failing.beginSuccessor(next))
+        let retry = try store(f, process: UUID()), before = try snapshot(f.1)
+        XCTAssertEqual(try retry.diagnosticReadback()?.userID, original.userID)
+        XCTAssertThrowsError(try retry.retryPendingWrite(expectedUserID: original.userID)) {
+            XCTAssertEqual($0 as? CloudWorkspaceSetupOperationStoreError, .differentUser)
+        }
+        XCTAssertEqual(try snapshot(f.1), before)
+        XCTAssertEqual(try retry.retryPendingWrite(expectedUserID: next.userID), next)
+    }
+    func testRestartRootOnlyCannotGuessTargetOrCreateEmptyAck() throws {
+        let f = try fixture(), target = try pending()
+        XCTAssertThrowsError(try store(f, point: .afterRootBinding, process: UUID()).save(target))
+        let retry = try store(f, process: UUID()), before = try snapshot(f.1)
+        XCTAssertThrowsError(try retry.retryPendingWrite(expectedUserID: target.userID)) {
+            XCTAssertEqual($0 as? CloudWorkspaceSetupOperationStoreError, .noRecoverableTarget)
+        }
+        XCTAssertEqual(try snapshot(f.1), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.1.appendingPathComponent("workspace-ack.json").path))
+    }
     func testLegacyReadOnlyLookupAcceptsOrdinary0755Directory() throws {
         let f = try fixture()
         try FileManager.default.createDirectory(at: f.2.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
@@ -31,13 +77,13 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
         XCTAssertThrowsError(try failing.save(value))
         var targets: [String] = []
         let retry = try CloudWorkspaceSetupOperationStore(directory: f.1, legacyJournal: f.2, boundary: { _ in }, directorySyncObserved: { targets.append($0) })
-        XCTAssertEqual(try retry.retryPendingWrite(), value)
+        XCTAssertEqual(try retry.retryPendingWrite(expectedUserID: value.userID), value)
         XCTAssertEqual(targets, [ScreenPreferenceAtomicWriter.canonicalRoot(f.1).path, ScreenPreferenceAtomicWriter.canonicalRoot(f.0).path])
         targets = []; XCTAssertEqual(try retry.load(), value); XCTAssertTrue(targets.isEmpty)
         let other = try fixture(); XCTAssertThrowsError(try store(other, point: .afterDirectoryCreation).save(pending()))
         try FileManager.default.removeItem(at: other.1)
         try FileManager.default.createDirectory(at: other.1, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        XCTAssertThrowsError(try store(other).retryPendingWrite())
+        XCTAssertThrowsError(try store(other).retryPendingWrite(expectedUserID: value.userID))
     }
     func testMetadataRootAttemptAckFaultMatrixAndRestartOrphans() throws {
         let points: [CloudWorkspaceSetupOperationStore.Boundary] = [.afterMetadataWrite, .beforeMetadataSync, .afterMetadataSync, .beforeMetadataRename, .afterMetadataRename, .beforeMetadataDirectorySync, .afterMetadataDirectorySync]
@@ -49,16 +95,16 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
                 })
                 XCTAssertThrowsError(try failing.save(value), "\(name) \(point)")
                 XCTAssertTrue(fired); XCTAssertThrowsError(try failing.load())
-                XCTAssertEqual(try store(f).retryPendingWrite(), value, "\(name) \(point)")
+                XCTAssertEqual(try store(f).retryPendingWrite(expectedUserID: value.userID), value, "\(name) \(point)")
             }
         }
         for name in ["workspace-root.json", "workspace-attempt.json", "workspace-ack.json"] {
-            let f = try fixture(); var fired = false
+            let f = try fixture(), value = try pending(); var fired = false
             let failing = try CloudWorkspaceSetupOperationStore(directory: f.1, legacyJournal: f.2, boundary: { _ in }, testOnlyProcessID: UUID(), metadataBoundary: {
                 if $0 == name && $1 == .beforeMetadataRename && !fired { fired = true; throw Injected.failure }
             })
-            XCTAssertThrowsError(try failing.save(pending()))
-            let restarted = try store(f, process: UUID()); XCTAssertThrowsError(try restarted.load()); XCTAssertThrowsError(try restarted.retryPendingWrite())
+            XCTAssertThrowsError(try failing.save(value))
+            let restarted = try store(f, process: UUID()); XCTAssertThrowsError(try restarted.load()); XCTAssertThrowsError(try restarted.retryPendingWrite(expectedUserID: value.userID))
         }
     }
     func testConcurrentInstancesSerializeAndRetainUncertainAttempt() throws {
@@ -72,7 +118,7 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
         XCTAssertEqual(entered.wait(timeout: .now() + 5), .success)
         DispatchQueue.global().async { do { _ = try second.load(); XCTFail("Uncertain writer must block reader") } catch {} ; secondDone.fulfill() }
         release.signal(); wait(for: [firstDone, secondDone], timeout: 5)
-        XCTAssertEqual(try second.retryPendingWrite(), value)
+        XCTAssertEqual(try second.retryPendingWrite(expectedUserID: value.userID), value)
     }
     func testMetadataSameBytesScratchReplacementIsRejected() throws {
         let f = try fixture(), value = try pending(); var replaced = false
@@ -85,7 +131,7 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
             }
         })
         XCTAssertThrowsError(try store.save(value)); XCTAssertTrue(replaced)
-        XCTAssertThrowsError(try store.retryPendingWrite())
+        XCTAssertThrowsError(try store.retryPendingWrite(expectedUserID: value.userID))
         XCTAssertNil(try store.diagnosticReadback())
     }
     func testSuccessorBeforeIntentReplacementPreservesOriginalContext() throws {
@@ -96,7 +142,7 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
             XCTAssertThrowsError(try failing.beginSuccessor(successor))
             XCTAssertEqual(try failing.diagnosticReadback(), completed)
             XCTAssertThrowsError(try normal.save(successor))
-            XCTAssertEqual(try normal.retryPendingWrite(), successor)
+            XCTAssertEqual(try normal.retryPendingWrite(expectedUserID: successor.userID), successor)
         }
     }
     func testCorruptPredecessorOrAckCannotBeOverwrittenByRetainedSuccessor() throws {
@@ -115,7 +161,7 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
             } else { object["attemptDigest"] = String(repeating: "0", count: 64) }
             let corrupt = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
             try corrupt.write(to: path)
-            XCTAssertThrowsError(try normal.retryPendingWrite())
+            XCTAssertThrowsError(try normal.retryPendingWrite(expectedUserID: next.userID))
             XCTAssertEqual(try Data(contentsOf: path), corrupt)
             XCTAssertEqual(try normal.diagnosticReadback(), completed)
         }
@@ -131,10 +177,10 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
             else if mutation == "corrupt" { try Data("{}".utf8).write(to: path) }
             else { try FileManager.default.removeItem(at: path); try original.write(to: path); try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path) }
             let evidence = try? Data(contentsOf: path)
-            XCTAssertThrowsError(try normal.retryPendingWrite(), mutation)
+            XCTAssertThrowsError(try normal.retryPendingWrite(expectedUserID: next.userID), mutation)
             XCTAssertEqual(try? Data(contentsOf: path), evidence)
             XCTAssertEqual(try normal.diagnosticReadback(), completed)
-            XCTAssertThrowsError(try store(f, process: UUID()).retryPendingWrite(), mutation)
+            XCTAssertThrowsError(try store(f, process: UUID()).retryPendingWrite(expectedUserID: next.userID), mutation)
         }
     }
     func testPendingCompletionAndExplicitSuccessor() throws {
@@ -152,7 +198,7 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
             XCTAssertThrowsError(try failing.save(value), "\(point)")
             let recreated = try store(f)
             XCTAssertThrowsError(try recreated.load()); XCTAssertThrowsError(try recreated.beginSuccessor(value))
-            XCTAssertEqual(try recreated.retryPendingWrite(), value, "\(point)")
+            XCTAssertEqual(try recreated.retryPendingWrite(expectedUserID: value.userID), value, "\(point)")
             XCTAssertEqual(try recreated.load(), value)
         }
     }
@@ -162,20 +208,20 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
             XCTAssertThrowsError(try failing.save(value))
             let restarted = try store(f, process: UUID())
             if point == .afterAck || point == .afterFinalSync { XCTAssertEqual(try restarted.load(), value) }
-            else { XCTAssertThrowsError(try restarted.load()); XCTAssertEqual(try restarted.retryPendingWrite(), value) }
+            else { XCTAssertThrowsError(try restarted.load()); XCTAssertEqual(try restarted.retryPendingWrite(expectedUserID: value.userID), value) }
         }
     }
     func testRestartUnrecordedScratchAndMalformedEvidenceBlock() throws {
         let f = try fixture(), value = try pending(); XCTAssertThrowsError(try store(f, point: .afterCandidateCreation, process: UUID()).save(value))
-        let restarted = try store(f, process: UUID()); XCTAssertThrowsError(try restarted.load()); XCTAssertThrowsError(try restarted.retryPendingWrite())
-        try Data("{}".utf8).write(to: f.1.appendingPathComponent("workspace-attempt.json")); XCTAssertThrowsError(try restarted.retryPendingWrite())
+        let restarted = try store(f, process: UUID()); XCTAssertThrowsError(try restarted.load()); XCTAssertThrowsError(try restarted.retryPendingWrite(expectedUserID: value.userID))
+        try Data("{}".utf8).write(to: f.1.appendingPathComponent("workspace-attempt.json")); XCTAssertThrowsError(try restarted.retryPendingWrite(expectedUserID: value.userID))
     }
     func testSuccessorIntentFailureRetainsExactMethodAndPredecessor() throws {
         let f = try fixture(), original = try pending(), normal = try store(f), completed = try complete(original); try normal.save(original); try normal.save(completed)
         let next = try pending(), failing = try store(f, point: .afterAttempt)
         XCTAssertThrowsError(try failing.beginSuccessor(next)); XCTAssertThrowsError(try normal.save(next))
         XCTAssertEqual(try normal.diagnosticReadback(), completed)
-        XCTAssertEqual(try normal.retryPendingWrite(), next)
+        XCTAssertEqual(try normal.retryPendingWrite(expectedUserID: next.userID), next)
     }
     func testLegacyPresenceIncludingSymlinkBlocksWithoutWrites() throws {
         let f = try fixture(); try FileManager.default.createDirectory(at: f.2.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -188,7 +234,7 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
         XCTAssertThrowsError(try failing.save(value))
         let file = f.1.appendingPathComponent("workspace-operation.json"), bytes = try Data(contentsOf: file)
         try FileManager.default.removeItem(at: file); try bytes.write(to: file); try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        XCTAssertThrowsError(try failing.retryPendingWrite()); XCTAssertThrowsError(try store(f, process: UUID()).load())
+        XCTAssertThrowsError(try failing.retryPendingWrite(expectedUserID: value.userID)); XCTAssertThrowsError(try store(f, process: UUID()).load())
         try FileManager.default.removeItem(at: f.1); XCTAssertThrowsError(try failing.load())
     }
     func testIncorrectRootAndSymlinkRejected() throws {

@@ -4,7 +4,7 @@ import CryptoKit
 import ScreenpunkCore
 
 public enum CloudWorkspaceSetupOperationStoreError: Error, Equatable, Sendable {
-    case invalidConfiguration, unsafeBinding, legacyEvidence, corrupt, conflict, outcomeUncertain
+    case invalidConfiguration, unsafeBinding, legacyEvidence, corrupt, conflict, outcomeUncertain, differentUser, noRecoverableTarget
     case io(operation: String, code: Int32)
 }
 
@@ -89,22 +89,22 @@ public final class CloudWorkspaceSetupOperationStore: @unchecked Sendable {
     public func save(_ record: CloudWorkspaceSetupOperationRecord) throws { try persist(record, method: .save) }
     public func beginSuccessor(_ record: CloudWorkspaceSetupOperationRecord) throws { try persist(record, method: .beginSuccessor) }
     /// Recommits only the exact retained/persisted method and target. Never chooses an operation UUID.
-    @discardableResult public func retryPendingWrite() throws -> CloudWorkspaceSetupOperationRecord? {
+    @discardableResult public func retryPendingWrite(expectedUserID: UUID) throws -> CloudWorkspaceSetupOperationRecord {
         try exclusive {
-            if let bytes = state.bytes, let method = state.method { return try perform(Self.record(bytes), method: method) }
+            if let bytes = state.bytes, let method = state.method {
+                let target = try Self.record(bytes)
+                guard target.userID == expectedUserID else { throw CloudWorkspaceSetupOperationStoreError.differentUser }
+                return try perform(target, method: method)
+            }
             return try withDisk(create: false) { disk in
                 guard let disk else { throw CloudWorkspaceSetupOperationStoreError.conflict }
                 let root = try binding(disk)
                 guard let raw = try disk.read(Self.attemptName, limit: 64 * 1024) else {
-                    // Only incomplete first-root initialization has no operation attempt.
-                    try disk.rejectScratch()
-                    guard try disk.read(Self.candidateName, limit: 16 * 1024) == nil,
-                          try disk.read(Self.ackName, limit: 64 * 1024) == nil else { throw CloudWorkspaceSetupOperationStoreError.corrupt }
-                    try disk.syncFile(Self.rootName); try disk.sync()
-                    try disk.replace(Self.ackName, bytes: Self.encode(Ack(version: 1, root: root, attemptDigest: nil, candidate: nil)))
-                    try disk.syncFile(Self.ackName); try disk.sync(); return nil
+                    // No target identity exists. Never infer one from a predecessor or initialize an ack here.
+                    throw CloudWorkspaceSetupOperationStoreError.noRecoverableTarget
                 }
                 let attempt = try Self.attempt(raw.bytes)
+                guard try Self.record(attempt.target).userID == expectedUserID else { throw CloudWorkspaceSetupOperationStoreError.differentUser }
                 guard attempt.root == root else { throw CloudWorkspaceSetupOperationStoreError.unsafeBinding }
                 try disk.rejectScratch(allowCandidate: attempt.prepared)
                 state.method = attempt.method; state.bytes = attempt.target; state.attempt = attempt; state.root = root
