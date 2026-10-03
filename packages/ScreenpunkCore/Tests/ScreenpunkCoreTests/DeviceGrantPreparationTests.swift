@@ -1,4 +1,9 @@
 import XCTest
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 @testable import ScreenpunkCore
 #if canImport(CryptoKit)
 import CryptoKit
@@ -23,7 +28,10 @@ final class DeviceGrantPreparationTests: XCTestCase {
     }
     private func id(_ n: Int) -> UUID { UUID(uuidString:String(format:"00000000-0000-4000-8000-%012d",n))! }
     private func root() throws -> URL {
-        let root = URL(fileURLWithPath:"/private/tmp/grant-preparation-tests-"+UUID().uuidString)
+        let physical = try XCTUnwrap(realpath(FileManager.default.temporaryDirectory.path,nil))
+        defer { free(physical) }
+        let root = URL(fileURLWithPath:String(cString:physical),isDirectory:true)
+            .appendingPathComponent("grant-preparation-tests-"+UUID().uuidString,isDirectory:true)
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:false)
         addTeardownBlock { try? FileManager.default.removeItem(at:root) }; return root
     }
