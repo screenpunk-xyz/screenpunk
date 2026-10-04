@@ -351,11 +351,11 @@ final class WorkbenchDeploymentDomain {
     }
 
     func status(_ operationId: String) throws -> WorkbenchDeploymentOperationRecord { try ledger.status(operationId) }
-    func lookup(planId: String, workspaceId: String) throws -> WorkbenchDeploymentOperationRecord {
+    func lookup(planId: String, workspaceId: String) throws -> WorkbenchDeploymentOperationRecord? {
         guard try ledger.plan(planId).workspaceId == workspaceId else {
             throw WorkbenchDeploymentError.conflict
         }
-        return try ledger.operationForPlan(planId)
+        return try ledger.lookupOperationForPlan(planId)
     }
     func review(planId: String) throws -> WorkbenchDeploymentReview {
         let plan = try ledger.plan(planId)
