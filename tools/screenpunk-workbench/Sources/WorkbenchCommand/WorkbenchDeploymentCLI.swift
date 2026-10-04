@@ -104,6 +104,10 @@ enum WorkbenchDeploymentCLI {
                 (verb == "lookup" ? .lookup : .reconcile)
             let value = try client.performDeployment(method: method,
                 params: params([verb == "lookup" ? "planId" : "operationId": words[2]]))
+            if verb == "lookup", let absence = value.absence {
+                try present(value, human: "No deployment operation has been admitted for plan \(absence.planId).")
+                return
+            }
             guard let operation = value.operation else { throw WorkbenchIPCError(.invalidRequest) }
             try present(value, human: "Operation \(operation.operationId): \(operation.state.rawValue). Send attempted: \(operation.sendAttempted).")
         case "cancel":
