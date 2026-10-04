@@ -372,6 +372,18 @@ final class DeviceBoundPackageCommandPermit {
     func begin(_ instance:ObjectIdentifier)throws{try permit.beginRead(instance)}
     func end(){permit.endRead()}
 }
+/// Only the fixed credential command can construct this dispatch permit.
+final class DeviceBoundCredentialCommandPermit {
+    private let permit:DeviceLocalResourcePermit
+    fileprivate init(_ permit:DeviceLocalResourcePermit){self.permit=permit}
+    func begin(_ instance:ObjectIdentifier)throws{try permit.beginRead(instance)}
+    func end(){permit.endRead()}
+}
+/// Credential additions and recorded references only, never a terminal grant/runtime receipt.
+final class DeviceBoundCompletedCredentials:GrantSecretRedacted {
+    fileprivate let batch:DeviceBoundPreparedPackageSet,transition:DeviceBoundGrantCredentialTransition
+    fileprivate init(batch:DeviceBoundPreparedPackageSet,transition:DeviceBoundGrantCredentialTransition){self.batch=batch;self.transition=transition}
+}
 /// One complete package batch's ORIGINAL final checkpoint. Not structural/grant completion,
 /// membership, activation or admission authority. No payload/secret getter or serialization.
 final class DeviceBoundPreparedPackageSet {
@@ -436,6 +448,41 @@ final class DeviceBoundPackagePreparationCoordinator {
         try packages.verifyResolutionCheckpoint(prepared.checkpoint,resourcePermit:permit)
         try journal.verifyExact(prepared.journalReceipt,plan:prepared.plan,resourcePermit:permit)
         try grants.verifyBoundPrivateAttempt(prepared.privateAnchor,resourcePermit:permit)
+    }
+    func completeCredentialsExact(_ batch:DeviceBoundPreparedPackageSet)throws->DeviceBoundCompletedCredentials {
+        var result:DeviceBoundCompletedCredentials?
+        try scope{permit in
+            try verifyPreparedSet(batch,permit:permit)
+            let fresh=try credentialPackages(batch,permit:permit)
+            let transition=try grants.performBoundCredentialCompletion(batch.privateAnchor,plan:batch.plan,packages:fresh,commandPermit:.init(permit))
+            let receipt=DeviceBoundCompletedCredentials(batch:batch,transition:transition)
+            try verifyCompletedCredentials(receipt,permit:permit);result=receipt
+        }
+        guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
+    }
+    func verifyCompletedCredentials(_ receipt:DeviceBoundCompletedCredentials)throws {
+        try scope{permit in try verifyCompletedCredentials(receipt,permit:permit)}
+    }
+    private func credentialPackages(_ batch:DeviceBoundPreparedPackageSet,permit:DeviceLocalResourcePermit)throws->[DeviceProvisioningPackageInput] {
+        guard batch.packages.count <= 12,batch.journalIssuer == ObjectIdentifier(journal),batch.grantIssuer == ObjectIdentifier(grants),batch.packageIssuer == ObjectIdentifier(packages) else{throw DeviceLocalResourceGateFailure.invalidScope}
+        try journal.verifyExact(batch.journalReceipt,plan:batch.plan,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(batch.checkpoint,resourcePermit:permit)
+        var fresh:[DeviceProvisioningPackageInput]=[]
+        for binding in batch.packages {
+            let value=try packages.verify(binding.receipt,resourcePermit:permit)
+            fresh.append(.retained(entryID:binding.entryID,reference:value.reference,verified:value))
+        }
+        try packages.verifyResolutionCheckpoint(batch.checkpoint,resourcePermit:permit)
+        try journal.verifyExact(batch.journalReceipt,plan:batch.plan,resourcePermit:permit)
+        return fresh
+    }
+    private func verifyCompletedCredentials(_ receipt:DeviceBoundCompletedCredentials,permit:DeviceLocalResourcePermit)throws {
+        // The old anchor's epoch/record intentionally cannot be revalidated after progress. Check the
+        // privately bound transition instead, retaining ORIGINAL package/journal evidence throughout.
+        let fresh=try credentialPackages(receipt.batch,permit:permit)
+        try grants.verifyBoundCredentialTransition(receipt.transition,plan:receipt.batch.plan,packages:fresh,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(receipt.batch.checkpoint,resourcePermit:permit)
+        try journal.verifyExact(receipt.batch.journalReceipt,plan:receipt.batch.plan,resourcePermit:permit)
     }
     private func scope(_ body:(DeviceLocalResourcePermit)throws->Void)throws {
         try DeviceLocalResourceRegistry.requireIdle()
