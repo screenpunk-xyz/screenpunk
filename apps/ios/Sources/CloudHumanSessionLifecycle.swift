@@ -66,6 +66,13 @@ final class CloudHumanSession {
 @MainActor
 final class CloudHumanSessionLifecycle: ObservableObject {
     enum Failure: Error { case alreadyInstalled, retired }
+    enum AccountEntryState: Equatable { case available, ownedHere, occupiedElsewhere, retired }
+    /// Presentation only. The broker still authorizes every acquisition and action.
+    var accountEntryState: AccountEntryState {
+        if retired { return .retired }
+        if lease?.isCurrent == true { return .ownedHere }
+        return broker.state == .vacant ? .available : .occupiedElsewhere
+    }
     private let broker: CloudHumanSessionBroker
     private let owner = UUID()
     @Published private var lease: CloudHumanSessionBroker.Lease?

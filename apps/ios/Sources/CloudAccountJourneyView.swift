@@ -21,6 +21,11 @@ struct CloudAccountJourneyActions {
     }
     @discardableResult func signIn(_ provider: CloudNativeSignInProvider) throws -> Task<Void, Never>? {
         guard enabled else { throw CloudNativeIdentityError.notConfigured }
+        switch lifecycle.accountEntryState {
+        case .occupiedElsewhere: throw CloudHumanSessionBroker.Failure.occupied
+        case .retired: throw CloudHumanSessionLifecycle.Failure.retired
+        case .available, .ownedHere: break
+        }
         if lifecycle.coordinator == nil { try lifecycle.installExplicit(presentation: presentation, testFactory: makeSession) }
         guard let coordinator = lifecycle.coordinator else { throw CloudNativeIdentityError.providerFailed }
         return coordinator.signIn(provider: provider)
@@ -71,9 +76,19 @@ struct CloudAccountJourneyView: View {
                                 .buttonStyle(.borderedProminent).accessibilityIdentifier("cloud.retryRetiredCleanup")
                         }
                     case .none:
-                        if let coordinator = lifecycle.coordinator {
-                            CloudAccountJourneyContent(coordinator: coordinator, actions: actions, signIn: signIn)
-                        } else { providerEntry }
+                        switch lifecycle.accountEntryState {
+                        case .available: providerEntry
+                        case .ownedHere:
+                            if let coordinator = lifecycle.coordinator {
+                                CloudAccountJourneyContent(coordinator: coordinator, actions: actions, signIn: signIn)
+                            } else {
+                                Text("Cloud account access is already active in this window.").foregroundStyle(.secondary)
+                            }
+                        case .occupiedElsewhere:
+                            Text(CloudJourneyCopy.occupiedWindow).foregroundStyle(.secondary).accessibilityIdentifier("cloud.occupiedWindow")
+                        case .retired:
+                            Text(CloudJourneyCopy.retiredWindow).foregroundStyle(.secondary).accessibilityIdentifier("cloud.retiredWindow")
+                        }
                     }
                     if let actionMessage { Text(actionMessage).foregroundStyle(.secondary).accessibilityIdentifier("cloud.actionError") }
                     Text("Cloud device connection is unavailable in this version.").font(.callout).foregroundStyle(.secondary)
@@ -85,6 +100,7 @@ struct CloudAccountJourneyView: View {
             .background(CloudJourneyDismissalObserver(cancel: { dismissalCancellation.cancel(actions.cancel) }).frame(width: 0, height: 0).accessibilityHidden(true))
         }
         .onAppear { dismissalCancellation.reset() }
+        .onChange(of: lifecycle.accountEntryState) { _ in actionMessage = nil }
     }
     private var providerEntry: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -96,8 +112,7 @@ struct CloudAccountJourneyView: View {
         actionMessage = nil
         do { try actions.signIn(provider) }
         catch {
-            actionMessage = (error as? CloudNativeIdentityError) == .notConfigured
-                ? "Cloud sign-in is not configured on this device." : "Sign-in could not start. Please try again."
+            actionMessage = CloudJourneyCopy.signInFailure(error)
         }
     }
 }
@@ -194,6 +209,15 @@ private struct CloudWorkspaceJourney: View {
 }
 
 enum CloudJourneyCopy {
+    static let occupiedWindow = "Cloud account access is in use in another window."
+    static let retiredWindow = "Cloud account access has ended in this window. Close this account view."
+    static func signInFailure(_ error: Error) -> String {
+        if case .occupied? = error as? CloudHumanSessionBroker.Failure { return occupiedWindow }
+        if case .retired? = error as? CloudHumanSessionLifecycle.Failure { return retiredWindow }
+        return (error as? CloudNativeIdentityError) == .notConfigured
+            ? "Cloud sign-in is not configured on this device." : "Sign-in could not start. Please try again."
+    }
+
     static func failure(_ failure: CloudConnectionCoordinator.Failure?, setup: CloudNativeFailure?) -> String? {
         if case .api(let status, _)? = setup {
             switch status {
