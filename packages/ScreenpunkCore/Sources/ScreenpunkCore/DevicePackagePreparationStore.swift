@@ -134,7 +134,13 @@ final class DevicePackagePreparationStore {
     }
     /// Never synchronizes/acknowledges a visible terminal. Requires private issued proof and current gate.
     func verify(_ receipt: DevicePreparedPackageReceipt) throws -> DeviceVerifiedPreparedPackage {
-        try disk { context in
+        try verifyRead(receipt,resourcePermit:nil)
+    }
+    func verify(_ receipt: DevicePreparedPackageReceipt, resourcePermit: DeviceLocalResourcePermit) throws -> DeviceVerifiedPreparedPackage {
+        try verifyRead(receipt,resourcePermit:resourcePermit)
+    }
+    private func verifyRead(_ receipt: DevicePreparedPackageReceipt, resourcePermit: DeviceLocalResourcePermit?) throws -> DeviceVerifiedPreparedPackage {
+        try disk(resourcePermit:resourcePermit) { context in
             let state = try inventory(context)
             guard receipt.issuer == ObjectIdentifier(self), !state.hasStages,
                   state.entries.allSatisfy({ $0.record.phase == .terminal }), let tip = state.tip?.final else { throw DevicePackagePreparationError.repairRequired }
@@ -376,8 +382,33 @@ final class DevicePackagePreparationStore {
         }
         return result
     }
-    private func disk<T>(create: Bool = false, _ operation: (Context) throws -> T) throws -> T {
+    private var borrowedResourceContext: Context?
+    var resourceGateDescriptor: DeviceLocalResourceDescriptor { get throws { try .existing(instance:ObjectIdentifier(self),path:root.path,rootID:rootID) } }
+    func withResourceGateScope(_ permit: DeviceLocalResourcePermit, _ body: () throws -> Void) throws {
+        try permit.beginAcquisition(resourceGateDescriptor)
+        mutex.lock(); defer { permit.invalidate(); mutex.unlock() }
+        try diskContext(create:false,releasePermit:permit) { context in
+            borrowedResourceContext = context
+            defer { borrowedResourceContext = nil; permit.invalidate() }
+            try body()
+            try check(context)
+        }
+    }
+    private func disk<T>(create: Bool = false, resourcePermit: DeviceLocalResourcePermit? = nil,
+                         _ operation: (Context) throws -> T) throws -> T {
+        if let permit = resourcePermit {
+            guard !create else { throw DeviceLocalResourceGateFailure.invalidScope }
+            try permit.beginRead(ObjectIdentifier(self)); defer { permit.endRead() }
+            guard let context = borrowedResourceContext else { throw DeviceLocalResourceGateFailure.invalidScope }
+            try check(context)
+            do { let result = try operation(context); try check(context); return result }
+            catch { try check(context); throw error }
+        }
+        try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
         mutex.lock(); defer { mutex.unlock() }
+        return try diskContext(create:create,operation)
+    }
+    private func diskContext<T>(create: Bool, releasePermit: DeviceLocalResourcePermit? = nil, _ operation: (Context) throws -> T) throws -> T {
         let paths = try protectedPaths()
         let rootFD = try absoluteDirectory(root.path); defer { close(rootFD) }
         let rootIdentity = try identity(rootFD, directory: true)
@@ -400,7 +431,7 @@ final class DevicePackagePreparationStore {
             if let expected = setupLock { guard expected == lockIdentity else { throw DevicePackagePreparationError.conflict } }
             setupLock = lockIdentity
         }
-        guard flock(lock, LOCK_EX) == 0 else { throw failure() }; defer { flock(lock, LOCK_UN) }
+        guard flock(lock, LOCK_EX) == 0 else { throw failure() }; defer { releasePermit?.invalidate(); flock(lock, LOCK_UN) }
         if create && !bindingExists {
             if mkdirat(rootFD, "operations", 0o700) != 0 { guard errno == EEXIST && setupOperations != nil else { throw failure() } }
         }

@@ -99,8 +99,12 @@ final class DeviceStructuralStore {
         }
     }
     /// Diagnostic only. Even exact terminal bytes need synchronization before a receipt is returned.
-    func recover(operationID: UUID) throws -> Recovery {
-        try disk { context in
+    func recover(operationID: UUID) throws -> Recovery { try recoverRead(operationID:operationID,resourcePermit:nil) }
+    func recover(operationID: UUID, resourcePermit: DeviceLocalResourcePermit) throws -> Recovery {
+        try recoverRead(operationID:operationID,resourcePermit:resourcePermit)
+    }
+    private func recoverRead(operationID: UUID, resourcePermit: DeviceLocalResourcePermit?) throws -> Recovery {
+        try disk(resourcePermit:resourcePermit) { context in
             let state = try inventory(context)
             guard let record = state.records.first(where: { $0.operationID == operationID }) else { throw DeviceStructuralStoreError.conflict }
             if record.phase == .terminal { return .terminalNeedsDurability(record) }
@@ -261,8 +265,33 @@ final class DeviceStructuralStore {
         return (records, current)
     }
 
-    private func disk<T>(create: Bool = false, _ operation: (Context) throws -> T) throws -> T {
+    private var borrowedResourceContext: Context?
+    var resourceGateDescriptor: DeviceLocalResourceDescriptor { get throws { try .existing(instance:ObjectIdentifier(self),path:root.path,rootID:rootID) } }
+    func withResourceGateScope(_ permit: DeviceLocalResourcePermit, _ body: () throws -> Void) throws {
+        try permit.beginAcquisition(resourceGateDescriptor)
+        mutex.lock(); defer { permit.invalidate(); mutex.unlock() }
+        try diskContext(create:false,releasePermit:permit) { context in
+            borrowedResourceContext = context
+            defer { borrowedResourceContext = nil; permit.invalidate() }
+            try body()
+            try check(context)
+        }
+    }
+    private func disk<T>(create: Bool = false, resourcePermit: DeviceLocalResourcePermit? = nil,
+                         _ operation: (Context) throws -> T) throws -> T {
+        if let permit = resourcePermit {
+            guard !create else { throw DeviceLocalResourceGateFailure.invalidScope }
+            try permit.beginRead(ObjectIdentifier(self)); defer { permit.endRead() }
+            guard let context = borrowedResourceContext else { throw DeviceLocalResourceGateFailure.invalidScope }
+            try check(context)
+            do { let result = try operation(context); try check(context); return result }
+            catch { try check(context); throw error }
+        }
+        try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
         mutex.lock(); defer { mutex.unlock() }
+        return try diskContext(create:create,operation)
+    }
+    private func diskContext<T>(create: Bool, releasePermit: DeviceLocalResourcePermit? = nil, _ operation: (Context) throws -> T) throws -> T {
         guard root.path.utf8.count <= 4096, root.resolvingSymlinksInPath().path == root.path else { throw DeviceStructuralStoreError.unsafeBinding }
         let rootFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
         guard rootFD >= 0 else { throw failure() }; defer { close(rootFD) }
@@ -270,7 +299,7 @@ final class DeviceStructuralStore {
         let lockFD = openat(rootFD, "structural.lock", O_RDWR | O_NOFOLLOW | O_NONBLOCK | (create ? O_CREAT : 0), 0o600)
         guard lockFD >= 0 else { throw failure() }; defer { close(lockFD) }
         let lockIdentity = try identity(lockFD, directory: false)
-        guard flock(lockFD, LOCK_EX) == 0 else { throw failure() }; defer { flock(lockFD, LOCK_UN) }
+        guard flock(lockFD, LOCK_EX) == 0 else { throw failure() }; defer { releasePermit?.invalidate(); flock(lockFD, LOCK_UN) }
         if create {
             if mkdirat(rootFD, "operations", 0o700) != 0 && errno != EEXIST { throw failure() }
             try sync(lockFD); try sync(rootFD)
