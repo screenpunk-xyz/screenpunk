@@ -5,6 +5,7 @@ public enum WorkbenchIPCErrorCode: String, Codable, Sendable {
     case authenticationFailed, instanceMismatch, unsupportedVersion, invalidRequest, methodNotFound
     case frameTooLarge, resourceLimit, timedOut, disconnected
     case workspaceExists, workspaceConflict, workspaceIncomplete, invalidWorkspacePath
+    case buildSourceConflict, buildHeadConflict
     case migrationRequired
     case incompatibleOwner
     case confirmationRequired
@@ -36,6 +37,8 @@ public struct WorkbenchIPCError: Error, LocalizedError, Codable, Sendable, Equat
         case .disconnected: return "Broker connection closed."
         case .workspaceExists: return "Workspace destination already exists."
         case .workspaceConflict: return "Workspace identity or generation changed."
+        case .buildSourceConflict: return "Project source version changed; inspect the current project before building."
+        case .buildHeadConflict: return "Build base revision does not match the current build head; inspect build head before building."
         case .workspaceIncomplete: return "Workspace recovery material or required content needs review."
         case .invalidWorkspacePath: return "Workspace path is invalid or unsafe."
         case .migrationRequired: return "Legacy source or package data requires an explicit migration plan before a new workspace is selected."
@@ -92,6 +95,9 @@ public enum WorkbenchMethodRegistry {
 }
 
 enum WorkbenchRPCResult: Codable {
+    // Several result families share the same wire shape (notably kind=device).
+    // The authenticated request method, rather than decode order, identifies it.
+    static let responseMethodKey = CodingUserInfoKey(rawValue: "screenpunk.responseMethod")!
     case snapshot(WorkbenchBrokerSnapshot)
     case read(WorkbenchReadResult)
     case deviceAction(WorkbenchDeviceActionResult)
@@ -119,6 +125,11 @@ enum WorkbenchRPCResult: Codable {
     case guiConsumer(WorkbenchGUIConsumerResult)
     init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer()
+        if let method = decoder.userInfo[Self.responseMethodKey] as? String,
+           WorkbenchDeviceControlMethod(rawValue: method) != nil {
+            self = .deviceAction(try value.decode(WorkbenchDeviceActionResult.self))
+            return
+        }
         if let snapshot = try? value.decode(WorkbenchBrokerSnapshot.self) { self = .snapshot(snapshot) }
         else if let read = try? value.decode(WorkbenchReadResult.self) { self = .read(read) }
         else if let authoring = try? value.decode(WorkbenchAuthoringRecoveryResult.self) {

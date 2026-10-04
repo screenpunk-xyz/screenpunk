@@ -311,6 +311,12 @@ public final class WorkbenchAuthoringRecoveryDomain {
             }
             return result
         } catch let error as WorkbenchIPCError { throw error }
+        catch let error as WorkbenchBuildConflict {
+            switch error {
+            case .sourceVersion: throw WorkbenchIPCError(.buildSourceConflict)
+            case .baseRevision: throw WorkbenchIPCError(.buildHeadConflict)
+            }
+        }
         catch is ToolchainTrustError { throw WorkbenchIPCError(.toolchainTrustUnavailable) }
         catch is WorkspaceAppliedMutationReadUnavailable {
             throw WorkbenchIPCError(.publicationOutcomeUnknown)

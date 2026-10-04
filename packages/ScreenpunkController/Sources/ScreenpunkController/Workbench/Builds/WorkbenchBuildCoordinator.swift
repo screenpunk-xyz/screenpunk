@@ -20,6 +20,10 @@ struct WorkbenchBuildResult {
 /// Builds a frozen included-source snapshot, validates every package byte, publishes the
 /// immutable package through the contained transaction engine, then CASes the visible head
 /// against both live source and the previous head under the workspace lock.
+enum WorkbenchBuildConflict: Error {
+    case sourceVersion, baseRevision
+}
+
 final class WorkbenchBuildCoordinator {
     typealias ReactCompiler = (_ projectID: String, _ sourceVersion: String,
                                _ requirement: WorkspaceToolchainRequirements.Requirement,
@@ -47,7 +51,7 @@ final class WorkbenchBuildCoordinator {
             throw WorkspaceError.invalidSchema
         }
         let snapshot = try capture(projectID: projectID, cancelled: cancelled)
-        guard snapshot.version == expectedSourceVersion else { throw WorkspaceError.conflict }
+        guard snapshot.version == expectedSourceVersion else { throw WorkbenchBuildConflict.sourceVersion }
         let work = URL(fileURLWithPath: "/private/tmp/screenpunk-workbench-build-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: false,
                                                 attributes: [.posixPermissions: 0o700])
@@ -289,7 +293,7 @@ final class WorkbenchBuildCoordinator {
                 ? root.read(heads, proposed.projectID + ".json", maxBytes: 4096) : nil
         } else { previousBytes = nil }
         let previous = try previousBytes.map { try JSONDecoder().decode(WorkbenchBuildHead.self, from: $0) }
-        guard previous?.revision == baseRevision else { throw WorkspaceError.conflict }
+        guard previous?.revision == baseRevision else { throw WorkbenchBuildConflict.baseRevision }
         let objectID = WorkbenchTransactionDigest.hex(Data((proposed.dashboardID + "\0" + proposed.revision).utf8))
         let manifestBytes = try JSONEncoder().encode(package.manifest)
         var payloads: [String: Data] = ["manifest.json": manifestBytes]
