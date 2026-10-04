@@ -38,6 +38,14 @@ final class DeviceLocalResourcePermit {
     func requireReadable() throws { try DeviceLocalResourceRegistry.readable(self) }
     func invalidate() { DeviceLocalResourceRegistry.invalidate(self) }
 }
+/// Gate-private construction and fixed dispatch only. Not available from a read scope.
+/// Beginning the command uses the same active-operation registry as reads, blocking nested callbacks.
+final class DeviceLocalStructuralCommandPermit {
+    private let readPermit: DeviceLocalResourcePermit
+    fileprivate init(_ permit: DeviceLocalResourcePermit) { readPermit = permit }
+    func begin(_ instance: ObjectIdentifier) throws { try readPermit.beginRead(instance) }
+    func end() { readPermit.endRead() }
+}
 /// Short registry critical sections only. Never holds its mutex during waits, I/O or callbacks.
 /// All ordinary store entries are marked BEFORE their mutex acquisition, rejecting nested cross-store
 /// or gate entry. Thread markers are removed on exit; they are not persistent state or authority.
@@ -132,6 +140,19 @@ final class DeviceLocalResourceGate {
         packages = packageStore; grants = grantStore; structural = structuralStore
     }
     func withReadScope<T>(_ body: (DeviceLocalResourceReadScope) throws -> T) throws -> T {
+        try withScope { scope,_ in try body(scope) }
+    }
+    /// Fixed complete-set orchestration: no generic mutation closure, command factory, or scope API.
+    func commitPreparedExact(_ request: DeviceLocalCompleteSetRequest) throws -> DeviceStructuralStore.QualifiedCurrentCapture {
+        try withScope { scope,permit in
+            let join = DeviceLocalCompleteSetCoordinator(packageStore:self.packages,grantStore:self.grants)
+            let candidate = try join.observeUnderGate(request,scope:scope)
+            let record = DeviceStructuralOperationRecord(rootID:request.structuralRootID,operationID:request.operationID,
+                expectedOld:candidate.expectedOldEnvelopeBytes,candidate:candidate.candidateEnvelopeBytes,resourceAssertions:Data())
+            return try self.structural.performExactAttempt(record,commandPermit:.init(permit))
+        }
+    }
+    private func withScope<T>(_ body: (DeviceLocalResourceReadScope,DeviceLocalResourcePermit) throws -> T) throws -> T {
         let descriptors = try [packages.resourceGateDescriptor,grants.resourceGateDescriptor,structural.resourceGateDescriptor]
             .sorted { $0.path.utf8.lexicographicallyPrecedes($1.path.utf8) }
         for item in descriptors {
@@ -151,7 +172,7 @@ final class DeviceLocalResourceGate {
             if index == descriptors.count {
                 try DeviceLocalResourceRegistry.execute(permit)
                 defer { permit.invalidate() } // BEFORE any participant starts releasing locks.
-                result = try body(.init(permit,packages,grants,structural)); return
+                result = try body(.init(permit,packages,grants,structural),permit); return
             }
             let descriptor = descriptors[index]
             if descriptor.instance == ObjectIdentifier(packages) { try packages.withResourceGateScope(permit) { try acquire(index+1) } }

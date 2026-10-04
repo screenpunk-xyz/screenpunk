@@ -23,6 +23,17 @@ final class DeviceLocalCompleteSetCoordinator {
         self.packageStore = packageStore; self.grantStore = grantStore
     }
     func observeSequentially(_ request: DeviceLocalCompleteSetRequest) throws -> DeviceLocalCompleteSetObservation {
+        try observe(request,verifyPackage:{try self.packageStore.verify($0)},
+                    verifyGrants:{try self.grantStore.verify($0,exactRequest:$1,expectedEntries:$2)})
+    }
+    /// Candidate construction under a held gate is still not itself an acknowledgment.
+    func observeUnderGate(_ request: DeviceLocalCompleteSetRequest, scope: DeviceLocalResourceReadScope) throws -> DeviceLocalCompleteSetObservation {
+        try observe(request,verifyPackage:{try scope.verifyPackage($0)},
+                    verifyGrants:{try scope.verifyGrants($0,exactRequest:$1,expectedEntries:$2)})
+    }
+    private func observe(_ request: DeviceLocalCompleteSetRequest,
+        verifyPackage: (DevicePreparedPackageReceipt) throws -> DeviceVerifiedPreparedPackage,
+        verifyGrants: (DevicePreparedGrantReceipt,DeviceGrantPreparationRequest,[DeviceGrantEntryExpectation]) throws -> DeviceVerifiedGrantPreparation) throws -> DeviceLocalCompleteSetObservation {
         try DeviceLocalCompleteSetBounds.preflight(request)
         let snapshot = request.snapshot
         guard snapshot.schemaVersion == 1, request.expectedGenerationID != snapshot.generationID,
@@ -45,14 +56,14 @@ final class DeviceLocalCompleteSetCoordinator {
         var expectations: [DeviceGrantEntryExpectation] = [], packages: [DeviceLocalCompleteSetReferences.Package] = []
         for entry in snapshot.entries {
             guard let binding = request.packages.first(where:{$0.entryID == entry.entryID}), entry.provenance == .retainedLocal else { throw DeviceLocalCompleteSetFailure.packageMismatch }
-            let observed = try packageStore.verify(binding.receipt)
+            let observed = try verifyPackage(binding.receipt)
             guard entry.packageDirectory.utf8.elementsEqual(observed.reference.directory.utf8),
                   try DeviceLocalCompleteSetBounds.encode(entry.revision,maximum:8192) == DeviceLocalCompleteSetBounds.encode(observed.package.revision,maximum:8192) else { throw DeviceLocalCompleteSetFailure.packageMismatch }
             expectations.append(.init(entryID:entry.entryID,package:observed.package))
             packages.append(.init(entryID:entry.entryID,rootID:observed.reference.rootID,contentID:observed.reference.contentID,
                 preparationOperationID:observed.reference.preparationOperationID,directory:observed.reference.directory))
         }
-        let grants = try grantStore.verify(request.grantReceipt,exactRequest:request.grantRequest,expectedEntries:expectations)
+        let grants = try verifyGrants(request.grantReceipt,request.grantRequest,expectations)
         let references = DeviceLocalCompleteSetReferences(schemaVersion:1,structuralRootID:request.structuralRootID,
             operationID:request.operationID,generationID:snapshot.generationID,packages:packages,
             grants:.init(identity:grants.identity,preparationOperationID:request.grantReceipt.operationID))
