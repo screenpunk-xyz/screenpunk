@@ -3,11 +3,29 @@ import ScreenpunkCore
 @testable import ScreenpunkApple
 
 final class DeviceManagementAuthorityTests: XCTestCase {
+    func testManagedAppearanceRevokesLeaseRenderingAndResetAndNeverBecomesLegacyAgain() throws {
+        let anchor = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: anchor) }
+        let authority = DeviceManagementAuthority(journal: AuthorityJournal(), credentials: .init(backend: AuthorityBackend(), random: { XCTFail("no keys"); return Data() }), reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor))
+        let lease = try XCTUnwrap(authority.refresh())
+        let namespace = anchor.appendingPathComponent("xyz.screenpunk.native-managed")
+        try FileManager.default.createDirectory(at: namespace, withIntermediateDirectories: false)
+        var effects = 0
+        XCTAssertThrowsError(try authority.withLocalAuthority(lease) { effects += 1 })
+        XCTAssertEqual(effects, 0)
+        XCTAssertFalse(authority.resetRenderingAllowed())
+        XCTAssertThrowsError(try authority.resetRecoverySnapshot())
+        try FileManager.default.removeItem(at: namespace)
+        XCTAssertNil(try authority.refresh())
+        XCTAssertThrowsError(try authority.requireLegacyNamespaceAbsent())
+    }
+
     private func history() throws -> DeviceManagementTransitionHistory {
         try .intent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: UUID().uuidString)
     }
     private func owner(_ journal: AuthorityJournal, _ backend: AuthorityBackend) -> DeviceManagementAuthority {
-        .init(journal: journal, credentials: .init(backend: backend, random: { Data(repeating: 9, count: 32) }), reset: ManagementTestResetEvidence())
+        .init(journal: journal, credentials: .init(backend: backend, random: { Data(repeating: 9, count: 32) }), reset: ManagementTestResetEvidence(), managedNamespace: testManagedNamespaceInspector())
     }
     func testRefreshRevokesPriorLeaseAndForeignLeaseRejected() throws {
         let journal = AuthorityJournal(), backend = AuthorityBackend(), authority = owner(journal, backend)

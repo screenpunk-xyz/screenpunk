@@ -4,6 +4,91 @@ import ScreenpunkCore
 
 @MainActor
 final class DeviceManagementBootstrapTests: XCTestCase {
+    func testPreparedOwnerSetupFailureRetainsOwnerAndRetriesBeforeDeferredConstruction() throws {
+        let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let anchor = parent.appendingPathComponent("Application Support")
+        // Configure the real inspector, then reproduce a missing final anchor
+        // before its first observation. No production locator is consulted.
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: false)
+        let inspector = try DeviceManagedNamespaceInspector.fixture(existingPhysicalAnchor: anchor)
+        try FileManager.default.removeItem(at: anchor)
+        var failed = false, creations = 0, parentSyncs = 0
+        let setup = try DeviceProductionSupportAnchorSetup.fixture(existingPhysicalParent: parent, boundary: { boundary in
+            if boundary == .afterCreate { creations += 1 }
+            if boundary == .afterParentSync {
+                parentSyncs += 1
+                if !failed { failed = true; throw BootstrapError.factory }
+            }
+        })
+        let owner = DeviceManagementAuthority(journal: BootstrapJournal(), credentials: .init(backend: BootstrapBackend(), random: { XCTFail("no keys"); return Data() }), reset: ManagementTestResetEvidence(), managedNamespace: inspector, supportAnchorSetup: setup)
+        var preparations = 0, constructions = 0, hosts = 0, retained = 0
+        let bootstrap = DeviceManagementBootstrap(preparationFactory: {
+            preparations += 1
+            return .init(authority: owner, constructLifecycle: {
+                constructions += 1
+                XCTAssertTrue(setup.allowsNamespaceInspection)
+                try owner.requireLegacyNamespaceAbsent()
+                throw BootstrapError.factory
+            })
+        }, retained: { retained += 1; return .empty }, hostFactory: { _ in hosts += 1; throw BootstrapError.factory })
+        bootstrap.start()
+        XCTAssertEqual(preparations, 1); XCTAssertEqual(constructions, 0)
+        XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0); XCTAssertNil(try owner.refresh())
+        bootstrap.retry()
+        XCTAssertEqual(preparations, 1); XCTAssertEqual(constructions, 1)
+        XCTAssertEqual(creations, 1); XCTAssertEqual(parentSyncs, 2)
+        XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0)
+        XCTAssertEqual(try inspector.inspect().classification, .confirmedAbsent)
+    }
+    func testPreparedOwnerManagedPresenceBlocksDeferredLifecycleAndAllFactories() throws {
+        let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let anchor = parent.appendingPathComponent("Application Support")
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: anchor.appendingPathComponent(DeviceNativeManagedRootLocator.namespaceName), withIntermediateDirectories: false)
+        var setupEffects = 0, constructions = 0, hosts = 0, retained = 0
+        let setup = try DeviceProductionSupportAnchorSetup.fixture(existingPhysicalParent: parent, boundary: { _ in setupEffects += 1 })
+        let owner = DeviceManagementAuthority(journal: BootstrapJournal(), credentials: .init(backend: BootstrapBackend(), random: { Data() }), reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor), supportAnchorSetup: setup)
+        let bootstrap = DeviceManagementBootstrap(preparationFactory: { .init(authority: owner, constructLifecycle: { constructions += 1; throw BootstrapError.factory }) }, retained: { retained += 1; return .empty }, hostFactory: { _ in hosts += 1; throw BootstrapError.factory })
+        bootstrap.start(); bootstrap.retry()
+        XCTAssertEqual(setupEffects, 0); XCTAssertEqual(constructions, 0); XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0)
+        guard case .blocked(let snapshot) = bootstrap.state else { return XCTFail("managed") }
+        XCTAssertTrue(snapshot.screens.isEmpty)
+    }
+
+    func testManagedNamespaceBlocksBeforeLifecycleAndRetainedFactories() throws {
+        for symlink in [false, true] {
+            let anchor = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: anchor) }
+            let namespace = anchor.appendingPathComponent("xyz.screenpunk.native-managed")
+            if symlink { try FileManager.default.createSymbolicLink(at: namespace, withDestinationURL: anchor) }
+            else { try FileManager.default.createDirectory(at: namespace, withIntermediateDirectories: false) }
+            let authority = DeviceManagementAuthority(journal: BootstrapJournal(), credentials: .init(backend: BootstrapBackend(), random: { XCTFail("no keys"); return Data() }), reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor))
+            var lifecycleCalls = 0, hostCalls = 0, retainedCalls = 0
+            let bootstrap = DeviceManagementBootstrap(authority: authority, lifecycleFactory: { lifecycleCalls += 1; throw BootstrapError.factory }, retained: { retainedCalls += 1; return .empty }, hostFactory: { _ in hostCalls += 1; throw BootstrapError.factory })
+            bootstrap.start(); bootstrap.retry()
+            XCTAssertEqual(lifecycleCalls, 0); XCTAssertEqual(hostCalls, 0); XCTAssertEqual(retainedCalls, 0)
+            guard case .blocked = bootstrap.state else { return XCTFail("managed namespace must block") }
+        }
+    }
+
+    func testNamespaceAppearingBeforeHostConstructionNeverCallsTLSProvider() throws {
+        let anchor = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: anchor) }
+        let authority = DeviceManagementAuthority(journal: BootstrapJournal(), credentials: .init(backend: BootstrapBackend(), random: { Data() }), reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor))
+        let context = DeviceManagementContext(authority: authority, lease: try XCTUnwrap(authority.refresh()))
+        try FileManager.default.createDirectory(at: anchor.appendingPathComponent("xyz.screenpunk.native-managed"), withIntermediateDirectories: false)
+        var tlsCalls = 0
+        XCTAssertThrowsError(try DeviceLANHost(runtime: DeviceRuntimeRootView.unpairedRuntime(), management: context, store: .init(root: anchor.appendingPathComponent("device")), identityProvider: { tlsCalls += 1; throw BootstrapError.factory }))
+        XCTAssertEqual(tlsCalls, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: anchor.appendingPathComponent("device").path))
+    }
+
     func testBlockedEvidenceNeverInvokesHostFactory() throws {
         for mode in 0..<5 {
             let journal = BootstrapJournal(), backend = BootstrapBackend()
@@ -15,7 +100,7 @@ final class DeviceManagementBootstrapTests: XCTestCase {
                 if mode == 4 { backend.values["candidate"] = Data(repeating: 1, count: 32) }
             }
             var creations = 0, retainedLoads = 0
-            let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { XCTFail("unexpected generation"); return Data() }), reset: ManagementTestResetEvidence()), retained: { retainedLoads += 1; return .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
+            let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { XCTFail("unexpected generation"); return Data() }), reset: ManagementTestResetEvidence(), managedNamespace: testManagedNamespaceInspector()), retained: { retainedLoads += 1; return .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
             bootstrap.start(); bootstrap.start()
             XCTAssertEqual(creations, 0); XCTAssertEqual(retainedLoads, 2)
             guard case .blocked = bootstrap.state else { return XCTFail("expected blocked") }
@@ -29,7 +114,7 @@ final class DeviceManagementBootstrapTests: XCTestCase {
                 backend.values["candidate"] = Data(repeating: 1, count: 32)
             }
             var creations = 0
-            let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { Data() }), reset: ManagementTestResetEvidence()), retained: { .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
+            let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { Data() }), reset: ManagementTestResetEvidence(), managedNamespace: testManagedNamespaceInspector()), retained: { .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
             bootstrap.start()
             XCTAssertEqual(creations, 1)
         }
@@ -38,7 +123,7 @@ final class DeviceManagementBootstrapTests: XCTestCase {
         let journal = BootstrapJournal(), backend = BootstrapBackend()
         journal.value = try .intent(transitionID: UUID(), credentialGenerationID: UUID(), credentialReference: "candidate")
         var creations = 0
-        let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { Data() }), reset: ManagementTestResetEvidence()), retained: { .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
+        let bootstrap = DeviceManagementBootstrap(authority: .init(journal: journal, credentials: .init(backend: backend, random: { Data() }), reset: ManagementTestResetEvidence(), managedNamespace: testManagedNamespaceInspector()), retained: { .empty }, hostFactory: { _ in creations += 1; throw BootstrapError.factory })
         bootstrap.start(); journal.value = nil; bootstrap.start()
         XCTAssertEqual(creations, 0)
     }

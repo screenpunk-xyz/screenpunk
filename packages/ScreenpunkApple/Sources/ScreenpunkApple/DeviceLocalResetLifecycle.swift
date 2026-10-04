@@ -20,15 +20,31 @@ import ScreenpunkCore
     private var completionFinalized = false
     private var writersFenced = false
     private static var productionOwner: DeviceLocalResetLifecycle?
-
-    init(scope: DeviceLocalResetCleanupScope, authorityFactory: @escaping () -> DeviceManagementAuthority,
-         provider: DeviceLocalResetWriterProvider, cleanup: DeviceLocalResetCleanup) throws {
-        self.scope = scope.authorityScope; self.authorityFactory = authorityFactory
-        authority = authorityFactory(); self.provider = provider; self.cleanup = cleanup
-        domains = try .init(scope: scope.authorityScope, provider: provider)
+    private static var productionPreparation: ProductionPreparation?
+    @MainActor struct ProductionPreparation {
+        let authority: DeviceManagementAuthority
+        fileprivate let configured: DeviceLocalResetCleanupScope
+        fileprivate let authorityFactory: () -> DeviceManagementAuthority
+        func construct() throws -> DeviceLocalResetLifecycle {
+            try authority.requireLegacyNamespaceAbsent()
+            if let owner = DeviceLocalResetLifecycle.productionOwner {
+                try owner.authority.requireLegacyNamespaceAbsent(); return owner
+            }
+            var initial: DeviceManagementAuthority? = authority
+            let owner = try DeviceLocalResetLifecycle(scope: configured, authorityFactory: {
+                if let first = initial { initial = nil; return first }
+                return authorityFactory()
+            }, provider: .production, cleanup: .init(scope: configured))
+            DeviceLocalResetLifecycle.productionOwner = owner
+            return owner
+        }
     }
-    static func production() throws -> DeviceLocalResetLifecycle {
-        if let productionOwner { return productionOwner }
+    static func prepareProduction() throws -> ProductionPreparation {
+        if let prepared = productionPreparation {
+            if let owner = productionOwner { return .init(authority: owner.authority, configured: prepared.configured, authorityFactory: prepared.authorityFactory) }
+            return prepared
+        }
+        // Pure configuration only: no writer domains, reset execution, host or TLS.
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let directory = DeviceLocalResetStore.defaultDirectory()
         let base = try DeviceLocalResetScope(deviceRoot: DeviceStateStore.defaultRoot(), preferencesRoot: support.appendingPathComponent("xyz.screenpunk.preferences"), managementDirectory: DeviceManagementTransitionStore.defaultDirectory(), resetDirectory: directory, credentialItems: DeviceLocalResetScope.allowedCredentialItems)
@@ -36,9 +52,20 @@ import ScreenpunkCore
         let evidence = DeviceLocalResetEvidenceAdapter(scope: configured.authorityScope, store: .init(directory: directory))
         let journal = DeviceManagementTransitionStore(directory: base.managementDirectory)
         let credentials = CloudInstallationCredentialStore()
-        let owner = try DeviceLocalResetLifecycle(scope: configured, authorityFactory: { .init(journal: journal, credentials: credentials, reset: evidence) }, provider: .production, cleanup: .init(scope: configured))
-        productionOwner = owner; return owner
+        let factory = { DeviceManagementAuthority(journal: journal, credentials: credentials, reset: evidence) }
+        let prepared = ProductionPreparation(authority: factory(), configured: configured, authorityFactory: factory)
+        productionPreparation = prepared
+        return prepared
     }
+
+    init(scope: DeviceLocalResetCleanupScope, authorityFactory: @escaping () -> DeviceManagementAuthority,
+         provider: DeviceLocalResetWriterProvider, cleanup: DeviceLocalResetCleanup) throws {
+        self.scope = scope.authorityScope; self.authorityFactory = authorityFactory
+        authority = authorityFactory(); self.provider = provider; self.cleanup = cleanup
+        try authority.requireLegacyNamespaceAbsent()
+        domains = try .init(scope: scope.authorityScope, provider: provider)
+    }
+    static func production() throws -> DeviceLocalResetLifecycle { try prepareProduction().construct() }
     func admittedHost() -> (DeviceLANHost, DeviceManagementContext)? {
         guard let host, let context = hostContext else { return nil }
         if !host.lifetime.isRetired, (try? context.validate()) != nil { return (host, context) }
@@ -83,6 +110,7 @@ import ScreenpunkCore
         progress?()
     }
     func recover(progress: @escaping () -> Void) async throws {
+        try authority.requireLegacyNamespaceAbsent()
         guard !busy else { throw Failure.busy }; busy = true; self.progress = progress
         defer { busy = false; self.progress = nil }
         do {
@@ -113,6 +141,7 @@ import ScreenpunkCore
         }
     }
     private func finish(_ driver: DeviceLocalResetCoordinator) throws {
+        try authority.requireLegacyNamespaceAbsent()
         guard case .completed = driver.state else {
             guard !writersFenced else { throw Failure.recoveryBlocked }
             return
@@ -128,6 +157,7 @@ import ScreenpunkCore
     /// Rotation occurs after completion, before constructing a replacement host; failed host
     /// construction retries only admission and never consumes the reopening capability again.
     func prepareNextReset() throws {
+        try authority.requireLegacyNamespaceAbsent()
         guard completionFinalized, !busy else { return }
         guard !writersFenced else { throw Failure.recoveryBlocked }
         domains = try .init(scope: scope, provider: provider)
