@@ -68,6 +68,22 @@ final class DeviceLocalProvisioningIntentStore {
         fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ nodes:[String:Node]) {self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.nodes=nodes}
         fileprivate func matches(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ nodes:[String:Node])->Bool{self.issuer == issuer && self.rootID == rootID && self.epoch == epoch && self.nodes == nodes}
     }
+    /// Original current successor plus immediately preceding retained completion. Diagnosis is not
+    /// capacity or structural authority; only this store constructs checked antecedent evidence.
+    final class SuccessorPredecessorCheckpoint {
+        let predecessorIntent:Data
+        var successorGrantOperationID:UUID {get throws {try ProvisioningIntentCodec.decode(successorIntent).grantOperationID}}
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,successorIntent:Data
+        fileprivate let current:[String:Node],retained:[String:Node]
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ successor:Data,_ predecessor:Data,_ current:[String:Node],_ retained:[String:Node]) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;successorIntent=successor;predecessorIntent=predecessor;self.current=current;self.retained=retained
+        }
+    }
+    final class SuccessorTransition {
+        let receipt:Receipt
+        fileprivate let original:SuccessorPredecessorCheckpoint,epoch:UInt64
+        fileprivate init(_ original:SuccessorPredecessorCheckpoint,_ epoch:UInt64,_ receipt:Receipt){self.original=original;self.epoch=epoch;self.receipt=receipt}
+    }
     struct Diagnostic {let operationID:UUID;let exactIntentBytes:Data} // Not acknowledgment or secret identity proof.
     private static let epochLock=NSLock()
     private static var epochs:[String:UInt64]=[:]
@@ -507,6 +523,69 @@ final class DeviceLocalProvisioningIntentStore {
             defer{borrowedResourceContext=nil;permit.invalidate()}
             try body();try check(c)
         }
+    }
+    private func predecessorNodes(_ c:Context,_ state:State)throws->[String:Node] {
+        guard state.complete,!state.completed,let attempt=state.nodes["attempt"] else{throw Failure.conflict}
+        let a=try decodeAttempt(attempt.bytes),head=try decodeHead(a.baseline.bytes)
+        guard a.schemaVersion == 2,head.completed == true,let operation=head.operationID else{throw Failure.conflict}
+        let prefix=operation.uuidString.lowercased()
+        let specs:[(String,Int)]=[(".intent.json",ProvisioningIntentCodec.limit),(".binding.json",32768),(".confirm.json",65536),(".completion.json",Self.completionLimit),(".completion-binding.json",32768),(".completion-confirm.json",65536)]
+        var nodes:[String:Node]=[:]
+        for (suffix,limit) in specs {nodes[prefix+suffix]=try require(c.ops,prefix+suffix,limit:limit)}
+        let proof=try decodeCompletionConfirmation(nodes[prefix+".completion-confirm.json"]!.bytes)
+        guard proof.head == a.baseline else{throw Failure.conflict}
+        return nodes
+    }
+    func captureSuccessorPredecessorExact(_ receipt:Receipt,plan:DeviceValidatedProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws->SuccessorPredecessorCheckpoint {
+        let body=try checked(plan)
+        return try disk(resourcePermit:resourcePermit){c in
+            let before=epoch(),state=try inventory(c)
+            guard state.operation == plan.operationID,state.intent == plan.canonicalBytes,
+                  receipt.matches(ObjectIdentifier(self),rootID,before,state.nodes) else{throw Failure.uncertain}
+            let retained=try predecessorNodes(c,state)
+            guard let intent=retained.first(where:{$0.key.hasSuffix(".intent.json")})?.value,
+                  let payload=retained.first(where:{$0.key.hasSuffix(".completion.json")})?.value else{throw Failure.conflict}
+            let previous=try ProvisioningIntentCodec.decode(intent.bytes),completion=try decodeCompletion(payload.bytes)
+            guard previous.roots == body.roots,completion.operationID == previous.operationID,
+                  completion.envelope == body.expectedOld,epoch() == before else{throw Failure.conflict}
+            return .init(ObjectIdentifier(self),rootID,before,plan.canonicalBytes,intent.bytes,state.nodes,retained)
+        }
+    }
+    private func verifySuccessor(_ original:SuccessorPredecessorCheckpoint,_ c:Context,at expectedEpoch:UInt64)throws->State {
+        let state=try inventory(c)
+        guard original.issuer == ObjectIdentifier(self),original.rootID == rootID,epoch() == expectedEpoch,
+              state.intent == original.successorIntent,state.nodes == original.current,
+              try predecessorNodes(c,state) == original.retained else{throw Failure.uncertain}
+        return state
+    }
+    func verifySuccessorPredecessorExact(_ original:SuccessorPredecessorCheckpoint,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in _ = try verifySuccessor(original,c,at:original.epoch)}
+    }
+    /// Exact owned-node synchronization only, no rewind/completion/capacity publication. Original
+    /// nodes survive the intentional epoch transition; no newly observed inode is adopted.
+    func repairSuccessorPredecessorExact(_ original:SuccessorPredecessorCheckpoint,commandPermit:DeviceBoundGrantCommandPermit)throws->SuccessorTransition {
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext else{throw Failure.uncertain}
+        _ = try verifySuccessor(original,c,at:original.epoch)
+        let now=epoch(true);qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil
+        for (name,node) in original.retained {
+            let kind:Kind=name.hasSuffix(".completion-confirm.json") ? .completionConfirmation:name.hasSuffix(".completion-binding.json") ? .completionBinding:name.hasSuffix(".completion.json") ? .completion:name.hasSuffix(".confirm.json") ? .confirmation:name.hasSuffix(".binding.json") ? .attempt:.intent
+            try syncExisting(c.ops,name,node,kind:kind)
+        }
+        for (key,name) in [("binding","root-binding.json"),("genesis","genesis.json"),("head","head.json")] {
+            guard let node=original.current[key] else{throw Failure.conflict};try syncExisting(c.root,name,node,kind:key == "binding" ? .binding:key == "genesis" ? .genesis:.head)
+        }
+        let operation=try ProvisioningIntentCodec.decode(original.successorIntent).operationID
+        let prefix=operation.uuidString.lowercased()
+        for (key,suffix) in [("intent",".intent.json"),("attempt",".binding.json"),("confirmation",".confirm.json")] {
+            guard let node=original.current[key] else{throw Failure.conflict};try syncExisting(c.ops,prefix+suffix,node,kind:key == "intent" ? .intent:key == "attempt" ? .attempt:.confirmation)
+        }
+        try boundary(.afterFileSync(.binding));try sync(c.lock);try sync(c.ops);try sync(c.root);try boundary(.afterDirectorySync(.binding));try check(c)
+        let state=try verifySuccessor(original,c,at:now)
+        return .init(original,now,.init(ObjectIdentifier(self),rootID,now,state.nodes))
+    }
+    func verifySuccessorTransitionExact(_ transition:SuccessorTransition,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in _ = try verifySuccessor(transition.original,c,at:transition.epoch)}
     }
     func verifyExact(_ receipt:Receipt,plan:DeviceValidatedProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws {
         _ = try checked(plan)
