@@ -255,6 +255,19 @@ final class DeviceGrantPreparationStore {
         guard observed.publicMetadataBytes == qualified.publicMetadataBytes else { throw DeviceGrantPreparationError.conflict }
         return observed
     }
+    /// One selected entry only, privately decoded and freshly requalified. No immutable backend mutation.
+    func makeGenericSeed(_ receipt:DevicePreparedGrantReceipt,expectedEntries:[DeviceGrantEntryExpectation],
+                         expectedOwner:PairingIdentity,entryID:UUID,resourcePermit:DeviceLocalResourcePermit)throws->DeviceImmutableGenericSeed {
+        try Task.checkCancellation()
+        _ = try verifyRecovered(receipt,expectedEntries:expectedEntries,expectedOwner:expectedOwner,resourcePermit:resourcePermit)
+        let body=try GrantPreparationCodec.decodeAttempt(receipt.privateBytes)
+        guard let entry=body.input.entries.first(where:{$0.entryID == entryID}),let generic=entry.generic else { throw ConnectionFailure.permissionRequired }
+        try generic.validate()
+        guard generic.entries.count <= 32 else { throw DeviceGrantPreparationError.sizeLimit }
+        var bytes=0
+        for item in generic.entries {let count=item.secret?.count ?? 0;guard count <= 8192,bytes <= 256*1024-count else {throw DeviceGrantPreparationError.sizeLimit};bytes += count}
+        try Task.checkCancellation();return DeviceImmutableGenericSeed(generic)
+    }
     private func qualifyRecovered(_ bytes: Data, reference: DeviceRetainedGrantReference, expectedOwner: PairingIdentity,
                                   expectedEntries: [DeviceGrantEntryExpectation], publicMetadata: Data) throws {
         let body = try GrantPreparationCodec.decodeAttempt(bytes)
@@ -785,4 +798,20 @@ final class DeviceGrantPreparationStore {
         } catch { throw DeviceGrantPreparationError.outcomeUncertain }
     }
     private func failure() -> DeviceGrantPreparationError { .io(errno) }
+}
+
+/// Private one-use working set; no receipt input/HA token/general secret accessor escapes this file.
+final class DeviceImmutableGenericSeed:GrantSecretRedacted,@unchecked Sendable {
+    private let mutex=NSLock()
+    private var provisioning:ConnectionProvisioning?
+    fileprivate init(_ provisioning:ConnectionProvisioning) {self.provisioning=provisioning}
+    private func take()throws->ConnectionProvisioning {
+        mutex.lock();defer{mutex.unlock()}
+        guard let value=provisioning else {throw ConnectionFailure.permissionRequired};provisioning=nil;return value
+    }
+    func instantiate(authorization:DeviceImmutableGenericAuthorization,http:any HTTPTransport,webSocket:any WebSocketTransport,
+                     resolver:any DestinationResolver,clock:any PairingClock)async throws->any DeviceImmutableGenericOperations {
+        try Task.checkCancellation();let value=try take()
+        return try await DeviceImmutableGenericFacade.install(value,authorization:authorization,http:http,webSocket:webSocket,resolver:resolver,clock:clock)
+    }
 }

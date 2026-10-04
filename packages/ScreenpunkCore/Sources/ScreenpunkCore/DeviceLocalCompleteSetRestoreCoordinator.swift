@@ -1,13 +1,25 @@
 import Foundation
 
+/// Private construction binds the original final structural capture to the ORIGINAL resolver attempt.
+/// Nonsecret evidence only; no native authority/secret getter/implicit checkpoint renewal.
+final class DeviceRestoredRuntimeBinding: @unchecked Sendable {
+    let capture:DeviceStructuralStore.QualifiedCurrentCapture
+    let resources:DeviceResolvedRetainedResources
+    let request:DeviceLocalCompleteSetRecoveredRequest
+    fileprivate init(_ capture:DeviceStructuralStore.QualifiedCurrentCapture,_ resources:DeviceResolvedRetainedResources,_ request:DeviceLocalCompleteSetRecoveredRequest) {
+        self.capture=capture;self.resources=resources;self.request=request
+    }
+}
 /// Qualified exact terminal restoration only. Not runtime admission, ongoing resource validity,
 /// new approval, legacy migration, or a portable/physical credential durability guarantee.
 final class DeviceLocalCompleteSetRestoreAcknowledgment {
     let operationID:UUID
     let generationID:UUID
     let envelopeBytes:Data
-    fileprivate init(_ capture:DeviceStructuralStore.QualifiedCurrentCapture,generationID:UUID) {
-        operationID=capture.operationID;self.generationID=generationID;envelopeBytes=capture.envelopeBytes
+    let runtimeBinding:DeviceRestoredRuntimeBinding
+    fileprivate init(_ capture:DeviceStructuralStore.QualifiedCurrentCapture,resources:DeviceResolvedRetainedResources,request:DeviceLocalCompleteSetRecoveredRequest) {
+        operationID=capture.operationID;generationID=request.snapshot.generationID;envelopeBytes=capture.envelopeBytes
+        runtimeBinding = .init(capture,resources,request)
     }
 }
 /// Unmounted effectful restoration of the actual existing committed terminal tip. No new IDs or set
@@ -38,6 +50,6 @@ final class DeviceLocalCompleteSetRestoreCoordinator {
         let resources=try resolver.resolveTerminalExact(selected:candidate.selected.reference,groups:groups)
         try DeviceLocalCompleteSetBounds.preflight(candidate.request,resources:resources)
         let capture=try gate.commitRecoveredExact(candidate.request,resources:resources,discovery:discovery)
-        return .init(capture,generationID:candidate.request.snapshot.generationID)
+        return .init(capture,resources:resources,request:candidate.request)
     }
 }

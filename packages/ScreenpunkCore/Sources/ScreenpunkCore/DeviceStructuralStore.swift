@@ -149,9 +149,32 @@ final class DeviceStructuralStore {
     /// Exact live-receipt command only. A command token is gate-file constructed and never exposed
     /// through the read scope. Neither token possession nor diagnostic bytes establish qualification.
     struct QualifiedCurrentCapture {
-        let envelopeBytes: Data
-        let operationID: UUID
-        fileprivate init(_ bytes: Data, operationID: UUID) { envelopeBytes = bytes; self.operationID = operationID }
+        let envelopeBytes:Data
+        let operationID:UUID
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64
+        fileprivate let currentIdentity:StructuralStoreIdentity,proofIdentity:StructuralStoreIdentity,bindingIdentity:StructuralStoreIdentity
+        fileprivate let proofBytes:Data,bindingBytes:Data
+        fileprivate init(_ bytes:Data,operationID:UUID,issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,
+                         currentIdentity:StructuralStoreIdentity,proofIdentity:StructuralStoreIdentity,proofBytes:Data,
+                         bindingIdentity:StructuralStoreIdentity,bindingBytes:Data) {
+            envelopeBytes=bytes;self.operationID=operationID;self.issuer=issuer;self.rootID=rootID;self.epoch=epoch
+            self.currentIdentity=currentIdentity;self.proofIdentity=proofIdentity;self.proofBytes=proofBytes
+            self.bindingIdentity=bindingIdentity;self.bindingBytes=bindingBytes
+        }
+    }
+    /// Verify the ORIGINAL final-lock capture. Diagnostic reads/current qualification cannot renew it.
+    func verifyQualifiedCurrentCapture(_ original:QualifiedCurrentCapture,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit) { context in
+            guard original.issuer == ObjectIdentifier(self),original.rootID == rootID,original.epoch == epoch() else { throw DeviceStructuralStoreError.conflict }
+            let state=try inventory(context)
+            try requireQualifiedBaseline(context,state:state,expectedOld:original.envelopeBytes)
+            guard state.current == Node(identity:original.currentIdentity,bytes:original.envelopeBytes),
+                  let proof=try readFile(context.operations,filename(original.operationID),limit:StructuralStoreCodec.operationLimit),
+                  proof == Node(identity:original.proofIdentity,bytes:original.proofBytes),
+                  let binding=try readFile(context.root,"root-binding.json",limit:8192),
+                  binding == Node(identity:original.bindingIdentity,bytes:original.bindingBytes),
+                  original.epoch == epoch() else { throw DeviceStructuralStoreError.conflict }
+        }
     }
     /// Diagnostic only: original-lock capture, never durability acknowledgment or approval.
     /// File-private construction prevents caller-supplied bytes from manufacturing a checkpoint.
@@ -237,7 +260,11 @@ final class DeviceStructuralStore {
                   terminal.phase == .terminal, terminal.sameIntent(as:command.record),
                   let current = final.current, current.bytes == command.record.candidate else { throw DeviceStructuralStoreError.conflict }
             try check(context)
-            return QualifiedCurrentCapture(current.bytes,operationID:command.record.operationID)
+            guard let proof=try readFile(context.operations,filename(command.record.operationID),limit:StructuralStoreCodec.operationLimit),
+                  let binding=try readFile(context.root,"root-binding.json",limit:8192),
+                  let qualified=qualification,qualified.epoch == epoch(),qualified.current == current,qualified.proof == proof else { throw DeviceStructuralStoreError.outcomeUncertain }
+            return QualifiedCurrentCapture(current.bytes,operationID:command.record.operationID,issuer:ObjectIdentifier(self),rootID:rootID,epoch:qualified.epoch,
+                currentIdentity:current.identity,proofIdentity:proof.identity,proofBytes:proof.bytes,bindingIdentity:binding.identity,bindingBytes:binding.bytes)
         } catch { try check(context); throw error }
     }
     private func requireQualifiedBaseline(_ context: Context,
