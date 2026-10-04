@@ -250,6 +250,28 @@ final class DeviceGrantPreparationStore {
     func verifyBoundPrivateAttempt(_ receipt:DeviceBoundGrantPrivateAttempt,resourcePermit:DeviceLocalResourcePermit)throws {
         try disk(resourcePermit:resourcePermit){c in try verifyBoundCheckpoint(receipt,context:c,state:inventory(c))}
     }
+    /// Read-only exact private binding for the fixed package command. The recorded secret input stays
+    /// in this file; fresh supplied/retained genuine packages constrain its complete declarations.
+    func verifyBoundPrivateAttempt(_ receipt:DeviceBoundGrantPrivateAttempt,plan:DeviceValidatedProvisioningPlan,
+                                  packages:[DeviceProvisioningPackageInput],resourcePermit:DeviceLocalResourcePermit)throws {
+        guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        let intent=try ProvisioningIntentCodec.decode(plan.canonicalBytes)
+        try disk(resourcePermit:resourcePermit){c in
+            try verifyBoundCheckpoint(receipt,context:c,state:inventory(c))
+            let frame=try GrantPreparationCodec.decodeStoredAttempt(receipt.privateBytes)
+            guard frame.version == 2,frame.completeSetIntent == plan.canonicalBytes,
+                  intent.roots == plan.roots,intent.operationID == plan.operationID else{throw DeviceGrantPreparationError.conflict}
+            let candidate=try StructuralStoreCodec.envelope(intent.candidate),expected=try Self.boundExpectations(packages)
+            let qualified=try DeviceGrantRevisionQualifier.qualify(frame.input,expectedEntries:expected)
+            let privateRequest=DeviceGrantPreparationRequest(operationID:frame.operationID,input:frame.input,qualified:qualified,expectedEntries:expected)
+            let original=DeviceProvisioningPlanRequest(roots:intent.roots,operationID:intent.operationID,grantOperationID:intent.grantOperationID,
+                expectedGenerationID:candidate.expectedGenerationID,baseline:intent.expectedOld.map{.expectedEnvelope($0)} ?? .initialExplicit(legacyGrantSet:candidate.snapshot.grantSet),
+                snapshot:candidate.snapshot,owner:frame.input.owner,packages:packages,grantInput:frame.input,qualifiedGrant:qualified)
+            guard try DeviceProvisioningPlanner.qualify(original).canonicalBytes == plan.canonicalBytes,
+                  try DeviceProvisioningPrivateAttemptV2.encoded(privateRequest,intent:plan.canonicalBytes) == receipt.privateBytes else{throw DeviceGrantPreparationError.conflict}
+            try verifyBoundCheckpoint(receipt,context:c,state:inventory(c))
+        }
+    }
     private func verifyBoundCheckpoint(_ receipt:DeviceBoundGrantPrivateAttempt,context c:Context,state:Inventory)throws {
         guard receipt.issuer == ObjectIdentifier(self),receipt.rootID == rootID,receipt.epoch == epoch(),
               let entry=state.tip,entry.record.operationID == receipt.operationID,!entry.complete,(entry.staged != nil) == receipt.staged,
