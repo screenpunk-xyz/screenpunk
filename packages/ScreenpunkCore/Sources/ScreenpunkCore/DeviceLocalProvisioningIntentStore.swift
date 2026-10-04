@@ -84,6 +84,19 @@ final class DeviceLocalProvisioningIntentStore {
         fileprivate let original:SuccessorPredecessorCheckpoint,epoch:UInt64
         fileprivate init(_ original:SuccessorPredecessorCheckpoint,_ epoch:UInt64,_ receipt:Receipt){self.original=original;self.epoch=epoch;self.receipt=receipt}
     }
+    /// Completed-current diagnosis retains ORIGINAL nodes/epoch. It is not a structural ACK,
+    /// grant receipt, capacity qualification or runtime admission capability.
+    final class CompletedCurrentCheckpoint {
+        let operationID:UUID,exactIntentBytes:Data,envelopeBytes:Data
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,nodes:[String:Node]
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ operation:UUID,_ intent:Data,_ envelope:Data,_ nodes:[String:Node]) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;operationID=operation;exactIntentBytes=intent;envelopeBytes=envelope;self.nodes=nodes
+        }
+    }
+    final class CompletedRestoreTransition {
+        fileprivate let original:CompletedCurrentCheckpoint,epoch:UInt64
+        fileprivate init(_ original:CompletedCurrentCheckpoint,_ epoch:UInt64){self.original=original;self.epoch=epoch}
+    }
     struct Diagnostic {let operationID:UUID;let exactIntentBytes:Data} // Not acknowledgment or secret identity proof.
     private static let epochLock=NSLock()
     private static var epochs:[String:UInt64]=[:]
@@ -523,6 +536,46 @@ final class DeviceLocalProvisioningIntentStore {
             defer{borrowedResourceContext=nil;permit.invalidate()}
             try body();try check(c)
         }
+    }
+    func inspectCompletedCurrentExact(resourcePermit:DeviceLocalResourcePermit)throws->CompletedCurrentCheckpoint {
+        try disk(resourcePermit:resourcePermit){c in
+            let before=epoch(),state=try inventory(c)
+            guard state.complete,state.completed,let operation=state.operation,let intent=state.intent,
+                  state.nodes["headStage"] == nil,!((try list(c.ops,limit:1548)).contains{$0.hasSuffix(".stage")}),let payload=state.nodes["completion"] else{throw Failure.uncertain}
+            let completion=try decodeCompletion(payload.bytes),body=try ProvisioningIntentCodec.decode(intent)
+            guard completion.operationID == operation,body.operationID == operation,completion.envelope == body.candidate,
+                  completion.structuralRootID == body.roots.structuralID,epoch() == before else{throw Failure.conflict}
+            return .init(ObjectIdentifier(self),rootID,before,operation,intent,completion.envelope,state.nodes)
+        }
+    }
+    private func verifyCompleted(_ original:CompletedCurrentCheckpoint,_ c:Context,at expectedEpoch:UInt64)throws {
+        let state=try inventory(c)
+        guard original.issuer == ObjectIdentifier(self),original.rootID == rootID,epoch() == expectedEpoch,
+              state.complete,state.completed,state.operation == original.operationID,state.intent == original.exactIntentBytes,
+              state.nodes == original.nodes,state.nodes["headStage"] == nil,!((try list(c.ops,limit:1548)).contains{$0.hasSuffix(".stage")}) else{throw Failure.uncertain}
+        guard let payload=state.nodes["completion"],try decodeCompletion(payload.bytes).envelope == original.envelopeBytes else{throw Failure.conflict}
+    }
+    func verifyCompletedCurrentExact(_ original:CompletedCurrentCheckpoint,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in try verifyCompleted(original,c,at:original.epoch)}
+    }
+    /// Fixed restore sync only. Never publishes qualifiedCompletion/pendingCompletion/capacity.
+    /// Missing or replaced antecedents are not repaired by adopting newly observed identities.
+    func repairCompletedCurrentExact(_ original:CompletedCurrentCheckpoint,commandPermit:DeviceBoundCompletedRestorePermit)throws->CompletedRestoreTransition {
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext else{throw Failure.uncertain}
+        try verifyCompleted(original,c,at:original.epoch)
+        let now=epoch(true);qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;qualifiedCompletion=nil;pendingCompletion=nil
+        let prefix=original.operationID.uuidString.lowercased()
+        let roots:[(String,String,Kind)]=[("binding","root-binding.json",.binding),("genesis","genesis.json",.genesis),("head","head.json",.head)]
+        let records:[(String,String,Kind)]=[("intent",".intent.json",.intent),("attempt",".binding.json",.attempt),("confirmation",".confirm.json",.confirmation),("completion",".completion.json",.completion),("completionBinding",".completion-binding.json",.completionBinding),("completionConfirmation",".completion-confirm.json",.completionConfirmation)]
+        for (key,name,kind) in roots {guard let node=original.nodes[key] else{throw Failure.conflict};try syncExisting(c.root,name,node,kind:kind)}
+        for (key,suffix,kind) in records {guard let node=original.nodes[key] else{throw Failure.conflict};try syncExisting(c.ops,prefix+suffix,node,kind:kind)}
+        try sync(c.lock);try sync(c.ops);try sync(c.root);try boundary(.afterDirectorySync(.binding));try check(c)
+        try verifyCompleted(original,c,at:now)
+        return .init(original,now)
+    }
+    func verifyCompletedRestoreTransition(_ transition:CompletedRestoreTransition,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in try verifyCompleted(transition.original,c,at:transition.epoch)}
     }
     private func predecessorNodes(_ c:Context,_ state:State)throws->[String:Node] {
         guard state.complete,!state.completed,let attempt=state.nodes["attempt"] else{throw Failure.conflict}

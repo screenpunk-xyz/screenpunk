@@ -171,6 +171,36 @@ final class DeviceLocalResourceReadScope {
 /// Body is internal synchronous orchestration, never UI/notification/async work. Existing backend/fault
 /// calls execute under locks. Same-thread reentry fails; callbacks synchronously joining another thread
 /// doing resource work are unsupported (they can deadlock through application-level waiting).
+/// Only the fixed completed-current restore command constructs a dispatch permit. No generic
+/// mutation closure or read-scope capability can create it.
+final class DeviceBoundCompletedRestorePermit {
+    private let permit:DeviceLocalResourcePermit
+    fileprivate init(_ permit:DeviceLocalResourcePermit){self.permit=permit}
+    func begin(_ instance:ObjectIdentifier)throws{try permit.beginRead(instance)}
+    func end(){permit.endRead()}
+}
+/// Original four-root diagnosis, not ACK/admission/capacity. No secret input is exposed.
+final class DeviceBoundCompletedRestoreDiscovery:GrantSecretRedacted {
+    fileprivate let journal:DeviceLocalProvisioningIntentStore.CompletedCurrentCheckpoint
+    fileprivate let grants:DeviceBoundGrantTerminalRecovery
+    fileprivate let structural:DeviceStructuralStore.TerminalDiscovery
+    fileprivate let journalIssuer:ObjectIdentifier
+    fileprivate init(_ journal:DeviceLocalProvisioningIntentStore.CompletedCurrentCheckpoint,_ grants:DeviceBoundGrantTerminalRecovery,
+        _ structural:DeviceStructuralStore.TerminalDiscovery,_ journalIssuer:ObjectIdentifier){self.journal=journal;self.grants=grants;self.structural=structural;self.journalIssuer=journalIssuer}
+}
+/// Original final-lock captures only, privately constructed AFTER successful scope exit. This is
+/// not ongoing validity, production admission, journal capacity or a legacy grant receipt.
+final class DeviceBoundRestoredRuntimeBinding:GrantSecretRedacted,@unchecked Sendable {
+    let operationID:UUID,generationID:UUID,envelopeBytes:Data
+    fileprivate let journal:DeviceLocalProvisioningIntentStore,plan:DeviceValidatedProvisioningPlan
+    fileprivate let journalTransition:DeviceLocalProvisioningIntentStore.CompletedRestoreTransition
+    fileprivate let grants:DeviceBoundGrantTerminalTransition,packages:[DeviceLocalCompleteSetPackageBinding]
+    fileprivate let packageCheckpoint:DevicePackageResolutionCheckpoint,capture:DeviceStructuralStore.QualifiedCurrentCapture
+    fileprivate init(journal:DeviceLocalProvisioningIntentStore,plan:DeviceValidatedProvisioningPlan,
+        journalTransition:DeviceLocalProvisioningIntentStore.CompletedRestoreTransition,grants:DeviceBoundGrantTerminalTransition,
+        packages:[DeviceLocalCompleteSetPackageBinding],packageCheckpoint:DevicePackageResolutionCheckpoint,
+        capture:DeviceStructuralStore.QualifiedCurrentCapture,generationID:UUID){self.journal=journal;self.plan=plan;self.journalTransition=journalTransition;self.grants=grants;self.packages=packages;self.packageCheckpoint=packageCheckpoint;self.capture=capture;operationID=capture.operationID;self.generationID=generationID;envelopeBytes=capture.envelopeBytes}
+}
 final class DeviceLocalResourceGate {
     private let packages: DevicePackagePreparationStore
     private let grants: DeviceGrantPreparationStore
@@ -296,6 +326,109 @@ final class DeviceLocalResourceGate {
         }
         try grants.verifyBoundTerminal(receipt.transition,plan:receipt.plan,packages:fresh,resourcePermit:permit)
         try packages.verifyResolutionCheckpoint(receipt.checkpoint,resourcePermit:permit)
+    }
+    func inspectBoundCompletedCurrentExact(journal:DeviceLocalProvisioningIntentStore)throws->DeviceBoundCompletedRestoreDiscovery {
+        try withScope(journal:journal){scope,permit in
+            let current=try journal.inspectCompletedCurrentExact(resourcePermit:permit)
+            let body=try ProvisioningIntentCodec.decode(current.exactIntentBytes)
+            let discovery=try scope.inspectLatestStructuralTerminalExact()
+            guard discovery.record.rootID == body.roots.structuralID,discovery.record.operationID == body.operationID,
+                  discovery.record.candidate == current.envelopeBytes,discovery.record.expectedOld == body.expectedOld else{throw DeviceStructuralStoreError.conflict}
+            let recovery=try self.grants.inspectBoundCompletedTerminalRecovery(current,resourcePermit:permit)
+            try journal.verifyCompletedCurrentExact(current,resourcePermit:permit)
+            try scope.verifyStructuralTerminalDiscovery(discovery)
+            return .init(current,recovery,discovery,ObjectIdentifier(journal))
+        }
+    }
+    func restoreBoundCompletedCurrentExact(_ original:DeviceBoundCompletedRestoreDiscovery,journal:DeviceLocalProvisioningIntentStore)throws->DeviceBoundRestoredRuntimeBinding {
+        guard original.journalIssuer == ObjectIdentifier(journal),original.grants.packages.count <= 12 else{throw DeviceLocalResourceGateFailure.invalidScope}
+        let references=original.grants.packages.map(\.reference)
+        let inspected=try packages.inspectRetainedTerminalExact(references)
+        guard inspected.count == references.count else{throw DeviceGrantPreparationError.conflict}
+        let observations=zip(original.grants.packages,inspected).map{DeviceProvisioningPackageInput.retained(entryID:$0.0.entryID,reference:$0.0.reference,verified:$0.1)}
+        let plan=try grants.qualifyBoundTerminalRecovery(original.grants,packages:observations)
+        guard plan.canonicalBytes == original.journal.exactIntentBytes else{throw DeviceGrantPreparationError.conflict}
+        // Original journal/structural captures are checked BEFORE package sync, never renewed.
+        try withScope(journal:journal){scope,permit in
+            try journal.verifyCompletedCurrentExact(original.journal,resourcePermit:permit)
+            try scope.verifyStructuralTerminalDiscovery(original.structural)
+        }
+        let resolution=try packages.resolveRetainedTerminalExact(references)
+        guard resolution.receipts.count == references.count else{throw DeviceGrantPreparationError.conflict}
+        let bindings=zip(original.grants.packages,resolution.receipts).map{DeviceLocalCompleteSetPackageBinding(entryID:$0.0.entryID,receipt:$0.1)}
+        let body=try ProvisioningIntentCodec.decode(plan.canonicalBytes),candidate=try StructuralStoreCodec.envelope(body.candidate)
+        let final=try withScope(journal:journal){scope,permit -> (DeviceLocalProvisioningIntentStore.CompletedRestoreTransition,DeviceBoundGrantTerminalTransition,DeviceStructuralStore.QualifiedCurrentCapture) in
+            let ids=try [journal.resourceGateDescriptor.rootID,self.packages.resourceGateDescriptor.rootID,self.grants.resourceGateDescriptor.rootID,self.structural.resourceGateDescriptor.rootID]
+            guard ids == [body.roots.journalID,body.roots.packageID,body.roots.grantID,body.roots.structuralID],body.operationID == original.structural.record.operationID,
+                  body.candidate == original.structural.record.candidate,body.expectedOld == original.structural.record.expectedOld else{throw DeviceLocalResourceGateFailure.invalidRoots}
+            try journal.verifyCompletedCurrentExact(original.journal,resourcePermit:permit)
+            try scope.verifyStructuralTerminalDiscovery(original.structural)
+            let fresh=try self.boundRestoredPackages(bindings,checkpoint:resolution.checkpoint,permit:permit)
+            // Original grant epoch/node/private-reference evidence must still hold BEFORE journal effects.
+            // This verifier does not sync or recapture the recovery object.
+            try self.grants.verifyBoundCompletedRecovery(original.grants,plan:plan,packages:fresh,resourcePermit:permit)
+            try journal.verifyCompletedCurrentExact(original.journal,resourcePermit:permit)
+            let j=try journal.repairCompletedCurrentExact(original.journal,commandPermit:.init(permit))
+            let g=try self.grants.performBoundTerminal(original.grants,plan:plan,packages:fresh,commandPermit:.init(permit))
+            try journal.verifyCompletedRestoreTransition(j,resourcePermit:permit)
+            try self.grants.verifyBoundTerminal(g,plan:plan,packages:fresh,resourcePermit:permit)
+            try self.packages.verifyResolutionCheckpoint(resolution.checkpoint,resourcePermit:permit)
+            try scope.verifyStructuralTerminalDiscovery(original.structural)
+            // Dispatch exact intent, not persisted terminal phase/inode evidence. The original
+            // discovery still proves the installed record; the store requires an unresolved command.
+            let retained=original.structural.record
+            let command=DeviceStructuralOperationRecord(rootID:retained.rootID,operationID:retained.operationID,
+                expectedOld:retained.expectedOld,candidate:retained.candidate,resourceAssertions:retained.resourceAssertions)
+            guard command.sameIntent(as:retained) else{throw DeviceStructuralStoreError.conflict}
+            let capture=try self.structural.performExactAttempt(command,commandPermit:.init(permit))
+            try journal.verifyCompletedRestoreTransition(j,resourcePermit:permit)
+            let finalPackages=try self.boundRestoredPackages(bindings,checkpoint:resolution.checkpoint,permit:permit)
+            try self.grants.verifyBoundTerminal(g,plan:plan,packages:finalPackages,resourcePermit:permit)
+            try scope.verifyQualifiedStructuralCapture(capture)
+            guard capture.envelopeBytes == original.journal.envelopeBytes,capture.operationID == body.operationID else{throw DeviceStructuralStoreError.conflict}
+            try journal.verifyCompletedRestoreTransition(j,resourcePermit:permit)
+            return (j,g,capture)
+        }
+        // All store/scope-exit identity checks succeeded; only now may an opaque binding escape.
+        return .init(journal:journal,plan:plan,journalTransition:final.0,grants:final.1,packages:bindings,packageCheckpoint:resolution.checkpoint,capture:final.2,generationID:candidate.snapshot.generationID)
+    }
+    private func boundRestoredPackages(_ bindings:[DeviceLocalCompleteSetPackageBinding],checkpoint:DevicePackageResolutionCheckpoint,
+        permit:DeviceLocalResourcePermit)throws->[DeviceProvisioningPackageInput] {
+        guard bindings.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        try packages.verifyResolutionCheckpoint(checkpoint,resourcePermit:permit)
+        var fresh:[DeviceProvisioningPackageInput]=[]
+        for binding in bindings {let value=try packages.verify(binding.receipt,resourcePermit:permit);fresh.append(.retained(entryID:binding.entryID,reference:value.reference,verified:value))}
+        try packages.verifyResolutionCheckpoint(checkpoint,resourcePermit:permit);return fresh
+    }
+    private func verifyBoundRestoredBinding(_ binding:DeviceBoundRestoredRuntimeBinding,scope:DeviceLocalResourceReadScope,
+        permit:DeviceLocalResourcePermit)throws->[DeviceProvisioningPackageInput] {
+        try binding.journal.verifyCompletedRestoreTransition(binding.journalTransition,resourcePermit:permit)
+        try scope.verifyQualifiedStructuralCapture(binding.capture)
+        let fresh=try boundRestoredPackages(binding.packages,checkpoint:binding.packageCheckpoint,permit:permit)
+        try grants.verifyBoundTerminal(binding.grants,plan:binding.plan,packages:fresh,resourcePermit:permit)
+        try scope.verifyQualifiedStructuralCapture(binding.capture)
+        try binding.journal.verifyCompletedRestoreTransition(binding.journalTransition,resourcePermit:permit)
+        return fresh
+    }
+    func verifyBoundRestoredRuntimeBinding(_ binding:DeviceBoundRestoredRuntimeBinding)throws {
+        try withScope(journal:binding.journal){scope,permit in _ = try self.verifyBoundRestoredBinding(binding,scope:scope,permit:permit)}
+    }
+    func makeGenericRuntimeExact(binding:DeviceBoundRestoredRuntimeBinding,entryID:UUID,
+        admission:any DeviceImmutableGenericAdmissionDriver,http:any HTTPTransport,webSocket:any WebSocketTransport,
+        resolver:any DestinationResolver,clock:any PairingClock)async throws->any DeviceImmutableGenericOperations {
+        try Task.checkCancellation()
+        let body=try ProvisioningIntentCodec.decode(binding.plan.canonicalBytes),candidate=try StructuralStoreCodec.envelope(body.candidate)
+        guard candidate.snapshot.entries.contains(where:{$0.entryID == entryID}),let owner=candidate.snapshot.contentOwner,owner.isWellFormed,owner.role == .controller else{throw ConnectionFailure.permissionRequired}
+        let operation=DeviceImmutableGenericScope(structuralRootID:body.roots.structuralID,operationID:body.operationID,generationID:candidate.snapshot.generationID,entryID:entryID,owner:owner,grants:body.grantIdentity)
+        let authorization=DeviceImmutableGenericAuthorization(scope:operation,driver:admission,validate:{try self.verifyBoundRestoredRuntimeBinding(binding)})
+        try authorization.validate()
+        let seed=try withScope(journal:binding.journal){scope,permit -> DeviceImmutableGenericSeed in
+            try Task.checkCancellation();let fresh=try self.verifyBoundRestoredBinding(binding,scope:scope,permit:permit)
+            let seed=try self.grants.makeBoundGenericSeed(binding.grants,plan:binding.plan,packages:fresh,owner:owner,entryID:entryID,resourcePermit:permit)
+            _ = try self.verifyBoundRestoredBinding(binding,scope:scope,permit:permit);try Task.checkCancellation();return seed
+        }
+        let runtime=try await seed.instantiate(authorization:authorization,http:http,webSocket:webSocket,resolver:resolver,clock:clock)
+        do {try Task.checkCancellation();try authorization.validate();return runtime}catch{await runtime.cancel();throw error}
     }
     /// Unmounted fixed entry factory. Mandatory native-driver seam is NOT a production admission
     /// implementation. Driver/resolver/actor installation/transport work occur outside resource locks.
