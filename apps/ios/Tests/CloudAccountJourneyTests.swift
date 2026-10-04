@@ -6,6 +6,53 @@ import ScreenpunkCore
 
 @MainActor
 final class CloudAccountJourneyTests: XCTestCase {
+    func testOccupiedEntryRaceHasSpecificCopyAndZeroLosingFactoryEffects() async throws {
+        let broker = CloudHumanSessionBroker()
+        let owner = JourneyFixture(broker: broker), later = JourneyFixture(broker: broker)
+        XCTAssertEqual(later.lifecycle.accountEntryState, .available)
+        let hosting = UIHostingController(rootView: later.view)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene); window.rootViewController = hosting; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        hosting.view.layoutIfNeeded() // Entry rendered before ownership changes.
+        await (try owner.actions.signIn(.google))?.value
+        hosting.rootView = later.view; hosting.view.layoutIfNeeded(); await Task.yield()
+        let occupiedImage = UIGraphicsImageRenderer(bounds: hosting.view.bounds).image { _ in hosting.view.drawHierarchy(in: hosting.view.bounds, afterScreenUpdates: true) }
+        let occupiedAttachment = XCTAttachment(image: occupiedImage); occupiedAttachment.name = "AccountEntry-Occupied"; occupiedAttachment.lifetime = .keepAlways; add(occupiedAttachment)
+        XCTAssertEqual(later.lifecycle.accountEntryState, .occupiedElsewhere)
+        XCTAssertThrowsError(try later.actions.signIn(.apple)) { error in
+            XCTAssertEqual(CloudJourneyCopy.signInFailure(error), CloudJourneyCopy.occupiedWindow)
+        }
+        XCTAssertEqual(later.factories, 0); XCTAssertEqual(later.presentations, 0)
+        later.actions.cancel(); later.lifecycle.didEnterBackground()
+        XCTAssertNotNil(owner.coordinator.humanIdentity)
+        await owner.actions.signOut()?.value
+        XCTAssertEqual(later.lifecycle.accountEntryState, .available)
+        XCTAssertEqual(later.factories, 0); XCTAssertNil(later.lifecycle.coordinator)
+        let successor = JourneyFixture(broker: broker)
+        await (try successor.actions.signIn(.google))?.value // Explicit acquisition constructs a fresh pair.
+        later.lifecycle.retirePresentationContext(); later.actions.cancel(); later.lifecycle.didEnterBackground()
+        XCTAssertEqual(later.lifecycle.accountEntryState, .retired)
+        hosting.rootView = later.view; hosting.view.layoutIfNeeded(); await Task.yield()
+        let retiredImage = UIGraphicsImageRenderer(bounds: hosting.view.bounds).image { _ in hosting.view.drawHierarchy(in: hosting.view.bounds, afterScreenUpdates: true) }
+        let retiredAttachment = XCTAttachment(image: retiredImage); retiredAttachment.name = "AccountEntry-Retired"; retiredAttachment.lifetime = .keepAlways; add(retiredAttachment)
+        XCTAssertNotNil(successor.coordinator.humanIdentity)
+    }
+
+    func testRetiredEntryHasTerminalCopyAndNoSignInEffects() throws {
+        let fixture = JourneyFixture()
+        fixture.lifecycle.retirePresentationContext()
+        XCTAssertEqual(fixture.lifecycle.accountEntryState, .retired)
+        let hosting = UIHostingController(rootView: fixture.view)
+        hosting.loadViewIfNeeded(); hosting.view.layoutIfNeeded()
+        XCTAssertThrowsError(try fixture.actions.signIn(.google)) { error in
+            XCTAssertEqual(CloudJourneyCopy.signInFailure(error), CloudJourneyCopy.retiredWindow)
+        }
+        XCTAssertEqual(fixture.factories, 0); XCTAssertEqual(fixture.presentations, 0)
+        XCTAssertNil(fixture.lifecycle.coordinator)
+    }
+
     func testLaterJourneyRendersCleanupAndRetriesWithoutFactoryOrPresentation() async throws {
         let broker = CloudHumanSessionBroker()
         let original = JourneyFixture(broker: broker); original.holdSignOut = true
@@ -14,6 +61,7 @@ final class CloudAccountJourneyTests: XCTestCase {
         while original.signOutContinuation == nil { await Task.yield() }
         let later = JourneyFixture(broker: broker)
         XCTAssertEqual(later.lifecycle.retiredCleanupState, .pending)
+        XCTAssertEqual(later.lifecycle.accountEntryState, .occupiedElsewhere) // Cleanup UI takes precedence.
         let hosting = UIHostingController(rootView: later.view)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)

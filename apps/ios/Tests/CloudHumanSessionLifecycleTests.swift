@@ -6,6 +6,49 @@ import ScreenpunkCore
 @testable import Screenpunk
 
 final class CloudHumanSessionLifecycleTests: XCTestCase {
+    @MainActor func testAccountEntrySnapshotObservesOwnershipReleaseWithoutAcquisition() throws {
+        let broker = CloudHumanSessionBroker()
+        let owner = CloudHumanSessionLifecycle(broker: broker), later = CloudHumanSessionLifecycle(broker: broker)
+        XCTAssertEqual(owner.accountEntryState, .available); XCTAssertEqual(later.accountEntryState, .available)
+        var changes = 0, factories = 0
+        let observation = later.objectWillChange.sink { changes += 1 }
+        let original = FakeHumanContext()
+        try owner.install(factory: { _ in
+            factories += 1
+            return CloudHumanSession(testCallback: original.callback, testRevoke: original.revoke)
+        })
+        XCTAssertEqual(owner.accountEntryState, .ownedHere); XCTAssertEqual(later.accountEntryState, .occupiedElsewhere)
+        XCTAssertGreaterThan(changes, 0)
+        later.cancelPresentation(); later.didEnterBackground()
+        XCTAssertEqual(original.revocations, 0)
+        let occupiedChanges = changes
+        owner.retirePresentationContext()
+        XCTAssertEqual(owner.accountEntryState, .retired); XCTAssertEqual(later.accountEntryState, .available)
+        XCTAssertGreaterThan(changes, occupiedChanges); XCTAssertEqual(factories, 1)
+        let successor = FakeHumanContext()
+        try later.install(CloudHumanSession(testCallback: successor.callback, testRevoke: successor.revoke))
+        owner.cancelPresentation(); owner.didEnterBackground(); owner.retirePresentationContext()
+        XCTAssertEqual(successor.revocations, 0); XCTAssertEqual(later.accountEntryState, .ownedHere)
+        withExtendedLifetime(observation) {}
+    }
+
+    @MainActor func testAttachedFailedSignOutKeepsOwnerEntryAndBlocksOtherWindow() async throws {
+        let broker = CloudHumanSessionBroker()
+        var fail = true
+        let coordinator = CloudConnectionCoordinator(authenticate: { _ in LifecycleTokens() },
+            cancelIdentityFlow: {}, signOutIdentity: { if fail { throw CloudNativeIdentityError.providerFailed } },
+            makeClient: { try CloudNativeClient(baseURL: URL(string: "https://fixture.invalid")!, tokenProvider: $0, transport: LifecycleTransport()) }, journal: LifecycleJournal())
+        let owner = CloudHumanSessionLifecycle(broker: broker), later = CloudHumanSessionLifecycle(broker: broker)
+        try owner.install(CloudHumanSession(testCoordinator: coordinator, testCallback: { _ in true }))
+        await owner.signOut()?.value
+        XCTAssertEqual(coordinator.signOutState, .failed)
+        XCTAssertEqual(owner.accountEntryState, .ownedHere); XCTAssertTrue(owner.coordinator === coordinator)
+        XCTAssertEqual(later.accountEntryState, .occupiedElsewhere); XCTAssertEqual(later.retiredCleanupState, .none)
+        fail = false; await owner.retrySignOut()?.value
+        XCTAssertEqual(owner.accountEntryState, .available); XCTAssertEqual(later.accountEntryState, .available)
+        XCTAssertNil(later.coordinator)
+    }
+
     @MainActor func testWrongSceneOnlyTransportsToAttachedOwner() throws {
         let broker = CloudHumanSessionBroker()
         let owner = CloudHumanSessionLifecycle(broker: broker)
@@ -41,6 +84,8 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
         owner.retirePresentationContext()
         while broker.state == .retiring { await Task.yield() }
         guard case .failed(let handle) = receiver.retiredCleanupState else { return XCTFail("Missing handle") }
+        XCTAssertEqual(receiver.accountEntryState, .occupiedElsewhere)
+        XCTAssertEqual(owner.accountEntryState, .retired)
         XCTAssertEqual(owner.retiredCleanupState, .none)
         XCTAssertNil(owner.retryRetiredCleanup(handle))
         fail = false
