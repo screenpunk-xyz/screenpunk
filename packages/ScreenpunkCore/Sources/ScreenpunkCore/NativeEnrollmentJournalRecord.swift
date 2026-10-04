@@ -21,9 +21,32 @@ struct NativeJournalBinding: Codable, Equatable {
 struct NativeJournalFrame: Codable, Equatable {
     let schemaVersion: Int, cloudRootID: UUID, preparationID: UUID, attemptID: UUID, intentAttemptID: UUID
     let index: Int, phase: Int
+    let stageOwnership: NativeJournalStageOwnership?
+    init(schemaVersion: Int, cloudRootID: UUID, preparationID: UUID, attemptID: UUID, intentAttemptID: UUID,
+        index: Int, phase: Int, stageOwnership: NativeJournalStageOwnership? = nil) {
+        self.schemaVersion = schemaVersion; self.cloudRootID = cloudRootID; self.preparationID = preparationID; self.attemptID = attemptID
+        self.intentAttemptID = intentAttemptID; self.index = index; self.phase = phase; self.stageOwnership = stageOwnership
+    }
+}
+/// Nonsecret persistent-reference ownership only; no payload/digest or remote proof.
+struct NativeJournalStageOwnership: Codable, Equatable {
+    let cloudRootID: UUID, preparationID: UUID, enrollmentID: UUID, localBindingID: UUID, transitionID: UUID, claimRequestID: UUID, stageAttemptID: UUID
+    let stageService: String, stageAccount: String
+    let persistentReference: Data
+    init(_ binding: NativeEnrollmentStageBinding, persistentReference: Data, stageAttemptID: UUID) {
+        cloudRootID = binding.cloudRootID; preparationID = binding.preparationID; enrollmentID = binding.enrollmentID
+        localBindingID = binding.binding.credentialGenerationID; transitionID = binding.binding.transitionID; claimRequestID = binding.input.requestId
+        self.stageAttemptID = stageAttemptID; stageService = NativeEnrollmentStageEnvelope.service
+        stageAccount = String(decoding: binding.stage, as: UTF8.self); self.persistentReference = persistentReference
+    }
+    func matches(_ b: NativeEnrollmentStageBinding) -> Bool {
+        cloudRootID == b.cloudRootID && preparationID == b.preparationID && enrollmentID == b.enrollmentID && localBindingID == b.binding.credentialGenerationID
+            && transitionID == b.binding.transitionID && claimRequestID == b.input.requestId && Data(stageService.utf8) == Data(NativeEnrollmentStageEnvelope.service.utf8)
+            && Data(stageAccount.utf8) == b.stage && (1...1024).contains(persistentReference.count)
+    }
 }
 struct NativeJournalAttempt: Codable, Equatable {
-    enum Method: String, Codable { case prepareIntent, appendPhaseAssertion }
+    enum Method: String, Codable { case prepareIntent, appendPhaseAssertion, bindStageOwnership }
     let schemaVersion: Int, cloudRootID: UUID, preparationID: UUID, attemptID: UUID
     let index: Int, method: Method, rootBindingIdentity: NativeJournalIdentity, ownIdentity: NativeJournalIdentity
     let predecessor: NativeJournalNode?
@@ -53,6 +76,19 @@ enum NativeJournalCodec {
         let bytes = ((intentBytes + 2) / 3) * 4 + 32768 + phaseCount * frameLimit + 6 * phaseAttemptLimit + frameLimit
         guard bytes <= attemptLimit else { throw NativeEnrollmentJournalError.capacity }; return bytes
     }
+    static func stageOwnershipReservationProof(_ binding: NativeEnrollmentStageBinding) throws {
+        // Pure maximum-size layout proof BEFORE backend or journal write effects.
+        let owned = NativeJournalStageOwnership(binding, persistentReference: Data(repeating: 0, count: 1024), stageAttemptID: UUID())
+        let f = NativeJournalFrame(schemaVersion: 2, cloudRootID: binding.cloudRootID, preparationID: binding.preparationID,
+            attemptID: UUID(), intentAttemptID: UUID(), index: 448, phase: 2, stageOwnership: owned)
+        let target = try encode(f)
+        let identity = NativeJournalIdentity(device: UInt64.max, inode: UInt64.max)
+        let a = NativeJournalAttempt(schemaVersion: 1, cloudRootID: binding.cloudRootID, preparationID: binding.preparationID,
+            attemptID: f.attemptID, index: 448, method: .bindStageOwnership, rootBindingIdentity: identity, ownIdentity: identity,
+            predecessor: .init(identity: identity, bytes: Data(repeating: 0, count: frameLimit)), candidateIdentity: identity,
+            targetPayload: target, intentPayload: nil, reservation: 0)
+        guard target.count <= frameLimit, try encode(a).count <= phaseAttemptLimit else { throw NativeEnrollmentJournalError.capacity }
+    }
     private static func object(_ data: Data, limit: Int, keys: Set<String>, optional: Set<String> = []) throws -> [String: Any] {
         guard data.count <= limit else { throw NativeEnrollmentJournalError.capacity }
         do {
@@ -78,10 +114,21 @@ enum NativeJournalCodec {
         guard result.schemaVersion == 1, result.canonicalPath.utf8.count <= 4096, try encode(result) == data else { throw NativeEnrollmentJournalError.invalidRecord }; return result
     }
     static func frame(_ data: Data) throws -> NativeJournalFrame {
-        let o = try object(data, limit: frameLimit, keys: ["schemaVersion", "cloudRootID", "preparationID", "attemptID", "intentAttemptID", "index", "phase"])
+        let o = try object(data, limit: frameLimit, keys: ["schemaVersion", "cloudRootID", "preparationID", "attemptID", "intentAttemptID", "index", "phase"], optional: ["stageOwnership"])
         for key in ["cloudRootID", "preparationID", "attemptID", "intentAttemptID"] { try uuid(o[key]) }
+        if let raw = o["stageOwnership"] {
+            guard let ownership = raw as? [String: Any] else { throw NativeEnrollmentJournalError.invalidRecord }
+            do { try StructuralStoreCodec.keys(ownership, required: ["cloudRootID", "preparationID", "enrollmentID", "localBindingID", "transitionID", "claimRequestID", "stageAttemptID", "stageService", "stageAccount", "persistentReference"]) } catch { throw NativeEnrollmentJournalError.invalidRecord }
+            for key in ["cloudRootID", "preparationID", "enrollmentID", "localBindingID", "transitionID", "claimRequestID", "stageAttemptID"] { try uuid(ownership[key]) }
+            guard let ref = ownership["persistentReference"] as? String, ref.utf8.prefix(1369).count <= 1368,
+                let decoded = Data(base64Encoded: ref), (1...1024).contains(decoded.count), decoded.base64EncodedString().utf8.elementsEqual(ref.utf8),
+                let service = ownership["stageService"] as? String, service.utf8.elementsEqual(NativeEnrollmentStageEnvelope.service.utf8),
+                let account = ownership["stageAccount"] as? String else { throw NativeEnrollmentJournalError.invalidRecord }
+            _ = try NativeEnrollmentStageBinding.reference(Data(account.utf8))
+        }
         let result = try JSONDecoder().decode(NativeJournalFrame.self, from: data)
-        guard result.schemaVersion == 1, (1...448).contains(result.index), (0...6).contains(result.phase), try encode(result) == data else { throw NativeEnrollmentJournalError.invalidRecord }; return result
+        guard (result.schemaVersion == 1 && result.stageOwnership == nil) || (result.schemaVersion == 2 && result.phase == 2 && result.stageOwnership != nil) else { throw NativeEnrollmentJournalError.invalidRecord }
+        guard (1...448).contains(result.index), (0...6).contains(result.phase), try encode(result) == data else { throw NativeEnrollmentJournalError.invalidRecord }; return result
     }
     static func attempt(_ data: Data) throws -> NativeJournalAttempt {
         let o = try object(data, limit: attemptLimit, keys: ["schemaVersion", "cloudRootID", "preparationID", "attemptID", "index", "method", "rootBindingIdentity", "ownIdentity", "candidateIdentity", "targetPayload", "reservation"], optional: ["predecessor", "intentPayload"])
@@ -100,7 +147,9 @@ enum NativeJournalCodec {
         } else {
             guard a.intentPayload == nil, a.reservation == 0, data.count <= phaseAttemptLimit else { throw NativeEnrollmentJournalError.invalidRecord }
         }
-        _ = try frame(a.targetPayload); return a
+        let f = try frame(a.targetPayload)
+        guard (a.method == .bindStageOwnership) == (f.schemaVersion == 2), a.method != .prepareIntent || f.phase == 0 else { throw NativeEnrollmentJournalError.invalidRecord }
+        return a
     }
     static func effectiveIntent(_ intent: Data, phase: Int) throws -> Data {
         guard intent.count <= NativeEnrollmentPreparationCodec.maximumBytes, (0...6).contains(phase) else { throw NativeEnrollmentJournalError.invalidRecord }
