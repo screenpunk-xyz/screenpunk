@@ -116,6 +116,11 @@ enum PackagePreparationCodec {
             profileID: package.manifest.target.profileId, files: files, directories: try directories(files))
         try validate(plan); _ = try encode(PreparationRecord(plan: plan)); return plan
     }
+    /// Expected identity from genuine supplied bytes only, not installation/provenance/durability.
+    /// Ordinal affects retained history, not the reference; this performs no filesystem effects.
+    static func expectedReference(_ request:DevicePackagePreparationRequest,rootID:UUID)throws->DevicePreparedPackageReference {
+        try makePlan(request,rootID:rootID,ordinal:1).reference
+    }
     static func directories(_ files: [PreparationFile]) throws -> [String] {
         var result = Set<String>()
         for file in files {
