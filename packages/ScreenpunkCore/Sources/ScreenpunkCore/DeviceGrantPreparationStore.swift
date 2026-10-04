@@ -140,8 +140,9 @@ final class DeviceGrantPreparationStore {
             return entry.record.privateAttempt == nil ? .awaitingPrivateIdentity : .partial
         }
     }
-    func verify(_ receipt: DevicePreparedGrantReceipt) throws -> DeviceVerifiedGrantPreparation {
-        try disk { context in
+    func verify(_ receipt: DevicePreparedGrantReceipt) throws -> DeviceVerifiedGrantPreparation { try verifyRead(receipt,resourcePermit:nil) }
+    private func verifyRead(_ receipt: DevicePreparedGrantReceipt, resourcePermit: DeviceLocalResourcePermit?) throws -> DeviceVerifiedGrantPreparation {
+        try disk(resourcePermit:resourcePermit) { context in
             guard receipt.issuer == ObjectIdentifier(self), receipt.identity.rootID == rootID else { throw DeviceGrantPreparationError.conflict }
             let state = try inventory(context)
             guard !state.hasStages, state.entries.allSatisfy(\.complete), let tip = state.tip?.terminal else { throw DeviceGrantPreparationError.repairRequired }
@@ -158,6 +159,14 @@ final class DeviceGrantPreparationStore {
     /// No private bytes escape; this does not synchronize, recommit, or renew qualification.
     func verify(_ receipt: DevicePreparedGrantReceipt, exactRequest request: DeviceGrantPreparationRequest,
                 expectedEntries: [DeviceGrantEntryExpectation]) throws -> DeviceVerifiedGrantPreparation {
+        try verifyExactRead(receipt,exactRequest:request,expectedEntries:expectedEntries,resourcePermit:nil)
+    }
+    func verify(_ receipt: DevicePreparedGrantReceipt, exactRequest request: DeviceGrantPreparationRequest,
+                expectedEntries: [DeviceGrantEntryExpectation], resourcePermit: DeviceLocalResourcePermit) throws -> DeviceVerifiedGrantPreparation {
+        try verifyExactRead(receipt,exactRequest:request,expectedEntries:expectedEntries,resourcePermit:resourcePermit)
+    }
+    private func verifyExactRead(_ receipt: DevicePreparedGrantReceipt, exactRequest request: DeviceGrantPreparationRequest,
+                                expectedEntries: [DeviceGrantEntryExpectation], resourcePermit: DeviceLocalResourcePermit?) throws -> DeviceVerifiedGrantPreparation {
         let fresh = try DeviceGrantRevisionQualifier.qualify(request.input, expectedEntries: expectedEntries)
         guard fresh.exactlyMatches(request.qualified), receipt.operationID == request.operationID,
               receipt.identity == request.input.identity, receipt.identity.rootID == rootID else { throw DeviceGrantPreparationError.conflict }
@@ -165,7 +174,7 @@ final class DeviceGrantPreparationStore {
             qualified: fresh, expectedEntries: expectedEntries)
         let attempted = try GrantPreparationCodec.attempt(rebound, rootID: rootID)
         guard attempted == receipt.privateBytes else { throw DeviceGrantPreparationError.conflict }
-        let observed = try verify(receipt)
+        let observed = try verifyRead(receipt,resourcePermit:resourcePermit)
         guard observed.publicMetadataBytes == fresh.publicMetadataBytes else { throw DeviceGrantPreparationError.conflict }
         return observed
     }
@@ -458,8 +467,33 @@ final class DeviceGrantPreparationStore {
         }
         return result
     }
-    private func disk<T>(create: Bool = false, _ operation: (Context) throws -> T) throws -> T {
+    private var borrowedResourceContext: Context?
+    var resourceGateDescriptor: DeviceLocalResourceDescriptor { get throws { try .existing(instance:ObjectIdentifier(self),path:root.path,rootID:rootID) } }
+    func withResourceGateScope(_ permit: DeviceLocalResourcePermit, _ body: () throws -> Void) throws {
+        try permit.beginAcquisition(resourceGateDescriptor)
+        mutex.lock(); defer { permit.invalidate(); mutex.unlock() }
+        try diskContext(create:false,releasePermit:permit) { context in
+            borrowedResourceContext = context
+            defer { borrowedResourceContext = nil; permit.invalidate() }
+            try body()
+            try check(context)
+        }
+    }
+    private func disk<T>(create: Bool = false, resourcePermit: DeviceLocalResourcePermit? = nil,
+                         _ operation: (Context) throws -> T) throws -> T {
+        if let permit = resourcePermit {
+            guard !create else { throw DeviceLocalResourceGateFailure.invalidScope }
+            try permit.beginRead(ObjectIdentifier(self)); defer { permit.endRead() }
+            guard let context = borrowedResourceContext else { throw DeviceLocalResourceGateFailure.invalidScope }
+            try check(context)
+            do { let result = try operation(context); try check(context); return result }
+            catch { try check(context); throw error }
+        }
+        try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
         mutex.lock(); defer { mutex.unlock() }
+        return try diskContext(create:create,operation)
+    }
+    private func diskContext<T>(create: Bool, releasePermit: DeviceLocalResourcePermit? = nil, _ operation: (Context) throws -> T) throws -> T {
         let paths = try protectedPaths()
         let rootFD = try absoluteDirectory(root.path); defer { close(rootFD) }
         let rootIdentity = try identity(rootFD, directory: true)
@@ -482,7 +516,7 @@ final class DeviceGrantPreparationStore {
             if let expected = setupLock { guard expected == lockIdentity else { throw DeviceGrantPreparationError.conflict } }
             setupLock = lockIdentity
         }
-        guard flock(lock, LOCK_EX) == 0 else { throw failure() }; defer { flock(lock, LOCK_UN) }
+        guard flock(lock, LOCK_EX) == 0 else { throw failure() }; defer { releasePermit?.invalidate(); flock(lock, LOCK_UN) }
         if create && !bindingExists {
             if mkdirat(rootFD, "operations", 0o700) != 0 { guard errno == EEXIST && setupOperations != nil else { throw failure() } }
         }
