@@ -46,6 +46,18 @@ final class DeviceLocalStructuralCommandPermit {
     func begin(_ instance: ObjectIdentifier) throws { try readPermit.beginRead(instance) }
     func end() { readPermit.endRead() }
 }
+/// Fixed completion dispatch/publication only. Neither token is constructible outside this file;
+/// publication is issued only after the entire four-root scope successfully exits.
+final class DeviceProvisioningCompletionCommandPermit {
+    private let permit:DeviceLocalResourcePermit
+    fileprivate init(_ permit:DeviceLocalResourcePermit){self.permit=permit}
+    func begin(_ instance:ObjectIdentifier)throws{try permit.beginRead(instance)}
+    func end(){permit.endRead()}
+}
+final class DeviceProvisioningCompletionPublicationPermit {
+    fileprivate init(){}
+    func requireIdle()throws{try DeviceLocalResourceRegistry.requireIdle()}
+}
 /// Short registry critical sections only. Never holds its mutex during waits, I/O or callbacks.
 /// All ordinary store entries are marked BEFORE their mutex acquisition, rejecting nested cross-store
 /// or gate entry. Thread markers are removed on exit; they are not persistent state or authority.
@@ -247,6 +259,43 @@ final class DeviceLocalResourceGate {
         try grants.verifyBoundTerminal(receipt.transition,plan:receipt.plan,packages:fresh,resourcePermit:permit)
         try packages.verifyResolutionCheckpoint(receipt.checkpoint,resourcePermit:permit)
         try journal.verifyExact(receipt.journalReceipt,plan:receipt.plan,resourcePermit:permit)
+    }
+    /// Fixed completion consumes the ORIGINAL structural capture; persisted diagnostics never recreate
+    /// acknowledgment. Journal capacity remains unqualified until every scope exit has succeeded.
+    func completeProvisioningExact(_ terminal:DeviceBoundTerminalGrantReceipt,
+        acknowledgment:DeviceLocalCompleteSetCommitAcknowledgment,journal:DeviceLocalProvisioningIntentStore)throws->DeviceLocalProvisioningIntentStore.CompletionReceipt {
+        guard terminal.packages.count <= 12,terminal.plan.canonicalBytes.count <= ProvisioningIntentCodec.limit,
+              acknowledgment.envelopeBytes.count <= 128*1024 else{throw DeviceLocalCompleteSetFailure.sizeLimit}
+        let body=try ProvisioningIntentCodec.decode(terminal.plan.canonicalBytes),candidate=try StructuralStoreCodec.envelope(body.candidate)
+        guard body.roots == terminal.plan.roots,body.operationID == terminal.plan.operationID,
+              acknowledgment.operationID == body.operationID,acknowledgment.generationID == candidate.snapshot.generationID,
+              acknowledgment.envelopeBytes == body.candidate else{throw DeviceStructuralStoreError.conflict}
+        let transition=try withScope(journal:journal){scope,permit in
+            let actual=try [journal.resourceGateDescriptor.rootID,self.packages.resourceGateDescriptor.rootID,self.grants.resourceGateDescriptor.rootID,self.structural.resourceGateDescriptor.rootID]
+            guard actual == [body.roots.journalID,body.roots.packageID,body.roots.grantID,body.roots.structuralID] else{throw DeviceLocalResourceGateFailure.invalidRoots}
+            try journal.verifyCompletionAntecedent(terminal.journalReceipt,plan:terminal.plan,resourcePermit:permit)
+            try self.verifyBoundTerminalExternalResources(terminal,permit:permit)
+            try acknowledgment.verifyOriginalUnderScope(scope)
+            let transition=try journal.performCompletionExact(terminal.journalReceipt,plan:terminal.plan,envelope:acknowledgment.envelopeBytes,commandPermit:.init(permit))
+            try journal.verifyCompletionTransition(transition,resourcePermit:permit)
+            try self.verifyBoundTerminalExternalResources(terminal,permit:permit)
+            try acknowledgment.verifyOriginalUnderScope(scope)
+            try journal.verifyCompletionTransition(transition,resourcePermit:permit)
+            return transition
+        }
+        // No qualification was published inside the scope. Exit checks throwing, or another instance
+        // invalidating the journal before this mutex-protected publication, cannot release capacity.
+        return try journal.publishCompletionExact(transition,permit:.init())
+    }
+    private func verifyBoundTerminalExternalResources(_ receipt:DeviceBoundTerminalGrantReceipt,permit:DeviceLocalResourcePermit)throws {
+        try packages.verifyResolutionCheckpoint(receipt.checkpoint,resourcePermit:permit)
+        var fresh:[DeviceProvisioningPackageInput]=[]
+        for binding in receipt.packages {
+            let value=try packages.verify(binding.receipt,resourcePermit:permit)
+            fresh.append(.retained(entryID:binding.entryID,reference:value.reference,verified:value))
+        }
+        try grants.verifyBoundTerminal(receipt.transition,plan:receipt.plan,packages:fresh,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(receipt.checkpoint,resourcePermit:permit)
     }
     /// Unmounted fixed entry factory. Mandatory native-driver seam is NOT a production admission
     /// implementation. Driver/resolver/actor installation/transport work occur outside resource locks.
@@ -555,7 +604,9 @@ final class DeviceBoundPackagePreparationCoordinator {
         guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
     }
     func inspectGrantTerminalRecoveryExact()throws->DeviceBoundGrantTerminalRecovery {
-        guard let diagnostic=try journal.inspectPendingExact() else{throw DeviceGrantPreparationError.repairRequired}
+        // Retained current completion can be explicitly requalified for an exact restart retry. This
+        // diagnostic still cannot mint a structural acknowledgment or release journal capacity.
+        guard let diagnostic=try journal.inspectPendingExact() ?? journal.inspectLatestRetainedIntentExact() else{throw DeviceGrantPreparationError.repairRequired}
         return try grants.inspectBoundTerminalRecovery(diagnostic)
     }
     func recommitGrantTerminalExact(_ recovery:DeviceBoundGrantTerminalRecovery)throws->DeviceBoundTerminalGrantReceipt {

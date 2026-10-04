@@ -6,9 +6,11 @@ final class DeviceLocalCompleteSetCommitAcknowledgment {
     let operationID: UUID
     let generationID: UUID
     let envelopeBytes: Data
+    private let originalCapture:DeviceStructuralStore.QualifiedCurrentCapture
     fileprivate init(_ capture: DeviceStructuralStore.QualifiedCurrentCapture, generationID: UUID) {
-        operationID = capture.operationID; self.generationID = generationID; envelopeBytes = capture.envelopeBytes
+        originalCapture=capture;operationID = capture.operationID; self.generationID = generationID; envelopeBytes = capture.envelopeBytes
     }
+    func verifyOriginalUnderScope(_ scope:DeviceLocalResourceReadScope)throws {try scope.verifyQualifiedStructuralCapture(originalCapture)}
 }
 /// Unmounted coordinator for supplied live receipts or explicit resolver bundles. Requests/IDs/selection are never regenerated.
 /// The gate releases every lock before this method returns. No activation/notification is dispatched.
@@ -36,6 +38,11 @@ final class DeviceLocalCompleteSetCommitCoordinator {
         journal:DeviceLocalProvisioningIntentStore)throws->DeviceLocalCompleteSetCommitAcknowledgment {
         let (capture,generation)=try gate.commitBoundTerminalExact(receipt,journal:journal)
         return .init(capture,generationID:generation)
+    }
+
+    func completeProvisioningExact(_ terminal:DeviceBoundTerminalGrantReceipt,
+        acknowledgment:DeviceLocalCompleteSetCommitAcknowledgment,journal:DeviceLocalProvisioningIntentStore)throws->DeviceLocalProvisioningIntentStore.CompletionReceipt {
+        try gate.completeProvisioningExact(terminal,acknowledgment:acknowledgment,journal:journal)
     }
 
 }
