@@ -17,14 +17,25 @@ final class BuildConflictCLITests: XCTestCase {
                 "SCREENPUNK_DOCUMENTS_DIRECTORY": root.appendingPathComponent("Documents").path]),
             ownerCheck: {}, nativeFactory: { _ in nil })
         defer { host.stop() }
-        let executable = try XCTUnwrap(ProcessInfo.processInfo.environment["SP_CLI_TEST_EXECUTABLE"])
+        var binary = ProcessInfo.processInfo.environment["SP_CLI_TEST_EXECUTABLE"].map {
+            URL(fileURLWithPath: $0)
+        }
+        var candidate = Bundle(for: Self.self).bundleURL
+        for _ in 0..<7 where binary == nil {
+            let path = candidate.appendingPathComponent("screenpunk")
+            if FileManager.default.isExecutableFile(atPath: path.path) { binary = path }
+            candidate.deleteLastPathComponent()
+        }
+        let executable = try XCTUnwrap(binary)
         func run(_ words: [String], status: Int32 = 0) throws -> [String: Any] {
             let output = root.appendingPathComponent(UUID().uuidString + ".json")
             XCTAssertTrue(FileManager.default.createFile(atPath: output.path, contents: nil))
             let handle = try FileHandle(forWritingTo: output)
             defer { try? handle.close() }
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: executable)
+            process.executableURL = executable
+            process.environment = ["PATH": "/usr/bin:/bin",
+                "SCREENPUNK_DOCUMENTS_DIRECTORY": root.appendingPathComponent("Documents").path]
             process.arguments = words + ["--json", "--no-input", "--home", home.path,
                 "--runtime-directory", runtime.path]
             process.standardOutput = handle; process.standardError = handle
