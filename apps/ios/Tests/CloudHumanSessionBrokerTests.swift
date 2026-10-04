@@ -27,6 +27,41 @@ final class CloudHumanSessionBrokerTests: XCTestCase {
         XCTAssertTrue(successor!.isCurrent)
     }
 
+    func testRetiredRecoveryHandleCannotRepairSuccessorOrForeignBroker() async throws {
+        let broker = CloudHumanSessionBroker(), first = BrokerFixture(); first.failClear = true
+        let old = try broker.acquire(owner: UUID(), factory: first.make)
+        await broker.retire(old)?.value
+        guard case .failed(let handle) = broker.retiredCleanupState else { return XCTFail("Missing failure") }
+        let foreign = CloudHumanSessionBroker()
+        XCTAssertNil(foreign.retryRetiredCleanup(handle))
+        first.failClear = false
+        await broker.retryRetiredCleanup(handle)?.value
+        XCTAssertEqual(broker.retiredCleanupState, .none)
+        let next = BrokerFixture(); next.failClear = true
+        let successor = try broker.acquire(owner: UUID(), factory: next.make)
+        await broker.retire(successor)?.value
+        XCTAssertNil(broker.retryRetiredCleanup(handle))
+        XCTAssertEqual(next.clears, 1)
+        XCTAssertTrue(successor.isCurrent)
+    }
+
+    func testRetiredRecoveryWaitsAndDuplicateRequestDoesNotStartAnotherClear() async throws {
+        let broker = CloudHumanSessionBroker(), fixture = BrokerFixture(); fixture.failClear = true
+        let lease = try broker.acquire(owner: UUID(), factory: fixture.make)
+        await broker.retire(lease)?.value
+        guard case .failed(let handle) = broker.retiredCleanupState else { return XCTFail("Missing failure") }
+        fixture.failClear = false; fixture.holdClear = true
+        let retry = broker.retryRetiredCleanup(handle)
+        while fixture.clears < 2 { await Task.yield() }
+        XCTAssertEqual(broker.retiredCleanupState, .pending)
+        XCTAssertNil(broker.retryRetiredCleanup(handle))
+        XCTAssertTrue(lease.isCurrent)
+        XCTAssertFalse(broker.dispatchGoogleCallback(URL(string: "fixture:/oauth2callback")!))
+        fixture.releaseClear(); await retry?.value
+        XCTAssertEqual(broker.retiredCleanupState, .none)
+        XCTAssertFalse(lease.isCurrent)
+    }
+
     func testDormantAndOccupiedLoserHaveNoFactoryOrSDKEffects() throws {
         let broker = CloudHumanSessionBroker(), first = BrokerFixture(), second = BrokerFixture()
         XCTAssertEqual(broker.state, .vacant); XCTAssertEqual(first.factories, 0)
@@ -157,7 +192,8 @@ final class CloudHumanSessionBrokerTests: XCTestCase {
         XCTAssertEqual(fixture.firebaseClears, 1); XCTAssertEqual(fixture.googleClears, 1)
         let other = CloudHumanSessionLifecycle(broker: broker), loser = BrokerFixture()
         XCTAssertThrowsError(try other.install(factory: loser.make)); XCTAssertEqual(loser.factories, 0)
-        fixture.failClear = false; await broker.retryRetiredCleanup()?.value
+        guard case .failed(let recovery) = broker.retiredCleanupState else { return XCTFail("Missing recovery handle") }
+        fixture.failClear = false; await other.retryRetiredCleanup(recovery)?.value
         XCTAssertEqual(broker.state, .vacant)
         try other.install(factory: loser.make); XCTAssertEqual(loser.factories, 1)
     }
@@ -166,6 +202,7 @@ final class CloudHumanSessionBrokerTests: XCTestCase {
         let scene = CloudHumanSessionLifecycle(broker: broker); try scene.install(factory: fixture.make)
         await scene.signOut()?.value
         XCTAssertEqual(broker.state, .cleanupFailed)
+        XCTAssertEqual(broker.retiredCleanupState, .none) // Attached owner keeps its coordinator retry.
         XCTAssertThrowsError(try scene.install(factory: BrokerFixture().make))
         fixture.failClear = false; await scene.retrySignOut()?.value
         XCTAssertEqual(broker.state, .vacant); XCTAssertNil(scene.coordinator)

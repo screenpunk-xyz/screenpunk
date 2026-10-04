@@ -24,6 +24,38 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
         XCTAssertFalse(owner.dispatchGoogleCallback(url))
     }
 
+    @MainActor func testLaterLiveSceneObservesRepairAndRetiredReceiverCannotRetry() async throws {
+        let broker = CloudHumanSessionBroker(), gate = LifecycleClearGate()
+        var fail = true, clears = 0, cancellations = 0
+        let coordinator = CloudConnectionCoordinator(authenticate: { _ in LifecycleTokens() },
+            cancelIdentityFlow: { cancellations += 1 }, signOutIdentity: {
+                clears += 1
+                if fail { throw CloudNativeIdentityError.providerFailed }
+                await gate.wait()
+            }, makeClient: { try CloudNativeClient(baseURL: URL(string: "https://fixture.invalid")!, tokenProvider: $0, transport: LifecycleTransport()) }, journal: LifecycleJournal())
+        let owner = CloudHumanSessionLifecycle(broker: broker)
+        try owner.install(CloudHumanSession(testCoordinator: coordinator, testCallback: { _ in true }))
+        let receiver = CloudHumanSessionLifecycle(broker: broker)
+        var notifications = 0
+        let observation = receiver.objectWillChange.sink { notifications += 1 }
+        owner.retirePresentationContext()
+        while broker.state == .retiring { await Task.yield() }
+        guard case .failed(let handle) = receiver.retiredCleanupState else { return XCTFail("Missing handle") }
+        XCTAssertEqual(owner.retiredCleanupState, .none)
+        XCTAssertNil(owner.retryRetiredCleanup(handle))
+        fail = false
+        let retry = receiver.retryRetiredCleanup(handle)
+        while !gate.entered { await Task.yield() }
+        let before = cancellations
+        receiver.cancelPresentation(); receiver.didEnterBackground(); receiver.retirePresentationContext()
+        XCTAssertEqual(cancellations, before)
+        XCTAssertNil(receiver.retryRetiredCleanup(handle))
+        gate.release(); await retry?.value
+        XCTAssertEqual(clears, 2); XCTAssertEqual(broker.retiredCleanupState, .none)
+        XCTAssertGreaterThanOrEqual(notifications, 3)
+        withExtendedLifetime(observation) {}
+    }
+
     @MainActor func testDormantCallbacksAndPhasesNeverConstructSession() {
         let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         XCTAssertNil(lifecycle.coordinator)

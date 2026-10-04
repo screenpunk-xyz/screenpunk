@@ -7,6 +7,24 @@ import SwiftUI
 final class CloudHumanSessionBroker: ObservableObject {
     static let shared = CloudHumanSessionBroker()
     enum State: Equatable { case vacant, reserving, attached, settling, retiring, cleanupFailed }
+    enum RetiredCleanupState: Equatable {
+        case none, pending, failed(RetiredCleanupHandle)
+    }
+    /// Repair authority for one retired slot only; never exposes its lease or pair.
+    struct RetiredCleanupHandle: Equatable {
+        fileprivate let brokerID: ObjectIdentifier
+        fileprivate let generation: UUID
+        fileprivate init(broker: CloudHumanSessionBroker, generation: UUID) {
+            brokerID = ObjectIdentifier(broker); self.generation = generation
+        }
+    }
+    var retiredCleanupState: RetiredCleanupState {
+        guard let current = slot, current.retirement else { return .none }
+        if state == .cleanupFailed {
+            return .failed(RetiredCleanupHandle(broker: self, generation: current.lease.generation))
+        }
+        return .pending
+    }
     enum Failure: Error { case occupied, staleOwnership }
     @Published private(set) var state: State = .vacant
 
@@ -99,8 +117,9 @@ final class CloudHumanSessionBroker: ObservableObject {
         return settle(lease, retrying: false)
     }
     /// A later scene can explicitly repair retired cleanup, never acquire around it.
-    @discardableResult func retryRetiredCleanup() -> Task<Void, Never>? {
-        guard let current = slot, current.retirement, state == .cleanupFailed else { return nil }
+    @discardableResult func retryRetiredCleanup(_ handle: RetiredCleanupHandle) -> Task<Void, Never>? {
+        guard handle.brokerID == ObjectIdentifier(self), let current = slot, current.retirement,
+              handle.generation == current.lease.generation, state == .cleanupFailed else { return nil }
         return settle(current.lease, retrying: true)
     }
     private func settle(_ lease: Lease, retrying: Bool) -> Task<Void, Never>? {
