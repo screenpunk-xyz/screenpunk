@@ -21,6 +21,17 @@ struct DeviceLocalCompleteSetRequest: GrantSecretRedacted {
     let grantRequest: DeviceGrantPreparationRequest
     let owner: PairingIdentity
 }
+/// Nonsecret caller-supplied candidate. Resolver checkpoints remain in the opaque bundle and are
+/// never reconstructed from these references. Latest-only resources are not selected implicitly.
+struct DeviceLocalCompleteSetRecoveredRequest {
+    let structuralRootID: UUID
+    let operationID: UUID
+    let expectedGenerationID: UUID?
+    let baseline: DeviceLocalCompleteSetBaseline
+    let snapshot: DeviceStructuralSnapshot
+    let packages: [DeviceRetainedEntryPackageBinding]
+    let owner: PairingIdentity
+}
 enum DeviceLocalCompleteSetFailure: Error, Equatable {
     case sizeLimit, invalidInput, baselineMismatch, packageMismatch, ownerMismatch
 }
@@ -56,19 +67,33 @@ enum DeviceLocalCompleteSetBounds {
         return 2 + 6 * value.utf8.count
     }
     static func preflight(_ request: DeviceLocalCompleteSetRequest) throws {
-        guard request.snapshot.entries.count <= 12, request.packages.count <= 12,
-              request.owner.publicKey.count <= PairingLimits.identityByteCount else { throw DeviceLocalCompleteSetFailure.sizeLimit }
-        if case .expectedEnvelope(let bytes) = request.baseline, bytes.count > envelopeLimit { throw DeviceLocalCompleteSetFailure.sizeLimit }
+        guard request.packages.count <= 12, request.snapshot.entries.count <= 12 else { throw DeviceLocalCompleteSetFailure.sizeLimit }
+        try preflight(snapshot:request.snapshot,baseline:request.baseline,owner:request.owner,
+                      references:request.packages.map { $0.receipt.reference },count:request.packages.count)
+    }
+    static func preflight(_ request: DeviceLocalCompleteSetRecoveredRequest, resources: DeviceResolvedRetainedResources) throws {
+        // Check all inventory counts before any maps/copies, including latest-only bundle resources.
+        guard request.packages.count <= 12, request.snapshot.entries.count <= 12, resources.packageReceipts.count <= 24,
+              (1...2).contains(resources.grantReceipts.count) else { throw DeviceLocalCompleteSetFailure.sizeLimit }
+        try preflight(snapshot:request.snapshot,baseline:request.baseline,owner:request.owner,
+                      references:request.packages.map(\.reference),count:request.packages.count)
+        for receipt in resources.packageReceipts { _ = try string(receipt.reference.directory); _ = try string(receipt.reference.contentID) }
+    }
+    private static func preflight(snapshot:DeviceStructuralSnapshot,baseline:DeviceLocalCompleteSetBaseline,
+                                  owner:PairingIdentity,references:[DevicePreparedPackageReference],count:Int) throws {
+        guard snapshot.entries.count <= 12, count <= 12,
+              owner.publicKey.count <= PairingLimits.identityByteCount else { throw DeviceLocalCompleteSetFailure.sizeLimit }
+        if case .expectedEnvelope(let bytes) = baseline, bytes.count > envelopeLimit { throw DeviceLocalCompleteSetFailure.sizeLimit }
         var snapshotBudget = 2048, referenceBudget = 1024
-        for entry in request.snapshot.entries {
+        for entry in snapshot.entries {
             for field in [entry.displayName,entry.packageDirectory,entry.revision.dashboardId,entry.revision.revision,entry.revision.name,entry.revision.digest] { snapshotBudget += try string(field) }
             snapshotBudget += 512
         }
-        if let grantSet = request.snapshot.grantSet { snapshotBudget += try string(grantSet) }
-        for binding in request.packages {
-            referenceBudget += 512 + (try string(binding.receipt.reference.directory)) + (try string(binding.receipt.reference.contentID))
+        if let grantSet = snapshot.grantSet { snapshotBudget += try string(grantSet) }
+        for reference in references {
+            referenceBudget += 512 + (try string(reference.directory)) + (try string(reference.contentID))
         }
-        if case .initialExplicit(let legacy) = request.baseline, let legacy { _ = try string(legacy) }
+        if case .initialExplicit(let legacy) = baseline, let legacy { _ = try string(legacy) }
         guard snapshotBudget <= 64 * 1024, referenceBudget <= intentLimit, referenceBudget <= outcomeLimit,
               snapshotBudget + 2 * (((referenceBudget + 2) / 3) * 4) + 1024 <= envelopeLimit else { throw DeviceLocalCompleteSetFailure.sizeLimit }
     }
