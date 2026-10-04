@@ -32,6 +32,10 @@ final class NativeEnrollmentJournalStore {
         let index: Int, phase: Int
         let identity: NativeJournalIdentity
     }
+    fileprivate struct StageNodeDeclaration: Equatable {
+        let ref: Ref
+        let frameIdentity: NativeJournalIdentity
+    }
     fileprivate struct Scan {
         let refs: [Ref]
         let tip: NativeJournalNode?
@@ -219,11 +223,12 @@ final class NativeEnrollmentJournalStore {
         let retainedOwnerships: [NativeJournalStageOwnership]
         fileprivate let issuer: ObjectIdentifier, generation: UInt64, binding: NativeJournalNode, tip: NativeJournalNode, proof: NativeJournalNode
         fileprivate let count: Int
+        fileprivate let nodes: [StageNodeDeclaration]
         fileprivate init(store: NativeEnrollmentJournalStore, state: Scan, qualified: Qualification, step: NativePreparationReconstructionStep,
-            attempt: Ref, proof: NativeJournalNode) throws {
+            attempt: Ref, proof: NativeJournalNode, nodes: [StageNodeDeclaration]) throws {
             guard let tip = state.tip else { throw NativeEnrollmentJournalError.conflict }
             self.step = step; stageAttemptID = attempt.attemptID; retainedOwnerships = state.stageOwnerships
-            issuer = ObjectIdentifier(store); generation = qualified.epoch; binding = qualified.binding; self.tip = tip; self.proof = proof; count = state.refs.count
+            issuer = ObjectIdentifier(store); generation = qualified.epoch; binding = qualified.binding; self.tip = tip; self.proof = proof; count = state.refs.count; self.nodes = nodes
         }
     }
     func captureStageIntent(preparationID: UUID) throws -> StageCheckpoint { try captureStage(preparationID, phase: 0, attemptID: nil) }
@@ -236,16 +241,92 @@ final class NativeEnrollmentJournalStore {
                 attemptID == nil || ref.attemptID == attemptID, let initial = state.unfinishedIntent, let q = qualification else { throw NativeEnrollmentJournalError.conflict }
             let step = try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(NativeJournalCodec.effectiveIntent(initial, phase: phase), context: state.context)
             try NativeJournalCodec.stageOwnershipReservationProof(NativeEnrollmentStageBinding(cloudRootID: cloudRootID, proposal: step.proposal))
-            return try .init(store: self, state: state, qualified: q, step: step, attempt: ref, proof: loadAttempt(d, ref).node)
+            return try .init(store: self, state: state, qualified: q, step: step, attempt: ref, proof: loadAttempt(d, ref).node, nodes: stageNodes(d, refs: state.refs))
         }
     }
     func verifyStageCheckpoint(_ c: StageCheckpoint) throws {
         try disk { d in let state = try scan(d); try requireQualification(d, state); try originalStage(c, d: d, state: state) }
     }
     private func originalStage(_ c: StageCheckpoint, d: Disk, state: Scan) throws {
+        try validateStagePrefix(c, d: d, state: state)
         guard c.issuer == ObjectIdentifier(self), (c.generation == epoch() || originalStageReplayEpochs[ObjectIdentifier(c)] == epoch()), c.binding == d.binding,
             c.tip == state.tip, state.refs.count == c.count, let ref = state.refs.last,
             ref.attemptID == c.stageAttemptID, try loadAttempt(d, ref).node == c.proof else { throw NativeEnrollmentJournalError.outcomeUncertain }
+    }
+    private func stageNodes(_ d: Disk, refs: [Ref]) throws -> [StageNodeDeclaration] {
+        // Conservative compact declaration payload bound, not a heap promise.
+        guard refs.count <= 448, refs.count * 512 <= 229_376 else { throw NativeEnrollmentJournalError.capacity }
+        return try refs.map { ref in
+            guard ref.name.utf8.count <= 64, let frame = try readFile(d.frames, ref.name, limit: NativeJournalCodec.frameLimit),
+                frame.identity == (try loadAttempt(d, ref)).value.candidateIdentity else { throw NativeEnrollmentJournalError.outcomeUncertain }
+            return .init(ref: ref, frameIdentity: frame.identity)
+        }
+    }
+    private func validateStagePrefix(_ c: StageCheckpoint, d: Disk, state: Scan) throws {
+        guard c.issuer == ObjectIdentifier(self), c.binding == d.binding, c.nodes.count == c.count,
+            state.refs.count >= c.count, Array(state.refs.prefix(c.count)) == c.nodes.map({ $0.ref }),
+            try stageNodes(d, refs: Array(state.refs.prefix(c.count))) == c.nodes,
+            let last = c.nodes.last,
+            try readFile(d.frames, last.ref.name, limit: NativeJournalCodec.frameLimit) == c.tip,
+            try loadAttempt(d, last.ref).node == c.proof else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        let prefix = try scanPublished(d, attemptNames: c.nodes.map { $0.ref.name }, frameNames: Set(c.nodes.map { $0.ref.name }))
+        guard prefix.latestInstalled, let initial = prefix.unfinishedIntent else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        let replay = try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(NativeJournalCodec.effectiveIntent(initial, phase: last.ref.phase), context: prefix.context)
+        let x = replay.proposal, y = c.step.proposal
+        guard x.preparationId == y.preparationId, x.enrollmentId == y.enrollmentId, x.phase == y.phase,
+            x.stageReference.utf8.elementsEqual(y.stageReference.utf8), x.binding == y.binding, x.claimInput == y.claimInput,
+            x.reservedBytes == y.reservedBytes,
+            try nativeEnrollmentBytes(x.sourceHistory) == nativeEnrollmentBytes(y.sourceHistory),
+            try nativeEnrollmentBytes(x.targetHistory) == nativeEnrollmentBytes(y.targetHistory),
+            try nativeEnrollmentBytes(x.sourceEnrollment) == nativeEnrollmentBytes(y.sourceEnrollment),
+            try nativeEnrollmentBytes(x.targetEnrollment) == nativeEnrollmentBytes(y.targetEnrollment),
+            try nativeEnrollmentBytes(replay.priorDeclarations) == nativeEnrollmentBytes(c.step.priorDeclarations),
+            prefix.stageOwnerships == c.retainedOwnerships else { throw NativeEnrollmentJournalError.outcomeUncertain }
+    }
+    private func originalPendingExists(_ a: NativeEnrollmentStageBridge.Attempt, d: Disk) throws -> Bool {
+        try readFile(d.attempts, filename(a.checkpoint.count + 1, a.ownershipAttemptID) + ".pending", limit: NativeJournalCodec.phaseAttemptLimit) != nil
+    }
+    private func inspectOriginalPending(_ a: NativeEnrollmentStageBridge.Attempt, d: Disk) throws -> (Ref, NativeJournalNode, NativeJournalAttempt) {
+        let c = a.checkpoint, name = filename(c.count + 1, a.ownershipAttemptID)
+        guard c.issuer == ObjectIdentifier(self), c.binding == d.binding, c.step.proposal.phase == .stageAttempted,
+            liveStageEpochs[a.ownershipAttemptID] == epoch(), let captured = liveStageCommits[a.ownershipAttemptID],
+            Set(try names(d.attempts)) == Set(c.nodes.map { $0.ref.name } + [name + ".pending"]),
+            Set(try names(d.frames)) == Set(c.nodes.map { $0.ref.name } + [name + ".pending"]),
+            let pending = try readFile(d.attempts, name + ".pending", limit: NativeJournalCodec.phaseAttemptLimit), pending == captured else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        let recorded = try NativeJournalCodec.attempt(pending.bytes)
+        guard recorded.method == .bindStageOwnership, recorded.cloudRootID == cloudRootID,
+            recorded.preparationID == a.envelope.binding.preparationID, recorded.attemptID == a.ownershipAttemptID,
+            recorded.index == c.count + 1, recorded.rootBindingIdentity == c.binding.identity,
+            recorded.ownIdentity == pending.identity, recorded.predecessor == c.tip,
+            recorded.targetPayload == (try NativeJournalCodec.encode(ownershipFrame(a))),
+            let candidate = try readFile(d.frames, name + ".pending", limit: NativeJournalCodec.frameLimit),
+            candidate.identity == recorded.candidateIdentity, candidate.bytes.isEmpty else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        let prefix = try scanPublished(d, attemptNames: c.nodes.map { $0.ref.name }, frameNames: Set(c.nodes.map { $0.ref.name }))
+        try validateStagePrefix(c, d: d, state: prefix)
+        try check(d)
+        guard liveStageEpochs[a.ownershipAttemptID] == epoch() else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        return (.init(name: name, attemptID: a.ownershipAttemptID, preparationID: recorded.preparationID,
+            index: recorded.index, phase: 2, identity: pending.identity), pending, recorded)
+    }
+    private func recommitOriginalPending(_ a: NativeEnrollmentStageBridge.Attempt, d: Disk) throws -> LocalDurabilityReceipt {
+        // All preflight is read-only and precedes epoch/write effects. Empty,
+        // partial, replaced or metadata-issued attempts never enter this path.
+        let (ref, node, recorded) = try inspectOriginalPending(a, d: d)
+        let generation = beginAttempt(); liveStageEpochs[a.ownershipAttemptID] = generation
+        try syncExisting(d.attempts, ref.name + ".pending", expected: node, limit: NativeJournalCodec.phaseAttemptLimit)
+        try event(.attempt, .fileSynced)
+        try publish(d, parent: d.attempts, temporary: ref.name + ".pending", name: ref.name, kind: .attempt, expected: node.identity)
+        let fd = openat(d.frames, ref.name + ".pending", O_RDWR | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw failure() }; defer { close(fd) }
+        guard try identity(fd, directory: false) == recorded.candidateIdentity else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        try writeExact(fd, recorded.targetPayload); try event(.candidate, .written)
+        try sync(fd); try event(.candidate, .fileSynced)
+        try publish(d, parent: d.frames, temporary: ref.name + ".pending", name: ref.name, kind: .candidate, expected: recorded.candidateIdentity)
+        let receipt = try qualify(d, ref: ref, generation: generation)
+        let state = try scan(d); try requireQualification(d, state)
+        _ = try installedOriginalOwnership(a, d: d, state: state)
+        try check(d)
+        return receipt
     }
     func invalidateStageQualification(original: NativeEnrollmentStageBridge.Attempt? = nil) {
         // Only our own exact in-process original can preserve explicit retry
@@ -269,6 +350,7 @@ final class NativeEnrollmentJournalStore {
     }
     private func installedOriginalOwnership(_ a: NativeEnrollmentStageBridge.Attempt, d: Disk, state: Scan) throws -> Ref {
         let c = a.checkpoint
+        try validateStagePrefix(c, d: d, state: state)
         guard c.issuer == ObjectIdentifier(self), c.binding == d.binding, state.refs.count == c.count + 1,
             let ref = state.refs.last, ref.attemptID == a.ownershipAttemptID, ref.phase == 2,
             let captured = liveStageCommits[a.ownershipAttemptID], liveStageEpochs[a.ownershipAttemptID] == epoch() else { throw NativeEnrollmentJournalError.outcomeUncertain }
@@ -279,6 +361,7 @@ final class NativeEnrollmentJournalStore {
     }
     func verifyStageAttemptOrOriginalOwnership(_ a: NativeEnrollmentStageBridge.Attempt) throws {
         try disk { d in
+            if try originalPendingExists(a, d: d) { _ = try inspectOriginalPending(a, d: d); return }
             let state = try scan(d)
             if state.refs.last?.attemptID == a.ownershipAttemptID { _ = try installedOriginalOwnership(a, d: d, state: state) }
             else {
@@ -295,6 +378,7 @@ final class NativeEnrollmentJournalStore {
     func commitOriginalStageOwnership(_ a: NativeEnrollmentStageBridge.Attempt) throws -> LocalDurabilityReceipt {
         do {
             return try disk { d in
+                if try originalPendingExists(a, d: d) { return try recommitOriginalPending(a, d: d) }
                 let state = try scan(d)
                 if state.refs.last?.attemptID == a.ownershipAttemptID {
                     let ref = try installedOriginalOwnership(a, d: d, state: state)
@@ -399,9 +483,15 @@ final class NativeEnrollmentJournalStore {
         guard value.ownIdentity == node.identity, value.attemptID == ref.attemptID else { throw NativeEnrollmentJournalError.conflict }; return (node, value)
     }
     private func scan(_ d: Disk, visit: (Diagnostic) throws -> Void = { _ in }) throws -> Scan {
-        guard let binding = d.binding else { throw NativeEnrollmentJournalError.unsafeRoot }
+        guard d.binding != nil else { throw NativeEnrollmentJournalError.unsafeRoot }
         let attemptNames = try names(d.attempts).sorted(), frameNames = Set(try names(d.frames))
         guard attemptNames.allSatisfy({ !$0.hasSuffix(".pending") }), attemptNames.count <= 448 else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        return try scanPublished(d, attemptNames: attemptNames, frameNames: frameNames, visit: visit)
+    }
+    // Only journal-owned callers select a captured prefix, never metadata callers.
+    private func scanPublished(_ d: Disk, attemptNames: [String], frameNames: Set<String>,
+        visit: (Diagnostic) throws -> Void = { _ in }) throws -> Scan {
+        guard let binding = d.binding, attemptNames.count <= 448, attemptNames.allSatisfy({ !$0.hasSuffix(".pending") }) else { throw NativeEnrollmentJournalError.outcomeUncertain }
         let boundNames = Set(attemptNames.flatMap { [$0, $0 + ".pending"] })
         guard frameNames.isSubset(of: boundNames) else { throw NativeEnrollmentJournalError.outcomeUncertain }
         var usedFrames = Set<String>(), refs: [Ref] = [], tip: NativeJournalNode?
