@@ -508,10 +508,83 @@ final class DeviceBoundPreparedPackageSet {
 }
 /// Unmounted fixed three-root batch. Existing backend/fault seams retain their synchronous
 /// nonreentrant-under-lock contract; no UI/driver/async/notification callback is introduced.
+/// Successor private stage only. Returned current journal receipt includes the intentional repair
+/// epoch; no old receipt is refreshed and no terminal/structural/runtime authority is issued.
+final class DeviceBoundSuccessorPrivateStage {
+    let journalReceipt:DeviceLocalProvisioningIntentStore.Receipt
+    let privateAnchor:DeviceBoundGrantPrivateAttempt
+    fileprivate init(_ receipt:DeviceLocalProvisioningIntentStore.Receipt,_ anchor:DeviceBoundGrantPrivateAttempt){journalReceipt=receipt;privateAnchor=anchor}
+}
 final class DeviceBoundPackagePreparationCoordinator {
     private let journal:DeviceLocalProvisioningIntentStore,grants:DeviceGrantPreparationStore,packages:DevicePackagePreparationStore
     init(journal:DeviceLocalProvisioningIntentStore,grants:DeviceGrantPreparationStore,packages:DevicePackagePreparationStore) {
         self.journal=journal;self.grants=grants;self.packages=packages
+    }
+    private func checkedSuccessorRequest(_ original:DeviceProvisioningPlanRequest,plan:DeviceValidatedProvisioningPlan,
+        permit:DeviceLocalResourcePermit)throws->(DeviceGrantPreparationRequest,[DeviceProvisioningPackageInput]) {
+        let packages=try self.packages.inspectBoundPackages(original.packages,plan:plan,resourcePermit:permit)
+        let expected=try DeviceGrantPreparationStore.boundExpectations(packages)
+        let qualified=try DeviceGrantRevisionQualifier.qualify(original.grantInput,expectedEntries:expected)
+        let current=DeviceProvisioningPlanRequest(roots:original.roots,operationID:original.operationID,grantOperationID:original.grantOperationID,
+            expectedGenerationID:original.expectedGenerationID,baseline:original.baseline,snapshot:original.snapshot,owner:original.owner,
+            packages:packages,grantInput:original.grantInput,qualifiedGrant:qualified)
+        guard try DeviceProvisioningPlanner.qualify(current).canonicalBytes == plan.canonicalBytes else{throw DeviceGrantPreparationError.conflict}
+        return (.init(operationID:original.grantOperationID,input:original.grantInput,qualified:qualified,expectedEntries:expected),packages)
+    }
+    func prepareSuccessorPrivateAttemptExact(_ original:DeviceProvisioningPlanRequest,plan:DeviceValidatedProvisioningPlan,
+        journalReceipt:DeviceLocalProvisioningIntentStore.Receipt)throws->DeviceBoundSuccessorPrivateStage {
+        guard original.packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        let fresh=try DeviceProvisioningPlanner.qualify(original)
+        guard fresh.canonicalBytes == plan.canonicalBytes else{throw DeviceGrantPreparationError.conflict}
+        let expected=try DeviceGrantPreparationStore.boundExpectations(original.packages)
+        let request=DeviceGrantPreparationRequest(operationID:original.grantOperationID,input:original.grantInput,qualified:original.qualifiedGrant,expectedEntries:expected)
+        _ = try DeviceProvisioningPrivateAttemptV2.encoded(request,intent:plan.canonicalBytes)
+        var journalOriginal:DeviceLocalProvisioningIntentStore.SuccessorPredecessorCheckpoint?
+        var grantOriginal:DeviceGrantPreparationStore.SuccessorPredecessor?
+        try scope{permit in
+            let j=try journal.captureSuccessorPredecessorExact(journalReceipt,plan:plan,resourcePermit:permit)
+            let g=try grants.captureSuccessorPredecessorExact(j,resourcePermit:permit)
+            try journal.verifySuccessorPredecessorExact(j,resourcePermit:permit)
+            journalOriginal=j;grantOriginal=g
+        }
+        guard let j=journalOriginal,let g=grantOriginal,g.packages.count <= 12 else{throw DeviceLocalResourceGateFailure.invalidScope}
+        let references=g.packages.map(\.reference)
+        let inspected=try packages.inspectRetainedTerminalExact(references)
+        guard inspected.count == g.packages.count else{throw DeviceGrantPreparationError.conflict}
+        let prior=zip(g.packages,inspected).map{DeviceProvisioningPackageInput.retained(entryID:$0.0.entryID,reference:$0.0.reference,verified:$0.1)}
+        _ = try grants.qualifySuccessorPredecessorExact(g,packages:prior)
+        // ALL new private capacity/input checks precede outside-gate package durability repair.
+        try scope{permit in
+            try journal.verifySuccessorPredecessorExact(j,resourcePermit:permit)
+            let (checkedRequest,_)=try checkedSuccessorRequest(original,plan:plan,permit:permit)
+            try grants.preflightSuccessorExact(g,request:checkedRequest,plan:plan,previousPackages:prior,resourcePermit:permit)
+            try journal.verifySuccessorPredecessorExact(j,resourcePermit:permit)
+        }
+        let resolution=try packages.resolveRetainedTerminalExact(references)
+        guard resolution.receipts.count == g.packages.count else{throw DeviceGrantPreparationError.conflict}
+        var result:DeviceBoundSuccessorPrivateStage?
+        try scope{permit in
+            try journal.verifySuccessorPredecessorExact(j,resourcePermit:permit)
+            try packages.verifyResolutionCheckpoint(resolution.checkpoint,resourcePermit:permit)
+            var checked:[DeviceProvisioningPackageInput]=[]
+            for (binding,receipt) in zip(g.packages,resolution.receipts) {
+                let value=try packages.verify(receipt,resourcePermit:permit)
+                guard value.reference == binding.reference else{throw DeviceGrantPreparationError.conflict}
+                checked.append(.retained(entryID:binding.entryID,reference:binding.reference,verified:value))
+            }
+            let (checkedRequest,currentPackages)=try checkedSuccessorRequest(original,plan:plan,permit:permit)
+            try grants.preflightSuccessorExact(g,request:checkedRequest,plan:plan,previousPackages:checked,resourcePermit:permit)
+            try packages.verifyResolutionCheckpoint(resolution.checkpoint,resourcePermit:permit)
+            try journal.verifySuccessorPredecessorExact(j,resourcePermit:permit)
+            let transition=try journal.repairSuccessorPredecessorExact(j,commandPermit:.init(permit))
+            let anchor=try grants.performSuccessorPrivateAttemptExact(g,request:checkedRequest,plan:plan,previousPackages:checked,commandPermit:.init(permit))
+            try journal.verifySuccessorTransitionExact(transition,resourcePermit:permit)
+            try grants.verifyBoundPrivateAttempt(anchor,plan:plan,packages:currentPackages,resourcePermit:permit)
+            try packages.verifyResolutionCheckpoint(resolution.checkpoint,resourcePermit:permit)
+            try journal.verifySuccessorTransitionExact(transition,resourcePermit:permit)
+            result = .init(transition.receipt,anchor)
+        }
+        guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
     }
     func preparePackagesExact(plan:DeviceValidatedProvisioningPlan,journalReceipt:DeviceLocalProvisioningIntentStore.Receipt,
                               privateAnchor:DeviceBoundGrantPrivateAttempt,packages inputs:[DeviceProvisioningPackageInput])throws->DeviceBoundPreparedPackageSet {

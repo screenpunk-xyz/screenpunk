@@ -207,8 +207,93 @@ final class DeviceGrantPreparationStore {
         }
     }
     /// Exact private-only dispatch, reachable only from the fixed two-root gate command.
+    final class SuccessorPredecessor {
+        fileprivate let original:DeviceBoundGrantTerminalRecovery
+        fileprivate let pendingOperation:UUID?,pendingNode:GrantHeadEvidence?,pendingItem:DeviceGrantCredentialItem?
+        fileprivate init(_ original:DeviceBoundGrantTerminalRecovery,pendingOperation:UUID?=nil,pendingNode:GrantHeadEvidence?=nil,pendingItem:DeviceGrantCredentialItem?=nil){self.original=original;self.pendingOperation=pendingOperation;self.pendingNode=pendingNode;self.pendingItem=pendingItem}
+        var packages:[DeviceRetainedEntryPackageBinding]{original.packages}
+    }
+    private func successorBaseline(_ c:Context,_ state:Inventory,operationID:UUID)throws->(Inventory,Entry?) {
+        if state.tip?.record.operationID == operationID {
+            guard let pending=state.tip,!pending.complete,state.entries.count >= 2 else{throw DeviceGrantPreparationError.conflict}
+            // Only this original current private record may have an exact progress stage. Projecting
+            // the predecessor must not erase the existing all-writer unrelated-stage barrier.
+            let allowed=operationID.uuidString.lowercased()+".json.pending"
+            guard try names(c.operations,maximum:129*10).allSatisfy({!$0.hasSuffix(".pending") || $0 == allowed}),
+                  try readFile(c.root,"head.json.pending",limit:4096) == nil else{throw DeviceGrantPreparationError.repairRequired}
+            let old=Inventory(entries:Array(state.entries.dropLast()),items:state.items,hasStages:false,head:state.head)
+            guard old.entries.allSatisfy({$0.complete && $0.staged == nil && $0.terminalStage == nil}),old.tip?.terminal != nil,
+                  pending.record.previousHead == state.head.map({.init(bytes:$0.bytes,identity:$0.identity)}) else{throw DeviceGrantPreparationError.conflict}
+            return (old,pending)
+        }
+        guard !state.hasStages,state.entries.allSatisfy(\.complete) else{throw DeviceGrantPreparationError.repairRequired}
+        return (state,nil)
+    }
+    func captureSuccessorPredecessorExact(_ journal:DeviceLocalProvisioningIntentStore.SuccessorPredecessorCheckpoint,
+                                         resourcePermit:DeviceLocalResourcePermit)throws->SuccessorPredecessor {
+        let operation=try journal.successorGrantOperationID
+        return try disk(resourcePermit:resourcePermit){c in
+            let state=try inventory(c), (baseline,pending)=try successorBaseline(c,state,operationID:operation)
+            let original=try captureBoundTerminal(c,state:baseline,intent:journal.predecessorIntent)
+            guard baseline.tip?.terminal != nil else{throw DeviceGrantPreparationError.repairRequired}
+            if let pending {
+                guard pending.record.privateAttempt != nil || liveAttempts[operation] != nil,let node=pending.staged ?? pending.final else{throw DeviceGrantPreparationError.repairRequired}
+                return .init(original,pendingOperation:operation,pendingNode:.init(bytes:node.bytes,identity:node.identity),pendingItem:pending.record.privateAttempt)
+            }
+            return .init(original)
+        }
+    }
+    private func verifySuccessorPredecessor(_ original:SuccessorPredecessor,_ c:Context,_ state:Inventory)throws {
+        let baseline:Inventory
+        if let operation=original.pendingOperation {
+            let (old,pending)=try successorBaseline(c,state,operationID:operation)
+            guard let pending,let node=pending.staged ?? pending.final,original.pendingNode == GrantHeadEvidence(bytes:node.bytes,identity:node.identity),pending.record.privateAttempt == original.pendingItem else{throw DeviceGrantPreparationError.conflict}
+            baseline=old
+        } else {baseline=state}
+        try verifyTerminalRecovery(original.original,c,baseline)
+    }
+    func qualifySuccessorPredecessorExact(_ original:SuccessorPredecessor,packages:[DeviceProvisioningPackageInput])throws->DeviceValidatedProvisioningPlan {
+        try disk{c in try verifySuccessorPredecessor(original,c,inventory(c));let result=try terminalPlan(original.original,packages:packages);try verifySuccessorPredecessor(original,c,inventory(c));return result}
+    }
+    private func successorRecord(_ request:DeviceGrantPreparationRequest,bytes:Data,state:Inventory)throws->GrantPreparationRecord {
+        guard !state.hasStages,state.entries.allSatisfy(\.complete),state.entries.count < 128,
+              !state.entries.contains(where:{$0.record.operationID == request.operationID || $0.record.revisionID == request.input.identity.revisionID}) else{throw DeviceGrantPreparationError.repairRequired}
+        let credentials=try request.input.credentials.sorted{$0.revisionID.uuidString < $1.revisionID.uuidString}.map{secret -> GrantCredentialBinding in
+            let account=GrantPreparationCodec.credentialAccount(secret.revisionID)
+            if let item=state.items[account] {try GrantPreparationCodec.validate(item,account:account,count:secret.bytes.count);guard try readPrivate(item).bytes == secret.bytes else{throw DeviceGrantPreparationError.conflict};return .init(revisionID:secret.revisionID,byteCount:secret.bytes.count,item:item)}
+            return .init(revisionID:secret.revisionID,byteCount:secret.bytes.count,item:nil)
+        }
+        let record=GrantPreparationRecord(rootID:rootID,operationID:request.operationID,revisionID:request.input.identity.revisionID,ordinal:state.entries.count+1,
+            publicMetadata:request.qualified.publicMetadataBytes,privateAttemptBytes:bytes.count,previousHead:state.head.map{.init(bytes:$0.bytes,identity:$0.identity)},credentials:credentials)
+        try reserve(record,state:state);return record
+    }
+    func preflightSuccessorExact(_ original:SuccessorPredecessor,request:DeviceGrantPreparationRequest,plan:DeviceValidatedProvisioningPlan,
+                                previousPackages:[DeviceProvisioningPackageInput],resourcePermit:DeviceLocalResourcePermit)throws {
+        let bytes=try DeviceProvisioningPrivateAttemptV2.encoded(request,intent:plan.canonicalBytes)
+        try disk(resourcePermit:resourcePermit){c in
+            let state=try inventory(c);try verifySuccessorPredecessor(original,c,state)
+            let prior=try terminalPlan(original.original,packages:previousPackages)
+            guard prior.roots == plan.roots,try GrantPreparationCodec.decodeStoredAttempt(original.original.privateBytes).input.owner == request.input.owner else{throw DeviceGrantPreparationError.conflict}
+            if let input=liveAttempts[request.operationID] {guard input == bytes else{throw DeviceGrantPreparationError.conflict}}
+            if let operation=original.pendingOperation {
+                guard operation == request.operationID,let entry=state.tip,entry.record.revisionID == request.input.identity.revisionID,
+                      entry.record.publicMetadata == request.qualified.publicMetadataBytes,entry.record.privateAttemptBytes == bytes.count else{throw DeviceGrantPreparationError.conflict}
+                if let item=entry.record.privateAttempt {guard try readPrivate(item).bytes == bytes else{throw DeviceGrantPreparationError.conflict}}
+                else {guard liveAttempts[operation] == bytes else{throw DeviceGrantPreparationError.repairRequired}}
+            } else {_ = try successorRecord(request,bytes:bytes,state:state)}
+        }
+    }
+    func performSuccessorPrivateAttemptExact(_ original:SuccessorPredecessor,request:DeviceGrantPreparationRequest,plan:DeviceValidatedProvisioningPlan,
+        previousPackages:[DeviceProvisioningPackageInput],commandPermit:DeviceBoundGrantCommandPermit)throws->DeviceBoundGrantPrivateAttempt {
+        try performPrivateAttempt(request,plan:plan,recovery:nil,predecessor:original,previousPackages:previousPackages,commandPermit:commandPermit)
+    }
     func performBoundPrivateAttempt(_ request:DeviceGrantPreparationRequest,plan:DeviceValidatedProvisioningPlan,
                                     recovery:DeviceBoundGrantRecoveryPlan?,commandPermit:DeviceBoundGrantCommandPermit)throws->DeviceBoundGrantPrivateAttempt {
+        try performPrivateAttempt(request,plan:plan,recovery:recovery,predecessor:nil,previousPackages:[],commandPermit:commandPermit)
+    }
+    private func performPrivateAttempt(_ request:DeviceGrantPreparationRequest,plan:DeviceValidatedProvisioningPlan,
+        recovery:DeviceBoundGrantRecoveryPlan?,predecessor:SuccessorPredecessor?,previousPackages:[DeviceProvisioningPackageInput],
+        commandPermit:DeviceBoundGrantCommandPermit)throws->DeviceBoundGrantPrivateAttempt {
         let bytes=try DeviceProvisioningPrivateAttemptV2.encoded(request,intent:plan.canonicalBytes)
         let frame=try GrantPreparationCodec.decodeStoredAttempt(bytes)
         guard frame.rootID == rootID else{throw DeviceGrantPreparationError.conflict}
@@ -218,6 +303,7 @@ final class DeviceGrantPreparationStore {
         let state=try inventory(c)
         if let original=liveAttempts[request.operationID] {guard original == bytes else{throw DeviceGrantPreparationError.conflict}}
         if let recovery {try verifyBoundCheckpoint(recovery.checkpoint,context:c,state:state);guard recovery.plan.canonicalBytes == plan.canonicalBytes else{throw DeviceGrantPreparationError.conflict}}
+        if let predecessor {try verifySuccessorPredecessor(predecessor,c,state)}
         var record:GrantPreparationRecord
         if let entry=state.entries.first(where:{$0.record.operationID == request.operationID}) {
             guard state.tip?.record.operationID == request.operationID,!entry.complete,
@@ -227,9 +313,13 @@ final class DeviceGrantPreparationStore {
             else{guard liveAttempts[request.operationID] == bytes else{throw DeviceGrantPreparationError.repairRequired}}
             record=entry.record
         } else {
-            guard bindingQualified,!state.hasStages,state.entries.allSatisfy(\.complete),state.entries.count < 128,
+            guard (bindingQualified || predecessor != nil),!state.hasStages,state.entries.allSatisfy(\.complete),state.entries.count < 128,
                   !state.entries.contains(where:{$0.record.revisionID == request.input.identity.revisionID}) else{throw DeviceGrantPreparationError.repairRequired}
-            if let tip=state.tip?.terminal {try requireQualification(tip,head:state.head)}
+            if let predecessor {
+                try verifySuccessorPredecessor(predecessor,c,state)
+                let prior=try terminalPlan(predecessor.original,packages:previousPackages)
+                guard prior.roots == plan.roots,try GrantPreparationCodec.decodeStoredAttempt(predecessor.original.privateBytes).input.owner == request.input.owner else{throw DeviceGrantPreparationError.conflict}
+            } else if let tip=state.tip?.terminal {try requireQualification(tip,head:state.head)}
             let credentials=try request.input.credentials.sorted{$0.revisionID.uuidString < $1.revisionID.uuidString}.map{secret -> GrantCredentialBinding in
                 let account=GrantPreparationCodec.credentialAccount(secret.revisionID)
                 if let item=state.items[account] {try GrantPreparationCodec.validate(item,account:account,count:secret.bytes.count);guard try readPrivate(item).bytes == secret.bytes else{throw DeviceGrantPreparationError.conflict};return .init(revisionID:secret.revisionID,byteCount:secret.bytes.count,item:item)}
@@ -250,6 +340,17 @@ final class DeviceGrantPreparationStore {
         var completed=false
         defer{if !completed{bindingQualified=false}}
         let currentEpoch=epoch(invalidate:true);qualification=nil
+        if predecessor != nil {boundTerminalQualification=nil}
+        if let predecessor {
+            // Exact original predecessor nodes, including explicit absences, precede the new intent.
+            // This private branch never manufactures legacy terminal qualification.
+            for evidence in predecessor.original.nodes {
+                if let node=evidence.node {try syncExisting(evidence.root ? c.root:c.operations,evidence.name,expected:Node(identity:node.identity,bytes:node.bytes))}
+            }
+            try boundary(.afterFileSync(.binding));try sync(c.lock);try sync(c.operations);try sync(c.root);try boundary(.afterDirectorySync(.binding));try check(c)
+            guard epoch() == currentEpoch,try terminalNodes(c,operationID:predecessor.original.operationID) == predecessor.original.nodes,
+                  try readPrivate(predecessor.original.item).bytes == predecessor.original.privateBytes else{throw DeviceGrantPreparationError.conflict}
+        }
         let entry=state.entries.first(where:{$0.record.operationID == request.operationID})
         if let entry,let staged=entry.staged {try replace(c,parent:c.operations,name:name(request.operationID),bytes:staged.bytes,expected:entry.final,kind:.progress)}
         else if let entry,let final=entry.final {try syncExisting(c.operations,name(request.operationID),expected:final);try sync(c.operations)}
@@ -270,6 +371,12 @@ final class DeviceGrantPreparationStore {
         guard try readFile(c.root,"root-binding.json",limit:GrantPreparationCodec.recordLimit) == originalBinding,
               try readFile(c.operations,name(request.operationID),limit:GrantPreparationCodec.recordLimit) == node,
               epoch() == currentEpoch else{throw DeviceGrantPreparationError.conflict}
+        if let predecessor {
+            guard try terminalNodes(c,operationID:predecessor.original.operationID) == predecessor.original.nodes,
+                  try readPrivate(predecessor.original.item).bytes == predecessor.original.privateBytes,
+                  let retained=finalState.entries.first(where:{$0.record.operationID == predecessor.original.operationID}),retained.complete else{throw DeviceGrantPreparationError.conflict}
+            try verifyResources(retained.record)
+        }
         bindingQualified=true;completed=true
         return .init(issuer:ObjectIdentifier(self),rootID:rootID,epoch:currentEpoch,node:.init(bytes:node.bytes,identity:node.identity),item:item,bytes:bytes,
                      binding:.init(bytes:originalBinding.bytes,identity:originalBinding.identity),operationID:request.operationID)
