@@ -111,6 +111,36 @@ enum GrantPreparationCodec {
         guard result.schemaVersion == 1, result.rootID == result.input.identity.rootID else { throw DeviceGrantPreparationError.invalidRecord }
         return result
     }
+    /// Strict retained union. V1 encoding/decoder remain unchanged; v2 can never be completed by v1 APIs.
+    struct StoredAttempt: GrantSecretRedacted {
+        let version:Int,rootID:UUID,operationID:UUID,input:DeviceGrantRevisionInput
+        let completeSetIntent:Data?
+    }
+    private struct V2:Codable,GrantSecretRedacted {
+        let schemaVersion:Int,rootID:UUID,operationID:UUID,input:DeviceGrantRevisionInput,completeSetIntent:Data
+    }
+    static func decodeStoredAttempt(_ bytes:Data)throws->StoredAttempt {
+        let raw=try object(bytes,limit:intentLimit)
+        if (raw["schemaVersion"] as? NSNumber)?.intValue == 1 {
+            let v=try decodeAttempt(bytes)
+            return .init(version:1,rootID:v.rootID,operationID:v.operationID,input:v.input,completeSetIntent:nil)
+        }
+        try keys(raw,["schemaVersion","rootID","operationID","input","completeSetIntent"])
+        guard let input=raw["input"],let encoded=raw["completeSetIntent"] as? String,
+              encoded.utf8.count <= ((ProvisioningIntentCodec.limit+2)/3)*4 else{throw DeviceGrantPreparationError.invalidRecord}
+        _ = try DeviceGrantRevisionPreflight.decode(JSONSerialization.data(withJSONObject:input,options:[.sortedKeys,.withoutEscapingSlashes]))
+        let v=try JSONDecoder().decode(V2.self,from:bytes)
+        guard v.schemaVersion == 2,v.rootID == v.input.identity.rootID else{throw DeviceGrantPreparationError.invalidRecord}
+        let intent=try ProvisioningIntentCodec.decode(v.completeSetIntent)
+        guard intent.roots.grantID == v.rootID,intent.grantOperationID == v.operationID,
+              intent.grantIdentity == v.input.identity,intent.privateAttemptByteCount == bytes.count,
+              intent.grantPublicMetadata == (try projection(v.input)),try encode(v,limit:intentLimit) == bytes else{throw DeviceGrantPreparationError.conflict}
+        // The frozen v2 encoder sorts opaque IDs; canonical equivalents are not accepted aliases.
+        guard v.input.entries.map(\.entryID.uuidString) == v.input.entries.map(\.entryID.uuidString).sorted(),
+              v.input.credentials.map(\.revisionID.uuidString) == v.input.credentials.map(\.revisionID.uuidString).sorted(),
+              v.input.retainedRevisions.map(\.revisionID.uuidString) == v.input.retainedRevisions.map(\.revisionID.uuidString).sorted() else{throw DeviceGrantPreparationError.invalidRecord}
+        return .init(version:2,rootID:v.rootID,operationID:v.operationID,input:v.input,completeSetIntent:v.completeSetIntent)
+    }
     static func decodeRecord(_ bytes: Data) throws -> GrantPreparationRecord {
         let object = try object(bytes, limit: recordLimit)
         try keys(object, ["schemaVersion","rootID","operationID","revisionID","ordinal","publicMetadata","privateAttemptBytes","credentials"], optional: ["privateAttempt","previousHead"])
