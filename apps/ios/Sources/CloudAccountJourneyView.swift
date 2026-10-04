@@ -36,6 +36,9 @@ struct CloudAccountJourneyActions {
     @discardableResult func retry() -> Task<Void, Never>? { enabled ? lifecycle.coordinator?.retryWorkspaceSetup() : nil }
     @discardableResult func signOut() -> Task<Void, Never>? { lifecycle.signOut() }
     @discardableResult func retrySignOut() -> Task<Void, Never>? { lifecycle.retrySignOut() }
+    @discardableResult func retryRetiredCleanup(_ handle: CloudHumanSessionBroker.RetiredCleanupHandle) -> Task<Void, Never>? {
+        lifecycle.retryRetiredCleanup(handle)
+    }
     func cancel() { lifecycle.cancelPresentation() }
 }
 
@@ -58,9 +61,20 @@ struct CloudAccountJourneyView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     Label("Screenpunk Cloud", systemImage: "cloud").font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
                     Text("Sign in to view your workspaces.").font(.title3).foregroundStyle(.secondary)
-                    if let coordinator = lifecycle.coordinator {
-                        CloudAccountJourneyContent(coordinator: coordinator, actions: actions, signIn: signIn)
-                    } else { providerEntry }
+                    switch lifecycle.retiredCleanupState {
+                    case .pending:
+                        ProgressView("Finishing previous sign-out…").accessibilityIdentifier("cloud.retiredCleanupPending")
+                    case .failed(let handle):
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Previous sign-out could not finish.")
+                            Button("Retry sign-out") { actions.retryRetiredCleanup(handle) }
+                                .buttonStyle(.borderedProminent).accessibilityIdentifier("cloud.retryRetiredCleanup")
+                        }
+                    case .none:
+                        if let coordinator = lifecycle.coordinator {
+                            CloudAccountJourneyContent(coordinator: coordinator, actions: actions, signIn: signIn)
+                        } else { providerEntry }
+                    }
                     if let actionMessage { Text(actionMessage).foregroundStyle(.secondary).accessibilityIdentifier("cloud.actionError") }
                     Text("Cloud device connection is unavailable in this version.").font(.callout).foregroundStyle(.secondary)
                 }.frame(maxWidth: 580, alignment: .leading).padding(20).frame(maxWidth: .infinity)

@@ -110,6 +110,14 @@ final class CloudHumanSessionLifecycle: ObservableObject {
     @discardableResult func retrySignOut() -> Task<Void, Never>? {
         guard !retired, let lease else { return nil }; return broker.retrySignOut(lease)
     }
+    var retiredCleanupState: CloudHumanSessionBroker.RetiredCleanupState {
+        retired ? .none : broker.retiredCleanupState
+    }
+    /// A later live scene can request exact retired cleanup, without installing a pair.
+    @discardableResult func retryRetiredCleanup(_ handle: CloudHumanSessionBroker.RetiredCleanupHandle) -> Task<Void, Never>? {
+        guard !retired else { return nil }
+        return broker.retryRetiredCleanup(handle)
+    }
     func cancelPresentation() { if !retired, let lease { broker.cancel(lease) } }
     func didEnterBackground() { cancelPresentation() }
     func scenePhaseChanged(_ phase: ScenePhase) { if phase == .background { didEnterBackground() } }

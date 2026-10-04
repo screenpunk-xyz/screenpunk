@@ -6,6 +6,41 @@ import ScreenpunkCore
 
 @MainActor
 final class CloudAccountJourneyTests: XCTestCase {
+    func testLaterJourneyRendersCleanupAndRetriesWithoutFactoryOrPresentation() async throws {
+        let broker = CloudHumanSessionBroker()
+        let original = JourneyFixture(broker: broker); original.holdSignOut = true
+        await (try original.actions.signIn(.google))?.value
+        original.lifecycle.retirePresentationContext()
+        while original.signOutContinuation == nil { await Task.yield() }
+        let later = JourneyFixture(broker: broker)
+        XCTAssertEqual(later.lifecycle.retiredCleanupState, .pending)
+        let hosting = UIHostingController(rootView: later.view)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene); window.rootViewController = hosting; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        hosting.view.layoutIfNeeded(); await Task.yield()
+        let pendingImage = UIGraphicsImageRenderer(bounds: hosting.view.bounds).image { _ in hosting.view.drawHierarchy(in: hosting.view.bounds, afterScreenUpdates: true) }
+        let pendingAttachment = XCTAttachment(image: pendingImage); pendingAttachment.name = "RetiredCleanup-Pending"; pendingAttachment.lifetime = .keepAlways; add(pendingAttachment)
+        original.finishSignOut(failed: true)
+        while broker.state == .retiring { await Task.yield() }
+        guard case .failed(let handle) = later.lifecycle.retiredCleanupState else { return XCTFail("Missing failure control") }
+        hosting.rootView = later.view; hosting.view.layoutIfNeeded(); await Task.yield()
+        let failedImage = UIGraphicsImageRenderer(bounds: hosting.view.bounds).image { _ in hosting.view.drawHierarchy(in: hosting.view.bounds, afterScreenUpdates: true) }
+        let failedAttachment = XCTAttachment(image: failedImage); failedAttachment.name = "RetiredCleanup-Failed"; failedAttachment.lifetime = .keepAlways; add(failedAttachment)
+        XCTAssertThrowsError(try later.actions.signIn(.google))
+        XCTAssertEqual(later.factories, 0); XCTAssertEqual(later.presentations, 0)
+        let retry = later.actions.retryRetiredCleanup(handle)
+        while original.signOutContinuation == nil { await Task.yield() }
+        later.actions.cancel(); later.lifecycle.didEnterBackground()
+        XCTAssertEqual(later.lifecycle.retiredCleanupState, .pending)
+        XCTAssertNil(later.lifecycle.coordinator)
+        original.finishSignOut(failed: false); await retry?.value
+        XCTAssertEqual(later.lifecycle.retiredCleanupState, .none)
+        XCTAssertEqual(later.factories, 0); XCTAssertEqual(later.presentations, 0)
+        XCTAssertNil(later.lifecycle.coordinator)
+    }
+
     func testUnavailableAndRenderingNeverConstructOrAuthenticate() throws {
         let fixture = JourneyFixture(availability: .unavailable("Unavailable fixture"))
         let hosting = UIHostingController(rootView: fixture.view)
@@ -194,7 +229,7 @@ final class CloudAccountJourneyTests: XCTestCase {
 
 @MainActor
 private final class JourneyFixture {
-    let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
+    let lifecycle: CloudHumanSessionLifecycle
     let journal = JourneyJournal()
     let transport = JourneyTransport()
     let availability: CloudJourneyAvailability
@@ -221,7 +256,7 @@ private final class JourneyFixture {
         guard let self else { throw CloudNativeIdentityError.cancelled }
         return try CloudNativeClient(baseURL: URL(string: "https://fixture.invalid")!, tokenProvider: tokens, transport: self.transport)
     }, journal: journal)
-    init(availability: CloudJourneyAvailability = .qualified) { self.availability = availability }
+    init(availability: CloudJourneyAvailability = .qualified, broker: CloudHumanSessionBroker? = nil) { self.availability = availability; lifecycle = CloudHumanSessionLifecycle(broker: broker ?? CloudHumanSessionBroker()) }
     var actions: CloudAccountJourneyActions {
         .init(lifecycle: lifecycle, presentation: presentation, availability: availability, makeSession: { _ in
             self.factories += 1; return CloudHumanSession(testCoordinator: self.coordinator, testCallback: { _ in false })
