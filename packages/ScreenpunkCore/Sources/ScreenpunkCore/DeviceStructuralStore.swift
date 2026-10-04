@@ -77,7 +77,9 @@ final class DeviceStructuralStore {
         let encoded = try StructuralStoreCodec.encode(record)
         let checked = try StructuralStoreCodec.record(encoded)
         guard checked.phase == .unresolved, checked.baselineIdentity == nil, checked.candidateIdentity == nil, checked.rootID == rootID else { throw DeviceStructuralStoreError.invalidRecord }
-        try disk { context in
+        try disk { context in try prepareChecked(context,record:record) }
+    }
+    private func prepareChecked(_ context: Context, record: DeviceStructuralOperationRecord) throws {
             let inventory = try inventory(context)
             if inventory.records.isEmpty && !bindingQualified { throw DeviceStructuralStoreError.outcomeUncertain }
             if let prior = inventory.records.first(where: { $0.operationID == record.operationID }) {
@@ -96,7 +98,6 @@ final class DeviceStructuralStore {
             guard inventory.records.filter({ $0.phase == .terminal }).count < 128 else { throw DeviceStructuralStoreError.capacity }
             guard !inventory.records.contains(where: { $0.phase != .terminal }), inventory.current?.bytes == record.expectedOld else { throw DeviceStructuralStoreError.conflict }
             try replace(context, parent: context.operations, name: filename(record.operationID), bytes: StructuralStoreCodec.encode(record.binding(baseline: inventory.current?.identity)), expected: nil, kind: .intent)
-        }
     }
     /// Diagnostic only. Even exact terminal bytes need synchronization before a receipt is returned.
     func recover(operationID: UUID) throws -> Recovery { try recoverRead(operationID:operationID,resourcePermit:nil) }
@@ -116,7 +117,9 @@ final class DeviceStructuralStore {
     func attempt(operationID: UUID) throws -> Receipt { try recommitExact(operationID: operationID) }
     /// Exact replay synchronizes current state and retained proof; an old operation never replaces the tip.
     func recommitExact(operationID: UUID) throws -> Receipt {
-        try disk { context in
+        try disk { context in try recommitChecked(context,operationID:operationID) }
+    }
+    private func recommitChecked(_ context: Context, operationID: UUID) throws -> Receipt {
             let attemptEpoch = epoch(invalidate: true)
             qualification = nil
             var state = try inventory(context)
@@ -142,6 +145,66 @@ final class DeviceStructuralStore {
                 try replace(context, parent: context.operations, name: recordName, bytes: StructuralStoreCodec.encode(record), expected: intent, kind: .intent)
             }
             return try finish(context, record: record, epoch: attemptEpoch)
+    }
+    /// Exact live-receipt command only. A command token is gate-file constructed and never exposed
+    /// through the read scope. Neither token possession nor diagnostic bytes establish qualification.
+    struct QualifiedCurrentCapture {
+        let envelopeBytes: Data
+        let operationID: UUID
+        fileprivate init(_ bytes: Data, operationID: UUID) { envelopeBytes = bytes; self.operationID = operationID }
+    }
+    private struct ExactCommand { let record: DeviceStructuralOperationRecord }
+    func performExactAttempt(_ supplied: DeviceStructuralOperationRecord,
+                             commandPermit: DeviceLocalStructuralCommandPermit) throws -> QualifiedCurrentCapture {
+        guard supplied.candidate.count <= StructuralStoreCodec.envelopeLimit,
+              (supplied.expectedOld?.count ?? 0) <= StructuralStoreCodec.envelopeLimit,
+              supplied.resourceAssertions.count <= 8192 else { throw DeviceStructuralStoreError.invalidRecord }
+        let record = try StructuralStoreCodec.record(StructuralStoreCodec.encode(supplied))
+        guard record.rootID == rootID, record.phase == .unresolved,
+              record.baselineIdentity == nil, record.candidateIdentity == nil else { throw DeviceStructuralStoreError.invalidRecord }
+        try commandPermit.begin(ObjectIdentifier(self)); defer { commandPermit.end() }
+        guard let context = borrowedResourceContext else { throw DeviceLocalResourceGateFailure.invalidScope }
+        try check(context)
+        do {
+            let state = try inventory(context)
+            let needsPrepare: Bool
+            if let retained = state.records.first(where: { $0.operationID == record.operationID }) {
+                guard retained.sameIntent(as: record) else { throw DeviceStructuralStoreError.conflict }
+                needsPrepare = false
+                // Terminal replay must be the actual tip, with no newer pending attempt. The generic
+                // store's older receipt behavior is deliberately not sufficient for this coordinator.
+                if retained.phase == .terminal {
+                    guard state.records.allSatisfy({ $0.phase == .terminal }),
+                          state.current?.bytes == retained.candidate,
+                          state.current?.identity == retained.candidateIdentity else { throw DeviceStructuralStoreError.conflict }
+                }
+            } else {
+                try requireQualifiedBaseline(context,state:state,expectedOld:record.expectedOld)
+                needsPrepare = true
+            }
+            let command = ExactCommand(record:record) // Private, exact, constructed only AFTER checks.
+            if needsPrepare { try prepareChecked(context,record:command.record) }
+            _ = try recommitChecked(context,operationID:command.record.operationID)
+            let final = try inventory(context)
+            try requireQualifiedBaseline(context,state:final,expectedOld:command.record.candidate)
+            guard final.records.allSatisfy({ $0.phase == .terminal }),
+                  let terminal = final.records.first(where:{$0.operationID == command.record.operationID}),
+                  terminal.phase == .terminal, terminal.sameIntent(as:command.record),
+                  let current = final.current, current.bytes == command.record.candidate else { throw DeviceStructuralStoreError.conflict }
+            try check(context)
+            return QualifiedCurrentCapture(current.bytes,operationID:command.record.operationID)
+        } catch { try check(context); throw error }
+    }
+    private func requireQualifiedBaseline(_ context: Context,
+        state: (records: [DeviceStructuralOperationRecord], current: Node?), expectedOld: Data?) throws {
+        guard state.current?.bytes == expectedOld,
+              state.records.allSatisfy({$0.phase == .terminal}) else { throw DeviceStructuralStoreError.conflict }
+        if let current = state.current {
+            guard let qualified = qualification, qualified.epoch == epoch(), qualified.current == current,
+                  let tip = state.records.first(where:{$0.phase == .terminal && $0.candidate == current.bytes}),
+                  try readFile(context.operations,filename(tip.operationID),limit:StructuralStoreCodec.operationLimit) == qualified.proof else { throw DeviceStructuralStoreError.outcomeUncertain }
+        } else {
+            guard state.records.isEmpty, bindingQualified else { throw DeviceStructuralStoreError.outcomeUncertain }
         }
     }
     private func finish(_ context: Context, record initial: DeviceStructuralOperationRecord, epoch attemptEpoch: UInt64) throws -> Receipt {
