@@ -364,3 +364,98 @@ final class DeviceBoundGrantAttemptCoordinator {
         try acquire(0)
     }
 }
+
+/// Fixed package-batch dispatch only; no read scope can construct a mutation permit.
+final class DeviceBoundPackageCommandPermit {
+    private let permit:DeviceLocalResourcePermit
+    fileprivate init(_ permit:DeviceLocalResourcePermit){self.permit=permit}
+    func begin(_ instance:ObjectIdentifier)throws{try permit.beginRead(instance)}
+    func end(){permit.endRead()}
+}
+/// One complete package batch's ORIGINAL final checkpoint. Not structural/grant completion,
+/// membership, activation or admission authority. No payload/secret getter or serialization.
+final class DeviceBoundPreparedPackageSet {
+    let packages:[DeviceLocalCompleteSetPackageBinding]
+    fileprivate let checkpoint:DevicePackageResolutionCheckpoint,plan:DeviceValidatedProvisioningPlan
+    fileprivate let journalReceipt:DeviceLocalProvisioningIntentStore.Receipt,privateAnchor:DeviceBoundGrantPrivateAttempt
+    fileprivate let journalIssuer:ObjectIdentifier,grantIssuer:ObjectIdentifier,packageIssuer:ObjectIdentifier
+    fileprivate init(packages:[DeviceLocalCompleteSetPackageBinding],checkpoint:DevicePackageResolutionCheckpoint,
+                     plan:DeviceValidatedProvisioningPlan,journalReceipt:DeviceLocalProvisioningIntentStore.Receipt,
+                     privateAnchor:DeviceBoundGrantPrivateAttempt,journal:DeviceLocalProvisioningIntentStore,
+                     grants:DeviceGrantPreparationStore,store:DevicePackagePreparationStore) {
+        self.packages=packages;self.checkpoint=checkpoint;self.plan=plan;self.journalReceipt=journalReceipt;self.privateAnchor=privateAnchor
+        journalIssuer=ObjectIdentifier(journal);grantIssuer=ObjectIdentifier(grants);packageIssuer=ObjectIdentifier(store)
+    }
+}
+/// Unmounted fixed three-root batch. Existing backend/fault seams retain their synchronous
+/// nonreentrant-under-lock contract; no UI/driver/async/notification callback is introduced.
+final class DeviceBoundPackagePreparationCoordinator {
+    private let journal:DeviceLocalProvisioningIntentStore,grants:DeviceGrantPreparationStore,packages:DevicePackagePreparationStore
+    init(journal:DeviceLocalProvisioningIntentStore,grants:DeviceGrantPreparationStore,packages:DevicePackagePreparationStore) {
+        self.journal=journal;self.grants=grants;self.packages=packages
+    }
+    func preparePackagesExact(plan:DeviceValidatedProvisioningPlan,journalReceipt:DeviceLocalProvisioningIntentStore.Receipt,
+                              privateAnchor:DeviceBoundGrantPrivateAttempt,packages inputs:[DeviceProvisioningPackageInput])throws->DeviceBoundPreparedPackageSet {
+        guard inputs.count <= 12 else{throw DevicePackagePreparationError.sizeLimit}
+        var result:DeviceBoundPreparedPackageSet?
+        try scope{permit in
+            try journal.verifyExact(journalReceipt,plan:plan,resourcePermit:permit)
+            try grants.verifyBoundPrivateAttempt(privateAnchor,resourcePermit:permit)
+            let fresh=try packages.inspectBoundPackages(inputs,plan:plan,resourcePermit:permit)
+            try grants.verifyBoundPrivateAttempt(privateAnchor,plan:plan,packages:fresh,resourcePermit:permit)
+            try journal.verifyExact(journalReceipt,plan:plan,resourcePermit:permit)
+            let terminal=try packages.performBoundPackagesExact(fresh,plan:plan,commandPermit:.init(permit))
+            let body=try ProvisioningIntentCodec.decode(plan.canonicalBytes),envelope=try StructuralStoreCodec.envelope(body.candidate)
+            let refs=try DeviceLocalCompleteSetRestoreCodec.references(envelope.intent)
+            guard terminal.receipts.count == refs.packages.count else{throw DevicePackagePreparationError.conflict}
+            let bindings=zip(refs.packages,terminal.receipts).map{DeviceLocalCompleteSetPackageBinding(entryID:$0.0.entryID,receipt:$0.1)}
+            let prepared=DeviceBoundPreparedPackageSet(packages:bindings,checkpoint:terminal.checkpoint,plan:plan,
+                journalReceipt:journalReceipt,privateAnchor:privateAnchor,journal:journal,grants:grants,store:packages)
+            try verifyPreparedSet(prepared,permit:permit)
+            result=prepared
+        }
+        guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
+    }
+    /// Validate only the ORIGINAL batch checkpoint; no implicit resolution/renewal. This is a future
+    /// fixed credential-command prerequisite, not admission or a substitute for executing that command.
+    func verifyPreparedSet(_ prepared:DeviceBoundPreparedPackageSet)throws {
+        try scope{permit in try verifyPreparedSet(prepared,permit:permit)}
+    }
+    private func verifyPreparedSet(_ prepared:DeviceBoundPreparedPackageSet,permit:DeviceLocalResourcePermit)throws {
+        guard prepared.packages.count <= 12,prepared.journalIssuer == ObjectIdentifier(journal),
+              prepared.grantIssuer == ObjectIdentifier(grants),prepared.packageIssuer == ObjectIdentifier(packages) else{throw DeviceLocalResourceGateFailure.invalidScope}
+        try journal.verifyExact(prepared.journalReceipt,plan:prepared.plan,resourcePermit:permit)
+        try grants.verifyBoundPrivateAttempt(prepared.privateAnchor,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(prepared.checkpoint,resourcePermit:permit)
+        var fresh:[DeviceProvisioningPackageInput]=[]
+        for binding in prepared.packages {
+            let verified=try packages.verify(binding.receipt,resourcePermit:permit)
+            fresh.append(.retained(entryID:binding.entryID,reference:verified.reference,verified:verified))
+        }
+        try grants.verifyBoundPrivateAttempt(prepared.privateAnchor,plan:prepared.plan,packages:fresh,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(prepared.checkpoint,resourcePermit:permit)
+        try journal.verifyExact(prepared.journalReceipt,plan:prepared.plan,resourcePermit:permit)
+        try grants.verifyBoundPrivateAttempt(prepared.privateAnchor,resourcePermit:permit)
+    }
+    private func scope(_ body:(DeviceLocalResourcePermit)throws->Void)throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        let descriptors=try [journal.resourceGateDescriptor,grants.resourceGateDescriptor,packages.resourceGateDescriptor].sorted {
+            if $0.path.utf8.elementsEqual($1.path.utf8){return $0.rootID.uuidString < $1.rootID.uuidString}
+            return $0.path.utf8.lexicographicallyPrecedes($1.path.utf8)
+        }
+        for a in descriptors.indices{for b in descriptors.indices where a < b {
+            guard descriptors[a].instance != descriptors[b].instance,
+                  !DeviceLocalResourceDescriptor.pathsOverlap(descriptors[a].path,descriptors[b].path) else{throw DeviceLocalResourceGateFailure.invalidRoots}
+        }}
+        let permit=DeviceLocalResourcePermit(descriptors)
+        try DeviceLocalResourceRegistry.begin(permit);defer{permit.invalidate();DeviceLocalResourceRegistry.finish(permit)}
+        func acquire(_ index:Int)throws {
+            if index == descriptors.count{try DeviceLocalResourceRegistry.execute(permit);try body(permit);return}
+            let instance=descriptors[index].instance
+            if instance == ObjectIdentifier(journal){try journal.withResourceGateScope(permit){try acquire(index+1)}}
+            else if instance == ObjectIdentifier(grants){try grants.withResourceGateScope(permit){try acquire(index+1)}}
+            else{try packages.withResourceGateScope(permit){try acquire(index+1)}}
+        }
+        try acquire(0)
+    }
+}
