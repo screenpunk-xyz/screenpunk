@@ -134,6 +134,12 @@ final class DeviceLocalResourceReadScope {
         try permit.requireReadable()
         return try grants.verifyRecovered(receipt,expectedEntries:expectedEntries,expectedOwner:expectedOwner,resourcePermit:permit)
     }
+    func inspectLatestStructuralTerminalExact()throws->DeviceStructuralStore.TerminalDiscovery {
+        try permit.requireReadable();return try structural.inspectLatestTerminalExact(resourcePermit:permit)
+    }
+    func verifyStructuralTerminalDiscovery(_ original:DeviceStructuralStore.TerminalDiscovery)throws {
+        try permit.requireReadable();try structural.verifyTerminalDiscovery(original,resourcePermit:permit)
+    }
     func diagnoseStructural(operationID: UUID) throws -> DeviceStructuralStore.Recovery {
         try permit.requireReadable(); return try structural.recover(operationID:operationID,resourcePermit:permit)
     }
@@ -166,13 +172,26 @@ final class DeviceLocalResourceGate {
     /// Fixed recovered dispatch retains the resolver's original checkpoints. Read scopes cannot
     /// dispatch mutation or recapture proof. Staleness fails before structural epoch/effects.
     func commitRecoveredExact(_ request:DeviceLocalCompleteSetRecoveredRequest,resources:DeviceResolvedRetainedResources) throws -> DeviceStructuralStore.QualifiedCurrentCapture {
+        try commitRecovered(request,resources:resources,discovery:nil)
+    }
+    /// Fixed terminal-restoration command only. Original structural discovery cannot be refreshed by
+    /// holding locks. The ordinary recovered commit path retains its existing exact-retry semantics.
+    func commitRecoveredExact(_ request:DeviceLocalCompleteSetRecoveredRequest,resources:DeviceResolvedRetainedResources,
+                              discovery:DeviceStructuralStore.TerminalDiscovery)throws->DeviceStructuralStore.QualifiedCurrentCapture {
+        try commitRecovered(request,resources:resources,discovery:discovery)
+    }
+    private func commitRecovered(_ request:DeviceLocalCompleteSetRecoveredRequest,resources:DeviceResolvedRetainedResources,
+                                 discovery:DeviceStructuralStore.TerminalDiscovery?)throws->DeviceStructuralStore.QualifiedCurrentCapture {
         try withScope { scope,permit in
+            if let discovery { try scope.verifyStructuralTerminalDiscovery(discovery) }
             try scope.verifyResolutionCheckpoints(packages:resources.packageCheckpoint,grants:resources.grantCheckpoint)
             let join=DeviceLocalCompleteSetCoordinator(packageStore:self.packages,grantStore:self.grants)
             let candidate=try join.observeRecoveredUnderGate(request,resources:resources,scope:scope)
             let record=DeviceStructuralOperationRecord(rootID:request.structuralRootID,operationID:request.operationID,
                 expectedOld:candidate.expectedOldEnvelopeBytes,candidate:candidate.candidateEnvelopeBytes,resourceAssertions:Data())
+            if let discovery { guard record.sameIntent(as:discovery.record) else { throw DeviceStructuralStoreError.conflict } }
             try scope.verifyResolutionCheckpoints(packages:resources.packageCheckpoint,grants:resources.grantCheckpoint)
+            if let discovery { try scope.verifyStructuralTerminalDiscovery(discovery) }
             return try self.structural.performExactAttempt(record,commandPermit:.init(permit))
         }
     }
