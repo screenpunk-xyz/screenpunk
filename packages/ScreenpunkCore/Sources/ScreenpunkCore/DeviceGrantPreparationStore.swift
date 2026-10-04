@@ -57,6 +57,25 @@ final class DeviceBoundGrantCredentialTransition:GrantSecretRedacted {
         self.original=original;self.epoch=epoch;self.node=node
     }
 }
+/// Finite original absent/present evidence, not a sync acknowledgment.
+fileprivate struct BoundGrantNodeEvidence:Equatable {
+    let root:Bool,name:String,node:GrantHeadEvidence?
+}
+final class DeviceBoundGrantTerminalRecovery:GrantSecretRedacted {
+    let operationID:UUID
+    let packages:[DeviceRetainedEntryPackageBinding]
+    fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,item:DeviceGrantCredentialItem,privateBytes:Data,intent:Data
+    fileprivate let nodes:[BoundGrantNodeEvidence],previousHead:GrantHeadEvidence?
+    fileprivate init(operationID:UUID,packages:[DeviceRetainedEntryPackageBinding],issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,
+                     item:DeviceGrantCredentialItem,privateBytes:Data,intent:Data,nodes:[BoundGrantNodeEvidence],previousHead:GrantHeadEvidence?) {
+        self.operationID=operationID;self.packages=packages;self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.item=item
+        self.privateBytes=privateBytes;self.intent=intent;self.nodes=nodes;self.previousHead=previousHead
+    }
+}
+final class DeviceBoundGrantTerminalTransition:GrantSecretRedacted {
+    fileprivate let original:DeviceBoundGrantTerminalRecovery,epoch:UInt64,nodes:[BoundGrantNodeEvidence]
+    fileprivate init(original:DeviceBoundGrantTerminalRecovery,epoch:UInt64,nodes:[BoundGrantNodeEvidence]){self.original=original;self.epoch=epoch;self.nodes=nodes}
+}
 final class DeviceBoundGrantRecoveryPlan:GrantSecretRedacted {
     let plan:DeviceValidatedProvisioningPlan
     fileprivate let checkpoint:DeviceBoundGrantPrivateAttempt,request:DeviceGrantPreparationRequest
@@ -107,6 +126,7 @@ final class DeviceGrantPreparationStore {
     private var terminalStages: [UUID: GrantDiskIdentity] = [:]
     private var headStages: [UUID: GrantDiskIdentity] = [:]
     private var qualification: (epoch: UInt64, tip: Node, head: Node)?
+    private var boundTerminalQualification:DeviceBoundGrantTerminalTransition?
     private static let gateLock = NSLock(); private static var epochs: [String: UInt64] = [:]
     private var service: String { GrantPreparationCodec.service(rootID) }
     init(root: URL, rootID: UUID, protectedScope: DevicePackageProtectedScope, backend: any DeviceGrantCredentialBackend, boundary: @escaping (Boundary) throws -> Void = { _ in }) {
@@ -350,6 +370,143 @@ final class DeviceGrantPreparationStore {
             guard try DeviceProvisioningPrivateAttemptV2.encoded(request,intent:plan.canonicalBytes) == original.privateBytes,
                   qualified.publicMetadataBytes == entry.record.publicMetadata else{throw DeviceGrantPreparationError.conflict}
             try verifyResources(entry.record)
+        }
+    }
+    /// Read-only capture of actual latest, including explicit absences. No new qualification.
+    func inspectBoundTerminalRecovery(_ diagnostic:DeviceLocalProvisioningIntentStore.Diagnostic)throws->DeviceBoundGrantTerminalRecovery {
+        let intent=try ProvisioningIntentCodec.decode(diagnostic.exactIntentBytes)
+        guard intent.roots.grantID == rootID,intent.operationID == diagnostic.operationID else{throw DeviceGrantPreparationError.conflict}
+        return try disk{c in
+            let state=try inventory(c)
+            guard state.tip?.record.operationID == intent.grantOperationID else{throw DeviceGrantPreparationError.conflict}
+            return try captureBoundTerminal(c,state:state,intent:diagnostic.exactIntentBytes)
+        }
+    }
+    func captureBoundTerminal(_ completed:DeviceBoundGrantCredentialTransition,plan:DeviceValidatedProvisioningPlan,
+                              resourcePermit:DeviceLocalResourcePermit)throws->DeviceBoundGrantTerminalRecovery {
+        try disk(resourcePermit:resourcePermit){c in
+            let state=try inventory(c)
+            guard completed.original.issuer == ObjectIdentifier(self),completed.epoch == epoch(),
+                  state.tip?.final == Node(identity:completed.node.identity,bytes:completed.node.bytes),
+                  state.tip?.record.privateAttempt == completed.original.item,
+                  try readPrivate(completed.original.item).bytes == completed.original.privateBytes else{throw DeviceGrantPreparationError.conflict}
+            return try captureBoundTerminal(c,state:state,intent:plan.canonicalBytes)
+        }
+    }
+    private func terminalNodes(_ c:Context,operationID:UUID)throws->[BoundGrantNodeEvidence] {
+        let base=operationID.uuidString.lowercased()
+        let names=[(true,"root-binding.json",GrantPreparationCodec.recordLimit),(true,"head.json",4096),(true,"head.json.pending",4096)] +
+            [".json",".json.pending",".terminal",".terminal.pending",".binding",".binding.pending",".head-binding",".head-binding.pending",".confirmed",".confirmed.pending"].map{(false,base+$0,$0.hasPrefix(".head-binding") ? 8192:($0.hasPrefix(".json") || $0.hasPrefix(".terminal") ? GrantPreparationCodec.recordLimit:4096))}
+        return try names.map{root,name,limit in
+            let node=try readFile(root ? c.root:c.operations,name,limit:limit)
+            return .init(root:root,name:name,node:node.map{.init(bytes:$0.bytes,identity:$0.identity)})
+        }
+    }
+    private func captureBoundTerminal(_ c:Context,state:Inventory,intent:Data)throws->DeviceBoundGrantTerminalRecovery {
+        let before=epoch(),body=try ProvisioningIntentCodec.decode(intent),candidate=try StructuralStoreCodec.envelope(body.candidate)
+        let refs=try DeviceLocalCompleteSetRestoreCodec.references(candidate.intent)
+        guard refs.packages.count <= 12,body.roots.grantID == rootID,let tip=state.tip,
+              tip.record.operationID == body.grantOperationID,tip.record.credentials.allSatisfy({$0.item != nil}),
+              let item=tip.record.privateAttempt else{throw DeviceGrantPreparationError.repairRequired}
+        let bytes=try readPrivate(item).bytes,frame=try GrantPreparationCodec.decodeStoredAttempt(bytes)
+        guard frame.version == 2,frame.completeSetIntent == intent,frame.operationID == tip.record.operationID,
+              frame.input.identity == refs.grants.identity,refs.grants.preparationOperationID == frame.operationID else{throw DeviceGrantPreparationError.conflict}
+        try verifyResources(tip.record)
+        let nodes=try terminalNodes(c,operationID:tip.record.operationID)
+        guard epoch() == before,let binding=nodes.first(where:{$0.root && $0.name == "root-binding.json"})?.node,
+              binding.bytes == (try GrantPreparationCodec.encode(c.binding)) else{throw DeviceGrantPreparationError.conflict}
+        let packages=refs.packages.map{DeviceRetainedEntryPackageBinding(entryID:$0.entryID,reference:.init(rootID:$0.rootID,contentID:$0.contentID,preparationOperationID:$0.preparationOperationID,directory:$0.directory))}
+        return .init(operationID:tip.record.operationID,packages:packages,issuer:ObjectIdentifier(self),rootID:rootID,epoch:before,
+            item:item,privateBytes:bytes,intent:intent,nodes:nodes,previousHead:tip.record.previousHead)
+    }
+    private func verifyTerminalRecovery(_ recovery:DeviceBoundGrantTerminalRecovery,_ c:Context,_ state:Inventory)throws {
+        guard recovery.issuer == ObjectIdentifier(self),recovery.rootID == rootID,recovery.epoch == epoch(),
+              let tip=state.tip,tip.record.operationID == recovery.operationID,tip.record.previousHead == recovery.previousHead,
+              tip.record.privateAttempt == recovery.item,tip.record.credentials.allSatisfy({$0.item != nil}),
+              try readPrivate(recovery.item).bytes == recovery.privateBytes,
+              try terminalNodes(c,operationID:recovery.operationID) == recovery.nodes else{throw DeviceGrantPreparationError.conflict}
+        try verifyResources(tip.record)
+    }
+    private func terminalPlan(_ recovery:DeviceBoundGrantTerminalRecovery,packages:[DeviceProvisioningPackageInput])throws->DeviceValidatedProvisioningPlan {
+        guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        let frame=try GrantPreparationCodec.decodeStoredAttempt(recovery.privateBytes),body=try ProvisioningIntentCodec.decode(recovery.intent)
+        guard frame.version == 2,frame.completeSetIntent == recovery.intent else{throw DeviceGrantPreparationError.conflict}
+        let candidate=try StructuralStoreCodec.envelope(body.candidate),expected=try Self.boundExpectations(packages)
+        let qualified=try DeviceGrantRevisionQualifier.qualify(frame.input,expectedEntries:expected)
+        let request=DeviceGrantPreparationRequest(operationID:frame.operationID,input:frame.input,qualified:qualified,expectedEntries:expected)
+        let original=DeviceProvisioningPlanRequest(roots:body.roots,operationID:body.operationID,grantOperationID:body.grantOperationID,
+            expectedGenerationID:candidate.expectedGenerationID,baseline:body.expectedOld.map{.expectedEnvelope($0)} ?? .initialExplicit(legacyGrantSet:candidate.snapshot.grantSet),
+            snapshot:candidate.snapshot,owner:frame.input.owner,packages:packages,grantInput:frame.input,qualifiedGrant:qualified)
+        let plan=try DeviceProvisioningPlanner.qualify(original)
+        guard plan.canonicalBytes == recovery.intent,try DeviceProvisioningPrivateAttemptV2.encoded(request,intent:plan.canonicalBytes) == recovery.privateBytes else{throw DeviceGrantPreparationError.conflict}
+        return plan
+    }
+    func qualifyBoundTerminalRecovery(_ recovery:DeviceBoundGrantTerminalRecovery,packages:[DeviceProvisioningPackageInput])throws->DeviceValidatedProvisioningPlan {
+        guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        return try disk{c in
+            try verifyTerminalRecovery(recovery,c,inventory(c));let plan=try terminalPlan(recovery,packages:packages)
+            try verifyTerminalRecovery(recovery,c,inventory(c));return plan
+        }
+    }
+    /// Existing nodes are never refreshed after effects. Only exact planned promotion/replacement
+    /// is allowed; persisted prepared inode identities follow their rename into installed nodes.
+    private func terminalContinuity(_ original:DeviceBoundGrantTerminalRecovery,_ final:[BoundGrantNodeEvidence])throws {
+        let base=original.operationID.uuidString.lowercased()
+        func old(_ root:Bool,_ name:String)->GrantHeadEvidence?{original.nodes.first{$0.root == root && $0.name == name}?.node}
+        func now(_ root:Bool,_ name:String)->GrantHeadEvidence?{final.first{$0.root == root && $0.name == name}?.node}
+        guard old(true,"root-binding.json") == now(true,"root-binding.json") else{throw DeviceGrantPreparationError.conflict}
+        for suffix in [".json",".terminal",".binding",".head-binding",".confirmed"] {
+            let installed=old(false,base+suffix),prepared=old(false,base+suffix+".pending")
+            if suffix == ".json",let prepared {guard now(false,base+suffix) == prepared else{throw DeviceGrantPreparationError.conflict}}
+            else if let installed {guard now(false,base+suffix) == installed else{throw DeviceGrantPreparationError.conflict}}
+            else if let prepared {guard now(false,base+suffix) == prepared else{throw DeviceGrantPreparationError.conflict}}
+            guard now(false,base+suffix+".pending") == nil else{throw DeviceGrantPreparationError.conflict}
+        }
+        if let prepared=old(true,"head.json.pending") {guard now(true,"head.json") == prepared else{throw DeviceGrantPreparationError.conflict}}
+        else if let installed=old(true,"head.json"),installed != original.previousHead {
+            guard now(true,"head.json") == installed else{throw DeviceGrantPreparationError.conflict}
+        }
+        guard now(true,"head.json.pending") == nil else{throw DeviceGrantPreparationError.conflict}
+    }
+    func performBoundTerminal(_ recovery:DeviceBoundGrantTerminalRecovery,plan:DeviceValidatedProvisioningPlan,
+                             packages:[DeviceProvisioningPackageInput],commandPermit:DeviceBoundTerminalCommandPermit)throws->DeviceBoundGrantTerminalTransition {
+        guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext else{throw DeviceLocalResourceGateFailure.invalidScope}
+        let state=try inventory(c);try verifyTerminalRecovery(recovery,c,state)
+        guard try terminalPlan(recovery,packages:packages).canonicalBytes == plan.canonicalBytes,let entry=state.tip,
+              let binding=recovery.nodes.first(where:{$0.root && $0.name == "root-binding.json"})?.node else{throw DeviceGrantPreparationError.conflict}
+        let attemptEpoch=epoch(invalidate:true);qualification=nil;boundTerminalQualification=nil;bindingQualified=false
+        var completed=false;defer{if !completed{bindingQualified=false;boundTerminalQualification=nil}}
+        if let staged=entry.staged {try replace(c,parent:c.operations,name:name(entry.record.operationID),bytes:staged.bytes,expected:entry.final,kind:.progress)}
+        let terminal=try terminalize(c,record:entry.record);try commitHead(c,record:entry.record,terminal:terminal)
+        let observed=try terminalNodes(c,operationID:recovery.operationID)
+        try terminalContinuity(recovery,observed)
+        for evidence in observed {
+            if let node=evidence.node {try syncExisting(evidence.root ? c.root:c.operations,evidence.name,expected:Node(identity:node.identity,bytes:node.bytes))}
+        }
+        try boundary(.afterFileSync(.binding));try sync(c.lock);try sync(c.operations);try sync(c.root);try boundary(.afterDirectorySync(.binding));try check(c)
+        let after=try inventory(c)
+        guard !after.hasStages,after.entries.allSatisfy(\.complete),let tip=after.tip,tip.record.operationID == recovery.operationID,
+              tip.terminal == terminal,tip.record.previousHead == recovery.previousHead,
+              try terminalNodes(c,operationID:recovery.operationID) == observed,epoch() == attemptEpoch,
+              try readFile(c.root,"root-binding.json",limit:GrantPreparationCodec.recordLimit) == Node(identity:binding.identity,bytes:binding.bytes) else{throw DeviceGrantPreparationError.conflict}
+        try verifyResources(tip.record)
+        let transition=DeviceBoundGrantTerminalTransition(original:recovery,epoch:attemptEpoch,nodes:observed)
+        boundTerminalQualification=transition;bindingQualified=true;completed=true;return transition
+    }
+    func verifyBoundTerminal(_ transition:DeviceBoundGrantTerminalTransition,plan:DeviceValidatedProvisioningPlan,
+                             packages:[DeviceProvisioningPackageInput],resourcePermit:DeviceLocalResourcePermit)throws {
+        guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        try disk(resourcePermit:resourcePermit){c in
+            let state=try inventory(c),original=transition.original
+            guard boundTerminalQualification === transition,bindingQualified,transition.epoch == epoch(),original.issuer == ObjectIdentifier(self),
+                  original.rootID == rootID,!state.hasStages,state.entries.allSatisfy(\.complete),let tip=state.tip,
+                  tip.record.operationID == original.operationID,tip.record.previousHead == original.previousHead,
+                  tip.record.privateAttempt == original.item,try readPrivate(original.item).bytes == original.privateBytes,
+                  try terminalNodes(c,operationID:original.operationID) == transition.nodes,
+                  try terminalPlan(original,packages:packages).canonicalBytes == plan.canonicalBytes else{throw DeviceGrantPreparationError.conflict}
+            try verifyResources(tip.record)
         }
     }
     private func verifyBoundCheckpoint(_ receipt:DeviceBoundGrantPrivateAttempt,context c:Context,state:Inventory)throws {
@@ -785,8 +942,8 @@ final class DeviceGrantPreparationStore {
             if let confirmation { guard let headBinding, confirmation.operationID == id, confirmation.headIdentity == headBinding.candidate.identity else { throw DeviceGrantPreparationError.conflict } }
             if let item=record.privateAttempt {
                 let attempt=try GrantPreparationCodec.decodeStoredAttempt(readPrivate(item).bytes)
-                if attempt.version == 2 {
-                    guard terminal == nil,terminalStage == nil,terminalBinding == nil,headBinding == nil,confirmation == nil else{throw DeviceGrantPreparationError.conflict}
+                if attempt.version == 2,terminal != nil || terminalStage != nil || terminalBinding != nil || headBinding != nil || confirmation != nil {
+                    guard record.credentials.allSatisfy({$0.item != nil}),attempt.completeSetIntent != nil else{throw DeviceGrantPreparationError.conflict}
                 }
                 try verifyResources(record)
             }
