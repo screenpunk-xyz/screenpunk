@@ -10,9 +10,9 @@ final class DeviceLocalCompleteSetCommitAcknowledgment {
         operationID = capture.operationID; self.generationID = generationID; envelopeBytes = capture.envelopeBytes
     }
 }
-/// Unmounted, live-receipt-only coordinator. Original requests/IDs/selection are never regenerated.
+/// Unmounted coordinator for supplied live receipts or explicit resolver bundles. Requests/IDs/selection are never regenerated.
 /// The gate releases every lock before this method returns. No activation/notification is dispatched.
-/// Missing in-memory resource receipts require a future explicit resolver; metadata cannot recreate them.
+/// Missing receipts require explicit terminal resolution; metadata cannot recreate them or renew stale checkpoints.
 final class DeviceLocalCompleteSetCommitCoordinator {
     private let gate: DeviceLocalResourceGate
     init(packageStore: DevicePackagePreparationStore, grantStore: DeviceGrantPreparationStore, structuralStore: DeviceStructuralStore) {
@@ -23,4 +23,11 @@ final class DeviceLocalCompleteSetCommitCoordinator {
         let capture = try gate.commitPreparedExact(request)
         return .init(capture,generationID:request.snapshot.generationID)
     }
+    func commitRecoveredExact(_ request:DeviceLocalCompleteSetRecoveredRequest,
+                              resources:DeviceResolvedRetainedResources) throws -> DeviceLocalCompleteSetCommitAcknowledgment {
+        try DeviceLocalCompleteSetBounds.preflight(request,resources:resources)
+        let capture=try gate.commitRecoveredExact(request,resources:resources)
+        return .init(capture,generationID:request.snapshot.generationID)
+    }
+
 }

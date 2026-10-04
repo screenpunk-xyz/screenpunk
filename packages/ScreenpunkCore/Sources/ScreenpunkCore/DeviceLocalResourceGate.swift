@@ -163,6 +163,19 @@ final class DeviceLocalResourceGate {
             return try self.structural.performExactAttempt(record,commandPermit:.init(permit))
         }
     }
+    /// Fixed recovered dispatch retains the resolver's original checkpoints. Read scopes cannot
+    /// dispatch mutation or recapture proof. Staleness fails before structural epoch/effects.
+    func commitRecoveredExact(_ request:DeviceLocalCompleteSetRecoveredRequest,resources:DeviceResolvedRetainedResources) throws -> DeviceStructuralStore.QualifiedCurrentCapture {
+        try withScope { scope,permit in
+            try scope.verifyResolutionCheckpoints(packages:resources.packageCheckpoint,grants:resources.grantCheckpoint)
+            let join=DeviceLocalCompleteSetCoordinator(packageStore:self.packages,grantStore:self.grants)
+            let candidate=try join.observeRecoveredUnderGate(request,resources:resources,scope:scope)
+            let record=DeviceStructuralOperationRecord(rootID:request.structuralRootID,operationID:request.operationID,
+                expectedOld:candidate.expectedOldEnvelopeBytes,candidate:candidate.candidateEnvelopeBytes,resourceAssertions:Data())
+            try scope.verifyResolutionCheckpoints(packages:resources.packageCheckpoint,grants:resources.grantCheckpoint)
+            return try self.structural.performExactAttempt(record,commandPermit:.init(permit))
+        }
+    }
     private func withScope<T>(_ body: (DeviceLocalResourceReadScope,DeviceLocalResourcePermit) throws -> T) throws -> T {
         let descriptors = try [packages.resourceGateDescriptor,grants.resourceGateDescriptor,structural.resourceGateDescriptor]
             .sorted { $0.path.utf8.lexicographicallyPrecedes($1.path.utf8) }
