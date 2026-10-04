@@ -305,3 +305,62 @@ final class DeviceImmutableGenericAuthorization: @unchecked Sendable {
         defer {reservation.finish()};try Task.checkCancellation();try reservation.check();try Task.checkCancellation()
     }
 }
+
+/// Fixed private-attempt command only. No arbitrary mutation closure, secret getter or resource
+/// completion authority. Backend/fault seams retain the synchronous nonreentrant store contract.
+final class DeviceBoundGrantCommandPermit {
+    private let permit:DeviceLocalResourcePermit
+    fileprivate init(_ permit:DeviceLocalResourcePermit){self.permit=permit}
+    func begin(_ instance:ObjectIdentifier)throws{try permit.beginRead(instance)}
+    func end(){permit.endRead()}
+}
+final class DeviceBoundGrantAttemptCoordinator {
+    private let journal:DeviceLocalProvisioningIntentStore,grants:DeviceGrantPreparationStore
+    init(journal:DeviceLocalProvisioningIntentStore,grants:DeviceGrantPreparationStore){self.journal=journal;self.grants=grants}
+    func stageExact(_ original:DeviceProvisioningPlanRequest,plan:DeviceValidatedProvisioningPlan,
+                    journalReceipt:DeviceLocalProvisioningIntentStore.Receipt)throws->DeviceBoundGrantPrivateAttempt {
+        let fresh=try DeviceProvisioningPlanner.qualify(original)
+        guard fresh.canonicalBytes == plan.canonicalBytes else{throw DeviceGrantPreparationError.conflict}
+        let expected=try DeviceGrantPreparationStore.boundExpectations(original.packages)
+        let request=DeviceGrantPreparationRequest(operationID:original.grantOperationID,input:original.grantInput,
+            qualified:original.qualifiedGrant,expectedEntries:expected)
+        var result:DeviceBoundGrantPrivateAttempt?
+        try scope{permit in
+            try journal.verifyExact(journalReceipt,plan:plan,resourcePermit:permit)
+            let receipt=try grants.performBoundPrivateAttempt(request,plan:plan,recovery:nil,commandPermit:.init(permit))
+            try journal.verifyExact(journalReceipt,plan:plan,resourcePermit:permit)
+            try grants.verifyBoundPrivateAttempt(receipt,resourcePermit:permit)
+            result=receipt
+        }
+        guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
+    }
+    func recommitRecoveredExact(_ recovery:DeviceBoundGrantRecoveryPlan,
+                                journalReceipt:DeviceLocalProvisioningIntentStore.Receipt)throws->DeviceBoundGrantPrivateAttempt {
+        var result:DeviceBoundGrantPrivateAttempt?
+        try scope{permit in
+            try journal.verifyExact(journalReceipt,plan:recovery.plan,resourcePermit:permit)
+            let receipt=try grants.performRecoveredBoundPrivateAttempt(recovery,commandPermit:.init(permit))
+            try journal.verifyExact(journalReceipt,plan:recovery.plan,resourcePermit:permit)
+            try grants.verifyBoundPrivateAttempt(receipt,resourcePermit:permit)
+            result=receipt
+        }
+        guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
+    }
+    private func scope(_ body:(DeviceLocalResourcePermit)throws->Void)throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        let descriptors=try [journal.resourceGateDescriptor,grants.resourceGateDescriptor].sorted {
+            if $0.path.utf8.elementsEqual($1.path.utf8){return $0.rootID.uuidString < $1.rootID.uuidString}
+            return $0.path.utf8.lexicographicallyPrecedes($1.path.utf8)
+        }
+        guard descriptors[0].instance != descriptors[1].instance,
+              !DeviceLocalResourceDescriptor.pathsOverlap(descriptors[0].path,descriptors[1].path) else{throw DeviceLocalResourceGateFailure.invalidRoots}
+        let permit=DeviceLocalResourcePermit(descriptors)
+        try DeviceLocalResourceRegistry.begin(permit);defer{permit.invalidate();DeviceLocalResourceRegistry.finish(permit)}
+        func acquire(_ index:Int)throws {
+            if index == descriptors.count{try DeviceLocalResourceRegistry.execute(permit);try body(permit);return}
+            if descriptors[index].instance == ObjectIdentifier(journal){try journal.withResourceGateScope(permit){try acquire(index+1)}}
+            else{try grants.withResourceGateScope(permit){try acquire(index+1)}}
+        }
+        try acquire(0)
+    }
+}

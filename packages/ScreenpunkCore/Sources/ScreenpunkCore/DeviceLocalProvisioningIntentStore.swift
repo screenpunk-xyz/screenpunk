@@ -261,9 +261,39 @@ final class DeviceLocalProvisioningIntentStore {
         }
         return(op,intent.bytes,complete,nodes)
     }
-    private func disk<T>(create:Bool=false,_ body:(Context)throws->T)throws->T {
+    private var borrowedResourceContext:Context?
+    var resourceGateDescriptor:DeviceLocalResourceDescriptor {get throws{try paths();return try .existing(instance:ObjectIdentifier(self),path:root.path,rootID:rootID)}}
+    func withResourceGateScope(_ permit:DeviceLocalResourcePermit,_ body:()throws->Void)throws {
+        try permit.beginAcquisition(resourceGateDescriptor)
+        mutex.lock();defer{permit.invalidate();mutex.unlock()}
+        try diskContext(create:false,releasePermit:permit){c in
+            _ = try inventory(c)
+            borrowedResourceContext=c
+            defer{borrowedResourceContext=nil;permit.invalidate()}
+            try body();try check(c)
+        }
+    }
+    func verifyExact(_ receipt:Receipt,plan:DeviceValidatedProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws {
+        _ = try checked(plan)
+        try disk(resourcePermit:resourcePermit){c in
+            let before=epoch(),s=try inventory(c)
+            guard s.complete,s.operation == plan.operationID,s.intent == plan.canonicalBytes,
+                  receipt.matches(ObjectIdentifier(self),rootID,before,s.nodes),epoch() == before else{throw Failure.uncertain}
+        }
+    }
+    private func disk<T>(create:Bool=false,resourcePermit:DeviceLocalResourcePermit?=nil,_ body:(Context)throws->T)throws->T {
+        if let permit=resourcePermit {
+            guard !create else{throw DeviceLocalResourceGateFailure.invalidScope}
+            try permit.beginRead(ObjectIdentifier(self));defer{permit.endRead()}
+            guard let c=borrowedResourceContext else{throw DeviceLocalResourceGateFailure.invalidScope}
+            try check(c);do{let result=try body(c);try check(c);return result}catch{try check(c);throw error}
+        }
         try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
         try paths();mutex.lock();defer{mutex.unlock()}
+        return try diskContext(create:create,body)
+    }
+    private func diskContext<T>(create:Bool,releasePermit:DeviceLocalResourcePermit?=nil,_ body:(Context)throws->T)throws->T {
+        try paths()
         let r=try directory(root.path);defer{close(r)}
         let rID=try identity(r,directory:true)
         var lock=openat(r,"provisioning.lock",O_RDWR|O_NOFOLLOW|O_NONBLOCK)
@@ -276,7 +306,7 @@ final class DeviceLocalProvisioningIntentStore {
         }
         guard lock >= 0 else{throw failure()}
         let lID=try identity(lock,directory:false)
-        guard flock(lock,LOCK_EX) == 0 else{throw failure()};defer{flock(lock,LOCK_UN)}
+        guard flock(lock,LOCK_EX) == 0 else{throw failure()};defer{releasePermit?.invalidate();flock(lock,LOCK_UN)}
         var ops=openat(r,"operations",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK)
         defer{if ops >= 0{close(ops)}}
         if ops < 0 && errno == ENOENT && create {
