@@ -33,6 +33,13 @@ final class DeviceLocalCompleteSetRestoreCoordinator {
         gate = .init(packageStore:packageStore,grantStore:grantStore,structuralStore:structuralStore)
         resolver = .init(packageStore:packageStore,grantStore:grantStore,structuralStore:structuralStore)
     }
+    /// Completed-current v2 bootstrap only. Pending successor/partial journal completion remains
+    /// explicit operation recovery, not permission to restore the previous runtime. No v1 receipt
+    /// conversion, journal capacity publication or production admission occurs.
+    func restoreLatestBoundCompletedExact(journal:DeviceLocalProvisioningIntentStore)throws->DeviceBoundRestoredRuntimeBinding {
+        let original=try gate.inspectBoundCompletedCurrentExact(journal:journal)
+        return try gate.restoreBoundCompletedCurrentExact(original,journal:journal)
+    }
     func restoreLatestTerminalExact(latestGroup:DeviceRetainedGrantResolutionGroup?=nil)throws->DeviceLocalCompleteSetRestoreAcknowledgment {
         // Caller mapping bounds precede copies/discovery/resolution. Selected mappings come ONLY
         // from the strict checked committed candidate. An unnecessary duplicate mapping is rejected.

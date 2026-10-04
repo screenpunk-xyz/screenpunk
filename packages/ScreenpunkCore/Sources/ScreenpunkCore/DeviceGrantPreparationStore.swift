@@ -489,6 +489,16 @@ final class DeviceGrantPreparationStore {
             return try captureBoundTerminal(c,state:state,intent:diagnostic.exactIntentBytes)
         }
     }
+    func inspectBoundCompletedTerminalRecovery(_ journal:DeviceLocalProvisioningIntentStore.CompletedCurrentCheckpoint,
+        resourcePermit:DeviceLocalResourcePermit)throws->DeviceBoundGrantTerminalRecovery {
+        let body=try ProvisioningIntentCodec.decode(journal.exactIntentBytes)
+        guard body.operationID == journal.operationID,body.candidate == journal.envelopeBytes,body.roots.grantID == rootID else{throw DeviceGrantPreparationError.conflict}
+        return try disk(resourcePermit:resourcePermit){c in
+            let state=try inventory(c)
+            guard !state.hasStages,state.entries.allSatisfy(\.complete),state.tip?.record.operationID == body.grantOperationID else{throw DeviceGrantPreparationError.repairRequired}
+            return try captureBoundTerminal(c,state:state,intent:journal.exactIntentBytes)
+        }
+    }
     func captureBoundTerminal(_ completed:DeviceBoundGrantCredentialTransition,plan:DeviceValidatedProvisioningPlan,
                               resourcePermit:DeviceLocalResourcePermit)throws->DeviceBoundGrantTerminalRecovery {
         try disk(resourcePermit:resourcePermit){c in
@@ -547,6 +557,18 @@ final class DeviceGrantPreparationStore {
         let plan=try DeviceProvisioningPlanner.qualify(original)
         guard plan.canonicalBytes == recovery.intent,try DeviceProvisioningPrivateAttemptV2.encoded(request,intent:plan.canonicalBytes) == recovery.privateBytes else{throw DeviceGrantPreparationError.conflict}
         return plan
+    }
+    /// Original completed v2 recovery only; no synchronization, qualification or checkpoint refresh.
+    func verifyBoundCompletedRecovery(_ original:DeviceBoundGrantTerminalRecovery,plan:DeviceValidatedProvisioningPlan,
+        packages:[DeviceProvisioningPackageInput],resourcePermit:DeviceLocalResourcePermit)throws {
+        guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        try disk(resourcePermit:resourcePermit){c in
+            let state=try inventory(c)
+            guard !state.hasStages,state.entries.allSatisfy(\.complete) else{throw DeviceGrantPreparationError.repairRequired}
+            try verifyTerminalRecovery(original,c,state)
+            guard try terminalPlan(original,packages:packages).canonicalBytes == plan.canonicalBytes else{throw DeviceGrantPreparationError.conflict}
+            try verifyTerminalRecovery(original,c,inventory(c))
+        }
     }
     func qualifyBoundTerminalRecovery(_ recovery:DeviceBoundGrantTerminalRecovery,packages:[DeviceProvisioningPackageInput])throws->DeviceValidatedProvisioningPlan {
         guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
@@ -760,6 +782,25 @@ final class DeviceGrantPreparationStore {
         let observed = try verifyRead(receipt,resourcePermit:resourcePermit)
         guard observed.publicMetadataBytes == qualified.publicMetadataBytes else { throw DeviceGrantPreparationError.conflict }
         return observed
+    }
+    /// Strict v2 only, one Generic entry working set. No v1 receipt/qualification conversion,
+    /// secret getter, backend mutation or production admission. Original transition stays mandatory.
+    func makeBoundGenericSeed(_ transition:DeviceBoundGrantTerminalTransition,plan:DeviceValidatedProvisioningPlan,
+        packages:[DeviceProvisioningPackageInput],owner:PairingIdentity,entryID:UUID,resourcePermit:DeviceLocalResourcePermit)throws->DeviceImmutableGenericSeed {
+        try Task.checkCancellation()
+        try verifyBoundTerminal(transition,plan:plan,packages:packages,resourcePermit:resourcePermit)
+        let seed=try disk(resourcePermit:resourcePermit){c -> DeviceImmutableGenericSeed in
+            guard transition.epoch == epoch(),boundTerminalQualification === transition else{throw DeviceGrantPreparationError.conflict}
+            let frame=try GrantPreparationCodec.decodeStoredAttempt(transition.original.privateBytes)
+            guard frame.version == 2,frame.completeSetIntent == plan.canonicalBytes,owner.isWellFormed,owner.role == .controller,
+                  frame.input.owner == owner,let entry=frame.input.entries.first(where:{$0.entryID == entryID}),let generic=entry.generic else{throw ConnectionFailure.permissionRequired}
+            try generic.validate();guard generic.entries.count <= 32 else{throw DeviceGrantPreparationError.sizeLimit}
+            var bytes=0
+            for item in generic.entries {let count=item.secret?.count ?? 0;guard count <= 8192,bytes <= 256*1024-count else{throw DeviceGrantPreparationError.sizeLimit};bytes += count}
+            try Task.checkCancellation();return .init(generic)
+        }
+        try verifyBoundTerminal(transition,plan:plan,packages:packages,resourcePermit:resourcePermit)
+        try Task.checkCancellation();return seed
     }
     /// One selected entry only, privately decoded and freshly requalified. No immutable backend mutation.
     func makeGenericSeed(_ receipt:DevicePreparedGrantReceipt,expectedEntries:[DeviceGrantEntryExpectation],
