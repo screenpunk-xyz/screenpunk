@@ -55,6 +55,10 @@ enum DeviceLocalResourceRegistry {
     private static let mutex = NSLock()
     private static var states: [ObjectIdentifier:State] = [:]
     private static var thread: ObjectIdentifier { ObjectIdentifier(Thread.current) }
+    static func requireIdle()throws {
+        mutex.lock();defer{mutex.unlock()}
+        guard states[thread] == nil else { throw DeviceLocalResourceGateFailure.reentrant }
+    }
     static func beginOrdinary() throws {
         mutex.lock(); defer { mutex.unlock() }
         guard states[thread] == nil else { throw DeviceLocalResourceGateFailure.reentrant }; states[thread] = .ordinary
@@ -134,6 +138,12 @@ final class DeviceLocalResourceReadScope {
         try permit.requireReadable()
         return try grants.verifyRecovered(receipt,expectedEntries:expectedEntries,expectedOwner:expectedOwner,resourcePermit:permit)
     }
+    func verifyQualifiedStructuralCapture(_ original:DeviceStructuralStore.QualifiedCurrentCapture)throws {
+        try permit.requireReadable();try structural.verifyQualifiedCurrentCapture(original,resourcePermit:permit)
+    }
+    func genericSeed(_ receipt:DevicePreparedGrantReceipt,expectedEntries:[DeviceGrantEntryExpectation],owner:PairingIdentity,entryID:UUID)throws->DeviceImmutableGenericSeed {
+        try permit.requireReadable();return try grants.makeGenericSeed(receipt,expectedEntries:expectedEntries,expectedOwner:owner,entryID:entryID,resourcePermit:permit)
+    }
     func inspectLatestStructuralTerminalExact()throws->DeviceStructuralStore.TerminalDiscovery {
         try permit.requireReadable();return try structural.inspectLatestTerminalExact(resourcePermit:permit)
     }
@@ -192,8 +202,51 @@ final class DeviceLocalResourceGate {
             if let discovery { guard record.sameIntent(as:discovery.record) else { throw DeviceStructuralStoreError.conflict } }
             try scope.verifyResolutionCheckpoints(packages:resources.packageCheckpoint,grants:resources.grantCheckpoint)
             if let discovery { try scope.verifyStructuralTerminalDiscovery(discovery) }
-            return try self.structural.performExactAttempt(record,commandPermit:.init(permit))
+            let capture=try self.structural.performExactAttempt(record,commandPermit:.init(permit))
+            if discovery != nil {
+                // Capture originates in performExactAttempt's original final lock. Do not recapture.
+                try scope.verifyResolutionCheckpoints(packages:resources.packageCheckpoint,grants:resources.grantCheckpoint)
+                try scope.verifyQualifiedStructuralCapture(capture)
+            }
+            return capture
         }
+    }
+    /// Unmounted fixed entry factory. Mandatory native-driver seam is NOT a production admission
+    /// implementation. Driver/resolver/actor installation/transport work occur outside resource locks.
+    func makeGenericRuntimeExact(binding:DeviceRestoredRuntimeBinding,entryID:UUID,
+        admission:any DeviceImmutableGenericAdmissionDriver,http:any HTTPTransport,webSocket:any WebSocketTransport,
+        resolver:any DestinationResolver,clock:any PairingClock) async throws -> any DeviceImmutableGenericOperations {
+        try Task.checkCancellation()
+        let request=binding.request
+        try DeviceLocalCompleteSetBounds.preflight(request,resources:binding.resources)
+        guard request.snapshot.entries.contains(where:{$0.entryID == entryID}) else { throw ConnectionFailure.permissionRequired }
+        let scope=DeviceImmutableGenericScope(structuralRootID:request.structuralRootID,operationID:request.operationID,
+            generationID:request.snapshot.generationID,entryID:entryID,owner:request.owner,grants:binding.resources.selected.identity)
+        let authorization=DeviceImmutableGenericAuthorization(scope:scope,driver:admission,validate:{try self.withReadScope { try self.verifyRuntimeBinding(binding,scope:$0) }})
+        try authorization.validate()
+        let seed=try withReadScope { scope -> DeviceImmutableGenericSeed in
+            try Task.checkCancellation();try self.verifyRuntimeBinding(binding,scope:scope)
+            let expectations=try request.packages.map { entryBinding -> DeviceGrantEntryExpectation in
+                guard let receipt=self.bindingReference(entryBinding.reference,in:binding.resources) else { throw DeviceLocalCompleteSetFailure.packageMismatch }
+                return .init(entryID:entryBinding.entryID,package:try scope.verifyPackage(receipt).package)
+            }
+            guard let receipt=binding.resources.grantReceipts.first(where:{$0.identity == binding.resources.selected.identity && $0.operationID == binding.resources.selected.operationID}) else { throw DeviceLocalCompleteSetFailure.invalidInput }
+            let seed=try scope.genericSeed(receipt,expectedEntries:expectations,owner:request.owner,entryID:entryID)
+            try self.verifyRuntimeBinding(binding,scope:scope);try Task.checkCancellation();return seed
+        }
+        let runtime=try await seed.instantiate(authorization:authorization,http:http,webSocket:webSocket,resolver:resolver,clock:clock)
+        do{try Task.checkCancellation();return runtime}catch{await runtime.cancel();throw error}
+    }
+    private func verifyRuntimeBinding(_ binding:DeviceRestoredRuntimeBinding,scope:DeviceLocalResourceReadScope)throws {
+        try scope.verifyQualifiedStructuralCapture(binding.capture)
+        try scope.verifyResolutionCheckpoints(packages:binding.resources.packageCheckpoint,grants:binding.resources.grantCheckpoint)
+        let observed=try DeviceLocalCompleteSetCoordinator(packageStore:packages,grantStore:grants).observeRecoveredUnderGate(binding.request,resources:binding.resources,scope:scope)
+        guard observed.candidateEnvelopeBytes == binding.capture.envelopeBytes,binding.request.operationID == binding.capture.operationID else { throw DeviceStructuralStoreError.conflict }
+        try scope.verifyResolutionCheckpoints(packages:binding.resources.packageCheckpoint,grants:binding.resources.grantCheckpoint)
+        try scope.verifyQualifiedStructuralCapture(binding.capture)
+    }
+    private func bindingReference(_ reference:DevicePreparedPackageReference,in resources:DeviceResolvedRetainedResources)->DevicePreparedPackageReceipt? {
+        resources.packageReceipts.first {$0.reference.rootID == reference.rootID && $0.reference.preparationOperationID == reference.preparationOperationID && $0.reference.contentID.utf8.elementsEqual(reference.contentID.utf8) && $0.reference.directory.utf8.elementsEqual(reference.directory.utf8)}
     }
     private func withScope<T>(_ body: (DeviceLocalResourceReadScope,DeviceLocalResourcePermit) throws -> T) throws -> T {
         let descriptors = try [packages.resourceGateDescriptor,grants.resourceGateDescriptor,structural.resourceGateDescriptor]
@@ -224,5 +277,31 @@ final class DeviceLocalResourceGate {
         }
         try acquire(0)
         guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+}
+
+/// Only the fixed gate factory constructs this authorization. Driver callbacks run with no resource
+/// locks held. Validation is mandatory exactly once, including drivers that swallow validator errors.
+final class DeviceImmutableGenericAuthorization: @unchecked Sendable {
+    let scope:DeviceImmutableGenericScope
+    private let driver:any DeviceImmutableGenericAdmissionDriver
+    private let validator:()throws->Void
+    fileprivate init(scope:DeviceImmutableGenericScope,driver:any DeviceImmutableGenericAdmissionDriver,validate:@escaping ()throws->Void) {
+        self.scope=scope;self.driver=driver;validator=validate
+    }
+    func reserve(onCancel:@escaping @Sendable ()->Void)throws->any DeviceImmutableGenericReservation {
+        try Task.checkCancellation();try DeviceLocalResourceRegistry.requireIdle()
+        var count=0;var succeeded=false
+        let reservation=try driver.reserve(scope:scope,validateResources:{
+            count += 1
+            guard count == 1 else { throw ConnectionFailure.permissionRequired }
+            try self.validator();succeeded=true
+        },onCancel:onCancel)
+        guard count == 1,succeeded else { reservation.finish();throw ConnectionFailure.permissionRequired }
+        do {try Task.checkCancellation();try reservation.check();try Task.checkCancellation();return reservation} catch {reservation.finish();throw error}
+    }
+    func validate()throws {
+        let reservation=try reserve(onCancel:{})
+        defer {reservation.finish()};try Task.checkCancellation();try reservation.check();try Task.checkCancellation()
     }
 }
