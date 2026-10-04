@@ -50,6 +50,13 @@ final class DeviceBoundGrantPrivateAttempt:GrantSecretRedacted {
         self.item=item;privateBytes=bytes;bindingIdentity=binding.identity;bindingBytes=binding.bytes;self.operationID=operationID;self.staged=staged
     }
 }
+/// Credential progress only: original private anchor -> exact final record/epoch. No terminal authority.
+final class DeviceBoundGrantCredentialTransition:GrantSecretRedacted {
+    fileprivate let original:DeviceBoundGrantPrivateAttempt,epoch:UInt64,node:GrantHeadEvidence
+    fileprivate init(original:DeviceBoundGrantPrivateAttempt,epoch:UInt64,node:GrantHeadEvidence) {
+        self.original=original;self.epoch=epoch;self.node=node
+    }
+}
 final class DeviceBoundGrantRecoveryPlan:GrantSecretRedacted {
     let plan:DeviceValidatedProvisioningPlan
     fileprivate let checkpoint:DeviceBoundGrantPrivateAttempt,request:DeviceGrantPreparationRequest
@@ -270,6 +277,79 @@ final class DeviceGrantPreparationStore {
             guard try DeviceProvisioningPlanner.qualify(original).canonicalBytes == plan.canonicalBytes,
                   try DeviceProvisioningPrivateAttemptV2.encoded(privateRequest,intent:plan.canonicalBytes) == receipt.privateBytes else{throw DeviceGrantPreparationError.conflict}
             try verifyBoundCheckpoint(receipt,context:c,state:inventory(c))
+        }
+    }
+    /// Fixed credential-only dispatch. V2 remains unresolved; no terminal/head or private addition.
+    func performBoundCredentialCompletion(_ original:DeviceBoundGrantPrivateAttempt,
+        plan:DeviceValidatedProvisioningPlan,packages:[DeviceProvisioningPackageInput],
+        commandPermit:DeviceBoundCredentialCommandPermit)throws->DeviceBoundGrantCredentialTransition {
+        guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext else{throw DeviceLocalResourceGateFailure.invalidScope}
+        let state=try inventory(c);try verifyBoundCheckpoint(original,context:c,state:state)
+        let frame=try GrantPreparationCodec.decodeStoredAttempt(original.privateBytes)
+        guard frame.version == 2,frame.completeSetIntent == plan.canonicalBytes,
+              frame.input.credentials.count <= 396,let entry=state.tip,entry.staged == nil else{throw DeviceGrantPreparationError.conflict}
+        let expected=try Self.boundExpectations(packages)
+        let qualified=try DeviceGrantRevisionQualifier.qualify(frame.input,expectedEntries:expected)
+        let request=DeviceGrantPreparationRequest(operationID:frame.operationID,input:frame.input,qualified:qualified,expectedEntries:expected)
+        guard try DeviceProvisioningPrivateAttemptV2.encoded(request,intent:plan.canonicalBytes) == original.privateBytes,
+              qualified.publicMetadataBytes == entry.record.publicMetadata else{throw DeviceGrantPreparationError.conflict}
+        var record=entry.record
+        let secrets=Dictionary(uniqueKeysWithValues:frame.input.credentials.map{($0.revisionID,$0.bytes)})
+        guard record.credentials.count == secrets.count else{throw DeviceGrantPreparationError.conflict}
+        // Inventory already reserves every planned credential and private byte across retained records.
+        // Check ALL existing identities/bytes before changing epoch or adding the first missing item.
+        for binding in record.credentials {
+            guard let bytes=secrets[binding.revisionID],bytes.count == binding.byteCount else{throw DeviceGrantPreparationError.conflict}
+            if let item=binding.item {guard try readPrivate(item).bytes == bytes else{throw DeviceGrantPreparationError.conflict}}
+            else if let item=state.items[binding.account] {
+                guard captured[binding.account] == item,try readPrivate(item).bytes == bytes else{throw DeviceGrantPreparationError.conflict}
+            }
+        }
+        guard let binding=try readFile(c.root,"root-binding.json",limit:GrantPreparationCodec.recordLimit),
+              binding.identity == original.bindingIdentity,binding.bytes == original.bindingBytes else{throw DeviceGrantPreparationError.conflict}
+        let attemptEpoch=epoch(invalidate:true);qualification=nil;bindingQualified=false
+        var completed=false;defer{if !completed{bindingQualified=false}}
+        for index in record.credentials.indices {
+            if record.credentials[index].item == nil {
+                let value=record.credentials[index]
+                guard let bytes=secrets[value.revisionID] else{throw DeviceGrantPreparationError.conflict}
+                record.credentials[index].item=try addExact(account:value.account,bytes:bytes)
+                try persist(c,record) // durable reference BEFORE the next add
+            }
+        }
+        try verifyResources(record)
+        guard let node=try readFile(c.operations,name(record.operationID),limit:GrantPreparationCodec.recordLimit),
+              node.bytes == (try GrantPreparationCodec.encode(record)) else{throw DeviceGrantPreparationError.conflict}
+        try syncExisting(c.operations,name(record.operationID),expected:node);try sync(c.operations)
+        try syncExisting(c.root,"root-binding.json",expected:binding);try boundary(.afterFileSync(.binding))
+        try sync(c.lock);try sync(c.operations);try sync(c.root);try boundary(.afterDirectorySync(.binding));try check(c)
+        let after=try inventory(c)
+        guard let latest=after.tip,latest.record.operationID == record.operationID,latest.final == node,
+              latest.staged == nil,!latest.complete,latest.record.credentials.allSatisfy({$0.item != nil}),
+              epoch() == attemptEpoch,try readFile(c.root,"root-binding.json",limit:GrantPreparationCodec.recordLimit) == binding else{throw DeviceGrantPreparationError.conflict}
+        bindingQualified=true;completed=true
+        return .init(original:original,epoch:attemptEpoch,node:.init(bytes:node.bytes,identity:node.identity))
+    }
+    func verifyBoundCredentialTransition(_ transition:DeviceBoundGrantCredentialTransition,
+        plan:DeviceValidatedProvisioningPlan,packages:[DeviceProvisioningPackageInput],resourcePermit:DeviceLocalResourcePermit)throws {
+        guard packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        try disk(resourcePermit:resourcePermit){c in
+            let original=transition.original,state=try inventory(c)
+            guard original.issuer == ObjectIdentifier(self),original.rootID == rootID,transition.epoch == epoch(),bindingQualified,
+                  let entry=state.tip,entry.record.operationID == original.operationID,!entry.complete,entry.staged == nil,
+                  entry.final == Node(identity:transition.node.identity,bytes:transition.node.bytes),
+                  entry.record.privateAttempt == original.item,try readPrivate(original.item).bytes == original.privateBytes,
+                  entry.record.credentials.allSatisfy({$0.item != nil}),
+                  try readFile(c.root,"root-binding.json",limit:GrantPreparationCodec.recordLimit) == Node(identity:original.bindingIdentity,bytes:original.bindingBytes) else{throw DeviceGrantPreparationError.conflict}
+            let frame=try GrantPreparationCodec.decodeStoredAttempt(original.privateBytes)
+            guard frame.version == 2,frame.completeSetIntent == plan.canonicalBytes else{throw DeviceGrantPreparationError.conflict}
+            let expected=try Self.boundExpectations(packages),qualified=try DeviceGrantRevisionQualifier.qualify(frame.input,expectedEntries:expected)
+            let request=DeviceGrantPreparationRequest(operationID:frame.operationID,input:frame.input,qualified:qualified,expectedEntries:expected)
+            guard try DeviceProvisioningPrivateAttemptV2.encoded(request,intent:plan.canonicalBytes) == original.privateBytes,
+                  qualified.publicMetadataBytes == entry.record.publicMetadata else{throw DeviceGrantPreparationError.conflict}
+            try verifyResources(entry.record)
         }
     }
     private func verifyBoundCheckpoint(_ receipt:DeviceBoundGrantPrivateAttempt,context c:Context,state:Inventory)throws {
