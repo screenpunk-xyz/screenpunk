@@ -30,4 +30,12 @@ final class DeviceLocalCompleteSetCommitCoordinator {
         return .init(capture,generationID:request.snapshot.generationID)
     }
 
+    /// Consumes only the original bound-v2 terminal receipt. The pending journal remains retained;
+    /// this acknowledgment is structural durability, never activation or journal completion.
+    func commitBoundTerminalExact(_ receipt:DeviceBoundTerminalGrantReceipt,
+        journal:DeviceLocalProvisioningIntentStore)throws->DeviceLocalCompleteSetCommitAcknowledgment {
+        let (capture,generation)=try gate.commitBoundTerminalExact(receipt,journal:journal)
+        return .init(capture,generationID:generation)
+    }
+
 }

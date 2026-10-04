@@ -211,6 +211,43 @@ final class DeviceLocalResourceGate {
             return capture
         }
     }
+    /// Fixed v2 dispatch only. The original journal/package/grant evidence survives structural
+    /// progress; no v1 receipt conversion, resource repair, runtime admission or journal release.
+    func commitBoundTerminalExact(_ receipt:DeviceBoundTerminalGrantReceipt,
+        journal:DeviceLocalProvisioningIntentStore)throws->(DeviceStructuralStore.QualifiedCurrentCapture,UUID) {
+        guard receipt.packages.count <= 12,receipt.plan.canonicalBytes.count <= ProvisioningIntentCodec.limit else { throw DeviceLocalCompleteSetFailure.sizeLimit }
+        let body=try ProvisioningIntentCodec.decode(receipt.plan.canonicalBytes)
+        guard body.operationID == receipt.plan.operationID,body.roots == receipt.plan.roots,
+              body.candidate.count <= 128*1024,(body.expectedOld?.count ?? 0) <= 128*1024 else { throw DeviceLocalCompleteSetFailure.invalidInput }
+        let candidate=try StructuralStoreCodec.envelope(body.candidate)
+        guard candidate.operationID == body.operationID else { throw DeviceLocalCompleteSetFailure.invalidInput }
+        let record=DeviceStructuralOperationRecord(rootID:body.roots.structuralID,operationID:body.operationID,
+            expectedOld:body.expectedOld,candidate:body.candidate,resourceAssertions:Data())
+        return try withScope(journal:journal) { scope,permit in
+            let rootIDs=try [journal.resourceGateDescriptor.rootID,self.packages.resourceGateDescriptor.rootID,
+                self.grants.resourceGateDescriptor.rootID,self.structural.resourceGateDescriptor.rootID]
+            guard rootIDs == [body.roots.journalID,body.roots.packageID,body.roots.grantID,body.roots.structuralID] else { throw DeviceLocalResourceGateFailure.invalidRoots }
+            try self.verifyBoundTerminalResources(receipt,journal:journal,permit:permit)
+            let capture=try self.structural.performExactAttempt(record,commandPermit:.init(permit))
+            try self.verifyBoundTerminalResources(receipt,journal:journal,permit:permit)
+            try scope.verifyQualifiedStructuralCapture(capture)
+            guard capture.envelopeBytes == body.candidate,capture.operationID == body.operationID else { throw DeviceStructuralStoreError.conflict }
+            return (capture,candidate.snapshot.generationID)
+        }
+    }
+    private func verifyBoundTerminalResources(_ receipt:DeviceBoundTerminalGrantReceipt,
+        journal:DeviceLocalProvisioningIntentStore,permit:DeviceLocalResourcePermit)throws {
+        try journal.verifyExact(receipt.journalReceipt,plan:receipt.plan,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(receipt.checkpoint,resourcePermit:permit)
+        var fresh:[DeviceProvisioningPackageInput]=[]
+        for binding in receipt.packages {
+            let verified=try packages.verify(binding.receipt,resourcePermit:permit)
+            fresh.append(.retained(entryID:binding.entryID,reference:verified.reference,verified:verified))
+        }
+        try grants.verifyBoundTerminal(receipt.transition,plan:receipt.plan,packages:fresh,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(receipt.checkpoint,resourcePermit:permit)
+        try journal.verifyExact(receipt.journalReceipt,plan:receipt.plan,resourcePermit:permit)
+    }
     /// Unmounted fixed entry factory. Mandatory native-driver seam is NOT a production admission
     /// implementation. Driver/resolver/actor installation/transport work occur outside resource locks.
     func makeGenericRuntimeExact(binding:DeviceRestoredRuntimeBinding,entryID:UUID,
@@ -248,8 +285,11 @@ final class DeviceLocalResourceGate {
     private func bindingReference(_ reference:DevicePreparedPackageReference,in resources:DeviceResolvedRetainedResources)->DevicePreparedPackageReceipt? {
         resources.packageReceipts.first {$0.reference.rootID == reference.rootID && $0.reference.preparationOperationID == reference.preparationOperationID && $0.reference.contentID.utf8.elementsEqual(reference.contentID.utf8) && $0.reference.directory.utf8.elementsEqual(reference.directory.utf8)}
     }
-    private func withScope<T>(_ body: (DeviceLocalResourceReadScope,DeviceLocalResourcePermit) throws -> T) throws -> T {
-        let descriptors = try [packages.resourceGateDescriptor,grants.resourceGateDescriptor,structural.resourceGateDescriptor]
+    private func withScope<T>(journal:DeviceLocalProvisioningIntentStore? = nil,_ body: (DeviceLocalResourceReadScope,DeviceLocalResourcePermit) throws -> T) throws -> T {
+        try DeviceLocalResourceRegistry.requireIdle()
+        var participants = try [packages.resourceGateDescriptor,grants.resourceGateDescriptor,structural.resourceGateDescriptor]
+        if let journal { participants.append(try journal.resourceGateDescriptor) }
+        let descriptors = participants
             .sorted { $0.path.utf8.lexicographicallyPrecedes($1.path.utf8) }
         for item in descriptors {
             guard item.path.hasPrefix("/"), item.path.utf8.count <= 4096 else { throw DeviceLocalResourceGateFailure.invalidRoots }
@@ -273,6 +313,7 @@ final class DeviceLocalResourceGate {
             let descriptor = descriptors[index]
             if descriptor.instance == ObjectIdentifier(packages) { try packages.withResourceGateScope(permit) { try acquire(index+1) } }
             else if descriptor.instance == ObjectIdentifier(grants) { try grants.withResourceGateScope(permit) { try acquire(index+1) } }
+            else if let journal,descriptor.instance == ObjectIdentifier(journal) { try journal.withResourceGateScope(permit) { try acquire(index+1) } }
             else { try structural.withResourceGateScope(permit) { try acquire(index+1) } }
         }
         try acquire(0)
