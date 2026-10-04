@@ -410,6 +410,30 @@ final class DeviceLocalResourceGate {
         try binding.journal.verifyCompletedRestoreTransition(binding.journalTransition,resourcePermit:permit)
         return fresh
     }
+    /// Unmounted static projection of the EXPLICIT configured entry only. No authority or display
+    /// selection is inferred; empty sets have no content. All assets come from fresh exact package
+    /// verification under the original restored four-store evidence, never directory enumeration.
+    func makeManagedStaticContentExact(binding:DeviceBoundRestoredRuntimeBinding)throws->DeviceManagedStaticContent {
+        let body=try ProvisioningIntentCodec.decode(binding.plan.canonicalBytes)
+        let candidate=try StructuralStoreCodec.envelope(body.candidate)
+        guard candidate.snapshot.entries.count <= 12 else{throw DeviceManagedRenderFailure.sizeLimit}
+        guard let selected=candidate.snapshot.configuredEntryID,
+              let entry=candidate.snapshot.entries.first(where:{$0.entryID == selected}) else{throw DeviceManagedRenderFailure.emptySelection}
+        let package=try withScope(journal:binding.journal){scope,permit -> QualifiedDevicePackage in
+            let fresh=try self.verifyBoundRestoredBinding(binding,scope:scope,permit:permit)
+            guard let supplied=fresh.first(where:{value in
+                switch value{case .retained(let id,_,_):return id == selected;case .supplied:return false}
+            }),case .retained(_,_,let verified)=supplied,
+                try StructuralStoreCodec.encode(verified.package.revision) == StructuralStoreCodec.encode(entry.revision) else{throw DeviceManagedRenderFailure.invalidContent}
+            try self.verifyBoundRestoredBinding(binding,scope:scope,permit:permit)
+            return verified.package
+        }
+        // Private projection construction and caller-visible checks occur after all scope exits.
+        let content=try DeviceManagedRenderProjection.make(package:package,operationID:binding.operationID,
+            generationID:binding.generationID,entryID:selected,displayName:entry.displayName,
+            validate:{try self.verifyBoundRestoredRuntimeBinding(binding)})
+        try content.verifyResources();return content
+    }
     func verifyBoundRestoredRuntimeBinding(_ binding:DeviceBoundRestoredRuntimeBinding)throws {
         try withScope(journal:binding.journal){scope,permit in _ = try self.verifyBoundRestoredBinding(binding,scope:scope,permit:permit)}
     }

@@ -1,5 +1,5 @@
 import SwiftUI
-import ScreenpunkCore
+@_spi(ManagedRender) import ScreenpunkCore
 #if canImport(WebKit)
 import WebKit
 #if os(iOS)
@@ -102,6 +102,9 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     var onReady: () -> Void
     var onUnlinkHold: () -> Void
     private let lifetime: DeviceRuntimeLifetime
+    private let managedStaticContent: DeviceManagedStaticContent?
+    var hasCapabilityBridge: Bool { bridge != nil }
+    var hasEventRuntime: Bool { events != nil }
     private var retirementRegistration: UUID?
     private(set) var isRetired = false
     private var installedRules = false
@@ -117,6 +120,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
 
     init(store: PackageAssetStore, lifetime: DeviceRuntimeLifetime = DeviceRuntimeLifetime(), preferenceStore: ScreenPreferenceStore? = nil, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
         self.lifetime = lifetime
+        managedStaticContent = nil
         let rasterResources = rasterResources ?? PublicRasterResources()
         self.handler = PackageSchemeHandler(store: store, rasterResources: rasterResources)
         self.onReady = onReady
@@ -148,8 +152,39 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         retirementRegistration = lifetime.register { [weak self] in self?.retireForReset() }
     }
 
+    /// Non-authorizing, unmounted static transport. No capability bridge, preferences, event
+    /// runtime, raster resources, mutable credentials or Local host are constructed in this path.
+    init(managedStatic content: DeviceManagedStaticContent, lifetime: DeviceRuntimeLifetime) {
+        self.lifetime = lifetime; managedStaticContent = content
+        let valid = !lifetime.isRetired && (try? content.verifyResources()) != nil
+        var assets: [String: PackageAsset] = [:]
+        if valid {
+            for asset in content.assets {
+                assets[asset.path] = .init(path: asset.path, data: asset.bytes, mime: PackageAssetStore.mime(for: asset.path))
+            }
+        }
+        handler = PackageSchemeHandler(store: .init(assets: assets), rasterResources: nil)
+        onReady = {}; onUnlinkHold = {}; onSettingsApplied = { _ in }; active = valid
+        initialPath = content.entrypoint; settingsValid = valid
+        super.init()
+        guard valid else { isRetired = true; return }
+        retirementRegistration = lifetime.register { [weak self] in self?.retireForReset() }
+    }
+    /// SwiftUI may reuse a coordinator while replacing value-view properties. Never adopt new
+    /// content or lifetime into an existing static renderer; the parent must recreate it explicitly.
+    func updateManagedStatic(content: DeviceManagedStaticContent, lifetime: DeviceRuntimeLifetime) {
+        guard let original = managedStaticContent, original === content, self.lifetime === lifetime else {
+            retireForReset(); return
+        }
+        update(settings: .init(), active: true, onSettingsApplied: { _ in })
+    }
+    private func managedResourcesValid() -> Bool {
+        guard let content = managedStaticContent else { return true } // Existing legacy path unchanged.
+        do { try content.verifyResources(); return true }
+        catch { retireForReset(); return false }
+    }
     func update(settings: DeviceSettings, active: Bool, onSettingsApplied: @escaping (Bool) -> Void) {
-        guard !isRetired, !lifetime.isRetired else { return }
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired else { return }
         self.onSettingsApplied = onSettingsApplied
         events?.update(settings: settings)
         if let events { settingsValid = events.settingsApplied }
@@ -185,7 +220,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     func stop() { bridge?.setActive(false); events?.stop(); bridge?.cancel(); webView?.pauseAllMediaPlayback(completionHandler: nil) }
 
     private func load(path: String) {
-        guard !isRetired, !lifetime.isRetired else { return }
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired else { return }
         guard let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/\(path)") else { return }
         bridge?.cancel(); programmaticURL = url.absoluteString
         webView?.load(URLRequest(url: url))
@@ -197,7 +232,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     }
 
     func makeWebView() -> WKWebView {
-        guard !isRetired, !lifetime.isRetired else {
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired else {
             let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
             config.defaultWebpagePreferences.allowsContentJavaScript = false
             return WKWebView(frame: .zero, configuration: config)
@@ -283,7 +318,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard !isRetired, !lifetime.isRetired else { decisionHandler(.cancel); return }
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired else { decisionHandler(.cancel); return }
         let url = navigationAction.request.url?.absoluteString ?? ""
         guard IsolationEvaluator.isLocalPackageURL(url) else { decisionHandler(.cancel); return }
         if navigationAction.targetFrame?.isMainFrame == true, let events {
@@ -307,7 +342,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         nil
     }
 
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { guard !isRetired, !lifetime.isRetired else { return }; onReady() }
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { guard managedResourcesValid(), !isRetired, !lifetime.isRetired else { return }; onReady() }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard !isRetired, !lifetime.isRetired else { return }
