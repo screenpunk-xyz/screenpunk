@@ -384,6 +384,23 @@ final class DeviceBoundCompletedCredentials:GrantSecretRedacted {
     fileprivate let batch:DeviceBoundPreparedPackageSet,transition:DeviceBoundGrantCredentialTransition
     fileprivate init(batch:DeviceBoundPreparedPackageSet,transition:DeviceBoundGrantCredentialTransition){self.batch=batch;self.transition=transition}
 }
+/// Fixed v2 terminal dispatch only; legacy/read scopes cannot manufacture it.
+final class DeviceBoundTerminalCommandPermit {
+    private let permit:DeviceLocalResourcePermit
+    fileprivate init(_ permit:DeviceLocalResourcePermit){self.permit=permit}
+    func begin(_ instance:ObjectIdentifier)throws{try permit.beginRead(instance)}
+    func end(){permit.endRead()}
+}
+/// V2 terminal/head mechanics only. Not a legacy grant receipt, journal completion or admission.
+final class DeviceBoundTerminalGrantReceipt:GrantSecretRedacted {
+    fileprivate let plan:DeviceValidatedProvisioningPlan,journalReceipt:DeviceLocalProvisioningIntentStore.Receipt
+    fileprivate let packages:[DeviceLocalCompleteSetPackageBinding],checkpoint:DevicePackageResolutionCheckpoint
+    fileprivate let transition:DeviceBoundGrantTerminalTransition
+    fileprivate init(plan:DeviceValidatedProvisioningPlan,journalReceipt:DeviceLocalProvisioningIntentStore.Receipt,
+                     packages:[DeviceLocalCompleteSetPackageBinding],checkpoint:DevicePackageResolutionCheckpoint,transition:DeviceBoundGrantTerminalTransition) {
+        self.plan=plan;self.journalReceipt=journalReceipt;self.packages=packages;self.checkpoint=checkpoint;self.transition=transition
+    }
+}
 /// One complete package batch's ORIGINAL final checkpoint. Not structural/grant completion,
 /// membership, activation or admission authority. No payload/secret getter or serialization.
 final class DeviceBoundPreparedPackageSet {
@@ -483,6 +500,67 @@ final class DeviceBoundPackagePreparationCoordinator {
         try grants.verifyBoundCredentialTransition(receipt.transition,plan:receipt.batch.plan,packages:fresh,resourcePermit:permit)
         try packages.verifyResolutionCheckpoint(receipt.batch.checkpoint,resourcePermit:permit)
         try journal.verifyExact(receipt.batch.journalReceipt,plan:receipt.batch.plan,resourcePermit:permit)
+    }
+    func closeGrantTerminalExact(_ completed:DeviceBoundCompletedCredentials)throws->DeviceBoundTerminalGrantReceipt {
+        var result:DeviceBoundTerminalGrantReceipt?
+        try scope{permit in
+            try verifyCompletedCredentials(completed,permit:permit)
+            let batch=completed.batch,fresh=try credentialPackages(batch,permit:permit)
+            let original=try grants.captureBoundTerminal(completed.transition,plan:batch.plan,resourcePermit:permit)
+            let transition=try grants.performBoundTerminal(original,plan:batch.plan,packages:fresh,commandPermit:.init(permit))
+            let receipt=DeviceBoundTerminalGrantReceipt(plan:batch.plan,journalReceipt:batch.journalReceipt,packages:batch.packages,checkpoint:batch.checkpoint,transition:transition)
+            try verifyGrantTerminalExact(receipt,permit:permit);result=receipt
+        }
+        guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
+    }
+    func inspectGrantTerminalRecoveryExact()throws->DeviceBoundGrantTerminalRecovery {
+        guard let diagnostic=try journal.inspectPendingExact() else{throw DeviceGrantPreparationError.repairRequired}
+        return try grants.inspectBoundTerminalRecovery(diagnostic)
+    }
+    func recommitGrantTerminalExact(_ recovery:DeviceBoundGrantTerminalRecovery)throws->DeviceBoundTerminalGrantReceipt {
+        guard recovery.packages.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        let refs=recovery.packages.map(\.reference)
+        let inspected=try packages.inspectRetainedTerminalExact(refs)
+        guard inspected.count == recovery.packages.count else{throw DeviceGrantPreparationError.conflict}
+        let observations=zip(recovery.packages,inspected).map{DeviceProvisioningPackageInput.retained(entryID:$0.0.entryID,reference:$0.0.reference,verified:$0.1)}
+        // Validate every mapping/private byte BEFORE either journal or package synchronization. Grant
+        // checkpoint stays original: neither of these other-root repairs changes its epoch.
+        let plan=try grants.qualifyBoundTerminalRecovery(recovery,packages:observations)
+        let journalReceipt=try journal.recommitExact(plan)
+        let resolution=try packages.resolveRetainedTerminalExact(refs)
+        guard resolution.receipts.count == recovery.packages.count else{throw DeviceGrantPreparationError.conflict}
+        let bindings=zip(recovery.packages,resolution.receipts).map{DeviceLocalCompleteSetPackageBinding(entryID:$0.0.entryID,receipt:$0.1)}
+        var result:DeviceBoundTerminalGrantReceipt?
+        try scope{permit in
+            let fresh=try terminalPackages(plan:plan,journalReceipt:journalReceipt,bindings:bindings,checkpoint:resolution.checkpoint,permit:permit)
+            let transition=try grants.performBoundTerminal(recovery,plan:plan,packages:fresh,commandPermit:.init(permit))
+            let receipt=DeviceBoundTerminalGrantReceipt(plan:plan,journalReceipt:journalReceipt,packages:bindings,checkpoint:resolution.checkpoint,transition:transition)
+            try verifyGrantTerminalExact(receipt,permit:permit);result=receipt
+        }
+        guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
+    }
+    func verifyGrantTerminalExact(_ receipt:DeviceBoundTerminalGrantReceipt)throws {
+        try scope{permit in try verifyGrantTerminalExact(receipt,permit:permit)}
+    }
+    private func terminalPackages(plan:DeviceValidatedProvisioningPlan,journalReceipt:DeviceLocalProvisioningIntentStore.Receipt,
+        bindings:[DeviceLocalCompleteSetPackageBinding],checkpoint:DevicePackageResolutionCheckpoint,permit:DeviceLocalResourcePermit)throws->[DeviceProvisioningPackageInput] {
+        guard bindings.count <= 12 else{throw DeviceGrantPreparationError.sizeLimit}
+        try journal.verifyExact(journalReceipt,plan:plan,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(checkpoint,resourcePermit:permit)
+        var fresh:[DeviceProvisioningPackageInput]=[]
+        for binding in bindings {
+            let value=try packages.verify(binding.receipt,resourcePermit:permit)
+            fresh.append(.retained(entryID:binding.entryID,reference:value.reference,verified:value))
+        }
+        try packages.verifyResolutionCheckpoint(checkpoint,resourcePermit:permit)
+        try journal.verifyExact(journalReceipt,plan:plan,resourcePermit:permit)
+        return fresh
+    }
+    private func verifyGrantTerminalExact(_ receipt:DeviceBoundTerminalGrantReceipt,permit:DeviceLocalResourcePermit)throws {
+        let fresh=try terminalPackages(plan:receipt.plan,journalReceipt:receipt.journalReceipt,bindings:receipt.packages,checkpoint:receipt.checkpoint,permit:permit)
+        try grants.verifyBoundTerminal(receipt.transition,plan:receipt.plan,packages:fresh,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(receipt.checkpoint,resourcePermit:permit)
+        try journal.verifyExact(receipt.journalReceipt,plan:receipt.plan,resourcePermit:permit)
     }
     private func scope(_ body:(DeviceLocalResourcePermit)throws->Void)throws {
         try DeviceLocalResourceRegistry.requireIdle()
