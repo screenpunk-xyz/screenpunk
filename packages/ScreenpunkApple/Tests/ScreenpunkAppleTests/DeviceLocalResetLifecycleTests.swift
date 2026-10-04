@@ -3,6 +3,37 @@ import ScreenpunkCore
 @testable import ScreenpunkApple
 
 @MainActor final class DeviceLocalResetLifecycleTests: XCTestCase {
+    func testBootstrapRejectsMismatchedLifecycleAuthorityWithoutPublishingOrHost() throws {
+        let expected = try LifecycleFixture(), replacement = try LifecycleFixture()
+        var factories = 0, hosts = 0, retained = 0
+        let bootstrap = DeviceManagementBootstrap(authority: expected.lifecycle.authority, lifecycleFactory: { factories += 1; return replacement.lifecycle }, retained: { retained += 1; return .empty }, hostFactory: { _ in hosts += 1; throw LifecycleFailure.injected })
+        bootstrap.start()
+        guard case .blocked(let snapshot) = bootstrap.state else { return XCTFail("mismatched owner must block") }
+        XCTAssertTrue(snapshot.screens.isEmpty)
+        XCTAssertEqual(factories, 1); XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0)
+        XCTAssertEqual(expected.keys.deletes, 0); XCTAssertEqual(replacement.keys.deletes, 0)
+    }
+
+    func testManagedAppearingAfterAdmissionBlocksCachedHostAndReset() async throws {
+        let f = try LifecycleFixture(); var hosts = 0, retained = 0
+        let bootstrap = DeviceManagementBootstrap(lifecycle: f.lifecycle, retained: { retained += 1; return .empty }, hostFactory: { hosts += 1; return try f.host($0) })
+        bootstrap.start(); await settle(bootstrap)
+        guard case .localReady(let host) = bootstrap.state else { return XCTFail("legacy admission") }
+        try FileManager.default.createDirectory(at: f.base.appendingPathComponent("xyz.screenpunk.native-managed"), withIntermediateDirectories: false)
+        bootstrap.start()
+        guard case .blocked = bootstrap.state else { return XCTFail("cached host must not bypass managed fence") }
+        XCTAssertTrue(host.lifetime.isRetired); XCTAssertEqual(hosts, 1); XCTAssertEqual(retained, 0)
+        do { try await f.lifecycle.recover(progress: {}); XCTFail("managed reset must not recover") } catch {}
+        XCTAssertEqual(f.keys.deletes, 0); XCTAssertNil(f.evidence.record)
+    }
+    func testNamespaceAppearingBetweenPreflightAndLifecycleConstructionRejectsDomains() throws {
+        let f = try LifecycleFixture()
+        try f.lifecycle.authority.requireLegacyNamespaceAbsent()
+        try FileManager.default.createDirectory(at: f.base.appendingPathComponent("xyz.screenpunk.native-managed"), withIntermediateDirectories: false)
+        XCTAssertThrowsError(try DeviceLocalResetLifecycle(scope: f.scope, authorityFactory: { f.lifecycle.authority }, provider: f.provider, cleanup: .init(scope: f.scope, credentials: f.keys)))
+        XCTAssertEqual(f.keys.deletes, 0); XCTAssertNil(f.evidence.record)
+    }
+
     func testLegacyCloudEvidenceBlocksFreshAndPendingCleanupAndRetry() async throws {
         for pending in [false, true] {
             for kind in ["valid", "invalid", "symlink", "dangling-symlink"] {
@@ -149,7 +180,7 @@ import ScreenpunkCore
     }
     func testConfigurationFailureRetriesConstructionWithoutRetainedRead() async throws {
         let f = try LifecycleFixture(); var configurations = 0, loads = 0
-        let boot = DeviceManagementBootstrap(lifecycleFactory: {
+        let boot = DeviceManagementBootstrap(authority: f.lifecycle.authority, lifecycleFactory: {
             configurations += 1
             if configurations == 1 { throw LifecycleFailure.injected }
             return f.lifecycle
@@ -194,7 +225,7 @@ import ScreenpunkCore
 }
 private enum LifecycleFailure: Error { case injected }
 @MainActor private final class LifecycleFixture {
-    let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let base = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
     let scope: DeviceLocalResetCleanupScope
     let evidence: LifecycleEvidence
     let keys = LifecycleKeys()
@@ -208,7 +239,8 @@ private enum LifecycleFailure: Error { case injected }
         evidence = .init(scope.authorityScope.digest)
         provider = try .init(calendar: .init(store: MemoryCredentialStore(), suspension: GoogleCalendarSuspensionDomain()), preferences: .init(root: original.preferencesRoot))
         let reset = evidence
-        lifecycle = try .init(scope: scope, authorityFactory: { .init(journal: LifecycleJournal(), credentials: .init(backend: LifecycleCredentials(), random: { Data() }), reset: reset) }, provider: provider, cleanup: .init(scope: scope, credentials: keys))
+        let managed = try DeviceManagedNamespaceInspector.fixture(existingPhysicalAnchor: base)
+        lifecycle = try .init(scope: scope, authorityFactory: { .init(journal: LifecycleJournal(), credentials: .init(backend: LifecycleCredentials(), random: { Data() }), reset: reset, managedNamespace: managed) }, provider: provider, cleanup: .init(scope: scope, credentials: keys))
         _ = try provider.preferences.generation()
         try FileManager.default.createDirectory(at: original.managementDirectory, withIntermediateDirectories: true)
         try Data("protected".utf8).write(to: original.managementDirectory.appendingPathComponent("sentinel"))

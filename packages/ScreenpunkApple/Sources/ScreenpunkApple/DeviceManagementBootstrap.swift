@@ -9,12 +9,17 @@ import ScreenpunkCore
     @Published public private(set) var rootGeneration = UUID()
     private var authority: DeviceManagementAuthority?
     private var lifecycle: DeviceLocalResetLifecycle?
-    private let lifecycleFactory: (() throws -> DeviceLocalResetLifecycle)?
+    private var lifecycleFactory: (() throws -> DeviceLocalResetLifecycle)?
     private let retained: () -> DeviceRetainedContentSnapshot
     private let hostFactory: (DeviceManagementContext) throws -> DeviceLANHost
     private var context: DeviceManagementContext?
     private var task: Task<Void, Never>?
     private var needsHost = false
+    struct PreparedOwner {
+        let authority: DeviceManagementAuthority
+        let constructLifecycle: @MainActor () throws -> DeviceLocalResetLifecycle
+    }
+    private var preparationFactory: (() throws -> PreparedOwner)?
 
     public init(authority: DeviceManagementAuthority, retained: @escaping () -> DeviceRetainedContentSnapshot,
                 hostFactory: @escaping (DeviceManagementContext) throws -> DeviceLANHost) {
@@ -26,28 +31,58 @@ import ScreenpunkCore
         self.lifecycle = lifecycle; authority = lifecycle.authority; self.retained = retained
         self.hostFactory = hostFactory; lifecycleFactory = nil
     }
-    init(lifecycleFactory: @escaping () throws -> DeviceLocalResetLifecycle,
+    init(authority: DeviceManagementAuthority, lifecycleFactory: @escaping () throws -> DeviceLocalResetLifecycle,
          retained: @escaping () -> DeviceRetainedContentSnapshot,
          hostFactory: @escaping (DeviceManagementContext) throws -> DeviceLANHost) {
-        self.lifecycleFactory = lifecycleFactory; self.retained = retained; self.hostFactory = hostFactory
+        self.authority = authority; self.lifecycleFactory = lifecycleFactory; self.retained = retained; self.hostFactory = hostFactory
+    }
+    init(preparationFactory: @escaping () throws -> PreparedOwner,
+                 retained: @escaping () -> DeviceRetainedContentSnapshot, hostFactory: @escaping (DeviceManagementContext) throws -> DeviceLANHost) {
+        self.preparationFactory = preparationFactory; self.retained = retained; self.hostFactory = hostFactory
     }
     public convenience init() {
         let store = DeviceStateStore(root: DeviceStateStore.defaultRoot())
-        self.init(lifecycleFactory: { try DeviceLocalResetLifecycle.production() },
+        self.init(preparationFactory: {
+            let prepared = try DeviceLocalResetLifecycle.prepareProduction()
+            return PreparedOwner(authority: prepared.authority, constructLifecycle: { try prepared.construct() })
+        },
                   retained: { DeviceRetainedContentSnapshot.load(store: store) },
                   hostFactory: { try DeviceLANHost(runtime: DeviceRuntimeRootView.unpairedRuntime(), management: $0, store: store) })
     }
     public func start() {
         guard task == nil else { return }
+        if authority == nil, let preparationFactory {
+            do {
+                let prepared = try preparationFactory()
+                authority = prepared.authority; lifecycleFactory = { try prepared.constructLifecycle() }
+            } catch {
+                state = .blocked(.empty); statusMessage = "Device connection needs attention. Local management is blocked."; return
+            }
+        }
+        if preparationFactory != nil {
+            do {
+                guard let authority else { throw DeviceManagementAuthority.Failure.staleLease }
+                try authority.prepareProductionSupportAnchor()
+            } catch {
+                state = .blocked(.empty); statusMessage = "Device connection needs attention. Local management is blocked."; return
+            }
+        }
+        guard checkManagedNamespace() else { return }
         if lifecycle == nil, let lifecycleFactory {
-            do { lifecycle = try lifecycleFactory(); authority = lifecycle?.authority }
+            do {
+                let candidate = try lifecycleFactory()
+                guard candidate.authority === authority else { throw DeviceLocalResetLifecycle.Failure.binding }
+                lifecycle = candidate
+            }
             catch {
                 state = .blocked(.empty)
                 statusMessage = "Saved reset configuration is unavailable. Local management is blocked."
                 return
             }
         }
-        if case .localReady(let host) = state, !host.lifetime.isRetired { return }
+        if case .localReady(let host) = state, !host.lifetime.isRetired {
+            do { guard let context else { throw DeviceManagementAuthority.Failure.staleLease }; try context.validate(); return } catch { host.retireForReset(); context = nil }
+        }
         if let (host, management) = lifecycle?.admittedHost() {
             authority = lifecycle?.authority; context = management
             rootGeneration = UUID(); state = .localReady(host); statusMessage = nil
@@ -88,7 +123,20 @@ import ScreenpunkCore
             }
         }
     }
+    private func checkManagedNamespace() -> Bool {
+        do {
+            guard let authority else { throw DeviceManagementAuthority.Failure.staleLease }
+            try authority.requireLegacyNamespaceAbsent()
+            return true
+        } catch {
+            if case .localReady(let host) = state { host.retireForReset() }
+            context = nil; state = .blocked(.empty)
+            statusMessage = "Device connection needs attention. Local management is blocked."
+            return false
+        }
+    }
     private func admit() {
+        guard checkManagedNamespace() else { return }
         state = .checking
         do {
             if let (host, management) = lifecycle?.admittedHost() {

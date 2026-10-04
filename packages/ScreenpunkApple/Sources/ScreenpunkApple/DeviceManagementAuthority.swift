@@ -37,11 +37,51 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     private var observedReset: DeviceLocalResetRecord?
     private let journal: any CloudInstallationTransitionJournal
     private let credentials: CloudInstallationCredentialStore
+    private let managedNamespace: DeviceManagedNamespaceInspector
+    private let supportAnchorSetup: DeviceProductionSupportAnchorSetup
+    private var supportAnchorPending = false
+    private var observedNamespace: DeviceManagedNamespaceEvidence?
+    private var managedNamespaceQuarantined = false
 
-    public init(journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore, reset: any DeviceLocalResetEvidence = DeviceLocalResetEvidenceAdapter.production()) {
+    public init(journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore, reset: any DeviceLocalResetEvidence = DeviceLocalResetEvidenceAdapter.production(), managedNamespace: DeviceManagedNamespaceInspector = .production(), supportAnchorSetup: DeviceProductionSupportAnchorSetup = .production()) {
         self.journal = journal
         self.credentials = credentials
         self.reset = reset
+        self.managedNamespace = managedNamespace
+        self.supportAnchorSetup = supportAnchorSetup
+    }
+
+    /// Production bootstrap only, before first inspection. Failed setup remains on
+    /// this owner and never turns its visible uncertain directory into permission.
+    func prepareProductionSupportAnchor() throws {
+        try serialized {
+            guard !managedNamespaceQuarantined else { throw Failure.staleLease }
+            if observedNamespace != nil { try checkManagedNamespace(); return }
+            invalidate(); supportAnchorPending = true
+            try supportAnchorSetup.prepare()
+            supportAnchorPending = false
+        }
+    }
+
+    /// Same owner gates startup, retained rendering, reset and legacy management. Snapshot
+    /// checks do not exclude external filesystem writers; future managed writes share this owner.
+    func requireLegacyNamespaceAbsent() throws {
+        try serialized { try checkManagedNamespace() }
+    }
+    private func checkManagedNamespace() throws {
+        guard !managedNamespaceQuarantined else { throw Failure.staleLease }
+        guard !supportAnchorPending, supportAnchorSetup.allowsNamespaceInspection else { throw Failure.staleLease }
+        do {
+            try supportAnchorSetup.validateForInspection()
+            let current = try managedNamespace.inspect()
+            guard current.classification == .confirmedAbsent,
+                  observedNamespace == nil || observedNamespace == current else {
+                managedNamespaceQuarantined = true; invalidate(); throw Failure.staleLease
+            }
+            observedNamespace = current
+        } catch {
+            managedNamespaceQuarantined = true; invalidate(); throw error
+        }
     }
 
     /// Starts blocked and revokes previous leases even when classification fails.
@@ -84,6 +124,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     private func verifiedEvidence() -> Evidence? {
         guard !quarantined, migrationAttempt == nil else { return nil }
         do {
+            try checkManagedNamespace()
             let history = try journal.loadEvidence()
             // Conservatively require owner-mediated writes after observing history.
             // This lifetime high-water guard is not persistent rollback protection.
@@ -124,6 +165,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         try serialized { try performMigration(expected: expected, recommit: true) }
     }
     private func performMigration(expected: DeviceManagementTransitionHistory, recommit: Bool) throws {
+        try checkManagedNamespace()
         invalidate()
         guard !quarantined, let store = journal as? DeviceManagementTransitionStore,
               try permittedReset() != nil else { throw Failure.staleLease }
@@ -168,6 +210,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     }
     private struct PermittedReset { let record: DeviceLocalResetRecord? }
     private func permittedReset() throws -> PermittedReset? {
+        try checkManagedNamespace()
         guard resetAttempt == nil else { return nil }
         let digest = try reset.scopeDigest
         let record = try reset.load()
@@ -187,6 +230,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     /// Recovery evidence only, never Local admission or a cleanup capability.
     func resetRecoverySnapshot() throws -> ResetRecoverySnapshot {
         try serialized {
+            try checkManagedNamespace()
             guard !resetQuarantined else { throw Failure.resetConflict }
             let digest = try reset.scopeDigest
             if let attempt = resetAttempt {
@@ -204,6 +248,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
 
     func withPendingResetStep(_ record: DeviceLocalResetRecord, operation: () throws -> Void) throws {
         try serialized {
+            try checkManagedNamespace()
             guard !resetQuarantined, resetAttempt == nil, record.phase == .pending,
                   record.scopeDigest == (try reset.scopeDigest), try reset.load() == record else { throw Failure.resetConflict }
             try operation()
@@ -212,6 +257,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     /// Internal, explicit Local reset only. No cleanup is executed here.
     func beginLocalReset(_ lease: Lease, record: DeviceLocalResetRecord) throws {
         try serialized {
+            try checkManagedNamespace()
             defer { invalidate() }
             guard permitted, lease.owner == identity, lease.generation == generation,
                   verifiedEvidence() == evidence, record.phase == .pending,
@@ -228,6 +274,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     /// Completion is solely the future cleanup caller's assertion; no Cloud meaning.
     func completeLocalReset(expected pending: DeviceLocalResetRecord) throws {
         try serialized {
+            try checkManagedNamespace()
             defer { invalidate() }
             guard resetAttempt == nil, pending.phase == .pending, pending.scopeDigest == (try reset.scopeDigest),
                   try reset.load() == pending else { throw Failure.resetConflict }
@@ -236,6 +283,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         }
     }
     private func writeResetAttempt() throws {
+        try checkManagedNamespace()
         guard let attempt = resetAttempt else { throw Failure.noResetAttempt }
         if attempt.beginsNew { try reset.beginNewReset(attempt.record) } else { try reset.save(attempt.record) }
         guard try reset.load() == attempt.record else { throw Failure.resetConflict }
