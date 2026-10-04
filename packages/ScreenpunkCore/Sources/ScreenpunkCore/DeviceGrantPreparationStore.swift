@@ -5,6 +5,30 @@ import Darwin
 import Glibc
 #endif
 
+/// Nonsecret exact repair snapshot only. Fields/constructor remain in this store file; not authority.
+final class DeviceGrantResolutionCheckpoint {
+    fileprivate let issuer:ObjectIdentifier
+    fileprivate let rootID:UUID
+    fileprivate let epoch:UInt64
+    fileprivate let tipIdentity:GrantDiskIdentity
+    fileprivate let tipBytes:Data
+    fileprivate let headIdentity:GrantDiskIdentity
+    fileprivate let headBytes:Data
+    fileprivate let bindingIdentity:GrantDiskIdentity
+    fileprivate let bindingBytes:Data
+    fileprivate init(issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,tipIdentity:GrantDiskIdentity,tipBytes:Data,
+                     headIdentity:GrantDiskIdentity,headBytes:Data,bindingIdentity:GrantDiskIdentity,bindingBytes:Data) {
+        self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.tipIdentity=tipIdentity;self.tipBytes=tipBytes
+        self.headIdentity=headIdentity;self.headBytes=headBytes;self.bindingIdentity=bindingIdentity;self.bindingBytes=bindingBytes
+    }
+}
+final class DeviceGrantTerminalResolution {
+    let receipts:[DevicePreparedGrantReceipt]
+    let checkpoint:DeviceGrantResolutionCheckpoint
+    fileprivate init(_ receipts:[DevicePreparedGrantReceipt],checkpoint:DeviceGrantResolutionCheckpoint) {
+        self.receipts=receipts;self.checkpoint=checkpoint
+    }
+}
 final class DevicePreparedGrantReceipt: GrantSecretRedacted {
     let operationID: UUID
     let identity: DeviceGrantRevisionIdentity
@@ -132,6 +156,116 @@ final class DeviceGrantPreparationStore {
             } else if let final = entry.final { try syncExisting(context.operations,name(request.operationID),expected:final); try sync(context.operations) }
             return try finish(context,record:entry.record,attempted:attempted,attemptEpoch:attemptEpoch)
         }
+    }
+    /// No effects: actual selected/latest mapping set, owners, full inventory and private canonical
+    /// attempts are checked before either resource domain is allowed to synchronize.
+    func validateRetainedTerminalExact(selected: DeviceRetainedGrantReference,
+                                      evidence: [DeviceRetainedGrantPackageEvidence]) throws {
+        try disk { context in _ = try resolutionEntries(context,selected:selected,evidence:evidence) }
+    }
+    /// Terminal-only reconstruction from already recorded persistent references. No add/update/delete.
+    func resolveRetainedTerminalExact(selected: DeviceRetainedGrantReference,
+                                     evidence: [DeviceRetainedGrantPackageEvidence]) throws -> DeviceGrantTerminalResolution {
+        try disk { context in
+            let checked = try resolutionEntries(context,selected:selected,evidence:evidence)
+            let attemptEpoch = epoch(invalidate:true); qualification = nil; bindingQualified = false
+            var completed = false
+            defer { if !completed { qualification = nil; bindingQualified = false } }
+            guard let binding = try readFile(context.root,"root-binding.json",limit:GrantPreparationCodec.recordLimit),
+                  binding.bytes == (try GrantPreparationCodec.encode(context.binding)) else { throw DeviceGrantPreparationError.unsafeBinding }
+            try syncExisting(context.root,"root-binding.json",expected:binding); try boundary(.afterFileSync(.binding))
+            try sync(context.lock); try sync(context.operations); try sync(context.root)
+            try boundary(.afterDirectorySync(.binding)); try check(context)
+            var receipts: [DevicePreparedGrantReceipt] = []
+            for item in checked { // selected (if older), then actual latest, never caller-picked tip.
+                let entry = item.entry
+                guard let terminal = entry.terminal else { throw DeviceGrantPreparationError.conflict }
+                for suffix in [".json",".terminal",".binding",".head-binding",".confirmed"] {
+                    let filename = entry.record.operationID.uuidString.lowercased()+suffix
+                    guard let node = try readFile(context.operations,filename,limit:GrantPreparationCodec.recordLimit) else { throw DeviceGrantPreparationError.conflict }
+                    try syncExisting(context.operations,filename,expected:node)
+                }
+                try boundary(.afterReplace(.terminal)); try sync(context.operations); try boundary(.afterDirectorySync(.terminal))
+                let state = try inventory(context)
+                if state.tip?.record.operationID == entry.record.operationID {
+                    try commitHead(context,record:entry.record,terminal:terminal)
+                    let final = try inventory(context)
+                    guard !final.hasStages, final.entries.allSatisfy(\.complete), final.tip?.terminal == terminal,
+                          let head = final.head, epoch() == attemptEpoch else { throw DeviceGrantPreparationError.repairRequired }
+                    qualification = (attemptEpoch,terminal,head)
+                }
+                receipts.append(.init(operationID:entry.record.operationID,identity:.init(rootID:rootID,revisionID:entry.record.revisionID),
+                    issuer:ObjectIdentifier(self),privateBytes:item.bytes,terminal:terminal.identity))
+            }
+            let final = try inventory(context)
+            guard !final.hasStages,final.entries.allSatisfy(\.complete),let tip = final.tip?.terminal,let head = final.head,
+                  epoch() == attemptEpoch,try readFile(context.root,"root-binding.json",limit:GrantPreparationCodec.recordLimit) == binding else { throw DeviceGrantPreparationError.repairRequired }
+            try requireQualification(tip,head:head)
+            let checkpoint = DeviceGrantResolutionCheckpoint(issuer:ObjectIdentifier(self),rootID:rootID,epoch:attemptEpoch,
+                tipIdentity:tip.identity,tipBytes:tip.bytes,headIdentity:head.identity,headBytes:head.bytes,
+                bindingIdentity:binding.identity,bindingBytes:binding.bytes)
+            bindingQualified = true; completed = true
+            return DeviceGrantTerminalResolution(receipts,checkpoint:checkpoint)
+        }
+    }
+    func verifyResolutionCheckpoint(_ checkpoint:DeviceGrantResolutionCheckpoint,resourcePermit:DeviceLocalResourcePermit) throws {
+        try disk(resourcePermit:resourcePermit) { context in
+            guard checkpoint.issuer == ObjectIdentifier(self),checkpoint.rootID == rootID,
+                  checkpoint.epoch == epoch(),bindingQualified else { throw DeviceGrantPreparationError.repairRequired }
+            let state = try inventory(context)
+            guard !state.hasStages,state.entries.allSatisfy(\.complete),
+                  state.tip?.terminal == Node(identity:checkpoint.tipIdentity,bytes:checkpoint.tipBytes),
+                  state.head == Node(identity:checkpoint.headIdentity,bytes:checkpoint.headBytes),
+                  try readFile(context.root,"root-binding.json",limit:GrantPreparationCodec.recordLimit) == Node(identity:checkpoint.bindingIdentity,bytes:checkpoint.bindingBytes) else { throw DeviceGrantPreparationError.conflict }
+            try requireQualification(Node(identity:checkpoint.tipIdentity,bytes:checkpoint.tipBytes),head:state.head)
+            guard checkpoint.epoch == epoch() else { throw DeviceGrantPreparationError.repairRequired }
+        }
+    }
+    private func resolutionEntries(_ context: Context, selected: DeviceRetainedGrantReference,
+        evidence: [DeviceRetainedGrantPackageEvidence]) throws -> [(entry: Entry, bytes: Data)] {
+        guard selected.identity.rootID == rootID, (1...2).contains(evidence.count),
+              evidence.allSatisfy({$0.reference.identity.rootID == rootID && $0.expectations.count <= 12}),
+              Set(evidence.map{$0.reference.operationID}).count == evidence.count else { throw DeviceGrantPreparationError.conflict }
+        let state = try inventory(context)
+        guard !state.hasStages, state.entries.allSatisfy(\.complete), let tip = state.tip,
+              let chosen = state.entries.first(where:{$0.record.operationID == selected.operationID}),
+              chosen.record.revisionID == selected.identity.revisionID else { throw DeviceGrantPreparationError.repairRequired }
+        let required = Set([selected.operationID,tip.record.operationID])
+        guard Set(evidence.map{$0.reference.operationID}) == required else { throw DeviceGrantPreparationError.conflict }
+        let ordered = chosen.record.operationID == tip.record.operationID ? [tip] : [chosen,tip]
+        return try ordered.map { entry in
+            guard let binding = evidence.first(where:{$0.reference.operationID == entry.record.operationID}),
+                  binding.reference.identity.revisionID == entry.record.revisionID,
+                  let persisted = entry.record.privateAttempt else { throw DeviceGrantPreparationError.conflict }
+            let bytes = try readPrivate(persisted).bytes
+            try qualifyRecovered(bytes,reference:binding.reference,expectedOwner:binding.owner,expectedEntries:binding.expectations,publicMetadata:entry.record.publicMetadata)
+            return (entry,bytes)
+        }
+    }
+    /// Private receipt bytes remain inside this store. Genuine expectations are reconstructed by the
+    /// resolver/gated reads; this does not repair, renew qualification, add secrets or expose input.
+    func verifyRecovered(_ receipt: DevicePreparedGrantReceipt, expectedEntries: [DeviceGrantEntryExpectation],
+                         expectedOwner: PairingIdentity, resourcePermit: DeviceLocalResourcePermit? = nil) throws -> DeviceVerifiedGrantPreparation {
+        guard expectedEntries.count <= 12 else { throw DeviceGrantPreparationError.sizeLimit }
+        let body = try GrantPreparationCodec.decodeAttempt(receipt.privateBytes)
+        let qualified = try DeviceGrantRevisionQualifier.qualify(body.input,expectedEntries:expectedEntries)
+        try qualifyRecovered(receipt.privateBytes,reference:.init(identity:receipt.identity,operationID:receipt.operationID),
+            expectedOwner:expectedOwner,expectedEntries:expectedEntries,publicMetadata:qualified.publicMetadataBytes)
+        let observed = try verifyRead(receipt,resourcePermit:resourcePermit)
+        guard observed.publicMetadataBytes == qualified.publicMetadataBytes else { throw DeviceGrantPreparationError.conflict }
+        return observed
+    }
+    private func qualifyRecovered(_ bytes: Data, reference: DeviceRetainedGrantReference, expectedOwner: PairingIdentity,
+                                  expectedEntries: [DeviceGrantEntryExpectation], publicMetadata: Data) throws {
+        let body = try GrantPreparationCodec.decodeAttempt(bytes)
+        guard body.rootID == rootID, body.operationID == reference.operationID, body.input.identity == reference.identity,
+              expectedOwner.role == .controller, expectedOwner.isWellFormed,
+              body.input.owner.role == .controller, body.input.owner.isWellFormed,
+              body.input.owner.publicKey == expectedOwner.publicKey else { throw DeviceGrantPreparationError.conflict }
+        let qualified = try DeviceGrantRevisionQualifier.qualify(body.input,expectedEntries:expectedEntries)
+        let request = DeviceGrantPreparationRequest(operationID:body.operationID,input:body.input,qualified:qualified,expectedEntries:expectedEntries)
+        guard try GrantPreparationCodec.attempt(request,rootID:rootID) == bytes,
+              qualified.publicMetadataBytes == publicMetadata else { throw DeviceGrantPreparationError.conflict }
     }
     func diagnose(operationID: UUID) throws -> Diagnosis {
         try disk { context in

@@ -123,6 +123,17 @@ final class DeviceLocalResourceReadScope {
                       expectedEntries: [DeviceGrantEntryExpectation]) throws -> DeviceVerifiedGrantPreparation {
         try permit.requireReadable(); return try grants.verify(receipt,exactRequest:exactRequest,expectedEntries:expectedEntries,resourcePermit:permit)
     }
+    /// Read-only ORIGINAL attempt checkpoints. Holding locks/current qualification cannot renew them.
+    func verifyResolutionCheckpoints(packages:DevicePackageResolutionCheckpoint,grants:DeviceGrantResolutionCheckpoint) throws {
+        try permit.requireReadable()
+        try self.packages.verifyResolutionCheckpoint(packages,resourcePermit:permit)
+        try self.grants.verifyResolutionCheckpoint(grants,resourcePermit:permit)
+    }
+    func verifyRecoveredGrants(_ receipt: DevicePreparedGrantReceipt, expectedEntries: [DeviceGrantEntryExpectation],
+                               expectedOwner: PairingIdentity) throws -> DeviceVerifiedGrantPreparation {
+        try permit.requireReadable()
+        return try grants.verifyRecovered(receipt,expectedEntries:expectedEntries,expectedOwner:expectedOwner,resourcePermit:permit)
+    }
     func diagnoseStructural(operationID: UUID) throws -> DeviceStructuralStore.Recovery {
         try permit.requireReadable(); return try structural.recover(operationID:operationID,resourcePermit:permit)
     }

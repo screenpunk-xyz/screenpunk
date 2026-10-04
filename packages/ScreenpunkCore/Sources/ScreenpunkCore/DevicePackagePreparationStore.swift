@@ -6,6 +6,29 @@ import Glibc
 #endif
 
 /// Constructible only after an exact synchronized attempt. Not Codable, membership, grants or approval.
+/// One repair attempt's nonsecret snapshot only, not admission or generic retained-receipt authority.
+/// No public/memberwise construction, serialization, FD or mutable qualification accessor.
+final class DevicePackageResolutionCheckpoint {
+    fileprivate let issuer: ObjectIdentifier
+    fileprivate let rootID: UUID
+    fileprivate let epoch: UInt64
+    fileprivate let tipIdentity: PreparationIdentity?
+    fileprivate let tipBytes: Data?
+    fileprivate let bindingIdentity: PreparationIdentity
+    fileprivate let bindingBytes: Data
+    fileprivate init(issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,tipIdentity:PreparationIdentity?,tipBytes:Data?,
+                     bindingIdentity:PreparationIdentity,bindingBytes:Data) {
+        self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.tipIdentity=tipIdentity;self.tipBytes=tipBytes
+        self.bindingIdentity=bindingIdentity;self.bindingBytes=bindingBytes
+    }
+}
+final class DevicePackageTerminalResolution {
+    let receipts: [DevicePreparedPackageReceipt]
+    let checkpoint: DevicePackageResolutionCheckpoint
+    fileprivate init(_ receipts:[DevicePreparedPackageReceipt],checkpoint:DevicePackageResolutionCheckpoint) {
+        self.receipts=receipts;self.checkpoint=checkpoint
+    }
+}
 final class DevicePreparedPackageReceipt {
     let reference: DevicePreparedPackageReference
     fileprivate let issuer: ObjectIdentifier
@@ -130,6 +153,89 @@ final class DevicePackagePreparationStore {
                 return try receipt(context, record: entry.record, attemptEpoch: attemptEpoch)
             }
             return try finish(context, record: entry.record, request: request, attemptEpoch: attemptEpoch)
+        }
+    }
+    /// Bounded byte/inode preflight only, never acknowledgment or qualification. Used so invalid grant
+    /// mappings can reject BEFORE the resolver performs synchronization in either resource domain.
+    func inspectRetainedTerminalExact(_ references: [DevicePreparedPackageReference]) throws -> [DeviceVerifiedPreparedPackage] {
+        try validateResolutionReferences(references)
+        return try disk { context in
+            let state = try inventory(context)
+            let selected = try resolutionEntries(references,state:state)
+            return try selected.map { entry in
+                .init(reference:entry.record.plan.reference,
+                      package:try checkedPackage(context,record:entry.record,directory:entry.record.plan.leaf,synchronize:false))
+            }
+        }
+    }
+    /// Terminal-only exact durability repair. Never adopts a leaf, unknown orphan or replacement.
+    /// Selected retained packages synchronize first; actual latest synchronizes/qualifies last.
+    func resolveRetainedTerminalExact(_ references: [DevicePreparedPackageReference]) throws -> DevicePackageTerminalResolution {
+        try validateResolutionReferences(references)
+        return try disk { context in
+            let state = try inventory(context)
+            let selected = try resolutionEntries(references,state:state)
+            let attemptEpoch = epoch(invalidate:true); qualification = nil; bindingQualified = false
+            var completed = false
+            defer { if !completed { qualification = nil; bindingQualified = false } }
+            guard let binding = try readFile(context.root,"root-binding.json",limit:PackagePreparationCodec.metadataLimit),
+                  binding.bytes == (try PackagePreparationCodec.encode(context.binding)) else { throw DevicePackagePreparationError.unsafeBinding }
+            try syncExisting(context.root,"root-binding.json",expected:binding); try boundary(.afterFileSync(.binding))
+            try sync(context.lock); try sync(context.operations); try sync(context.root)
+            try boundary(.afterDirectorySync(.binding)); try check(context)
+            var ordered = selected.filter { $0.record.plan.operationID != state.tip?.record.plan.operationID }
+            if let tip = state.tip { ordered.append(tip) }
+            for entry in ordered {
+                guard let proof = entry.final else { throw DevicePackagePreparationError.conflict }
+                _ = try checkedPackage(context,record:entry.record,directory:entry.record.plan.leaf,synchronize:true)
+                try boundary(.afterFileSync(.install)); try sync(context.root)
+                try syncExisting(context.operations,filename(entry.record.plan.operationID),expected:proof)
+                try boundary(.afterReplace(.terminal)); try sync(context.operations); try boundary(.afterDirectorySync(.terminal))
+            }
+            let after = try inventory(context)
+            guard after.entries.count == state.entries.count, after.tip?.final == state.tip?.final,
+                  !after.hasStages, epoch() == attemptEpoch else { throw DevicePackagePreparationError.repairRequired }
+            if let tip = after.tip, let final = tip.final { qualification = (attemptEpoch,final) }
+            let receipts = try selected.map { try receipt(context,record:$0.record,attemptEpoch:attemptEpoch) }
+            let final = try inventory(context)
+            guard final.tip?.final == after.tip?.final, !final.hasStages, epoch() == attemptEpoch,
+                  try readFile(context.root,"root-binding.json",limit:PackagePreparationCodec.metadataLimit) == binding else { throw DevicePackagePreparationError.repairRequired }
+            let checkpoint = DevicePackageResolutionCheckpoint(issuer:ObjectIdentifier(self),rootID:rootID,epoch:attemptEpoch,
+                tipIdentity:final.tip?.final?.identity,tipBytes:final.tip?.final?.bytes,bindingIdentity:binding.identity,bindingBytes:binding.bytes)
+            bindingQualified = true; completed = true
+            return DevicePackageTerminalResolution(receipts,checkpoint:checkpoint)
+        }
+    }
+    /// Requires the ORIGINAL repair snapshot. Never reconstructs it from current qualification.
+    func verifyResolutionCheckpoint(_ checkpoint:DevicePackageResolutionCheckpoint, resourcePermit:DeviceLocalResourcePermit) throws {
+        try disk(resourcePermit:resourcePermit) { context in
+            guard checkpoint.issuer == ObjectIdentifier(self),checkpoint.rootID == rootID,
+                  checkpoint.epoch == epoch(),bindingQualified else { throw DevicePackagePreparationError.repairRequired }
+            let state = try inventory(context)
+            guard !state.hasStages,state.entries.allSatisfy({$0.record.phase == .terminal}),
+                  state.tip?.final?.identity == checkpoint.tipIdentity,state.tip?.final?.bytes == checkpoint.tipBytes,
+                  try readFile(context.root,"root-binding.json",limit:PackagePreparationCodec.metadataLimit) == Node(identity:checkpoint.bindingIdentity,bytes:checkpoint.bindingBytes) else { throw DevicePackagePreparationError.conflict }
+            if let tip = state.tip?.final { try requireQualification(tip) }
+            else { guard state.entries.isEmpty,checkpoint.tipIdentity == nil,checkpoint.tipBytes == nil else { throw DevicePackagePreparationError.conflict } }
+            guard checkpoint.epoch == epoch() else { throw DevicePackagePreparationError.repairRequired }
+        }
+    }
+    private func validateResolutionReferences(_ references: [DevicePreparedPackageReference]) throws {
+        guard references.count <= 24 else { throw DevicePackagePreparationError.sizeLimit }
+        var operations = Set<UUID>()
+        for ref in references {
+            guard ref.rootID == rootID, operations.insert(ref.preparationOperationID).inserted,
+                  ref.contentID.utf8.count == 64, ref.directory.utf8.count <= 256 else { throw DevicePackagePreparationError.conflict }
+        }
+    }
+    private func resolutionEntries(_ references: [DevicePreparedPackageReference], state: Inventory) throws -> [Entry] {
+        guard !state.hasStages, state.entries.allSatisfy({$0.record.phase == .terminal}) else { throw DevicePackagePreparationError.repairRequired }
+        return try references.map { ref in
+            guard let entry = state.entries.first(where:{$0.record.plan.operationID == ref.preparationOperationID}),
+                  entry.record.plan.rootID == ref.rootID,
+                  entry.record.plan.contentID.utf8.elementsEqual(ref.contentID.utf8),
+                  entry.record.plan.leaf.utf8.elementsEqual(ref.directory.utf8) else { throw DevicePackagePreparationError.conflict }
+            return entry
         }
     }
     /// Never synchronizes/acknowledges a visible terminal. Requires private issued proof and current gate.
