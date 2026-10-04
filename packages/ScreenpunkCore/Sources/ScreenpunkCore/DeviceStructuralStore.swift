@@ -153,6 +153,51 @@ final class DeviceStructuralStore {
         let operationID: UUID
         fileprivate init(_ bytes: Data, operationID: UUID) { envelopeBytes = bytes; self.operationID = operationID }
     }
+    /// Diagnostic only: original-lock capture, never durability acknowledgment or approval.
+    /// File-private construction prevents caller-supplied bytes from manufacturing a checkpoint.
+    final class TerminalDiscovery {
+        let record:DeviceStructuralOperationRecord
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64
+        fileprivate let currentIdentity:StructuralStoreIdentity,proofIdentity:StructuralStoreIdentity,bindingIdentity:StructuralStoreIdentity
+        fileprivate let currentBytes:Data,proofBytes:Data,bindingBytes:Data
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ record:DeviceStructuralOperationRecord,
+                         currentIdentity:StructuralStoreIdentity,currentBytes:Data,proofIdentity:StructuralStoreIdentity,proofBytes:Data,bindingIdentity:StructuralStoreIdentity,bindingBytes:Data) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.record=record
+            self.currentIdentity=currentIdentity;self.currentBytes=currentBytes;self.proofIdentity=proofIdentity;self.proofBytes=proofBytes
+            self.bindingIdentity=bindingIdentity;self.bindingBytes=bindingBytes
+        }
+    }
+    func inspectLatestTerminalExact(resourcePermit:DeviceLocalResourcePermit)throws->TerminalDiscovery {
+        try disk(resourcePermit:resourcePermit) { context in
+            let before=epoch(),nodes=try terminalNodes(context)
+            guard epoch() == before else { throw DeviceStructuralStoreError.conflict }
+            return TerminalDiscovery(ObjectIdentifier(self),rootID,before,nodes.record,currentIdentity:nodes.current.identity,currentBytes:nodes.current.bytes,proofIdentity:nodes.proof.identity,proofBytes:nodes.proof.bytes,bindingIdentity:nodes.binding.identity,bindingBytes:nodes.binding.bytes)
+        }
+    }
+    func verifyTerminalDiscovery(_ original:TerminalDiscovery,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit) { context in
+            guard original.issuer == ObjectIdentifier(self),original.rootID == rootID,original.epoch == epoch() else { throw DeviceStructuralStoreError.conflict }
+            let nodes=try terminalNodes(context)
+            guard nodes.record == original.record,
+                  nodes.current == Node(identity:original.currentIdentity,bytes:original.currentBytes),
+                  nodes.proof == Node(identity:original.proofIdentity,bytes:original.proofBytes),
+                  nodes.binding == Node(identity:original.bindingIdentity,bytes:original.bindingBytes),
+                  original.epoch == epoch() else { throw DeviceStructuralStoreError.conflict }
+        }
+    }
+    private func terminalNodes(_ context:Context)throws->(record:DeviceStructuralOperationRecord,current:Node,proof:Node,binding:Node) {
+        // Terminal restoration cannot adopt initial empty state, staging remnants or unknown nodes.
+        let allowed:Set<String>=["structural.lock","operations","root-binding.json",envelopeName]
+        guard Set(try names(context.root)) == allowed,
+              !(try names(context.operations)).contains(where:{$0.hasSuffix(".pending")}) else { throw DeviceStructuralStoreError.conflict }
+        let state=try inventory(context)
+        guard state.records.allSatisfy({$0.phase == .terminal}),let current=state.current,
+              let tip=state.records.first(where:{$0.candidate == current.bytes && $0.candidateIdentity == current.identity}),
+              let proof=try readFile(context.operations,filename(tip.operationID),limit:StructuralStoreCodec.operationLimit),
+              try StructuralStoreCodec.record(proof.bytes) == tip,
+              let binding=try readFile(context.root,"root-binding.json",limit:8192) else { throw DeviceStructuralStoreError.conflict }
+        try check(context);return(tip,current,proof,binding)
+    }
     private struct ExactCommand { let record: DeviceStructuralOperationRecord }
     func performExactAttempt(_ supplied: DeviceStructuralOperationRecord,
                              commandPermit: DeviceLocalStructuralCommandPermit) throws -> QualifiedCurrentCapture {

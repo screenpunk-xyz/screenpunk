@@ -103,3 +103,50 @@ enum DeviceLocalCompleteSetBounds {
         guard bytes.count <= maximum else { throw DeviceLocalCompleteSetFailure.sizeLimit }; return bytes
     }
 }
+
+/// Strict local interpretation of an already committed candidate, never legacy conversion or approval.
+/// All bytes are bounded before decoding. Canonical equality rejects normalized aliases and alternate
+/// encodings instead of silently reconstructing a different exact operation.
+enum DeviceLocalCompleteSetRestoreCodec {
+    struct Candidate {
+        let request:DeviceLocalCompleteSetRecoveredRequest
+        let selected:DeviceRetainedGrantResolutionGroup
+    }
+    static func candidate(_ supplied:DeviceStructuralOperationRecord)throws->Candidate {
+        guard supplied.candidate.count <= DeviceLocalCompleteSetBounds.envelopeLimit,
+              (supplied.expectedOld?.count ?? 0) <= DeviceLocalCompleteSetBounds.envelopeLimit,
+              supplied.phase == .terminal,supplied.resourceAssertions.isEmpty else { throw DeviceLocalCompleteSetFailure.invalidInput }
+        let record=try StructuralStoreCodec.record(StructuralStoreCodec.encode(supplied))
+        let envelope=try StructuralStoreCodec.envelope(record.candidate)
+        let references=try references(envelope.intent)
+        guard envelope.outcome == envelope.intent,
+              try DeviceLocalCompleteSetBounds.encode(references,maximum:DeviceLocalCompleteSetBounds.intentLimit) == envelope.intent,
+              try DeviceLocalCompleteSetBounds.encode(envelope,maximum:DeviceLocalCompleteSetBounds.envelopeLimit) == record.candidate,
+              references.structuralRootID == record.rootID,references.operationID == record.operationID,
+              references.operationID == envelope.operationID,references.generationID == envelope.snapshot.generationID,
+              references.packages.count == envelope.snapshot.entries.count,
+              let owner=envelope.snapshot.contentOwner,owner.role == .controller,owner.isWellFormed,
+              owner.publicKey.count <= PairingLimits.identityByteCount else { throw DeviceLocalCompleteSetFailure.invalidInput }
+        for (entry,reference) in zip(envelope.snapshot.entries,references.packages) {
+            guard entry.entryID == reference.entryID,entry.packageDirectory.utf8.elementsEqual(reference.directory.utf8) else { throw DeviceLocalCompleteSetFailure.packageMismatch }
+        }
+        let bindings=references.packages.map { DeviceRetainedEntryPackageBinding(entryID:$0.entryID,reference:.init(rootID:$0.rootID,contentID:$0.contentID,preparationOperationID:$0.preparationOperationID,directory:$0.directory)) }
+        let baseline:DeviceLocalCompleteSetBaseline=record.expectedOld.map { .expectedEnvelope($0) } ?? .initialExplicit(legacyGrantSet:envelope.snapshot.grantSet)
+        let request=DeviceLocalCompleteSetRecoveredRequest(structuralRootID:record.rootID,operationID:record.operationID,
+            expectedGenerationID:envelope.expectedGenerationID,baseline:baseline,snapshot:envelope.snapshot,packages:bindings,owner:owner)
+        return .init(request:request,selected:.init(reference:.init(identity:references.grants.identity,operationID:references.grants.preparationOperationID),expectedOwner:owner,packages:bindings))
+    }
+    static func references(_ bytes:Data)throws->DeviceLocalCompleteSetReferences {
+        let object=try StructuralStoreCodec.object(bytes,limit:DeviceLocalCompleteSetBounds.intentLimit)
+        try StructuralStoreCodec.keys(object,required:["schemaVersion","structuralRootID","operationID","generationID","packages","grants"])
+        guard let packages=object["packages"] as? [[String:Any]],packages.count <= 12,
+              let grants=object["grants"] as? [String:Any],let identity=grants["identity"] as? [String:Any] else { throw DeviceLocalCompleteSetFailure.invalidInput }
+        for package in packages { try StructuralStoreCodec.keys(package,required:["entryID","rootID","contentID","preparationOperationID","directory"]) }
+        try StructuralStoreCodec.keys(grants,required:["identity","preparationOperationID"])
+        try StructuralStoreCodec.keys(identity,required:["rootID","revisionID"])
+        let decoded=try JSONDecoder().decode(DeviceLocalCompleteSetReferences.self,from:bytes)
+        guard decoded.schemaVersion == 1,Set(decoded.packages.map(\.entryID)).count == decoded.packages.count else { throw DeviceLocalCompleteSetFailure.invalidInput }
+        for reference in decoded.packages { _ = try DeviceLocalCompleteSetBounds.string(reference.contentID);_ = try DeviceLocalCompleteSetBounds.string(reference.directory);guard reference.contentID.utf8.count == 64 else { throw DeviceLocalCompleteSetFailure.invalidInput } }
+        return decoded
+    }
+}
