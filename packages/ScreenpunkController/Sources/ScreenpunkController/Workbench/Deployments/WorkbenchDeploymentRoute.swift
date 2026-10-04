@@ -163,6 +163,12 @@ public struct WorkbenchPreparedPackageSummary: Codable, Equatable, Sendable {
     }
 }
 
+public struct WorkbenchDeploymentLookupAbsence: Codable {
+    public let planId: String
+    public let state: String
+    init(planId: String) { self.planId = planId; state = "not-admitted" }
+}
+
 public struct WorkbenchDeploymentActionResult: Codable {
     public let schemaVersion: Int
     public let kind: String
@@ -171,27 +177,34 @@ public struct WorkbenchDeploymentActionResult: Codable {
     public let prepared: WorkbenchPreparedPackageSummary?
     public let review: WorkbenchDeploymentReview?
     public let operation: WorkbenchDeploymentOperationRecord?
+    public let absence: WorkbenchDeploymentLookupAbsence?
     public let cancelled: Bool?
 
     init(_ method: WorkbenchDeploymentMethod, workspaceId: String, generation: Int,
          prepared: WorkbenchPreparedPackageSummary? = nil,
          review: WorkbenchDeploymentReview? = nil,
          operation: WorkbenchDeploymentOperationRecord? = nil,
+         absence: WorkbenchDeploymentLookupAbsence? = nil,
          cancelled: Bool? = nil) {
         schemaVersion = 1; kind = method.rawValue; self.workspaceId = workspaceId
         selectionGeneration = generation; self.prepared = prepared
-        self.review = review; self.operation = operation; self.cancelled = cancelled
+        self.review = review; self.operation = operation; self.absence = absence; self.cancelled = cancelled
     }
     func validate(for request: WorkbenchDeploymentRequest) throws {
         guard schemaVersion == 1, kind == request.method.rawValue,
               workspaceId == request.selection.workspaceId,
               selectionGeneration == request.selection.generation,
-              [prepared != nil, review != nil, operation != nil, cancelled != nil]
+              [prepared != nil, review != nil, operation != nil, absence != nil, cancelled != nil]
                 .filter({ $0 }).count == 1 else { throw WorkbenchIPCError(.invalidRequest) }
         switch request {
         case .prepare: guard prepared != nil else { throw WorkbenchIPCError(.invalidRequest) }
         case .plan, .review: guard review != nil else { throw WorkbenchIPCError(.invalidRequest) }
-        case .apply, .status, .lookup, .reconcile: guard operation != nil else { throw WorkbenchIPCError(.invalidRequest) }
+        case .apply, .status, .reconcile: guard operation != nil else { throw WorkbenchIPCError(.invalidRequest) }
+        case .lookup(_, _, let planId):
+            guard operation?.planId == planId ||
+                (absence?.planId == planId && absence?.state == "not-admitted") else {
+                throw WorkbenchIPCError(.invalidRequest)
+            }
         case .cancel: guard cancelled != nil || operation != nil else { throw WorkbenchIPCError(.invalidRequest) }
         }
     }

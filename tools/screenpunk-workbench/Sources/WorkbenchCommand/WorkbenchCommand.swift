@@ -1125,12 +1125,15 @@ public enum WorkbenchCommand {
         case .timedOut, .confirmationRequired, .credentialCleanupRequired, .connectionValidationFailed,
              .serviceBusy, .remoteOutcomeUnknown, .publicationOutcomeUnknown: status = 7
         case .unavailable, .disconnected: status = 9
-        case .workspaceExists, .workspaceConflict, .workspaceIncomplete, .invalidWorkspacePath, .migrationRequired: status = 6
+        case .workspaceExists, .workspaceConflict, .workspaceIncomplete, .invalidWorkspacePath, .migrationRequired,
+             .buildSourceConflict, .buildHeadConflict: status = 6
         }
         let publicCode: String
         switch error.code {
         case .workspaceExists: publicCode = "workspace_exists"
         case .workspaceConflict: publicCode = "workspace_conflict"
+        case .buildSourceConflict: publicCode = "build_source_conflict"
+        case .buildHeadConflict: publicCode = "build_head_conflict"
         case .workspaceIncomplete: publicCode = "workspace_incomplete"
         case .invalidWorkspacePath: publicCode = "invalid_workspace_path"
         case .migrationRequired: publicCode = "migration_required"

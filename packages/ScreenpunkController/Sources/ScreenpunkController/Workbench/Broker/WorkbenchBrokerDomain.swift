@@ -1061,7 +1061,8 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                     case .lookup(_, _, let planId):
                         let operation = try domain.lookup(planId: planId, workspaceId: id)
                         return .init(.lookup, workspaceId: id, generation: generation,
-                            operation: operation)
+                            operation: operation,
+                            absence: operation == nil ? .init(planId: planId) : nil)
                     case .reconcile(_, _, let operationId):
                         let operation = try domain.status(operationId)
                         let review = try domain.review(planId: operation.planId)

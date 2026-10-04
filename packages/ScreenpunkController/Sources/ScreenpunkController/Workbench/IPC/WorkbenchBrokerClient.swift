@@ -908,6 +908,7 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
         let response: WorkbenchWireResponse
         do {
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            decoder.userInfo[WorkbenchRPCResult.responseMethodKey] = method
             response = try decoder.decode(WorkbenchWireResponse.self, from: data)
         }
         catch { throw WorkbenchIPCError(.invalidRequest) }

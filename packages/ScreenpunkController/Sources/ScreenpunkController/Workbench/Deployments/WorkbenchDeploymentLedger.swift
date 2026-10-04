@@ -455,6 +455,11 @@ final class WorkbenchDeploymentLedger {
         return value
     }
 
+    func lookupOperationForPlan(_ planId: String) throws -> WorkbenchDeploymentOperationRecord? {
+        lock.lock(); defer { lock.unlock() }
+        return try operation(for: planId)
+    }
+
     func approval(_ approvalId: String) throws -> WorkbenchDeploymentApprovalRecord {
         lock.lock(); defer { lock.unlock() }
         guard let value = fetch(WorkbenchDeploymentApprovalRecord.self, table: "approvals",
@@ -627,8 +632,15 @@ final class WorkbenchDeploymentLedger {
     private func operation(for planId: String) throws -> WorkbenchDeploymentOperationRecord? {
         let query = try statement("SELECT record FROM operations WHERE plan_id=? LIMIT 1")
         defer { sqlite3_finalize(query) }
-        bind(planId, to: query, at: 1)
-        guard sqlite3_step(query) == SQLITE_ROW, let bytes = sqlite3_column_blob(query, 0) else { return nil }
+        let bound = planId.withCString {
+            sqlite3_bind_text(query, 1, $0, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        guard bound == SQLITE_OK else { throw WorkbenchDeploymentError.storage }
+        let step = sqlite3_step(query)
+        if step == SQLITE_DONE { return nil }
+        guard step == SQLITE_ROW, let bytes = sqlite3_column_blob(query, 0) else {
+            throw WorkbenchDeploymentError.storage
+        }
         return try decoder.decode(WorkbenchDeploymentOperationRecord.self,
             from: Data(bytes: bytes, count: Int(sqlite3_column_bytes(query, 0))))
     }
