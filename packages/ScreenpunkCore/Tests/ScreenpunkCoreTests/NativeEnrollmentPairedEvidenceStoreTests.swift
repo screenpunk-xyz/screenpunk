@@ -930,18 +930,38 @@ final class NativeEnrollmentPairedEvidenceStoreTests: XCTestCase {
         XCTAssertThrowsError(try j.captureStageAttempt(preparationID: p.preparationId, stageAttemptID: UUID()))
     }
     func testScopedTerminalContinuationPreservesExactPriorClaimsAndNextSource() throws {
-        let f = try fixture(), j = f.journal(), b = Backend(); try start(f, j, b)
+        promotionMarker("scoped.fixture.before")
+        let f = try fixture(), j = f.journal(), b = Backend()
+        promotionMarker("scoped.fixture.after")
+        promotionMarker("scoped.start.before")
+        try start(f, j, b)
+        promotionMarker("scoped.start.after")
         let paired = NativeEnrollmentPairedEvidenceStore(journal: j)
-        _ = try paired.continueExact(paired.beginOriginal(preparationID: f.preparation.preparationId))
+        promotionMarker("scoped.pair.begin.before")
+        let pairOriginal = try paired.beginOriginal(preparationID: f.preparation.preparationId)
+        promotionMarker("scoped.pair.begin.after")
+        promotionMarker("scoped.pair.continue.before")
+        _ = try paired.continueExact(pairOriginal)
+        promotionMarker("scoped.pair.continue.after")
+        promotionMarker("scoped.model.before")
         let old = try completedModel(f.preparation, retained: [], backend: b)
+        promotionMarker("scoped.model.after")
         for phase in [NativeEnrollmentPreparation.Phase.promotionAttempted, .promotionQualified, .complete] {
+            promotionMarker("scoped.phase.before")
             XCTAssertTrue(try j.appendPhaseAssertion(preparationID: old.preparationId, next: phase, attemptID: UUID()).qualifiesCurrentJournalTip)
+            promotionMarker("scoped.phase.after")
         }
+        promotionMarker("scoped.prior.before")
         let previous = try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(NativeJournalCodec.effectiveIntent(f.bytes, phase: 6))
+        promotionMarker("scoped.prior.after")
+        promotionMarker("scoped.next.before")
         let p = try next(old, retained: [old], index: 1), bytes = try NativeEnrollmentPreparationCodec.encodeReconstructionProposal(p, retained: [previous])
+        promotionMarker("scoped.next.after")
         let before = try FileManager.default.contentsOfDirectory(atPath: f.root.appendingPathComponent("attempts").path)
         for changeName in [false, true] {
+            promotionMarker("scoped.loop.recommit.before")
             _ = try j.recommitExactLatestTip(expectedAttemptID: latest(f.root))
+            promotionMarker("scoped.loop.recommit.after")
             var object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
             var enrollment = try XCTUnwrap(object["sourceEnrollment"] as? [String: Any])
             var records = try XCTUnwrap(enrollment["enrollments"] as? [[String: Any]])
@@ -951,13 +971,21 @@ final class NativeEnrollmentPairedEvidenceStoreTests: XCTestCase {
             } else { records = [] }
             enrollment["enrollments"] = records; object["sourceEnrollment"] = enrollment
             let invalid = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+            promotionMarker("scoped.invalid.prepare.before")
             XCTAssertThrowsError(try j.prepareIntent(invalid, attemptID: UUID()))
+            promotionMarker("scoped.invalid.prepare.after")
             XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.root.appendingPathComponent("attempts").path), before)
         }
         // Read-only rejection does not invent a new continuation or consume capacity.
+        promotionMarker("scoped.final.recommit.before")
         _ = try j.recommitExactLatestTip(expectedAttemptID: latest(f.root))
+        promotionMarker("scoped.final.recommit.after")
+        promotionMarker("scoped.final.prepare.before")
         let receipt = try j.prepareIntent(bytes, attemptID: UUID()); XCTAssertTrue(receipt.qualifiesCurrentJournalTip)
+        promotionMarker("scoped.final.prepare.after")
+        promotionMarker("scoped.pair.assert.before")
         try assertPair(old, root: f.root, target: true)
+        promotionMarker("scoped.pair.assert.after")
     }
     func testScopedTerminalCannotAdoptWrongValidPhaseOrQualifyAfterCallbackThrow() throws {
         for changePhase in [false, true] {
