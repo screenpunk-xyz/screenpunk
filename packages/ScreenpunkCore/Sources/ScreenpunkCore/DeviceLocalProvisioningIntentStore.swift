@@ -145,6 +145,28 @@ final class DeviceLocalProvisioningIntentStore {
         fileprivate let transition:NativeJoinTransition
         fileprivate init(_ transition:NativeJoinTransition){self.transition=transition;nativeOperationID=transition.nativeOperationID}
     }
+    /// Original joined receipt captured under the existing lock. This nonsecret checkpoint
+    /// cannot establish original private input, authorize admission or renew a changed epoch.
+    final class NativePrivatePrerequisite {
+        fileprivate let issuer: ObjectIdentifier
+        fileprivate let receipt: NativeJoinReceipt
+        fileprivate let intent: Data
+        fileprivate let candidate: Data
+        fileprivate init(_ issuer: ObjectIdentifier, _ receipt: NativeJoinReceipt, _ plan: DeviceValidatedNativeProvisioningPlan) {
+            self.issuer = issuer; self.receipt = receipt; intent = plan.intentBytes; candidate = plan.candidateBytes
+        }
+    }
+    func captureNativePrivatePrerequisiteExact(_ receipt: NativeJoinReceipt,
+        plan: DeviceValidatedNativeProvisioningPlan, resourcePermit: DeviceLocalResourcePermit) throws -> NativePrivatePrerequisite {
+        try verifyNativeJoinExact(receipt, plan: plan, resourcePermit: resourcePermit)
+        return .init(ObjectIdentifier(self), receipt, plan)
+    }
+    func verifyNativePrivatePrerequisiteExact(_ original: NativePrivatePrerequisite,
+        plan: DeviceValidatedNativeProvisioningPlan, resourcePermit: DeviceLocalResourcePermit) throws {
+        guard original.issuer == ObjectIdentifier(self), original.intent == plan.intentBytes,
+              original.candidate == plan.candidateBytes else { throw Failure.conflict }
+        try verifyNativeJoinExact(original.receipt, plan: plan, resourcePermit: resourcePermit)
+    }
     private var nativeJoinInput:Data?,nativeJoinQualified:NativeJoinTransition?,nativeJoinPending:NativeJoinTransition?
     private func nativeJoinLeaves(_ c:Context)throws->[String] {try list(c.root,limit:28).filter{Self.nativeJoinNames.contains($0) || $0.hasSuffix(".stage") && Self.nativeJoinNames.contains(String($0.dropLast(6)))}}
     private func requireNoNativeJoin(_ c:Context)throws {
