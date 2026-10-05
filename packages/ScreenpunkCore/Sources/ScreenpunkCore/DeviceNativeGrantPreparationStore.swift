@@ -9,12 +9,13 @@ import Glibc
 #endif
 
 /// Unmounted native schema3 private-item and independent progress1 credential mechanics.
-/// No terminal, head, runtime, admission, journal-capacity-release or legacy conversion API.
+/// Native terminal1 is unmounted. No runtime, admission, journal-capacity-release or legacy conversion API.
 /// Synchronous injected backend/fault seams retain the nonreentrant active-operation contract.
 /// No UI, notifications, async waits or arbitrary mutation callbacks may run under these locks.
 final class DeviceNativeGrantPreparationStore {
     enum Kind: Equatable { case rootBinding, genesis, intent, binding, privateItem, record, confirmation
         case credentialMethod, credentialBinding, credentialProgress, credentialConfirmation, credentialItem
+        case terminalIntent, terminalBinding, terminalRecord, terminalConfirmation, terminalHead, terminalHeadConfirmation
     }
     enum Boundary: Equatable {
         case afterCreate(Kind), afterWrite(Kind), afterFileSync(Kind)
@@ -386,6 +387,89 @@ final class DeviceNativeGrantPreparationStore {
     private var credentialCaptured: [String: ID] = [:]
     private var credentialLiveItems: [UUID: DeviceGrantCredentialItem] = [:]
     private var credentialLiveStep: LiveCredentialStep?
+    // Native terminal1 is independent of Local/v2 and progress1 qualification.
+    private enum TerminalLimits {
+        static let intent = 512 * 1024, binding = 2 * 1024 * 1024
+        static let record = 1024 * 1024, confirmation = 8 * 1024
+        static let head = 32 * 1024, headConfirmation = 8 * 1024
+    }
+    private struct TerminalIntent: Codable {
+        let schemaVersion: Int, domain: String
+        let rootID: UUID, operationID: UUID, revisionID: UUID
+        let selfID: ID
+        let rootBinding: PublicMarker, genesis: PublicMarker
+        let original: [String: PublicMarker]
+        // First closure only. Future nonnil predecessor requires genuine successor proof.
+        let previousHead: Node?, previousHeadConfirmation: Node?
+    }
+    private struct TerminalBinding: Codable {
+        let schemaVersion: Int, domain: String
+        let rootID: UUID, operationID: UUID, selfID: ID
+        let intent: PublicMarker
+        let recordID: ID, confirmationID: ID, headID: ID, headConfirmationID: ID
+    }
+    private struct TerminalRecord: Codable {
+        let schemaVersion: Int, domain: String
+        let rootID: UUID, operationID: UUID, revisionID: UUID, selfID: ID
+        let binding: PublicMarker
+        let privateAttempt: DeviceGrantCredentialItem
+        let credentials: [DeviceGrantCredentialItem]
+    }
+    private struct TerminalConfirmation: Codable {
+        let schemaVersion: Int, domain: String
+        let rootID: UUID, operationID: UUID, selfID: ID
+        let intent: PublicMarker, binding: PublicMarker, record: PublicMarker
+    }
+    private struct TerminalHead: Codable {
+        let schemaVersion: Int, domain: String
+        let rootID: UUID, operationID: UUID, revisionID: UUID, selfID: ID
+        let record: PublicMarker, confirmation: PublicMarker
+    }
+    private struct TerminalHeadConfirmation: Codable {
+        let schemaVersion: Int, domain: String
+        let rootID: UUID, operationID: UUID, selfID: ID
+        let head: PublicMarker, confirmation: PublicMarker
+    }
+    final class PendingTerminal: GrantSecretRedacted {
+        let operationID: UUID
+        fileprivate let issuer: ObjectIdentifier, epoch: UInt64
+        fileprivate let rootBinding: Node, genesis: Node
+        fileprivate let original: [String: Node], nodes: [String: Node]
+        fileprivate init(_ issuer: ObjectIdentifier, _ epoch: UInt64, _ operationID: UUID,
+            _ rootBinding: Node, _ genesis: Node, _ original: [String: Node], _ nodes: [String: Node]) {
+            self.issuer = issuer; self.epoch = epoch; self.operationID = operationID
+            self.rootBinding = rootBinding; self.genesis = genesis; self.original = original; self.nodes = nodes
+        }
+    }
+    final class TerminalReceipt: GrantSecretRedacted {
+        let operationID: UUID
+        fileprivate let transition: PendingTerminal
+        fileprivate init(_ transition: PendingTerminal) { self.transition = transition; operationID = transition.operationID }
+    }
+    final class TerminalRecovery: GrantSecretRedacted {
+        let operationID: UUID, plan: DeviceValidatedNativeProvisioningPlan
+        fileprivate let issuer: ObjectIdentifier, epoch: UInt64
+        fileprivate let rootBinding: Node, genesis: Node
+        fileprivate let original: [String: Node], nodes: [String: Node]
+        fileprivate let privateBytes: Data
+        fileprivate init(_ issuer: ObjectIdentifier, _ epoch: UInt64, _ operationID: UUID,
+            _ plan: DeviceValidatedNativeProvisioningPlan, _ rootBinding: Node, _ genesis: Node,
+            _ original: [String: Node], _ nodes: [String: Node], _ privateBytes: Data) {
+            self.issuer = issuer; self.epoch = epoch; self.operationID = operationID; self.plan = plan
+            self.rootBinding = rootBinding; self.genesis = genesis; self.original = original
+            self.nodes = nodes; self.privateBytes = privateBytes
+        }
+    }
+    private var terminalScopeActive = false
+    private var terminalCaptured: [String: ID] = [:]
+    private var terminalPending: PendingTerminal?, terminalQualified: PendingTerminal?
+    private var terminalCheckedRequest: DeviceNativeGrantPreparationRequest?
+    private struct TerminalState {
+        let credentials: CredentialState
+        let original: [String: Node], nodes: [String: Node]
+        let intent: Node?, binding: Node?
+    }
+
     private static let epochsLock = NSLock()
     private static var epochs: [String: UInt64] = [:]
 
@@ -507,8 +591,9 @@ final class DeviceNativeGrantPreparationStore {
               try identity(context.operations, directory: true) == context.operationsID else {
             throw DeviceNativeGrantPreparationError.unsafeBinding
         }
-        let rootNames = try names(context.root, maximum: 6)
-        let allowed: Set<String> = ["native-grant.lock", "operations", "root-binding.json", "root-binding.json.stage", "genesis.json", "genesis.json.stage"]
+        let rootNames = try names(context.root, maximum: terminalScopeActive ? 10 : 6)
+        var allowed: Set<String> = ["native-grant.lock", "operations", "root-binding.json", "root-binding.json.stage", "genesis.json", "genesis.json.stage"]
+        if terminalScopeActive { allowed.formUnion(["native-head.json", "native-head.json.stage", "native-head.confirm", "native-head.confirm.stage"]) }
         guard Set(rootNames).isSubset(of: allowed) else { throw DeviceNativeGrantPreparationError.invalidRecord }
         // Verify the named nodes still designate the held descriptors, not replaced aliases.
         func named(_ parent: Int32, _ name: String, _ expected: ID, directory: Bool) throws {
@@ -685,7 +770,7 @@ final class DeviceNativeGrantPreparationStore {
         let rootFD = try openRoot()
         defer { close(rootFD) }
         let rootIdentity = try identity(rootFD, directory: true)
-        let rootNames = try names(rootFD, maximum: 6)
+        let rootNames = try names(rootFD, maximum: terminalScopeActive ? 10 : 6)
         if create && rootNames.isEmpty {
             if let setupRoot { guard setupRoot == rootIdentity else { throw DeviceNativeGrantPreparationError.unsafeBinding } }
             else { setupRoot = rootIdentity }
@@ -1130,6 +1215,436 @@ final class DeviceNativeGrantPreparationStore {
         try verifyPendingExact(receipt.transition, request: request, resourcePermit: resourcePermit)
     }
 
+    private func terminalName(_ operation: UUID, _ suffix: String) -> String {
+        operation.uuidString.lowercased() + ".terminal." + suffix + ".json"
+    }
+    private func terminalLeaves(_ operation: UUID) -> Set<String> {
+        Set(["intent", "binding", "record", "confirm"].flatMap {
+            let name = terminalName(operation, $0); return [name, name + ".stage"]
+        })
+    }
+    private func terminalLimit(_ name: String) -> Int {
+        if name.hasPrefix("native-head.confirm") { return TerminalLimits.headConfirmation }
+        if name.hasPrefix("native-head.json") { return TerminalLimits.head }
+        if name.contains(".terminal.intent.") { return TerminalLimits.intent }
+        if name.contains(".terminal.binding.") { return TerminalLimits.binding }
+        if name.contains(".terminal.record.") { return TerminalLimits.record }
+        return TerminalLimits.confirmation
+    }
+    private func terminalSnapshot(_ c: Context, operation: UUID) throws -> [String: Node] {
+        var result: [String: Node] = [:]
+        let allowed = credentialNames(operation).union(terminalLeaves(operation))
+        for name in try names(c.operations, maximum: 24) {
+            guard allowed.contains(name) else { throw DeviceNativeGrantPreparationError.invalidRecord }
+            if terminalLeaves(operation).contains(name) {
+                guard let node = try read(c.operations, name, limit: terminalLimit(name)) else {
+                    throw DeviceNativeGrantPreparationError.unsafeBinding
+                }
+                result[name] = node
+            }
+        }
+        for name in ["native-head.json", "native-head.json.stage", "native-head.confirm", "native-head.confirm.stage"] {
+            if let node = try read(c.root, name, limit: terminalLimit(name)) { result[name] = node }
+        }
+        // A captured creation cannot disappear or be replaced and then recreated/adopted.
+        for (stage, id) in terminalCaptured {
+            let final = String(stage.dropLast(".stage".count))
+            guard result[stage]?.id == id || result[final]?.id == id else {
+                throw DeviceNativeGrantPreparationError.unsafeBinding
+            }
+        }
+        return result
+    }
+    private func terminalMarkers(_ nodes: [String: Node]) throws -> [String: PublicMarker] {
+        try nodes.mapValues { try publicMarker($0) }
+    }
+    private func terminalIntentBytes(_ request: DeviceNativeGrantPreparationRequest,
+        state: CredentialState, original: [String: Node], id: ID) throws -> Data {
+        try NativeGrantPreparationCodec.encode(TerminalIntent(schemaVersion: 1, domain: "nativeGrantTerminal1",
+            rootID: rootID, operationID: request.operationID, revisionID: request.input.identity.revisionID,
+            selfID: id, rootBinding: publicMarker(state.rootBinding), genesis: publicMarker(state.genesis),
+            original: terminalMarkers(original), previousHead: nil, previousHeadConfirmation: nil), limit: TerminalLimits.intent)
+    }
+    private func terminalPreflight(_ c: Context, request: DeviceNativeGrantPreparationRequest) throws -> TerminalState {
+        guard terminalScopeActive else { throw DeviceLocalResourceGateFailure.invalidScope }
+        let nodes = try terminalSnapshot(c, operation: request.operationID)
+        let credentials = try credentialPreflight(c, request: request)
+        let original = try credentialSnapshot(c, operation: request.operationID)
+        guard credentials.completed.count == request.input.credentials.count,
+              original.count == 8, original.keys.allSatisfy({ !$0.hasSuffix(".stage") }) else {
+            throw DeviceNativeGrantPreparationError.repairRequired
+        }
+        func pair(_ name: String) throws -> Node? {
+            guard nodes[name] == nil || nodes[name + ".stage"] == nil else {
+                throw DeviceNativeGrantPreparationError.unsafeBinding
+            }
+            return nodes[name] ?? nodes[name + ".stage"]
+        }
+        let methodName = terminalName(request.operationID, "intent"), bindingName = terminalName(request.operationID, "binding")
+        let method = try pair(methodName), binding = try pair(bindingName)
+        var decoded: TerminalBinding?
+        if let method, !method.bytes.isEmpty {
+            let intent: TerminalIntent = try strictDecode(method.bytes, limit: TerminalLimits.intent)
+            guard intent.previousHead == nil, intent.previousHeadConfirmation == nil,
+                  method.bytes == (try terminalIntentBytes(request, state: credentials, original: original, id: method.id)) else {
+                throw DeviceNativeGrantPreparationError.unsafeBinding
+            }
+            if let binding, !binding.bytes.isEmpty {
+                let value: TerminalBinding = try strictDecode(binding.bytes, limit: TerminalLimits.binding)
+                guard value.schemaVersion == 1, value.domain == "nativeGrantTerminal1", value.rootID == rootID,
+                      value.operationID == request.operationID, value.selfID == binding.id,
+                      value.intent == (try publicMarker(method)) else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+                let ids = [method.id, binding.id, value.recordID, value.confirmationID, value.headID, value.headConfirmationID]
+                for index in ids.indices { guard !ids.prefix(index).contains(ids[index]) else { throw DeviceNativeGrantPreparationError.unsafeBinding } }
+                decoded = value
+            }
+        }
+        let expected = try decoded.map { try terminalCandidateNodes(request, state: credentials, method: method!, binding: binding!, value: $0) } ?? [:]
+        if decoded != nil {
+            for (name, candidate) in expected {
+                guard nodes[name] == nil || nodes[name + ".stage"] == nil,
+                      let existing = nodes[name] ?? nodes[name + ".stage"], existing.id == candidate.id,
+                      existing.bytes.isEmpty || existing == candidate else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+            }
+        }
+        for (name, node) in nodes {
+            let final = name.hasSuffix(".stage") ? String(name.dropLast(6)) : name
+            if final == methodName {
+                guard !node.bytes.isEmpty || terminalCaptured[name] == node.id else { throw DeviceNativeGrantPreparationError.repairRequired }
+            } else if final == bindingName {
+                guard !node.bytes.isEmpty || terminalCaptured[name] == node.id else { throw DeviceNativeGrantPreparationError.repairRequired }
+                if decoded == nil { guard terminalCaptured[name] == node.id else { throw DeviceNativeGrantPreparationError.repairRequired } }
+            } else if let candidate = expected[final] {
+                guard node.id == candidate.id, node.bytes.isEmpty || node.bytes == candidate.bytes else {
+                    throw DeviceNativeGrantPreparationError.unsafeBinding
+                }
+            } else {
+                guard decoded == nil, name.hasSuffix(".stage"), node.bytes.isEmpty,
+                      terminalCaptured[name] == node.id else { throw DeviceNativeGrantPreparationError.repairRequired }
+            }
+        }
+        return .init(credentials: credentials, original: original, nodes: nodes, intent: method, binding: binding)
+    }
+    private func terminalCandidateNodes(_ request: DeviceNativeGrantPreparationRequest, state: CredentialState,
+        method: Node, binding: Node, value: TerminalBinding) throws -> [String: Node] {
+        let record = Node(id: value.recordID, bytes: try NativeGrantPreparationCodec.encode(TerminalRecord(
+            schemaVersion: 1, domain: "nativeGrantTerminal1", rootID: rootID, operationID: request.operationID,
+            revisionID: request.input.identity.revisionID, selfID: value.recordID, binding: publicMarker(binding),
+            privateAttempt: state.item, credentials: state.completed), limit: TerminalLimits.record))
+        let proof = Node(id: value.confirmationID, bytes: try NativeGrantPreparationCodec.encode(TerminalConfirmation(
+            schemaVersion: 1, domain: "nativeGrantTerminal1", rootID: rootID, operationID: request.operationID,
+            selfID: value.confirmationID, intent: publicMarker(method), binding: publicMarker(binding), record: publicMarker(record)), limit: TerminalLimits.confirmation))
+        let head = Node(id: value.headID, bytes: try NativeGrantPreparationCodec.encode(TerminalHead(
+            schemaVersion: 1, domain: "nativeGrantTerminal1", rootID: rootID, operationID: request.operationID,
+            revisionID: request.input.identity.revisionID, selfID: value.headID, record: publicMarker(record),
+            confirmation: publicMarker(proof)), limit: TerminalLimits.head))
+        let headProof = Node(id: value.headConfirmationID, bytes: try NativeGrantPreparationCodec.encode(TerminalHeadConfirmation(
+            schemaVersion: 1, domain: "nativeGrantTerminal1", rootID: rootID, operationID: request.operationID,
+            selfID: value.headConfirmationID, head: publicMarker(head), confirmation: publicMarker(proof)), limit: TerminalLimits.headConfirmation))
+        return [terminalName(request.operationID, "record"): record, terminalName(request.operationID, "confirm"): proof,
+                "native-head.json": head, "native-head.confirm": headProof]
+    }
+    private func terminalAllocate(_ c: Context, name: String, kind: Kind, recorded: ID? = nil) throws -> ID {
+        let parent = name.hasPrefix("native-head") ? c.root : c.operations
+        if let existing = try read(parent, name, limit: terminalLimit(name)) {
+            guard existing.id == recorded || terminalCaptured[name] == existing.id else { throw DeviceNativeGrantPreparationError.repairRequired }
+            return existing.id
+        }
+        guard recorded == nil, terminalCaptured[name] == nil else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        let fd = openat(parent, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, mode_t(0o600))
+        guard fd >= 0 else { throw DeviceNativeGrantPreparationError.io(errno) }
+        defer { close(fd) }
+        let id = try identity(fd, directory: false); terminalCaptured[name] = id
+        try fault(.afterCreate(kind)); return id
+    }
+    private func terminalPromote(_ c: Context, name: String, candidate: Node, kind: Kind) throws {
+        let parent = name.hasPrefix("native-head") ? c.root : c.operations
+        let final = try read(parent, name, limit: terminalLimit(name)), staged = try read(parent, name + ".stage", limit: terminalLimit(name))
+        if final == candidate {
+            guard staged == nil else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        } else {
+            guard final == nil, staged == candidate else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+            try syncNode(parent, name + ".stage", expected: candidate); try fault(.afterFileSync(kind))
+            try fault(.beforeReplace(kind))
+            guard renameat(parent, name + ".stage", parent, name) == 0 else { throw DeviceNativeGrantPreparationError.io(errno) }
+            try fault(.afterReplace(kind))
+        }
+        try syncNode(parent, name, expected: candidate); try fault(.afterFileSync(kind))
+        try synchronize(parent); try fault(.afterDirectorySync(kind))
+        guard try read(parent, name, limit: terminalLimit(name)) == candidate else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+    }
+
+    private func reserveTerminal(_ c: Context, request: DeviceNativeGrantPreparationRequest,
+        state: TerminalState) throws -> [String: Int] {
+        let sample = ID(device: UInt64.max, inode: UInt64.max)
+        let method = Node(id: sample, bytes: try terminalIntentBytes(request, state: state.credentials, original: state.original, id: sample))
+        let value = TerminalBinding(schemaVersion: 1, domain: "nativeGrantTerminal1", rootID: rootID,
+            operationID: request.operationID, selfID: sample, intent: try publicMarker(method),
+            recordID: sample, confirmationID: sample, headID: sample, headConfirmationID: sample)
+        let binding = Node(id: sample, bytes: try NativeGrantPreparationCodec.encode(value, limit: TerminalLimits.binding))
+        let candidates = try terminalCandidateNodes(request, state: state.credentials, method: method, binding: binding, value: value)
+        var sizes = candidates.mapValues { $0.bytes.count }
+        sizes[terminalName(request.operationID, "intent")] = method.bytes.count
+        sizes[terminalName(request.operationID, "binding")] = binding.bytes.count
+        var retained = 0
+        for (parent, maximum) in [(c.root, 10), (c.operations, 24)] {
+            for name in try names(parent, maximum: maximum) where name != "operations" && name != "native-grant.lock" {
+                let limit = name.hasPrefix("native-head") || name.contains(".terminal.") ? terminalLimit(name) : 2 * 1024 * 1024
+                guard let node = try read(parent, name, limit: limit) else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+                guard node.bytes.count <= CredentialProgressLimits.publicTotal - retained else { throw DeviceNativeGrantPreparationError.capacity }
+                retained += node.bytes.count
+            }
+        }
+        // Conservative reservation includes all current bytes and both independent new stage
+        // and final encodings; no existing reservation is silently released or netted out.
+        for size in sizes.values {
+            guard size <= (CredentialProgressLimits.publicTotal - retained) / 2 else { throw DeviceNativeGrantPreparationError.capacity }
+            retained += size * 2
+        }
+        sizes["reservedPublicBytes"] = retained
+        return sizes
+    }
+    private func finishTerminal(_ c: Context, request: DeviceNativeGrantPreparationRequest) throws -> PendingTerminal {
+        let before = try terminalPreflight(c, request: request)
+        terminalCheckedRequest = request
+        _ = try reserveTerminal(c, request: request, state: before)
+        let privateBytes = try NativeGrantPreparationCodec.privateBytes(request, rootID: rootID)
+        if let exactInput { guard exactInput.operation == request.operationID, exactInput.bytes == privateBytes else { throw DeviceNativeGrantPreparationError.conflict } }
+        else { exactInput = (request.operationID, privateBytes) }
+        bindingQualified = false; terminalPending = nil; terminalQualified = nil
+        pending = nil; qualified = nil; credentialPending = nil; credentialQualified = nil
+        let attempted = epoch(invalidate: true)
+        try syncNode(c.root, "root-binding.json", expected: before.credentials.rootBinding); try fault(.afterFileSync(.rootBinding))
+        try syncNode(c.root, "genesis.json", expected: before.credentials.genesis); try fault(.afterFileSync(.genesis))
+        try synchronize(c.lock); try synchronize(c.operations); try synchronize(c.root)
+        let rooted = try terminalPreflight(c, request: request)
+        guard rooted.nodes == before.nodes, rooted.original == before.original, epoch() == attempted else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        let methodName = terminalName(request.operationID, "intent"), bindingName = terminalName(request.operationID, "binding")
+        let method: Node
+        if let old = before.intent, !old.bytes.isEmpty { method = old }
+        else {
+            let id = try terminalAllocate(c, name: methodName + ".stage", kind: .terminalIntent)
+            method = try fill(c.operations, methodName + ".stage", id: id,
+                bytes: terminalIntentBytes(request, state: before.credentials, original: before.original, id: id), kind: .terminalIntent)
+        }
+        try terminalPromote(c, name: methodName, candidate: method, kind: .terminalIntent)
+        let binding: Node, value: TerminalBinding
+        if let old = before.binding, !old.bytes.isEmpty {
+            binding = old; value = try strictDecode(old.bytes, limit: TerminalLimits.binding)
+        } else {
+            let recordID = try terminalAllocate(c, name: terminalName(request.operationID, "record") + ".stage", kind: .terminalRecord)
+            let proofID = try terminalAllocate(c, name: terminalName(request.operationID, "confirm") + ".stage", kind: .terminalConfirmation)
+            let headID = try terminalAllocate(c, name: "native-head.json.stage", kind: .terminalHead)
+            let headProofID = try terminalAllocate(c, name: "native-head.confirm.stage", kind: .terminalHeadConfirmation)
+            let id = try terminalAllocate(c, name: bindingName + ".stage", kind: .terminalBinding)
+            value = TerminalBinding(schemaVersion: 1, domain: "nativeGrantTerminal1", rootID: rootID,
+                operationID: request.operationID, selfID: id, intent: try publicMarker(method),
+                recordID: recordID, confirmationID: proofID, headID: headID, headConfirmationID: headProofID)
+            binding = try fill(c.operations, bindingName + ".stage", id: id,
+                bytes: NativeGrantPreparationCodec.encode(value, limit: TerminalLimits.binding), kind: .terminalBinding)
+        }
+        try terminalPromote(c, name: bindingName, candidate: binding, kind: .terminalBinding)
+        let candidates = try terminalCandidateNodes(request, state: before.credentials, method: method, binding: binding, value: value)
+        let order: [(String, Kind)] = [(terminalName(request.operationID, "record"), .terminalRecord),
+            (terminalName(request.operationID, "confirm"), .terminalConfirmation),
+            ("native-head.json", .terminalHead), ("native-head.confirm", .terminalHeadConfirmation)]
+        for (name, kind) in order {
+            let candidate = candidates[name]!, parent = name.hasPrefix("native-head") ? c.root : c.operations
+            if try read(parent, name, limit: terminalLimit(name)) == nil {
+                let stage = try read(parent, name + ".stage", limit: terminalLimit(name))
+                guard let stage, stage.id == candidate.id, stage.bytes.isEmpty || stage == candidate else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+                if stage.bytes.isEmpty { _ = try fill(parent, name + ".stage", id: candidate.id, bytes: candidate.bytes, kind: kind) }
+            }
+            try terminalPromote(c, name: name, candidate: candidate, kind: kind)
+        }
+        let after = try terminalPreflight(c, request: request)
+        guard after.original == before.original, after.credentials.rootBinding == before.credentials.rootBinding,
+              after.credentials.genesis == before.credentials.genesis, epoch() == attempted,
+              after.nodes.count == 6, after.nodes.keys.allSatisfy({ !$0.hasSuffix(".stage") }) else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        for (name, node) in after.nodes { try syncNode(name.hasPrefix("native-head") ? c.root : c.operations, name, expected: node) }
+        try synchronize(c.operations); try synchronize(c.root); try check(c)
+        let final = try terminalPreflight(c, request: request)
+        guard final.nodes == after.nodes, epoch() == attempted else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        let transition = PendingTerminal(ObjectIdentifier(self), attempted, request.operationID,
+            before.credentials.rootBinding, before.credentials.genesis, before.original, final.nodes)
+        terminalPending = transition; bindingQualified = true
+        return transition
+    }
+    func performTerminalExact(_ request: DeviceNativeGrantPreparationRequest, original: CredentialReceipt,
+        commandPermit: DeviceNativeGrantTerminalCommandPermit) throws -> PendingTerminal {
+        try commandPermit.begin(ObjectIdentifier(self)); defer { commandPermit.end() }
+        guard terminalScopeActive, let c = borrowed, credentialQualified === original.transition,
+              original.transition.epoch == epoch(), bindingQualified else { throw DeviceNativeGrantPreparationError.outcomeUncertain }
+        let state = try terminalPreflight(c, request: request)
+        guard state.original == original.transition.nodes, state.credentials.rootBinding == original.transition.rootBinding,
+              state.credentials.genesis == original.transition.genesis else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        return try finishTerminal(c, request: request)
+    }
+    func verifyTerminalPendingExact(_ transition: PendingTerminal, request: DeviceNativeGrantPreparationRequest,
+        resourcePermit: DeviceLocalResourcePermit) throws {
+        try disk(permit: resourcePermit) { c in
+            guard terminalScopeActive, transition.issuer == ObjectIdentifier(self), transition.epoch == epoch(),
+                  bindingQualified, terminalPending === transition || terminalQualified === transition else { throw DeviceNativeGrantPreparationError.outcomeUncertain }
+            let state = try terminalPreflight(c, request: request)
+            terminalCheckedRequest = request
+            guard state.original == transition.original, state.nodes == transition.nodes,
+                  state.credentials.rootBinding == transition.rootBinding, state.credentials.genesis == transition.genesis else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        }
+    }
+    func publishTerminalExact(_ transition: PendingTerminal,
+        publicationPermit: DeviceNativeGrantTerminalPublicationPermit) throws -> TerminalReceipt {
+        try publicationPermit.validate(transition)
+        mutex.lock(); defer { mutex.unlock() }
+        guard transition.issuer == ObjectIdentifier(self), transition.epoch == epoch(),
+              terminalPending === transition, bindingQualified else { throw DeviceNativeGrantPreparationError.outcomeUncertain }
+        terminalQualified = transition; terminalPending = nil
+        return .init(transition)
+    }
+    /// Opaque observation of a genuinely published token for stale-cleanup regression only.
+    func captureTerminalCleanupTokenForTesting() throws -> PendingTerminal {
+        try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
+        mutex.lock(); defer { mutex.unlock() }
+        guard let original = terminalQualified, original.issuer == ObjectIdentifier(self),
+              original.epoch == epoch(), bindingQualified else { throw DeviceNativeGrantPreparationError.outcomeUncertain }
+        return original
+    }
+    func discardTerminalPublication(_ transition: PendingTerminal) throws {
+        try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
+        mutex.lock(); defer { mutex.unlock() }
+        guard transition.issuer == ObjectIdentifier(self), transition.epoch == epoch(),
+              terminalPending === transition || terminalQualified === transition else { return }
+        if terminalPending === transition { terminalPending = nil }
+        if terminalQualified === transition { terminalQualified = nil }
+        bindingQualified = false
+    }
+    func verifyTerminalExact(_ receipt: TerminalReceipt, request: DeviceNativeGrantPreparationRequest,
+        resourcePermit: DeviceLocalResourcePermit) throws {
+        try disk(permit: resourcePermit) { _ in
+            guard terminalQualified === receipt.transition else { throw DeviceNativeGrantPreparationError.outcomeUncertain }
+        }
+        try verifyTerminalPendingExact(receipt.transition, request: request, resourcePermit: resourcePermit)
+    }
+
+    func captureTerminalRecoveryExact(operationID: UUID, resources: DeviceNativeGrantRecoveryResources,
+        expectedEntries: [DeviceGrantEntryExpectation], resourcePermit: DeviceLocalResourcePermit) throws -> TerminalRecovery {
+        try disk(permit: resourcePermit) { c in
+            guard terminalScopeActive else { throw DeviceLocalResourceGateFailure.invalidScope }
+            guard let record = try read(c.operations, operationName(operationID, "record"), limit: NativeGrantPreparationCodec.recordLimit) else {
+                throw DeviceNativeGrantPreparationError.repairRequired
+            }
+            let value: Record = try strictDecode(record.bytes, limit: NativeGrantPreparationCodec.recordLimit)
+            guard value.schemaVersion == 3, value.selfID == record.id, value.operationID == operationID, value.rootID == rootID,
+                  value.privateAttempt.account.utf8.elementsEqual(GrantPreparationCodec.attemptAccount(operationID).utf8),
+                  let stored = try backend.read(service: GrantPreparationCodec.service(rootID), account: value.privateAttempt.account,
+                      maximumBytes: NativeGrantPreparationCodec.privateLimit), stored.item == value.privateAttempt else { throw DeviceNativeGrantPreparationError.repairRequired }
+            let request = try recoveredRequest(stored.bytes, resources: resources, expectedEntries: expectedEntries)
+            guard request.operationID == operationID else { throw DeviceNativeGrantPreparationError.conflict }
+            let state = try terminalPreflight(c, request: request)
+            return .init(ObjectIdentifier(self), epoch(), operationID, request.plan, state.credentials.rootBinding,
+                state.credentials.genesis, state.original, state.nodes, stored.bytes)
+        }
+    }
+    func verifyTerminalRecoveryExact(_ original: TerminalRecovery, resources: DeviceNativeGrantRecoveryResources,
+        expectedEntries: [DeviceGrantEntryExpectation], resourcePermit: DeviceLocalResourcePermit) throws {
+        try disk(permit: resourcePermit) { c in
+            _ = try terminalRecoveredRequest(c, original: original, resources: resources, expectedEntries: expectedEntries)
+        }
+    }
+    private func terminalRecoveredRequest(_ c: Context, original: TerminalRecovery,
+        resources: DeviceNativeGrantRecoveryResources, expectedEntries: [DeviceGrantEntryExpectation]) throws -> DeviceNativeGrantPreparationRequest {
+        guard terminalScopeActive, original.issuer == ObjectIdentifier(self), original.epoch == epoch() else { throw DeviceNativeGrantPreparationError.conflict }
+        let request = try recoveredRequest(original.privateBytes, resources: resources, expectedEntries: expectedEntries)
+        guard request.operationID == original.operationID, request.plan.intentBytes == original.plan.intentBytes,
+              request.plan.candidateBytes == original.plan.candidateBytes else { throw DeviceNativeGrantPreparationError.conflict }
+        let current = try terminalPreflight(c, request: request)
+        guard current.original == original.original, current.nodes == original.nodes,
+              current.credentials.rootBinding == original.rootBinding, current.credentials.genesis == original.genesis,
+              original.epoch == epoch() else { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        return request
+    }
+    func performTerminalRecoveredExact(_ original: TerminalRecovery, resources: DeviceNativeGrantRecoveryResources,
+        expectedEntries: [DeviceGrantEntryExpectation], commandPermit: DeviceNativeGrantTerminalCommandPermit) throws -> PendingTerminal {
+        try commandPermit.begin(ObjectIdentifier(self)); defer { commandPermit.end() }
+        guard let c = borrowed else { throw DeviceLocalResourceGateFailure.invalidScope }
+        let request = try terminalRecoveredRequest(c, original: original, resources: resources, expectedEntries: expectedEntries)
+        return try finishTerminal(c, request: request)
+    }
+    func verifyRecoveredTerminalPendingExact(_ transition: PendingTerminal, original: TerminalRecovery,
+        resources: DeviceNativeGrantRecoveryResources, expectedEntries: [DeviceGrantEntryExpectation], resourcePermit: DeviceLocalResourcePermit) throws {
+        let request = try recoveredRequest(original.privateBytes, resources: resources, expectedEntries: expectedEntries)
+        guard transition.operationID == original.operationID, request.plan.intentBytes == original.plan.intentBytes,
+              request.plan.candidateBytes == original.plan.candidateBytes else { throw DeviceNativeGrantPreparationError.conflict }
+        try verifyTerminalPendingExact(transition, request: request, resourcePermit: resourcePermit)
+    }
+    /// Initialized roots only; this fixed scope admits terminal leaves for exact checks, never
+    /// arbitrary mutation. Its read permit cannot mint the file-private Gate command token.
+    func withNativeTerminalResourceGateScope(_ permit: DeviceLocalResourcePermit, _ body: () throws -> Void) throws {
+        try permit.beginAcquisition(resourceGateDescriptor)
+        mutex.lock(); defer { permit.invalidate(); mutex.unlock() }
+        guard !terminalScopeActive else { throw DeviceLocalResourceGateFailure.invalidScope }
+        terminalScopeActive = true; defer { terminalScopeActive = false; terminalCheckedRequest = nil }
+        let originalEpoch = epoch()
+        do {
+            try context(create: false) { c in
+                _ = try checkedBinding(c); borrowed = c
+                defer { borrowed = nil; permit.invalidate() }
+                try body(); try fault(.beforeScopeExit); _ = try checkedBinding(c)
+                if let request = terminalCheckedRequest, let transition = terminalPending ?? terminalQualified {
+                    let actual = try terminalPreflight(c, request: request)
+                    guard transition.epoch == epoch(), actual.original == transition.original, actual.nodes == transition.nodes,
+                          actual.credentials.rootBinding == transition.rootBinding, actual.credentials.genesis == transition.genesis else {
+                        throw DeviceNativeGrantPreparationError.unsafeBinding
+                    }
+                }
+            }
+        } catch {
+            if epoch() != originalEpoch {
+                bindingQualified = false; terminalPending = nil; terminalQualified = nil
+                pending = nil; qualified = nil; credentialPending = nil; credentialQualified = nil
+            }
+            throw error
+        }
+    }
+
+    /// Synthetic maximum-width PUBLIC metadata sizing only. These values cannot qualify a
+    /// root, secret, request or receipt. No private frame or credential bytes are emitted/hashed.
+    static func maximumTerminalEncoderSizesForTesting() throws -> [String: Int] {
+        let id = ID(device: UInt64.max, inode: UInt64.max), uuid = UUID(uuidString: "FFFFFFFF-FFFF-4FFF-BFFF-FFFFFFFFFFFF")!
+        let marker = PublicMarker(id: id, sha256: String(repeating: "a", count: 64))
+        var originals: [String: PublicMarker] = [:]
+        for suffix in ["intent", "binding", "record", "confirm", "credentials.intent", "credentials.binding", "credentials.progress", "credentials.confirm"] {
+            let name = uuid.uuidString.lowercased() + "." + suffix + ".json"
+            originals[name] = marker; originals[name + ".stage"] = marker
+        }
+        let intent = try NativeGrantPreparationCodec.encode(TerminalIntent(schemaVersion: 1, domain: "nativeGrantTerminal1",
+            rootID: uuid, operationID: uuid, revisionID: uuid, selfID: id, rootBinding: marker, genesis: marker,
+            original: originals, previousHead: nil, previousHeadConfirmation: nil), limit: TerminalLimits.intent)
+        let binding = try NativeGrantPreparationCodec.encode(TerminalBinding(schemaVersion: 1, domain: "nativeGrantTerminal1",
+            rootID: uuid, operationID: uuid, selfID: id, intent: marker, recordID: id,
+            confirmationID: id, headID: id, headConfirmationID: id), limit: TerminalLimits.binding)
+        let privateItem = DeviceGrantCredentialItem(account: "attempt." + uuid.uuidString.lowercased(),
+            persistentReference: Data(repeating: 7, count: 1024), byteCount: 4 * 1024 * 1024)
+        let credentials = (0..<CredentialProgressLimits.credentialCount).map { _ in DeviceGrantCredentialItem(
+            account: "credential." + uuid.uuidString.lowercased(), persistentReference: Data(repeating: 8, count: 1024), byteCount: 8192) }
+        let record = try NativeGrantPreparationCodec.encode(TerminalRecord(schemaVersion: 1, domain: "nativeGrantTerminal1",
+            rootID: uuid, operationID: uuid, revisionID: uuid, selfID: id, binding: marker,
+            privateAttempt: privateItem, credentials: credentials), limit: TerminalLimits.record)
+        let confirmation = try NativeGrantPreparationCodec.encode(TerminalConfirmation(schemaVersion: 1, domain: "nativeGrantTerminal1",
+            rootID: uuid, operationID: uuid, selfID: id, intent: marker, binding: marker, record: marker), limit: TerminalLimits.confirmation)
+        let head = try NativeGrantPreparationCodec.encode(TerminalHead(schemaVersion: 1, domain: "nativeGrantTerminal1",
+            rootID: uuid, operationID: uuid, revisionID: uuid, selfID: id, record: marker, confirmation: marker), limit: TerminalLimits.head)
+        let headProof = try NativeGrantPreparationCodec.encode(TerminalHeadConfirmation(schemaVersion: 1, domain: "nativeGrantTerminal1",
+            rootID: uuid, operationID: uuid, selfID: id, head: marker, confirmation: marker), limit: TerminalLimits.headConfirmation)
+        return ["intent": intent.count, "binding": binding.count, "record": record.count,
+            "confirmation": confirmation.count, "head": head.count, "headConfirmation": headProof.count]
+    }
+    func terminalReservationSizesForTesting(_ request: DeviceNativeGrantPreparationRequest,
+        resourcePermit: DeviceLocalResourcePermit) throws -> [String: Int] {
+        try disk(permit: resourcePermit) { c in
+            try reserveTerminal(c, request: request, state: terminalPreflight(c, request: request))
+        }
+    }
+
     private func credentialLimit(_ suffix: String) -> Int {
         switch suffix {
         case "intent": return CredentialProgressLimits.method
@@ -1145,7 +1660,8 @@ final class DeviceNativeGrantPreparationStore {
     private func credentialSnapshot(_ c: Context, operation: UUID) throws -> [String: Node] {
         let allowed = credentialNames(operation)
         var output: [String: Node] = [:]
-        for name in try names(c.operations, maximum: 16) {
+        for name in try names(c.operations, maximum: terminalScopeActive ? 24 : 16) {
+            if terminalScopeActive, terminalLeaves(operation).contains(name) { continue }
             guard allowed.contains(name) else { throw DeviceNativeGrantPreparationError.invalidRecord }
             let suffix = name.replacingOccurrences(of: ".stage", with: "").split(separator: ".").dropLast().last.map(String.init) ?? ""
             let limit = name.contains(".credentials.") ? credentialLimit(suffix) : NativeGrantPreparationCodec.confirmationLimit
