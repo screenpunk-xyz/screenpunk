@@ -301,7 +301,10 @@ final class DeviceLocalProvisioningIntentStore {
     func publishNativeJoinExact(_ transition:NativeJoinTransition,publicationPermit:DeviceNativeProvisioningPublicationPermit)throws->NativeJoinReceipt {
         try publicationPermit.validate(transition);try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
         mutex.lock();defer{mutex.unlock()}
-        guard nativeJoinPending === transition,transition.epoch == epoch() else{nativeJoinQualified=nil;throw Failure.uncertain}
+        // A late failed publisher owns no newer qualifier. Failure is nonmutating; the
+        // fixed caller may discard only its exact transition after this guard rejects.
+        guard transition.original.issuer == ObjectIdentifier(self),transition.original.rootID == rootID,
+              nativeJoinPending === transition,transition.epoch == epoch() else{throw Failure.uncertain}
         nativeJoinQualified=transition;nativeJoinPending=nil;return .init(transition)
     }
     /// Fixed coordinator failure cleanup only; retains reservation/bytes/latch. Does not read disk,

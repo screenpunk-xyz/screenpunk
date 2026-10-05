@@ -178,8 +178,23 @@ final class DevicePackagePreparationStore {
         guard inputs.count <= 12 else{throw DevicePackagePreparationError.sizeLimit}
         let body=try ProvisioningIntentCodec.decode(plan.canonicalBytes),envelope=try StructuralStoreCodec.envelope(body.candidate)
         let refs=try DeviceLocalCompleteSetRestoreCodec.references(envelope.intent)
-        guard body.roots.packageID == rootID,body.roots == plan.roots,body.operationID == plan.operationID,
-              inputs.count == refs.packages.count else{throw DevicePackagePreparationError.conflict}
+        guard body.roots.packageID == rootID,body.roots == plan.roots,body.operationID == plan.operationID else {
+            throw DevicePackagePreparationError.conflict
+        }
+        let bindings = refs.packages.map { ref in
+            NativeReference(entryID: ref.entryID, reference: .init(rootID: ref.rootID, contentID: ref.contentID,
+                preparationOperationID: ref.preparationOperationID, directory: ref.directory))
+        }
+        return try matchBoundItems(inputs, references: bindings, context: c, state: state)
+    }
+    private struct NativeReference { let entryID: UUID; let reference: DevicePreparedPackageReference }
+    private func matchBoundItems(_ inputs: [DeviceProvisioningPackageInput], references: [NativeReference],
+                                context c: Context, state: Inventory) throws -> [BoundItem] {
+        guard inputs.count <= 12, references.count <= 12, inputs.count == references.count,
+              Set(references.map(\.entryID)).count == references.count,
+              references.allSatisfy({ $0.reference.rootID == rootID }) else {
+            throw DevicePackagePreparationError.conflict
+        }
         var supplied:[UUID:DeviceProvisioningPackageInput]=[:]
         for input in inputs {
             let id:UUID
@@ -187,11 +202,11 @@ final class DevicePackagePreparationStore {
             guard supplied.updateValue(input,forKey:id) == nil else{throw DevicePackagePreparationError.conflict}
         }
         var items:[BoundItem]=[],newCount=0,operations=Set<UUID>(),contentIDs=Set<Data>()
-        for ref in refs.packages {
-            guard let input=supplied[ref.entryID],operations.insert(ref.preparationOperationID).inserted,
+        for binding in references {
+            let ref = binding.reference
+            guard let input=supplied[binding.entryID],operations.insert(ref.preparationOperationID).inserted,
                   contentIDs.insert(Data(ref.contentID.utf8)).inserted else{throw DevicePackagePreparationError.conflict}
-            let reference=DevicePreparedPackageReference(rootID:ref.rootID,contentID:ref.contentID,
-                preparationOperationID:ref.preparationOperationID,directory:ref.directory)
+            let reference = ref
             let existing=state.entries.first{$0.record.plan.operationID == ref.preparationOperationID}
             let package:QualifiedDevicePackage,retained:Bool
             switch input {
@@ -212,7 +227,7 @@ final class DevicePackagePreparationStore {
                 guard !retained,!state.entries.contains(where:{$0.record.plan.contentID.utf8.elementsEqual(expected.contentID.utf8)}) else{throw DevicePackagePreparationError.conflict}
                 _ = try PackagePreparationCodec.encode(PreparationRecord(plan:expected));newCount += 1
             }
-            items.append(.init(entryID:ref.entryID,reference:reference,request:request,retained:retained))
+            items.append(.init(entryID:binding.entryID,reference:reference,request:request,retained:retained))
         }
         // Reserve the WHOLE batch before any shared epoch or filesystem effects. No pruning.
         guard state.entries.count <= 128,newCount <= 128-state.entries.count else{throw DevicePackagePreparationError.capacity}
@@ -272,6 +287,115 @@ final class DevicePackagePreparationStore {
             guard Set(try names(fd,maximum:6097)).isSubset(of:allowed) else{throw DevicePackagePreparationError.conflict}
         }
     }
+    /// Nonauthorizing original read evidence for one explicit native recovery. No synchronization,
+    /// receipt issuance, epoch renewal or public construction; retained Data shares bounded nodes.
+    final class NativeBatchOriginal {
+        fileprivate let issuer: ObjectIdentifier, rootID: UUID, epoch: UInt64
+        fileprivate let bindingBytes: Data, bindingID: PreparationIdentity
+        fileprivate let bytes: [String: Data], identities: [String: PreparationIdentity]
+        let inputs: [DeviceProvisioningPackageInput]
+        fileprivate init(_ issuer: ObjectIdentifier, _ rootID: UUID, _ epoch: UInt64, _ binding: Data,
+                         _ bindingID: PreparationIdentity, _ bytes: [String: Data],
+                         _ identities: [String: PreparationIdentity], _ inputs: [DeviceProvisioningPackageInput]) {
+            self.issuer = issuer; self.rootID = rootID; self.epoch = epoch
+            bindingBytes = binding; self.bindingID = bindingID; self.bytes = bytes
+            self.identities = identities; self.inputs = inputs
+        }
+    }
+    private func nativeReferences(_ plan: DeviceValidatedNativeProvisioningPlan) throws -> [NativeReference] {
+        guard plan.intentBytes.count <= 32768, plan.candidateBytes.count <= 128 * 1024 else {
+            throw DevicePackagePreparationError.sizeLimit
+        }
+        let body = try DeviceNativeProvisioningIntentCodec.decode(plan.intentBytes)
+        let envelope = try DeviceNativeStructuralEnvelopeCodec.decode(plan.candidateBytes)
+        let state = try DeviceNativeStructuralStateCodec.decode(envelope.snapshotBytes)
+        guard body.roots == plan.roots, body.roots.packageID == rootID,
+              body.nativeOperationID == plan.nativeOperationID, envelope.operationID == plan.nativeOperationID,
+              envelope.expectedGenerationID == body.expectedGenerationID,
+              state.generationID == body.desiredGenerationID,
+              body.candidateByteCount == plan.candidateBytes.count,
+              body.candidateDigest.utf8.elementsEqual(try DeviceNativeDeliveryAttachmentCodec.hash(plan.candidateBytes).utf8),
+              state.entries.count == body.packages.count else { throw DevicePackagePreparationError.conflict }
+        for (entry, package) in zip(state.entries, body.packages) {
+            guard entry.entryID == package.entryID,
+                  DeviceProvisioningPlanner.exactReference(entry.preparedPackage, package.reference) else {
+                throw DevicePackagePreparationError.conflict
+            }
+        }
+        return body.packages.map { .init(entryID: $0.entryID, reference: $0.reference) }
+    }
+    private func freshInputs(_ items: [BoundItem]) -> [DeviceProvisioningPackageInput] {
+        items.map { item in
+            if item.retained { return .retained(entryID: item.entryID, reference: item.reference,
+                verified: DeviceVerifiedPreparedPackage(reference: item.reference, package: item.request.package)) }
+            return .supplied(entryID: item.entryID, operationID: item.request.operationID, package: item.request.package)
+        }
+    }
+    func inspectNativeBoundPackages(_ inputs: [DeviceProvisioningPackageInput], plan: DeviceValidatedNativeProvisioningPlan,
+                                    resourcePermit: DeviceLocalResourcePermit) throws -> [DeviceProvisioningPackageInput] {
+        guard inputs.count <= 12 else { throw DevicePackagePreparationError.sizeLimit }
+        let references = try nativeReferences(plan)
+        return try disk(resourcePermit: resourcePermit) { c in
+            try freshInputs(matchBoundItems(inputs, references: references, context: c, state: inventory(c)))
+        }
+    }
+    /// Before private frame recovery a caller has only an explicit schema2 candidate, not a plan.
+    /// This reads a bounded matching package inventory; the grant's private frame later binds it
+    /// to the genuine exact intent. Candidate bytes alone confer no operation authority.
+    func captureNativeBatchOriginal(_ inputs: [DeviceProvisioningPackageInput],
+        candidate: DeviceNativeStructuralState, resourcePermit: DeviceLocalResourcePermit) throws -> NativeBatchOriginal {
+        guard inputs.count <= 12, candidate.entries.count <= 12 else { throw DevicePackagePreparationError.sizeLimit }
+        _ = try DeviceNativeStructuralStateCodec.encode(candidate)
+        let references = candidate.entries.map { NativeReference(entryID: $0.entryID, reference: $0.preparedPackage) }
+        guard references.allSatisfy({ $0.reference.rootID == rootID }) else { throw DevicePackagePreparationError.conflict }
+        return try disk(resourcePermit: resourcePermit) { c in
+            let before = epoch(), state = try inventory(c)
+            let items = try matchBoundItems(inputs, references: references, context: c, state: state)
+            guard let binding = try readFile(c.root, "root-binding.json", limit: PackagePreparationCodec.metadataLimit) else {
+                throw DevicePackagePreparationError.unsafeBinding
+            }
+            var bytes: [String: Data] = [:], identities: [String: PreparationIdentity] = [:]
+            for name in try names(c.operations, maximum: 260) {
+                guard let node = try readFile(c.operations, name, limit: PackagePreparationCodec.metadataLimit) else {
+                    throw DevicePackagePreparationError.conflict
+                }
+                bytes[name] = node.bytes; identities[name] = node.identity
+            }
+            guard before == epoch() else { throw DevicePackagePreparationError.conflict }
+            return NativeBatchOriginal(ObjectIdentifier(self), rootID, before, binding.bytes, binding.identity,
+                                       bytes, identities, freshInputs(items))
+        }
+    }
+    func verifyNativeBatchOriginal(_ original: NativeBatchOriginal, resourcePermit: DeviceLocalResourcePermit) throws {
+        try disk(resourcePermit: resourcePermit) { c in
+            guard original.issuer == ObjectIdentifier(self), original.rootID == rootID,
+                  original.epoch == epoch(),
+                  try readFile(c.root, "root-binding.json", limit: PackagePreparationCodec.metadataLimit) ==
+                    Node(identity: original.bindingID, bytes: original.bindingBytes),
+                  Set(try names(c.operations, maximum: 260)) == Set(original.bytes.keys) else {
+                throw DevicePackagePreparationError.conflict
+            }
+            _ = try inventory(c)
+            for (name, bytes) in original.bytes {
+                guard let identity = original.identities[name],
+                      try readFile(c.operations, name, limit: PackagePreparationCodec.metadataLimit) ==
+                        Node(identity: identity, bytes: bytes) else { throw DevicePackagePreparationError.conflict }
+            }
+            guard original.epoch == epoch() else { throw DevicePackagePreparationError.conflict }
+        }
+    }
+    /// Fixed native command only. Reference matching and all capacity/pending branches precede
+    /// invalidation/effects; neither a Local plan nor a mutable alias is synthesized.
+    func performNativeBoundPackagesExact(_ inputs: [DeviceProvisioningPackageInput], plan: DeviceValidatedNativeProvisioningPlan,
+        commandPermit: DeviceNativePackageCommandPermit) throws -> DevicePackageTerminalResolution {
+        guard inputs.count <= 12 else { throw DevicePackagePreparationError.sizeLimit }
+        let references = try nativeReferences(plan)
+        try commandPermit.begin(ObjectIdentifier(self)); defer { commandPermit.end() }
+        guard let c = borrowedResourceContext else { throw DeviceLocalResourceGateFailure.invalidScope }
+        let state = try inventory(c)
+        let items = try matchBoundItems(inputs, references: references, context: c, state: state)
+        return try finishBoundItems(c, state: state, items: items)
+    }
     /// Gate-private fixed batch dispatch only. No borrowed ordinary mutation API or arbitrary closure.
     func performBoundPackagesExact(_ inputs:[DeviceProvisioningPackageInput],plan:DeviceValidatedProvisioningPlan,
                                   commandPermit:DeviceBoundPackageCommandPermit)throws->DevicePackageTerminalResolution {
@@ -279,6 +403,9 @@ final class DevicePackagePreparationStore {
         try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
         guard let c=borrowedResourceContext else{throw DeviceLocalResourceGateFailure.invalidScope}
         let state=try inventory(c),items=try boundItems(inputs,plan:plan,context:c,state:state)
+        return try finishBoundItems(c, state: state, items: items)
+    }
+    private func finishBoundItems(_ c: Context, state: Inventory, items: [BoundItem]) throws -> DevicePackageTerminalResolution {
         guard let binding=try readFile(c.root,"root-binding.json",limit:PackagePreparationCodec.metadataLimit),
               binding.bytes == (try PackagePreparationCodec.encode(c.binding)) else{throw DevicePackagePreparationError.unsafeBinding}
         let attemptEpoch=epoch(invalidate:true);qualification=nil;bindingQualified=false
