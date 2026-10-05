@@ -34,6 +34,56 @@ public struct NativePreparationReconstructionAssessment: Sendable {
     }
 }
 
+/// Preparation-only source. The genesis tag is never a management history or Local permission.
+public enum NativeEnrollmentPreparationSource: Encodable, Sendable {
+    case existingHistory(DeviceManagementFormatHistory)
+    case firstNativeGenesis
+    public var transitions: [DeviceManagementTransitionEntry] {
+        switch self { case .existingHistory(let h): return h.transitions; case .firstNativeGenesis: return [] }
+    }
+    public var credentials: [DeviceManagementFormatHistory.Binding] {
+        switch self { case .existingHistory(let h): return h.credentials; case .firstNativeGenesis: return [] }
+    }
+    var isFirstNative: Bool { if case .firstNativeGenesis = self { return true }; return false }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .existingHistory(let h): try h.encode(to: encoder)
+        case .firstNativeGenesis:
+            var c = encoder.container(keyedBy: Keys.self)
+            try c.encode(1, forKey: .schemaVersion); try c.encode("first-native-genesis", forKey: .sourceKind)
+        }
+    }
+    private enum Keys: String, CodingKey { case schemaVersion, sourceKind }
+    func enrollmentBytes(_ evidence: NativeEnrollmentEvidence) throws -> Data {
+        switch self {
+        case .existingHistory(let h): return try NativeEnrollmentEvidenceCodec.encode(evidence, history: h)
+        case .firstNativeGenesis:
+            guard evidence.enrollments.isEmpty else { throw NativePreparationFailure.invalidProposal }
+            return Data("{\"enrollments\":[],\"schemaVersion\":1}".utf8)
+        }
+    }
+}
+
+/// Explicit first-device proposal, distinct from every ordinary history-based preparation.
+/// It is pure metadata: only the fixed bridge may qualify complete empty credential inventory.
+public struct NativeFirstEnrollmentPreparation: Sendable {
+    public let preparationId: UUID, enrollmentId: UUID, stageReference: String
+    public let binding: DeviceManagementFormatHistory.Binding, claimInput: NativeClaimInput
+    public let targetHistory: DeviceManagementFormatHistory, targetEnrollment: NativeEnrollmentEvidence
+    public init(preparationId: UUID, enrollmentId: UUID, stageReference: String,
+        binding: DeviceManagementFormatHistory.Binding, claimInput: NativeClaimInput) throws {
+        let ids = [preparationId, enrollmentId, binding.transitionID, binding.credentialGenerationID, claimInput.requestId]
+        _ = try DeviceManagementCredentialBinding(credentialGenerationID: binding.credentialGenerationID, transitionID: binding.transitionID, credentialReference: stageReference)
+        guard Set(ids).count == ids.count, binding.format == .nativeInstallationV1,
+            binding.transitionID == claimInput.transitionId, stageReference != binding.credentialReference else { throw NativePreparationFailure.invalidProposal }
+        self.preparationId = preparationId; self.enrollmentId = enrollmentId; self.stageReference = stageReference
+        self.binding = binding; self.claimInput = claimInput
+        targetHistory = try .init(transitions: [.init(transitionID: binding.transitionID, phase: .intent)], credentials: [binding])
+        targetEnrollment = try NativeEnrollmentRecovery.proposingClaim(in: .init(), history: targetHistory,
+            enrollmentId: enrollmentId, binding: binding, input: claimInput)
+    }
+}
+
 public struct NativeEnrollmentPreparation: Sendable {
     public enum Phase: Int, Sendable {
         case intent, stageAttempted, stageQualified, pairedEvidenceQualified
@@ -136,8 +186,9 @@ public struct NativeEnrollmentPreparation: Sendable {
         currentHistory: DeviceManagementFormatHistory, currentEnrollment: NativeEnrollmentEvidence,
         inventory: Inventory) -> NativePreparationReconstructionAssessment {
         let p = step.proposal
+        guard let sourceHistory = try? p.sourceHistory else { return .make(recovery: .blocked, inventory: inventory) }
         let structural = Self(preparationId: p.preparationId, enrollmentId: p.enrollmentId, stageReference: p.stageReference,
-            binding: p.binding, sourceHistory: p.sourceHistory, targetHistory: p.targetHistory,
+            binding: p.binding, sourceHistory: sourceHistory, targetHistory: p.targetHistory,
             sourceEnrollment: p.sourceEnrollment, targetEnrollment: p.targetEnrollment,
             claimInput: p.claimInput, phase: p.phase, reservedBytes: p.reservedBytes)
         let recovery = structural.classify(history: currentHistory, enrollment: currentEnrollment, inventory: inventory,

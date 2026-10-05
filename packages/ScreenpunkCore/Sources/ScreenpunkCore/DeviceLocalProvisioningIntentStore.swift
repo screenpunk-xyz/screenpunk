@@ -16,8 +16,8 @@ import Glibc
 /// store work. This adds no UI/notification callback and no physical or hostile same-UID guarantee.
 final class DeviceLocalProvisioningIntentStore {
     enum Failure:Error {case unsafeRoot, conflict, uncertain, capacity, io(Int32)}
-    enum Kind:Equatable {case binding,genesis,head,intent,attempt,confirmation,completion,completionBinding,completionHead,completionConfirmation,deliveryIntent,deliveryBinding,deliveryCommand,deliveryPlan,deliveryConfirmation,nativeJoinIntent,nativeJoinBinding,nativeJoinCandidate,nativeJoinConfirmation}
-    enum Boundary:Equatable {case afterCreate(Kind),afterWrite(Kind),afterFileSync(Kind),beforeReplace(Kind),afterReplace(Kind),afterDirectorySync(Kind),beforeDeliveryScopeExit,beforeNativeJoinScopeExit}
+    enum Kind:Equatable {case binding,genesis,head,intent,attempt,confirmation,completion,completionBinding,completionHead,completionConfirmation,deliveryIntent,deliveryBinding,deliveryCommand,deliveryPlan,deliveryConfirmation,nativeJoinIntent,nativeJoinBinding,nativeJoinCandidate,nativeJoinConfirmation,nativeCompletionMethod,nativeCompletionBinding,nativeCompletionRecord,nativeCompletionHead,nativeCompletionConfirm,nativeHTTPMethod,nativeHTTPBinding,nativeHTTPRequest,nativeHTTPResponse}
+    enum Boundary:Equatable {case afterCreate(Kind),afterWrite(Kind),afterFileSync(Kind),beforeReplace(Kind),afterReplace(Kind),afterDirectorySync(Kind),beforeDeliveryScopeExit,beforeNativeJoinScopeExit,beforeNativeCompletionScopeExit,beforeNativeHTTPScopeExit}
     fileprivate struct ID:Codable,Equatable {let device:UInt64,inode:UInt64}
     fileprivate struct Node:Codable,Equatable {let identity:ID;let bytes:Data}
     private struct Binding:Codable,Equatable {
@@ -165,10 +165,12 @@ final class DeviceLocalProvisioningIntentStore {
         plan: DeviceValidatedNativeProvisioningPlan, resourcePermit: DeviceLocalResourcePermit) throws {
         guard original.issuer == ObjectIdentifier(self), original.intent == plan.intentBytes,
               original.candidate == plan.candidateBytes else { throw Failure.conflict }
-        try verifyNativeJoinExact(original.receipt, plan: plan, resourcePermit: resourcePermit)
+        if (nativeHTTPPending ?? nativeHTTPQualified)?.prerequisite === original || nativeHTTPLive?.original === original {
+            try disk(resourcePermit:resourcePermit){c in try nativeHTTPRequireOriginal(c,original,plan:plan)}
+        } else {try verifyNativeJoinExact(original.receipt, plan: plan, resourcePermit: resourcePermit)}
     }
     private var nativeJoinInput:Data?,nativeJoinQualified:NativeJoinTransition?,nativeJoinPending:NativeJoinTransition?
-    private func nativeJoinLeaves(_ c:Context)throws->[String] {try list(c.root,limit:28).filter{Self.nativeJoinNames.contains($0) || $0.hasSuffix(".stage") && Self.nativeJoinNames.contains(String($0.dropLast(6)))}}
+    private func nativeJoinLeaves(_ c:Context)throws->[String] {try list(c.root,limit:rootScanLimit).filter{Self.nativeJoinNames.contains($0) || $0.hasSuffix(".stage") && Self.nativeJoinNames.contains(String($0.dropLast(6)))}}
     private func requireNoNativeJoin(_ c:Context)throws {
         guard nativeJoinInput == nil,nativeJoinPending == nil,nativeJoinQualified == nil,try nativeJoinLeaves(c).isEmpty else{throw Failure.conflict}
     }
@@ -320,6 +322,845 @@ final class DeviceLocalProvisioningIntentStore {
         try verifyNativeJoinTransition(receipt.transition,plan:plan,resourcePermit:resourcePermit)
     }
 
+    // Fixed nonsecret HTTP journals. Dates and server authorization bytes are historical
+    // evidence only; these records never create/revive a process admission lease.
+    enum NativeHTTPPhase:String,Codable {case activation,receipt}
+    private struct NativeHTTPMethod:Codable {
+        let schemaVersion:Int,rootID:UUID,operationID:UUID,selfID:ID
+        let phase:NativeHTTPPhase,activationRequestID:UUID
+        let request:Data,original:[String:NativeFingerprint],prepared:[String:ID]
+    }
+    private struct NativeHTTPBinding:Codable {
+        let schemaVersion:Int,rootID:UUID,operationID:UUID,selfID:ID
+        let method:NativeFingerprint,request:NativeFingerprint,response:NativeFingerprint
+    }
+    final class NativeHTTPTransition:GrantSecretRedacted {
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,phase:NativeHTTPPhase
+        fileprivate let prerequisite:NativePrivatePrerequisite?
+        fileprivate let completion:NativeCompletionTransition?
+        fileprivate let original:[String:Node],nodes:[String:Node],requestID:UUID
+        fileprivate let request:Data,response:Data?
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ phase:NativeHTTPPhase,
+            _ prerequisite:NativePrivatePrerequisite?,_ completion:NativeCompletionTransition?,_ original:[String:Node],_ nodes:[String:Node],
+            _ requestID:UUID,_ request:Data,_ response:Data?) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.phase=phase
+            self.prerequisite=prerequisite;self.completion=completion;self.original=original;self.nodes=nodes
+            self.requestID=requestID;self.request=request;self.response=response
+        }
+    }
+    final class NativeHTTPReceipt:GrantSecretRedacted {
+        fileprivate let transition:NativeHTTPTransition
+        fileprivate init(_ transition:NativeHTTPTransition){self.transition=transition}
+    }
+    private var nativeHTTPScopeActive=false
+    private var nativeHTTPInputs:[String:Data]=[:]
+    private var nativeHTTPPending:NativeHTTPTransition?,nativeHTTPQualified:NativeHTTPTransition?
+    private var nativeHTTPLive:(original:NativePrivatePrerequisite,epoch:UInt64,nodes:[String:Node])?
+    private var nativeHTTPLiveCompletion:(original:NativeCompletionTransition,epoch:UInt64)?
+    private static let nativeHTTPSuffixes:Set<String>=[".activation.method",".activation.binding",".activation.request",".activation.response",".receipt.method",".receipt.binding",".receipt.request",".receipt.ack"]
+    private func nativeHTTPNames(_ c:Context)throws->[String] {
+        try list(c.ops,limit:1548).filter {name in
+            let suffix=String(name.dropFirst(36)),plain=suffix.hasSuffix(".stage") ? String(suffix.dropLast(6)):suffix
+            return Self.nativeHTTPSuffixes.contains(plain)
+        }
+    }
+    private func nativeHTTPPrefix(_ operation:UUID,_ phase:NativeHTTPPhase)->String {operation.uuidString.lowercased()+"."+phase.rawValue}
+    private func nativeHTTPOriginal(_ prerequisite:NativePrivatePrerequisite)throws->[String:Node] {
+        try nativeCompletionSuppliedOriginal(prerequisite).filter{!$0.key.hasPrefix("operations/")}
+    }
+    private func nativeOriginalNode(_ c:Context,_ name:String,limit:Int)throws->Node {
+        if name.hasPrefix("operations/") {
+            let leaf=String(name.dropFirst(11))
+            guard !leaf.contains("/"),Self.nativeHTTPSuffixes.contains(String(leaf.dropFirst(36))) else{throw Failure.conflict}
+            return try require(c.ops,leaf,limit:limit)
+        }
+        guard !name.contains("/") else{throw Failure.conflict};return try require(c.root,name,limit:limit)
+    }
+    private func nativeHTTPOriginalMatches(_ c:Context,_ original:[String:Node],includeHead:Bool)throws {
+        for(name,node)in original where includeHead || name != "head.json" {
+            guard try nativeOriginalNode(c,name,limit:name == "native-completion.record" ? 256*1024:(name == "native-join.candidate" ? 128*1024:65536)) == node else{throw Failure.conflict}
+        }
+    }
+    private func nativeHTTPMethod(_ bytes:Data)throws->NativeHTTPMethod {
+        let v:NativeHTTPMethod=try nativeCompletionDecode(NativeHTTPMethod.self,bytes,["schemaVersion","rootID","operationID","selfID","phase","activationRequestID","request","original","prepared"],limit:32768)
+        guard v.schemaVersion == 1,v.rootID == rootID,v.request.count <= (v.phase == .activation ? 4096:16384),
+              v.prepared.isEmpty || Set(v.prepared.keys) == ["binding","request","response"] else{throw Failure.conflict}
+        let base:Set<String>=["root-binding.json","genesis.json","delivery.intent","delivery.binding","delivery.command","delivery.plan","delivery.confirm","native-join.intent","native-join.binding","native-join.candidate","native-join.confirm"]
+        let prefix="operations/"+nativeHTTPPrefix(v.operationID,.activation)+"."
+        let expected=v.phase == .activation ? base : base.union(["head.json"]).union(Self.nativeCompletionNames).union(["method","binding","request","response"].map{prefix+$0})
+        guard Set(v.original.keys) == expected else{throw Failure.conflict}
+        return v
+    }
+    private func nativeHTTPBinding(_ bytes:Data)throws->NativeHTTPBinding {
+        let v:NativeHTTPBinding=try nativeCompletionDecode(NativeHTTPBinding.self,bytes,["schemaVersion","rootID","operationID","selfID","method","request","response"],limit:65536)
+        guard v.schemaVersion == 1,v.rootID == rootID else{throw Failure.conflict};return v
+    }
+    private func nativeHTTPBindingInput(_ c:Context,_ operation:UUID)throws->DeviceNativeDeliveryCommandBinding {
+        let intent=try decodeDeliveryIntent(require(c.root,"delivery.intent",limit:32768).bytes)
+        // Validate immutable delivery graph without calling inventory: the fixed HTTP
+        // inventory itself invokes this reader, so calling the legacy scanner would recurse.
+        guard Set(try deliveryLeaves(c)) == Self.deliveryNames,intent.nativeOperationID == operation else{throw Failure.conflict}
+        let attached=try Self.deliveryNames.reduce(into:[String:Node]()){result,name in
+            result[name]=try require(c.root,name,limit:name == "delivery.plan" ? 65536:32768)
+        }
+        let d=try decodeDeliveryBinding(attached["delivery.binding"]!.bytes),proof=try decodeDeliveryConfirmation(attached["delivery.confirm"]!.bytes)
+        let rootBinding=try require(c.root,"root-binding.json",limit:16384),genesis=try require(c.root,"genesis.json",limit:32768)
+        let rb=try decodeBinding(rootBinding.bytes),g=try decodeGenesis(genesis.bytes);try checkBinding(c,rb,node:rootBinding)
+        guard d.selfID == attached["delivery.binding"]!.identity,d.intent == attached["delivery.intent"],
+              d.commandID == attached["delivery.command"]!.identity,d.planID == attached["delivery.plan"]!.identity,
+              proof.selfID == attached["delivery.confirm"]!.identity,d.confirmationID == proof.selfID,
+              proof.binding == attached["delivery.binding"],proof.command == Node(identity:d.commandID,bytes:Data()),
+              proof.plan == Node(identity:d.planID,bytes:Data()),rootBinding.identity == intent.bindingID,
+              genesis.identity == intent.genesisID,g.binding == rootBinding,g.initialHeadID == rb.initialHeadID,
+              try DeviceNativeDeliveryAttachmentCodec.hash(rootBinding.bytes) == intent.bindingHash,
+              try DeviceNativeDeliveryAttachmentCodec.hash(genesis.bytes) == intent.genesisHash else{throw Failure.conflict}
+        let actualHead=try require(c.root,"head.json",limit:8192)
+        if actualHead != intent.head {
+            guard nativeCompletionScopeActive else{throw Failure.conflict}
+            let method=try requireEither(c.root,"native-completion.method",limit:32768)
+            let binding=try requireEither(c.root,"native-completion.binding",limit:65536)
+            let m=try nativeCompletionMethod(method.bytes),b=try nativeCompletionBinding(binding.bytes)
+            guard m.operationID == operation,m.rootID == rootID,m.selfID == method.identity,
+                  b.operationID == operation,b.rootID == rootID,b.selfID == binding.identity,
+                  b.method == (try fingerprint(method)),b.baseline == intent.head,b.candidate == actualHead else{throw Failure.conflict}
+        }
+        let command=try require(c.root,"delivery.command",limit:16384).bytes
+        guard command.count == intent.commandBytes,try DeviceNativeDeliveryAttachmentCodec.hash(command) == intent.commandHash,
+              attached["delivery.plan"]!.bytes.count == intent.association.planByteLength,
+              try DeviceNativeDeliveryAttachmentCodec.hash(attached["delivery.plan"]!.bytes) == intent.association.planDigest else{throw Failure.conflict}
+        let raw=try DeviceNativeDeliveryAttachmentCodec.object(command,limit:16384,keys:["schemaVersion","operationId","planId","planDigest","planByteLength","installationId","accountId","locationId","transitionId","sequence","expectedInstalledSetGenerationId","desiredSetGenerationId","resultingSet","resultingSetDigest","executionExpiresAt"])
+        let fields:Set<String>=["schemaVersion","operationId","planId","planDigest","planByteLength","installationId","accountId","locationId","transitionId"]
+        let header=try JSONSerialization.data(withJSONObject:raw.filter{fields.contains($0.key)},options:[.sortedKeys,.withoutEscapingSlashes]).base64EncodedString().replacingOccurrences(of:"+",with:"-").replacingOccurrences(of:"/",with:"_").replacingOccurrences(of:"=",with:"")
+        return try DeviceNativeDeliveryCommandBinding.bind(command:command,associationHeader:header,
+            rawPlan:require(c.root,"delivery.plan",limit:65536).bytes,nativeOperationID:operation,journalRootID:rootID)
+    }
+    private func nativeHTTPGraph(_ c:Context,_ phase:NativeHTTPPhase,_ operation:UUID,
+        allowLive:Bool)throws->[String:Node] {
+        let prefix=nativeHTTPPrefix(operation,phase),last=phase == .activation ? "response":"ack"
+        let expected=Set(["method","binding","request",last].flatMap{[prefix+"."+$0,prefix+"."+$0+".stage"]})
+        let present=Set(try nativeHTTPNames(c).filter{$0.hasPrefix(prefix+".")})
+        guard present.isSubset(of:expected) else{throw Failure.conflict}
+        // A captured live prefix may neither disappear nor be replaced before binding.
+        for(name,id)in live where expected.contains(name) {
+            let base=name.hasSuffix(".stage") ? String(name.dropLast(6)):name
+            guard let node=try either(c.ops,base,limit:65536),node.identity == id else{throw Failure.conflict}
+        }
+        var nodes:[String:Node]=[:]
+        for leaf in ["method","binding","request",last] {
+            if let node=try either(c.ops,prefix+"."+leaf,limit:leaf == "method" ? 32768:65536){nodes[leaf]=node}
+        }
+        guard let methodNode=nodes["method"] else{guard nodes.isEmpty else{throw Failure.conflict};return [:]}
+        if methodNode.bytes.isEmpty {
+            guard allowLive,isLiveEmpty(methodNode,prefix+".method.stage"),nodes.count == 1 else{throw Failure.conflict};return nodes
+        }
+        let method=try nativeHTTPMethod(methodNode.bytes)
+        guard method.selfID == methodNode.identity,method.operationID == operation,method.phase == phase else{throw Failure.conflict}
+        let bindingInput=try nativeHTTPBindingInput(c,operation)
+        _ = try DeviceNativeDeliveryHTTPCodec.observe(method.request,kind:phase == .activation ? .activationRequest:.terminalRequest,
+            binding:bindingInput,requestID:method.activationRequestID,
+            authorizationDigest:phase == .receipt ? nativeHTTPAuthorization(c,operation).authorizationDigest:nil,
+            expectedOutcome:phase == .receipt ? "activated":nil)
+        for(name,marker)in method.original {
+            let node=try nativeOriginalNode(c,name,limit:256*1024)
+            guard try fingerprint(node) == marker else{throw Failure.conflict}
+        }
+        if method.prepared.isEmpty {
+            guard allowLive,live[prefix+".method.stage"] == methodNode.identity || live[prefix+".method"] == methodNode.identity else{throw Failure.conflict}
+            for(leaf,node)in nodes where leaf != "method" {guard node.bytes.isEmpty,live[prefix+"."+leaf+".stage"] == node.identity else{throw Failure.conflict}}
+            return nodes
+        }
+        for(leaf,node)in nodes where leaf != "method" {
+            let key=leaf == last ? "response":leaf
+            guard method.prepared[key] == node.identity else{throw Failure.conflict}
+        }
+        guard let request=nodes["request"],let response=nodes[last],let binding=nodes["binding"] else{throw Failure.conflict}
+        guard request.bytes.isEmpty || request.bytes == method.request else{throw Failure.conflict}
+        if binding.bytes.isEmpty {
+            guard response.bytes.isEmpty else{throw Failure.conflict}
+        } else {
+            let b=try nativeHTTPBinding(binding.bytes)
+            guard b.selfID == binding.identity,b.operationID == operation,b.method == (try fingerprint(methodNode)),
+                  b.request == (try fingerprint(Node(identity:request.identity,bytes:method.request))),
+                  b.response.identity == response.identity else{throw Failure.conflict}
+            if !response.bytes.isEmpty {
+                guard b.response == (try fingerprint(response)) else{throw Failure.conflict}
+                _ = try DeviceNativeDeliveryHTTPCodec.observe(response.bytes,kind:phase == .activation ? .activationResponse:.terminalResponse,
+                    binding:bindingInput,requestID:method.activationRequestID,
+                    authorizationDigest:phase == .receipt ? nativeHTTPAuthorization(c,operation).authorizationDigest:nil,
+                    expectedOutcome:phase == .receipt ? "activated":nil)
+            }
+        }
+        return nodes
+    }
+    private func nativeHTTPAuthorization(_ c:Context,_ operation:UUID)throws->DeviceNativeDeliveryHTTPCodec.Observation {
+        let graph=try nativeHTTPGraph(c,.activation,operation,allowLive:false)
+        guard let response=graph["response"],!response.bytes.isEmpty,
+              let methodNode=graph["method"] else{throw Failure.uncertain}
+        let method=try nativeHTTPMethod(methodNode.bytes)
+        return try DeviceNativeDeliveryHTTPCodec.observe(response.bytes,kind:.activationResponse,
+            binding:nativeHTTPBindingInput(c,operation),requestID:method.activationRequestID)
+    }
+    private func nativeHTTPValidateInventory(_ c:Context)throws {
+        let names=try nativeHTTPNames(c)
+        guard names.count <= 16 else{throw Failure.capacity}
+        var operations=Set<UUID>()
+        for name in names {
+            let prefix=String(name.prefix(36))
+            guard let op=UUID(uuidString:prefix),prefix == op.uuidString.lowercased() else{throw Failure.conflict};operations.insert(op)
+        }
+        guard operations.count <= 1 else{throw Failure.conflict}
+        for operation in operations {
+            _ = try nativeHTTPGraph(c,.activation,operation,allowLive:true)
+            _ = try nativeHTTPGraph(c,.receipt,operation,allowLive:true)
+        }
+    }
+    private func nativeHTTPRequireOriginal(_ c:Context,_ original:NativePrivatePrerequisite,
+        plan:DeviceValidatedNativeProvisioningPlan)throws {
+        guard original.issuer == ObjectIdentifier(self),original.intent == plan.intentBytes,
+              original.candidate == plan.candidateBytes else{throw Failure.conflict}
+        let nodes=try nativeHTTPOriginal(original)
+        // Head may deliberately become the exact native completion head after structural closure.
+        try nativeHTTPOriginalMatches(c,nodes,includeHead:false)
+        if let transition=nativeHTTPQualified,transition.prerequisite === original,
+           transition.epoch == epoch() {
+            try nativeHTTPCheckTransition(c,transition);return
+        }
+        if let live=nativeHTTPLive,live.original === original,live.epoch == epoch() {
+            guard live.nodes == nodes else{throw Failure.conflict};return
+        }
+        guard nativeJoinQualified === original.receipt.transition,
+              original.receipt.transition.epoch == epoch() else{throw Failure.uncertain}
+    }
+    private func nativeHTTPCheckTransition(_ c:Context,_ transition:NativeHTTPTransition)throws {
+        guard transition.issuer == ObjectIdentifier(self),transition.rootID == rootID,
+              transition.epoch == epoch() else{throw Failure.uncertain}
+        try nativeHTTPOriginalMatches(c,transition.original,includeHead:transition.phase == .receipt)
+        let graph=try nativeHTTPGraph(c,transition.phase,try nativeHTTPMethod(transition.nodes["method"]!.bytes).operationID,allowLive:false)
+        guard graph == transition.nodes else{throw Failure.conflict}
+    }
+    func verifyNativeHTTPExact(_ receipt:NativeHTTPReceipt,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in
+            if nativeHTTPQualified === receipt.transition {try nativeHTTPCheckTransition(c,receipt.transition);return}
+            let old=receipt.transition
+            guard old.issuer == ObjectIdentifier(self),old.rootID == rootID,old.response == nil,
+                  (nativeHTTPLive?.original === old.prerequisite && nativeHTTPLive?.epoch == epoch()) ||
+                  (nativeHTTPLiveCompletion?.original === old.completion && nativeHTTPLiveCompletion?.epoch == epoch()) else{throw Failure.uncertain}
+            try nativeHTTPOriginalMatches(c,old.original,includeHead:old.phase == .receipt)
+            let operation=try nativeHTTPMethod(old.nodes["method"]!.bytes).operationID
+            let graph=try nativeHTTPGraph(c,old.phase,operation,allowLive:true)
+            guard graph["method"] == old.nodes["method"],graph["request"] == old.nodes["request"],
+                  graph["binding"]?.identity == old.nodes["binding"]?.identity,
+                  graph[old.phase == .activation ? "response":"ack"]?.identity == old.nodes[old.phase == .activation ? "response":"ack"]?.identity else{throw Failure.conflict}
+        }
+    }
+    func performNativeHTTPExact(_ original:NativePrivatePrerequisite?,plan:DeviceValidatedNativeProvisioningPlan,
+        phase:NativeHTTPPhase,requestID:UUID,request:Data,response:Data?,
+        completed:NativeCompletionReceipt?,commandPermit:DeviceNativeHTTPCommandPermit)throws->NativeHTTPTransition {
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext,nativeHTTPScopeActive,
+              request.count <= (phase == .activation ? 4096:16384),response == nil || response!.count <= (phase == .activation ? 4096:16384) else{throw Failure.conflict}
+        try nativeHTTPValidateInventory(c)
+        let bindingInput=try nativeHTTPBindingInput(c,plan.nativeOperationID)
+        guard bindingInput.commandBytes == plan.delivery.commandBytes,bindingInput.planBytes == plan.delivery.planBytes else{throw Failure.conflict}
+        var originalNodes:[String:Node]
+        if phase == .activation {
+            guard let original else{throw Failure.conflict}
+            originalNodes=try nativeHTTPOriginal(original);try nativeHTTPRequireOriginal(c,original,plan:plan)
+        }
+        else {
+            guard let completed,nativeCompletionQualified === completed.transition,
+                  (completed.transition.epoch == epoch() || ((nativeHTTPPending ?? nativeHTTPQualified)?.completion === completed.transition && (nativeHTTPPending ?? nativeHTTPQualified)?.epoch == epoch()) || (nativeHTTPLiveCompletion?.original === completed.transition && nativeHTTPLiveCompletion?.epoch == epoch())),completed.operationID == plan.nativeOperationID else{throw Failure.uncertain}
+            try verifyNativeCompletionTransitionInContext(c,completed.transition,plan:plan)
+            originalNodes=completed.transition.original
+            originalNodes["head.json"]=try require(c.root,"head.json",limit:8192)
+            for name in Self.nativeCompletionNames {originalNodes[name]=try require(c.root,name,limit:256*1024)}
+        }
+        let auth=phase == .receipt ? try nativeHTTPAuthorization(c,plan.nativeOperationID):nil
+        if let auth {guard auth.activationRequestID == requestID else{throw Failure.conflict}}
+        _ = try DeviceNativeDeliveryHTTPCodec.observe(request,kind:phase == .activation ? .activationRequest:.terminalRequest,
+            binding:bindingInput,requestID:requestID,authorizationDigest:auth?.authorizationDigest,
+            expectedOutcome:phase == .receipt ? "activated":nil)
+        if let response {_ = try DeviceNativeDeliveryHTTPCodec.observe(response,kind:phase == .activation ? .activationResponse:.terminalResponse,
+            binding:bindingInput,requestID:requestID,authorizationDigest:auth?.authorizationDigest,
+            expectedOutcome:phase == .receipt ? "activated":nil)}
+        let prefix=nativeHTTPPrefix(plan.nativeOperationID,phase),last=phase == .activation ? "response":"ack"
+        let key=prefix+".request",responseKey=prefix+"."+last
+        if let saved=nativeHTTPInputs[key] {guard saved == request else{throw Failure.conflict}}
+        if let response,let saved=nativeHTTPInputs[responseKey] {guard saved == response else{throw Failure.conflict}}
+        let before=try nativeHTTPGraph(c,phase,plan.nativeOperationID,allowLive:true)
+        if let methodNode=before["method"],!methodNode.bytes.isEmpty {
+            let m=try nativeHTTPMethod(methodNode.bytes)
+            guard m.request == request,m.activationRequestID == requestID,
+                  m.original == (try originalNodes.filter{phase != .activation || $0.key != "head.json"}.mapValues{try fingerprint($0)}) else{throw Failure.conflict}
+        }
+        if let response,let existing=before[last],!existing.bytes.isEmpty {guard existing.bytes == response else{throw Failure.conflict}}
+        // Reserve exact worst-case encoded method/binding and both installed/staging copies.
+        let maxID=ID(device:UInt64.max,inode:UInt64.max)
+        let markers=try originalNodes.filter{phase != .activation || $0.key != "head.json"}.mapValues{try fingerprint($0)}
+        let sample=try DeviceLocalCompleteSetBounds.encode(NativeHTTPMethod(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:maxID,phase:phase,activationRequestID:requestID,request:request,original:markers,prepared:["binding":maxID,"request":maxID,"response":maxID]),maximum:32768)
+        let responseBytes=response ?? Data()
+        let sampleBinding=try DeviceLocalCompleteSetBounds.encode(NativeHTTPBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:maxID,
+            method:NativeFingerprint(identity:maxID,byteCount:sample.count,digest:String(repeating:"f",count:64)),
+            request:NativeFingerprint(identity:maxID,byteCount:request.count,digest:String(repeating:"f",count:64)),
+            response:NativeFingerprint(identity:maxID,byteCount:responseBytes.count,digest:String(repeating:"f",count:64))),maximum:65536)
+        var total=0
+        for name in try list(c.root,limit:rootScanLimit) where name != "operations" && name != "provisioning.lock" {
+            let n=try require(c.root,name,limit:ProvisioningIntentCodec.limit)
+            guard total <= Self.retainedIntentLimit-n.bytes.count else{throw Failure.capacity};total += n.bytes.count
+        }
+        for name in try list(c.ops,limit:1548) {
+            let n=try require(c.ops,name,limit:ProvisioningIntentCodec.limit)
+            guard total <= Self.retainedIntentLimit-n.bytes.count else{throw Failure.capacity};total += n.bytes.count
+        }
+        let reserved=2*(sample.count+sampleBinding.count+request.count+responseBytes.count)
+        guard total <= Self.retainedIntentLimit-reserved else{throw Failure.capacity}
+        // Original exact input latches precede epoch invalidation and every creation.
+        nativeHTTPInputs[key]=request;if let response {nativeHTTPInputs[responseKey]=response}
+        nativeHTTPQualified=nil;nativeHTTPPending=nil;let now=epoch(true)
+        if let original {nativeHTTPLive=(original,now,try nativeHTTPOriginal(original))}
+        if let completed{nativeHTTPLiveCompletion=(completed.transition,now)}
+        let methodID:ID
+        if let m=before["method"] {methodID=m.identity}
+        else {methodID=try allocate(c.ops,prefix+".method.stage",kind:.nativeHTTPMethod)}
+        let reservedMethod=Node(identity:methodID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeHTTPMethod(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:methodID,phase:phase,activationRequestID:requestID,request:request,original:markers,prepared:[:]),maximum:32768))
+        var prepared:[String:ID]
+        if let old=before["method"],!old.bytes.isEmpty {prepared=try nativeHTTPMethod(old.bytes).prepared}else{prepared=[:]}
+        if prepared.isEmpty {
+            // The exact durable reservation precedes creation of dependent candidates.
+            try fill(c.ops,prefix+".method.stage",reservedMethod,kind:.nativeHTTPMethod)
+            try sync(c.ops);try boundary(.afterDirectorySync(.nativeHTTPMethod))
+            prepared=["request":try allocate(c.ops,prefix+".request.stage",kind:.nativeHTTPRequest),
+                "response":try allocate(c.ops,prefix+"."+last+".stage",kind:.nativeHTTPResponse),
+                "binding":try allocate(c.ops,prefix+".binding.stage",kind:.nativeHTTPBinding)]
+            let method=Node(identity:methodID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeHTTPMethod(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:methodID,phase:phase,activationRequestID:requestID,request:request,original:markers,prepared:prepared),maximum:32768))
+            try fill(c.ops,prefix+".method.stage",method,kind:.nativeHTTPMethod)
+        }
+        let method=try requireEither(c.ops,prefix+".method",limit:32768)
+        try promote(c,parent:c.ops,name:prefix+".method",expected:method,kind:.nativeHTTPMethod)
+        let requestNode=Node(identity:prepared["request"]!,bytes:request)
+        if try read(c.ops,prefix+".request",limit:16384) == nil {
+            guard try require(c.ops,prefix+".request.stage",limit:16384).identity == requestNode.identity else{throw Failure.conflict}
+            try fill(c.ops,prefix+".request.stage",requestNode,kind:.nativeHTTPRequest)
+        }
+        try promote(c,parent:c.ops,name:prefix+".request",expected:requestNode,kind:.nativeHTTPRequest)
+        if let response {
+            let responseNode=Node(identity:prepared["response"]!,bytes:response)
+            let bound=Node(identity:prepared["binding"]!,bytes:try DeviceLocalCompleteSetBounds.encode(NativeHTTPBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:prepared["binding"]!,method:try fingerprint(method),request:try fingerprint(requestNode),response:try fingerprint(responseNode)),maximum:65536))
+            if let existing=try read(c.ops,prefix+".binding",limit:65536){guard existing == bound else{throw Failure.conflict}}
+            else {try fill(c.ops,prefix+".binding.stage",bound,kind:.nativeHTTPBinding)}
+            try promote(c,parent:c.ops,name:prefix+".binding",expected:bound,kind:.nativeHTTPBinding)
+            if let existing=try read(c.ops,prefix+"."+last,limit:16384){guard existing == responseNode else{throw Failure.conflict}}
+            else {try fill(c.ops,prefix+"."+last+".stage",responseNode,kind:.nativeHTTPResponse)}
+            try promote(c,parent:c.ops,name:prefix+"."+last,expected:responseNode,kind:.nativeHTTPResponse)
+        }
+        for name in ["root-binding.json","genesis.json"] {try syncExisting(c.root,name,originalNodes[name]!,kind:.binding)}
+        try sync(c.lock);try sync(c.ops);try sync(c.root)
+        let final=try nativeHTTPGraph(c,phase,plan.nativeOperationID,allowLive:false)
+        guard final["request"] == requestNode,epoch() == now else{throw Failure.uncertain}
+        let transition=NativeHTTPTransition(ObjectIdentifier(self),rootID,now,phase,original,completed?.transition,originalNodes,final,requestID,request,response)
+        nativeHTTPPending=transition;return transition
+    }
+    private func verifyNativeCompletionTransitionInContext(_ c:Context,_ transition:NativeCompletionTransition,
+        plan:DeviceValidatedNativeProvisioningPlan)throws {
+        guard transition.issuer == ObjectIdentifier(self),transition.rootID == rootID,transition.operationID == plan.nativeOperationID else{throw Failure.uncertain}
+        let bridge=nativeHTTPPending ?? nativeHTTPQualified
+        guard transition.epoch == epoch() || (bridge?.completion === transition && bridge?.epoch == epoch()) || (nativeHTTPLiveCompletion?.original === transition && nativeHTTPLiveCompletion?.epoch == epoch()) else{throw Failure.uncertain}
+        let value=try nativeCompletionPreflight(c,plan:plan,envelope:transition.envelope,structuralRootID:plan.roots.structuralID,original:transition.original)
+        var nodes=value.nodes;nodes["head.json"]=try require(c.root,"head.json",limit:8192)
+        guard value.original == transition.original,nodes == transition.nodes else{throw Failure.conflict}
+    }
+    func verifyNativeCompletionReceiptExact(_ receipt:NativeCompletionReceipt,
+        plan:DeviceValidatedNativeProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in
+            guard nativeCompletionQualified === receipt.transition else{throw Failure.uncertain}
+            try verifyNativeCompletionTransitionInContext(c,receipt.transition,plan:plan)
+        }
+    }
+    func verifyNativeHTTPTransitionExact(_ transition:NativeHTTPTransition,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in try nativeHTTPCheckTransition(c,transition)}
+    }
+    func publishNativeHTTPExact(_ transition:NativeHTTPTransition,publicationPermit:DeviceNativeHTTPPublicationPermit)throws->NativeHTTPReceipt {
+        try publicationPermit.validate(transition);try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
+        mutex.lock();defer{mutex.unlock()}
+        guard transition.issuer == ObjectIdentifier(self),transition.rootID == rootID,transition.epoch == epoch(),
+              nativeHTTPPending === transition else{throw Failure.uncertain}
+        nativeHTTPQualified=transition;nativeHTTPPending=nil;return .init(transition)
+    }
+    func discardNativeHTTPExact(_ transition:NativeHTTPTransition)throws {
+        try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
+        mutex.lock();defer{mutex.unlock()}
+        guard transition.issuer == ObjectIdentifier(self),transition.rootID == rootID,transition.epoch == epoch() else{return}
+        if nativeHTTPPending === transition {nativeHTTPPending=nil}
+        if nativeHTTPQualified === transition {nativeHTTPQualified=nil}
+    }
+    func maximumNativeHTTPEncoderSizesForTesting()throws->[String:Int] {
+        let id=ID(device:UInt64.max,inode:UInt64.max),op=UUID()
+        let marker=NativeFingerprint(identity:id,byteCount:262144,digest:String(repeating:"f",count:64))
+        let rootNames=["root-binding.json","genesis.json","delivery.intent","delivery.binding","delivery.command","delivery.plan","delivery.confirm","native-join.intent","native-join.binding","native-join.candidate","native-join.confirm","head.json"]+Self.nativeCompletionNames.sorted()
+        var original=Dictionary(uniqueKeysWithValues:rootNames.map{($0,marker)})
+        for leaf in ["method","binding","request","response"]{original["operations/"+nativeHTTPPrefix(op,.activation)+"."+leaf]=marker}
+        let method=try DeviceLocalCompleteSetBounds.encode(NativeHTTPMethod(schemaVersion:1,rootID:rootID,operationID:op,selfID:id,phase:.receipt,activationRequestID:UUID(),request:Data(repeating:120,count:16384),original:original,prepared:["binding":id,"request":id,"response":id]),maximum:32768)
+        let binding=try DeviceLocalCompleteSetBounds.encode(NativeHTTPBinding(schemaVersion:1,rootID:rootID,operationID:op,selfID:id,method:marker,request:marker,response:marker),maximum:65536)
+        return ["method":method.count,"binding":binding.count,"request":16384,"response":16384,"reservedCopies":2*(method.count+binding.count+32768)]
+    }
+    func withNativeHTTPResourceGateScope(_ permit:DeviceLocalResourcePermit,_ body:()throws->Void)throws {
+        try permit.beginAcquisition(resourceGateDescriptor);mutex.lock();defer{permit.invalidate();mutex.unlock()}
+        nativeHTTPScopeActive=true;nativeCompletionScopeActive=true
+        defer{nativeHTTPScopeActive=false;nativeCompletionScopeActive=false}
+        try diskContext(create:false,releasePermit:permit){c in
+            try nativeHTTPValidateInventory(c)
+            borrowedResourceContext=c;defer{borrowedResourceContext=nil;permit.invalidate()}
+            try body();try nativeHTTPValidateInventory(c);try boundary(.beforeNativeHTTPScopeExit);try boundary(.beforeNativeCompletionScopeExit);try check(c)
+        }
+    }
+
+    // Native completion is separate from Local v1/v2 head and receipt formats. Original
+    // authorization is not a lease; this mechanical command cannot authorize dispatch.
+    private static let nativeCompletionNames:Set<String>=["native-completion.method","native-completion.binding","native-completion.record","native-completion.confirm"]
+    private var nativeCompletionHeadStage:(operationID:UUID,envelope:Data,identity:ID)?
+    private var nativeCompletionScopeActive=false
+    private var rootScanLimit:Int {nativeCompletionScopeActive ? 36:28}
+    private struct NativeCompletionMethod:Codable {
+        let schemaVersion:Int,rootID:UUID,operationID:UUID,selfID:ID
+        let structuralRootID:UUID,generationID:UUID
+        let original:[String:NativeFingerprint],candidate:NativeFingerprint
+    }
+    private struct NativeCompletionHead:Codable {
+        let schemaVersion:Int,genesisID:ID,operationID:UUID,intentID:ID,completionID:ID
+    }
+    private struct NativeCompletionBinding:Codable {
+        let schemaVersion:Int,rootID:UUID,operationID:UUID,selfID:ID
+        let method:NativeFingerprint,baseline:Node,candidate:Node,recordID:ID,confirmationID:ID
+    }
+    private struct NativeCompletionRecord:Codable {
+        let schemaVersion:Int,rootID:UUID,operationID:UUID,selfID:ID
+        let association:DeviceNativeDeliveryCommandBinding.Association
+        let structuralRootID:UUID,generationID:UUID,envelope:Data
+        let originalIntent:NativeFingerprint
+    }
+    private struct NativeCompletionConfirm:Codable {
+        let schemaVersion:Int,selfID:ID,binding:NativeFingerprint,head:NativeFingerprint,record:NativeFingerprint
+    }
+    final class NativeCompletionTransition {
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,operationID:UUID
+        fileprivate let original:[String:Node],nodes:[String:Node],envelope:Data
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ operationID:UUID,
+                         _ original:[String:Node],_ nodes:[String:Node],_ envelope:Data) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.operationID=operationID
+            self.original=original;self.nodes=nodes;self.envelope=envelope
+        }
+    }
+    final class NativeCompletionReceipt:GrantSecretRedacted {
+        let operationID:UUID
+        fileprivate let transition:NativeCompletionTransition
+        fileprivate init(_ transition:NativeCompletionTransition){self.transition=transition;operationID=transition.operationID}
+    }
+    private var nativeCompletionInputs:[UUID:Data]=[:]
+    private var nativeCompletionPending:NativeCompletionTransition?,nativeCompletionQualified:NativeCompletionTransition?
+    private func nativeCompletionLeaves(_ c:Context)throws->[String] {
+        try list(c.root,limit:rootScanLimit).filter{Self.nativeCompletionNames.contains($0) || $0.hasSuffix(".stage") && Self.nativeCompletionNames.contains(String($0.dropLast(6)))}
+    }
+    private func nativeCompletionObject(_ bytes:Data,_ keys:Set<String>,limit:Int=65536)throws {
+        let object=try StructuralStoreCodec.object(bytes,limit:limit)
+        try StructuralStoreCodec.keys(object,required:keys)
+    }
+    private func nativeCompletionDecode<T:Codable>(_ type:T.Type,_ bytes:Data,_ keys:Set<String>,limit:Int)throws->T {
+        try nativeCompletionObject(bytes,keys,limit:limit)
+        let value=try JSONDecoder().decode(type,from:bytes)
+        guard try DeviceLocalCompleteSetBounds.encode(value,maximum:limit) == bytes else{throw Failure.conflict}
+        return value
+    }
+    private func nativeCompletionMethod(_ bytes:Data)throws->NativeCompletionMethod {
+        try nativeCompletionDecode(NativeCompletionMethod.self,bytes,["schemaVersion","rootID","operationID","selfID","structuralRootID","generationID","original","candidate"],limit:32768)
+    }
+    private func nativeCompletionBinding(_ bytes:Data)throws->NativeCompletionBinding {
+        try nativeCompletionDecode(NativeCompletionBinding.self,bytes,["schemaVersion","rootID","operationID","selfID","method","baseline","candidate","recordID","confirmationID"],limit:65536)
+    }
+    private func nativeCompletionRecord(_ bytes:Data)throws->NativeCompletionRecord {
+        try nativeCompletionDecode(NativeCompletionRecord.self,bytes,["schemaVersion","rootID","operationID","selfID","association","structuralRootID","generationID","envelope","originalIntent"],limit:256*1024)
+    }
+    private func nativeCompletionConfirm(_ bytes:Data)throws->NativeCompletionConfirm {
+        try nativeCompletionDecode(NativeCompletionConfirm.self,bytes,["schemaVersion","selfID","binding","head","record"],limit:65536)
+    }
+    private func nativeCompletionOriginalNodes(_ c:Context,_ baseline:Node)throws->[String:Node] {
+        var nodes:[String:Node]=[:]
+        for name in ["root-binding.json","genesis.json","delivery.intent","delivery.binding","delivery.command","delivery.plan","delivery.confirm","native-join.intent","native-join.binding","native-join.candidate","native-join.confirm"] {
+            nodes[name]=try require(c.root,name,limit:128*1024)
+        }
+        nodes["head.json"]=baseline
+        let operation=try decodeDeliveryIntent(require(c.root,"delivery.intent",limit:32768).bytes).nativeOperationID
+        let graph=try nativeHTTPGraph(c,.activation,operation,allowLive:false)
+        if !graph.isEmpty {
+            guard graph["response"]?.bytes.isEmpty == false,graph["binding"]?.bytes.isEmpty == false else{throw Failure.uncertain}
+            for(leaf,node)in graph {nodes["operations/"+nativeHTTPPrefix(operation,.activation)+"."+leaf]=node}
+        }
+        return nodes
+    }
+    /// Full retained Local history is checked against the method-bound predecessor head,
+    /// never against a caller-selected head or by silently ignoring the actual native head.
+    private func nativeCompletionLegacyInventory(_ c:Context,_ baseline:Node)throws->State {
+        try inventory(c,allowDeliveryAttachment:true,nativePredecessor:baseline)
+    }
+    private func nativeCompletionPreflight(_ c:Context,plan:DeviceValidatedNativeProvisioningPlan,
+        envelope:Data,structuralRootID:UUID,original supplied:[String:Node])throws->(original:[String:Node],nodes:[String:Node]) {
+        guard envelope == plan.candidateBytes,envelope.count <= 128*1024,
+              plan.intentBytes.count <= 32768,structuralRootID == plan.roots.structuralID else{throw Failure.conflict}
+        let candidate=try DeviceNativeStructuralEnvelopeCodec.decode(envelope)
+        let state=try DeviceNativeStructuralStateCodec.decode(candidate.snapshotBytes)
+        guard candidate.operationID == plan.nativeOperationID else{throw Failure.conflict}
+        if let exact=nativeCompletionInputs[plan.nativeOperationID] {guard exact == envelope else{throw Failure.conflict}}
+        var nodes:[String:Node]=[:]
+        for name in Self.nativeCompletionNames {if let n=try either(c.root,name,limit:256*1024){nodes[name]=n}}
+        let methodNode=nodes["native-completion.method"],bindingNode=nodes["native-completion.binding"]
+        var original=supplied
+        if let methodNode,!methodNode.bytes.isEmpty {
+            let method=try nativeCompletionMethod(methodNode.bytes)
+            guard method.schemaVersion == 3,method.rootID == rootID,method.operationID == plan.nativeOperationID,
+                  method.selfID == methodNode.identity,method.structuralRootID == structuralRootID,
+                  method.generationID == state.generationID else{throw Failure.conflict}
+            if let bindingNode,!bindingNode.bytes.isEmpty {
+                let b=try nativeCompletionBinding(bindingNode.bytes)
+                guard b.schemaVersion == 3,b.rootID == rootID,b.operationID == plan.nativeOperationID,
+                      b.selfID == bindingNode.identity,b.method == (try fingerprint(methodNode)) else{throw Failure.conflict}
+                original=try nativeCompletionOriginalNodes(c,b.baseline)
+                guard nodes["native-completion.record"]?.identity == b.recordID,
+                      nodes["native-completion.confirm"]?.identity == b.confirmationID else{throw Failure.conflict}
+                let head=try nativeCompletionDecode(NativeCompletionHead.self,b.candidate.bytes,["schemaVersion","genesisID","operationID","intentID","completionID"],limit:8192)
+                                guard head.schemaVersion == 3,head.genesisID == (try require(c.root,"genesis.json",limit:32768)).identity,
+                      head.operationID == plan.nativeOperationID,head.intentID == original["native-join.intent"]!.identity,
+                      head.completionID == b.recordID else{throw Failure.conflict}
+                let current=try require(c.root,"head.json",limit:8192)
+                guard current == b.baseline || current == b.candidate else{throw Failure.conflict}
+                if let staged=try read(c.root,"head.json.stage",limit:8192) {
+                    guard staged == b.candidate || live["head.json.stage"] == staged.identity && staged.bytes.isEmpty else{throw Failure.conflict}
+                } else if current != b.candidate {throw Failure.conflict}
+                if let record=nodes["native-completion.record"],!record.bytes.isEmpty {
+                    let r=try nativeCompletionRecord(record.bytes)
+                    guard r.schemaVersion == 3,r.rootID == rootID,r.operationID == plan.nativeOperationID,r.selfID == record.identity,
+                          r.association == plan.delivery.association,r.structuralRootID == structuralRootID,r.generationID == state.generationID,
+                          r.envelope == envelope,r.originalIntent == (try fingerprint(original["native-join.intent"]!)) else{throw Failure.conflict}
+                }
+                if let confirmation=nodes["native-completion.confirm"],!confirmation.bytes.isEmpty {
+                    let proof=try nativeCompletionConfirm(confirmation.bytes)
+                    guard let record=nodes["native-completion.record"],proof.schemaVersion == 3,proof.selfID == confirmation.identity,
+                          proof.binding == (try fingerprint(bindingNode)),proof.head == (try fingerprint(b.candidate)),
+                          proof.record == (try fingerprint(record)) else{throw Failure.conflict}
+                }
+            } else {
+                guard nativeCompletionInputs[plan.nativeOperationID] == envelope,live["native-completion.method.stage"] == methodNode.identity else{throw Failure.conflict}
+            }
+            var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(node)}
+            guard method.original == markers,method.candidate.byteCount == envelope.count,
+                  method.candidate.digest == (try DeviceNativeDeliveryAttachmentCodec.hash(envelope)) else{throw Failure.conflict}
+        } else if !nodes.isEmpty {
+            guard nativeCompletionInputs[plan.nativeOperationID] == envelope else{throw Failure.conflict}
+        }
+        // Captured live prefix cannot disappear or be replaced before reciprocal binding exists.
+        if bindingNode == nil || bindingNode!.bytes.isEmpty {
+            for name in Self.nativeCompletionNames {
+                if let id=live[name+".stage"] {guard nodes[name]?.identity == id else{throw Failure.conflict}}
+                if let node=nodes[name],name != "native-completion.method" {guard node.bytes.isEmpty,live[name+".stage"] == node.identity else{throw Failure.conflict}}
+            }
+        }
+        if bindingNode == nil || bindingNode!.bytes.isEmpty {
+            let head=try require(c.root,"head.json",limit:8192)
+            guard head == original["head.json"] else{throw Failure.conflict}
+            if let captured=nativeCompletionHeadStage {guard captured.operationID == plan.nativeOperationID,captured.envelope == envelope,try read(c.root,"head.json.stage",limit:8192)?.identity == captured.identity else{throw Failure.conflict}}
+            if let staged=try read(c.root,"head.json.stage",limit:8192) {guard staged.bytes.isEmpty,nativeCompletionHeadStage?.operationID == plan.nativeOperationID,nativeCompletionHeadStage?.envelope == envelope,nativeCompletionHeadStage?.identity == staged.identity else{throw Failure.conflict}}
+        }
+        guard original["native-join.intent"]?.bytes == plan.intentBytes,
+              original["native-join.candidate"]?.bytes == envelope,
+              original["delivery.command"]?.bytes == plan.delivery.commandBytes,
+              original["delivery.plan"]?.bytes == plan.delivery.planBytes else{throw Failure.conflict}
+        for (name,node) in original where name != "head.json" {guard try nativeOriginalNode(c,name,limit:128*1024) == node else{throw Failure.conflict}}
+        let history=try nativeCompletionLegacyInventory(c,original["head.json"]!)
+        guard history.operation == nil || history.completed,history.terminalCount < 128 else{throw Failure.capacity}
+        // Actual encoded maximum-width inode shape is reserved before epoch/effects.
+        let dummy=ID(device:UInt64.max,inode:UInt64.max)
+        var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(node)}
+        let method=try DeviceLocalCompleteSetBounds.encode(NativeCompletionMethod(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,structuralRootID:structuralRootID,generationID:state.generationID,original:markers,candidate:NativeFingerprint(identity:dummy,byteCount:envelope.count,digest:try DeviceNativeDeliveryAttachmentCodec.hash(envelope))),maximum:32768)
+        let head=Node(identity:dummy,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionHead(schemaVersion:3,genesisID:dummy,operationID:plan.nativeOperationID,intentID:dummy,completionID:dummy),maximum:8192))
+        let binding=try DeviceLocalCompleteSetBounds.encode(NativeCompletionBinding(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,method:try fingerprint(Node(identity:dummy,bytes:method)),baseline:original["head.json"]!,candidate:head,recordID:dummy,confirmationID:dummy),maximum:65536)
+        let record=try DeviceLocalCompleteSetBounds.encode(NativeCompletionRecord(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,association:plan.delivery.association,structuralRootID:structuralRootID,generationID:state.generationID,envelope:envelope,originalIntent:try fingerprint(original["native-join.intent"]!)),maximum:256*1024)
+        let confirmation=try DeviceLocalCompleteSetBounds.encode(NativeCompletionConfirm(schemaVersion:3,selfID:dummy,binding:try fingerprint(Node(identity:dummy,bytes:binding)),head:try fingerprint(head),record:try fingerprint(Node(identity:dummy,bytes:record))),maximum:65536)
+        var total=0
+        for name in try list(c.root,limit:36) where name != "operations" && name != "provisioning.lock" {
+            let count=try require(c.root,name,limit:ProvisioningIntentCodec.limit).bytes.count
+            guard total <= Self.retainedIntentLimit-count else{throw Failure.capacity};total += count
+        }
+        for name in try list(c.ops,limit:1548) {
+            let count=try require(c.ops,name,limit:ProvisioningIntentCodec.limit).bytes.count
+            guard total <= Self.retainedIntentLimit-count else{throw Failure.capacity};total += count
+        }
+        for bytes in [method,binding,record,confirmation,head.bytes] {
+            guard bytes.count <= (Self.retainedIntentLimit-total)/2 else{throw Failure.capacity};total += bytes.count*2
+        }
+        return(original,nodes)
+    }
+    private func nativeCompletionSuppliedOriginal(_ prerequisite:NativePrivatePrerequisite)throws->[String:Node] {
+        guard prerequisite.issuer == ObjectIdentifier(self),prerequisite.receipt.transition.original.rootID == rootID else{throw Failure.conflict}
+        var nodes=prerequisite.receipt.transition.original.nodes
+        nodes["root-binding.json"]=nodes.removeValue(forKey:"rootBinding")
+        nodes["genesis.json"]=nodes.removeValue(forKey:"genesis")
+        nodes["head.json"]=nodes.removeValue(forKey:"head")
+        for (key,node) in prerequisite.receipt.transition.nodes {nodes[key]=node}
+        if let http=nativeHTTPPending ?? nativeHTTPQualified,http.prerequisite === prerequisite {
+            if http.phase == .activation,http.response != nil {
+                for(leaf,node)in http.nodes {nodes["operations/"+nativeHTTPPrefix(prerequisite.receipt.nativeOperationID,.activation)+"."+leaf]=node}
+            } else if let completed=http.completion {
+                for(key,node)in completed.original where key.hasPrefix("operations/"){nodes[key]=node}
+            }
+        } else if let completed=nativeHTTPLiveCompletion?.original {
+            for(key,node)in completed.original where key.hasPrefix("operations/"){nodes[key]=node}
+        }
+        return nodes
+    }
+    func verifyNativeCompletionAntecedentsExact(_ prerequisite:NativePrivatePrerequisite,
+        plan:DeviceValidatedNativeProvisioningPlan,envelope:Data,structuralRootID:UUID,
+        resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in
+            let original=try nativeCompletionSuppliedOriginal(prerequisite)
+            guard prerequisite.intent == plan.intentBytes,prerequisite.candidate == plan.candidateBytes else{throw Failure.conflict}
+            let retained=try nativeCompletionPreflight(c,plan:plan,envelope:envelope,structuralRootID:structuralRootID,original:original)
+            guard retained.original == original else{throw Failure.conflict}
+            if retained.nodes.isEmpty {
+                try nativeHTTPRequireOriginal(c,prerequisite,plan:plan)
+            }
+        }
+    }
+    func performNativeCompletionExact(_ prerequisite:NativePrivatePrerequisite,
+        plan:DeviceValidatedNativeProvisioningPlan,envelope:Data,structuralRootID:UUID,
+        commandPermit:DeviceNativeCompletionCommandPermit)throws->NativeCompletionTransition {
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext,nativeCompletionScopeActive else{throw Failure.uncertain}
+        let original=try nativeCompletionSuppliedOriginal(prerequisite)
+        guard prerequisite.intent == plan.intentBytes,prerequisite.candidate == envelope else{throw Failure.conflict}
+        let retained=try nativeCompletionPreflight(c,plan:plan,envelope:envelope,structuralRootID:structuralRootID,original:original)
+        let initialQualified:Bool
+        if retained.nodes.isEmpty {try nativeHTTPRequireOriginal(c,prerequisite,plan:plan);initialQualified=true}
+        else{initialQualified=false}
+        return try finishNativeCompletion(c,plan:plan,envelope:envelope,structuralRootID:structuralRootID,
+            original:original,initialQualified:initialQualified)
+    }
+    private func finishNativeCompletion(_ c:Context,plan:DeviceValidatedNativeProvisioningPlan,
+        envelope:Data,structuralRootID:UUID,original:[String:Node],initialQualified:Bool)throws->NativeCompletionTransition {
+        let before=try nativeCompletionPreflight(c,plan:plan,envelope:envelope,structuralRootID:structuralRootID,original:original)
+        guard before.original == original else{throw Failure.conflict}
+        if before.nodes.isEmpty {guard initialQualified else{throw Failure.uncertain}}
+        // Exact original nonsecret input and all reservation checks precede invalidation.
+        nativeCompletionInputs[plan.nativeOperationID]=envelope
+        nativeCompletionQualified=nil;nativeCompletionPending=nil
+        let attemptEpoch=epoch(true)
+        let next=try DeviceNativeStructuralStateCodec.decode(DeviceNativeStructuralEnvelopeCodec.decode(envelope).snapshotBytes)
+        var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(node)}
+        let method:Node
+        if let existing=before.nodes["native-completion.method"],!existing.bytes.isEmpty {method=existing}
+        else {
+            let id=try allocate(c.root,"native-completion.method.stage",kind:.nativeCompletionMethod)
+            method=Node(identity:id,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionMethod(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:id,structuralRootID:structuralRootID,generationID:next.generationID,original:markers,candidate:NativeFingerprint(identity:id,byteCount:envelope.count,digest:try DeviceNativeDeliveryAttachmentCodec.hash(envelope))),maximum:32768))
+            try fill(c.root,"native-completion.method.stage",method,kind:.nativeCompletionMethod)
+        }
+        try promote(c,parent:c.root,name:"native-completion.method",expected:method,kind:.nativeCompletionMethod)
+        let binding:Node
+        if let existing=before.nodes["native-completion.binding"],!existing.bytes.isEmpty {binding=existing}
+        else {
+            let recordID=try allocate(c.root,"native-completion.record.stage",kind:.nativeCompletionRecord)
+            let priorHeadStageID=live["head.json.stage"]
+            let headID:ID
+            do {headID=try allocate(c.root,"head.json.stage",kind:.nativeCompletionHead)} catch {
+                // allocate captures the created inode before invoking the fault seam.
+                if let created=live["head.json.stage"],created != priorHeadStageID {
+                    nativeCompletionHeadStage=(plan.nativeOperationID,envelope,created)
+                }
+                throw error
+            }
+            nativeCompletionHeadStage=(plan.nativeOperationID,envelope,headID)
+            let confirmID=try allocate(c.root,"native-completion.confirm.stage",kind:.nativeCompletionConfirm)
+            let bindingID=try allocate(c.root,"native-completion.binding.stage",kind:.nativeCompletionBinding)
+            let head=Node(identity:headID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionHead(schemaVersion:3,genesisID:original["genesis.json"]!.identity,operationID:plan.nativeOperationID,intentID:original["native-join.intent"]!.identity,completionID:recordID),maximum:8192))
+            binding=Node(identity:bindingID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionBinding(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:bindingID,method:try fingerprint(method),baseline:original["head.json"]!,candidate:head,recordID:recordID,confirmationID:confirmID),maximum:65536))
+            // Persistent inode graph precedes every dependent record/head/confirmation payload.
+            try fill(c.root,"native-completion.binding.stage",binding,kind:.nativeCompletionBinding)
+        }
+        try promote(c,parent:c.root,name:"native-completion.binding",expected:binding,kind:.nativeCompletionBinding)
+        let bound=try nativeCompletionBinding(binding.bytes)
+        let record=Node(identity:bound.recordID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionRecord(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:bound.recordID,association:plan.delivery.association,structuralRootID:structuralRootID,generationID:next.generationID,envelope:envelope,originalIntent:try fingerprint(original["native-join.intent"]!)),maximum:256*1024))
+        if try read(c.root,"native-completion.record",limit:256*1024) == nil {
+            guard try require(c.root,"native-completion.record.stage",limit:256*1024).identity == record.identity else{throw Failure.conflict}
+            try fill(c.root,"native-completion.record.stage",record,kind:.nativeCompletionRecord)
+        }
+        try promote(c,parent:c.root,name:"native-completion.record",expected:record,kind:.nativeCompletionRecord)
+        let current=try require(c.root,"head.json",limit:8192)
+        if current == bound.baseline {
+            let staged=try require(c.root,"head.json.stage",limit:8192)
+            guard staged.identity == bound.candidate.identity,staged.bytes.isEmpty || staged == bound.candidate else{throw Failure.conflict}
+            try fill(c.root,"head.json.stage",bound.candidate,kind:.nativeCompletionHead)
+            try boundary(.beforeReplace(.nativeCompletionHead));try check(c)
+            guard try require(c.root,"head.json",limit:8192) == bound.baseline else{throw Failure.conflict}
+            guard renameat(c.root,"head.json.stage",c.root,"head.json") == 0 else{throw failure()}
+            try boundary(.afterReplace(.nativeCompletionHead))
+        } else {guard current == bound.candidate else{throw Failure.conflict}}
+        try syncExisting(c.root,"head.json",bound.candidate,kind:.nativeCompletionHead)
+        try sync(c.root);try boundary(.afterDirectorySync(.nativeCompletionHead))
+        let confirmation=Node(identity:bound.confirmationID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionConfirm(schemaVersion:3,selfID:bound.confirmationID,binding:try fingerprint(binding),head:try fingerprint(bound.candidate),record:try fingerprint(record)),maximum:65536))
+        if try read(c.root,"native-completion.confirm",limit:65536) == nil {
+            guard try require(c.root,"native-completion.confirm.stage",limit:65536).identity == confirmation.identity else{throw Failure.conflict}
+            try fill(c.root,"native-completion.confirm.stage",confirmation,kind:.nativeCompletionConfirm)
+        }
+        try promote(c,parent:c.root,name:"native-completion.confirm",expected:confirmation,kind:.nativeCompletionConfirm)
+        for name in ["root-binding.json","genesis.json"] {try syncExisting(c.root,name,original[name]!,kind:.binding)}
+        try sync(c.lock);try sync(c.ops);try sync(c.root)
+        let final=try nativeCompletionPreflight(c,plan:plan,envelope:envelope,structuralRootID:structuralRootID,original:original)
+        guard final.original == original,epoch() == attemptEpoch,
+              Set(try nativeCompletionLeaves(c)) == Self.nativeCompletionNames,
+              try require(c.root,"head.json",limit:8192) == bound.candidate else{throw Failure.uncertain}
+        var finalNodes=final.nodes;finalNodes["head.json"]=bound.candidate
+        let transition=NativeCompletionTransition(ObjectIdentifier(self),rootID,attemptEpoch,plan.nativeOperationID,original,finalNodes,envelope)
+        nativeCompletionPending=transition;return transition
+    }
+    func verifyNativeCompletionTransitionExact(_ transition:NativeCompletionTransition,
+        plan:DeviceValidatedNativeProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in try verifyNativeCompletionTransitionInContext(c,transition,plan:plan)}
+    }
+    func publishNativeCompletionExact(_ transition:NativeCompletionTransition,
+        publicationPermit:DeviceNativeCompletionPublicationPermit)throws->NativeCompletionReceipt {
+        try publicationPermit.validate(transition)
+        try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
+        mutex.lock();defer{mutex.unlock()}
+        guard transition.issuer == ObjectIdentifier(self),transition.rootID == rootID,
+              transition.epoch == epoch(),nativeCompletionPending === transition else{throw Failure.uncertain}
+        nativeCompletionQualified=transition;nativeCompletionPending=nil
+        return .init(transition)
+    }
+    func discardNativeCompletionExact(_ transition:NativeCompletionTransition)throws {
+        try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
+        mutex.lock();defer{mutex.unlock()}
+        guard transition.issuer == ObjectIdentifier(self),transition.rootID == rootID,transition.epoch == epoch() else{return}
+        if nativeCompletionPending === transition {nativeCompletionPending=nil}
+        if nativeCompletionQualified === transition {nativeCompletionQualified=nil}
+    }
+    /// Original checked completed/partial native head graph captured before outside package
+    /// repair. Neither diagnostic visibility nor this checkpoint acknowledges completion.
+    final class NativeCompletionRecoveryOriginal {
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,operationID:UUID
+        fileprivate let original:[String:Node],nodes:[String:Node],intent:Data,envelope:Data
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ operationID:UUID,
+                         _ original:[String:Node],_ nodes:[String:Node],_ plan:DeviceValidatedNativeProvisioningPlan) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.operationID=operationID
+            self.original=original;self.nodes=nodes;intent=plan.intentBytes;envelope=plan.candidateBytes
+        }
+    }
+    final class NativeCompletionRecoveryTransition {
+        fileprivate let original:NativeCompletionRecoveryOriginal,epoch:UInt64
+        fileprivate init(_ original:NativeCompletionRecoveryOriginal,_ epoch:UInt64){self.original=original;self.epoch=epoch}
+    }
+    private func nativeCompletionRecoveryNodes(_ c:Context,_ retained:[String:Node])throws->[String:Node] {
+        var nodes=retained
+        nodes["head.json"]=try require(c.root,"head.json",limit:8192)
+        if let headStage=try read(c.root,"head.json.stage",limit:8192){nodes["head.json.stage"]=headStage}
+        return nodes
+    }
+    func captureNativeCompletionRecoveryOriginalExact(_ plan:DeviceValidatedNativeProvisioningPlan,
+        resourcePermit:DeviceLocalResourcePermit)throws->NativeCompletionRecoveryOriginal {
+        try disk(resourcePermit:resourcePermit){c in
+            guard nativeCompletionScopeActive else{throw Failure.uncertain}
+            let before=epoch(),bindingNode=try requireEither(c.root,"native-completion.binding",limit:65536)
+            let binding=try nativeCompletionBinding(bindingNode.bytes)
+            let original=try nativeCompletionOriginalNodes(c,binding.baseline)
+            let retained=try nativeCompletionPreflight(c,plan:plan,envelope:plan.candidateBytes,
+                structuralRootID:plan.roots.structuralID,original:original)
+            guard retained.original == original,epoch() == before else{throw Failure.uncertain}
+            return .init(ObjectIdentifier(self),rootID,before,plan.nativeOperationID,original,
+                try nativeCompletionRecoveryNodes(c,retained.nodes),plan)
+        }
+    }
+    private func verifyNativeCompletionRecoveryOriginal(_ c:Context,_ original:NativeCompletionRecoveryOriginal,
+        plan:DeviceValidatedNativeProvisioningPlan,expectedEpoch:UInt64)throws {
+        guard nativeCompletionScopeActive,original.issuer == ObjectIdentifier(self),original.rootID == rootID,
+              original.operationID == plan.nativeOperationID,original.intent == plan.intentBytes,
+              original.envelope == plan.candidateBytes,epoch() == expectedEpoch else{throw Failure.uncertain}
+        let retained=try nativeCompletionPreflight(c,plan:plan,envelope:original.envelope,
+            structuralRootID:plan.roots.structuralID,original:original.original)
+        guard retained.original == original.original,
+              try nativeCompletionRecoveryNodes(c,retained.nodes) == original.nodes,
+              epoch() == expectedEpoch else{throw Failure.conflict}
+    }
+    func verifyNativeCompletionRecoveryOriginalExact(_ original:NativeCompletionRecoveryOriginal,
+        plan:DeviceValidatedNativeProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in
+            try verifyNativeCompletionRecoveryOriginal(c,original,plan:plan,expectedEpoch:original.epoch)
+        }
+    }
+    /// Deliberate original-to-new journal sync only. The actual head is retained, never
+    /// rewound to the recorded predecessor. This yields no NativeJoinReceipt or capacity.
+    func performNativeCompletionRecoveryExact(_ original:NativeCompletionRecoveryOriginal,
+        plan:DeviceValidatedNativeProvisioningPlan,commandPermit:DeviceNativeCompletionCommandPermit)throws->NativeCompletionRecoveryTransition {
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext else{throw Failure.uncertain}
+        try verifyNativeCompletionRecoveryOriginal(c,original,plan:plan,expectedEpoch:original.epoch)
+        nativeCompletionPending=nil;nativeCompletionQualified=nil
+        let next=epoch(true)
+        for(name,node)in original.original where name != "head.json" {
+            if name.hasPrefix("operations/") {try syncExisting(c.ops,String(name.dropFirst(11)),node,kind:.binding)}
+            else{try syncExisting(c.root,name,node,kind:.binding)}
+        }
+        for(name,node)in original.nodes {
+            let actual:String
+            if try read(c.root,name,limit:256*1024) != nil {actual=name}
+            else {actual=name+".stage"}
+            try syncExisting(c.root,actual,node,kind:.nativeCompletionBinding)
+        }
+        try sync(c.lock);try sync(c.ops);try sync(c.root)
+        try verifyNativeCompletionRecoveryOriginal(c,original,plan:plan,expectedEpoch:next)
+        return .init(original,next)
+    }
+    func performNativeCompletionRecoveredExact(_ recovery:NativeCompletionRecoveryTransition,
+        plan:DeviceValidatedNativeProvisioningPlan,commandPermit:DeviceNativeCompletionCommandPermit)throws->NativeCompletionTransition {
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext else{throw Failure.uncertain}
+        try verifyNativeCompletionRecoveryOriginal(c,recovery.original,plan:plan,expectedEpoch:recovery.epoch)
+        guard recovery.original.nodes["native-completion.method"] != nil else{throw Failure.conflict}
+        return try finishNativeCompletion(c,plan:plan,envelope:recovery.original.envelope,
+            structuralRootID:plan.roots.structuralID,original:recovery.original.original,initialQualified:false)
+    }
+    func verifyNativeCompletionRecoveryTransitionExact(_ transition:NativeCompletionRecoveryTransition,
+        plan:DeviceValidatedNativeProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in
+            try verifyNativeCompletionRecoveryOriginal(c,transition.original,plan:plan,expectedEpoch:transition.epoch)
+        }
+    }
+
+    /// Public-byte encoder upper shapes only; these values are not qualified commands/proofs.
+    static func maximumNativeCompletionEncoderSizesForTesting()throws->[String:Int] {
+        let id=ID(device:UInt64.max,inode:UInt64.max),uuid=UUID(uuidString:"ffffffff-ffff-ffff-ffff-ffffffffffff")!
+        let marker=NativeFingerprint(identity:id,byteCount:128*1024,digest:String(repeating:"f",count:64))
+        let names=["root-binding.json","genesis.json","head.json","delivery.intent","delivery.binding","delivery.command","delivery.plan","delivery.confirm","native-join.intent","native-join.binding","native-join.candidate","native-join.confirm"]
+        let originals=Dictionary(uniqueKeysWithValues:names.map{($0,marker)})
+        let method=try DeviceLocalCompleteSetBounds.encode(NativeCompletionMethod(schemaVersion:3,rootID:uuid,operationID:uuid,selfID:id,
+            structuralRootID:uuid,generationID:uuid,original:originals,candidate:marker),maximum:32768)
+        let head=try DeviceLocalCompleteSetBounds.encode(NativeCompletionHead(schemaVersion:3,genesisID:id,operationID:uuid,intentID:id,completionID:id),maximum:8192)
+        let binding=try DeviceLocalCompleteSetBounds.encode(NativeCompletionBinding(schemaVersion:3,rootID:uuid,operationID:uuid,selfID:id,
+            method:marker,baseline:.init(identity:id,bytes:Data(repeating:65,count:8192)),candidate:.init(identity:id,bytes:head),recordID:id,confirmationID:id),maximum:65536)
+        let association=DeviceNativeDeliveryCommandBinding.Association(operationID:uuid,planID:uuid,installationID:uuid,accountID:uuid,locationID:uuid,
+            transitionID:uuid,planDigest:String(repeating:"f",count:64),planByteLength:65536)
+        let record=try DeviceLocalCompleteSetBounds.encode(NativeCompletionRecord(schemaVersion:3,rootID:uuid,operationID:uuid,selfID:id,
+            association:association,structuralRootID:uuid,generationID:uuid,envelope:Data(repeating:65,count:128*1024),originalIntent:marker),maximum:256*1024)
+        let confirmation=try DeviceLocalCompleteSetBounds.encode(NativeCompletionConfirm(schemaVersion:3,selfID:id,binding:marker,head:marker,record:marker),maximum:65536)
+        return ["method":method.count,"binding":binding.count,"record":record.count,"confirmation":confirmation.count,"head":head.count]
+    }
+
+    func withNativeCompletionResourceGateScope(_ permit:DeviceLocalResourcePermit,_ body:()throws->Void)throws {
+        try permit.beginAcquisition(resourceGateDescriptor)
+        mutex.lock();defer{permit.invalidate();mutex.unlock()}
+        nativeCompletionScopeActive=true;defer{nativeCompletionScopeActive=false}
+        try diskContext(create:false,releasePermit:permit){c in
+            // Body validates the exact retained method/head/predecessor before mutations.
+            // Ordinary Local/native join entrypoints never use this fixed scope.
+            borrowedResourceContext=c;defer{borrowedResourceContext=nil;permit.invalidate()}
+            try body();try boundary(.beforeNativeCompletionScopeExit);try check(c)
+        }
+    }
+
     private struct Context {let root:Int32,lock:Int32,ops:Int32;let directory:ID,lockID:ID,opsID:ID}
     init(root:URL,rootID:UUID,protectedRoots:[URL],boundary:@escaping(Boundary)throws->Void={_ in}) {
         self.root=root;self.rootID=rootID;self.boundary=boundary
@@ -338,7 +1179,7 @@ final class DeviceLocalProvisioningIntentStore {
         try disk(create:true){c in
             try requireNoDeliveryReservation(c)
             qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;let initialEpoch=epoch(true)
-            let names=try list(c.root,limit:28)
+            let names=try list(c.root,limit:rootScanLimit)
             let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage","native-join.intent","native-join.intent.stage","native-join.binding","native-join.binding.stage","native-join.candidate","native-join.candidate.stage","native-join.confirm","native-join.confirm.stage"]
             guard Set(names).isSubset(of:allowed) else{throw Failure.conflict}
             let binding:Node
@@ -525,7 +1366,8 @@ final class DeviceLocalProvisioningIntentStore {
         return Receipt(ObjectIdentifier(self),rootID,attemptEpoch,state.nodes)
     }
     private struct RetainedOperation {let baseline:Node,pending:Node,completedHead:Node?,completed:Bool}
-    private func inventory(_ c:Context,allowDeliveryAttachment:Bool=false)throws->State {
+    private func inventory(_ c:Context,allowDeliveryAttachment:Bool=false,nativePredecessor:Node?=nil)throws->State {
+        if nativePredecessor != nil {guard nativeCompletionScopeActive else{throw Failure.conflict}}
         try check(c)
         if !allowDeliveryAttachment {try requireNoNativeJoin(c)
             guard try deliveryLeaves(c).isEmpty else{throw Failure.conflict}}
@@ -533,11 +1375,16 @@ final class DeviceLocalProvisioningIntentStore {
         let binding=try require(c.root,"root-binding.json",limit:16384),genesis=try require(c.root,"genesis.json",limit:32768)
         let b=try decodeBinding(binding.bytes),g=try decodeGenesis(genesis.bytes);try checkBinding(c,b,node:binding)
         guard genesis.identity == b.genesisID,g.binding == binding,g.initialHeadID == b.initialHeadID else{throw Failure.conflict}
-        let names=try list(c.ops,limit:1548),head=try require(c.root,"head.json",limit:8192),h=try decodeHead(head.bytes)
+        var names=try list(c.ops,limit:1548)
+        if nativeHTTPScopeActive {try nativeHTTPValidateInventory(c);let http=Set(try nativeHTTPNames(c));names.removeAll{http.contains($0)}}
+        let head:Node
+        if let nativePredecessor {head=nativePredecessor}else{head=try require(c.root,"head.json",limit:8192)}
+        let h=try decodeHead(head.bytes)
         guard h.genesisID == b.genesisID else{throw Failure.conflict}
         var nodes=["binding":binding,"genesis":genesis,"head":head]
         if names.isEmpty {
-            guard head.identity == b.initialHeadID,h.operationID == nil,h.intentID == nil,try read(c.root,"head.json.stage",limit:8192) == nil else{throw Failure.conflict}
+            guard head.identity == b.initialHeadID,h.operationID == nil,h.intentID == nil else{throw Failure.conflict}
+            if nativePredecessor == nil {guard try read(c.root,"head.json.stage",limit:8192) == nil else{throw Failure.conflict}}
             return State(operation:nil,intent:nil,complete:false,nodes:nodes,completed:false,terminalCount:0,intentBytes:0)
         }
         let suffixes:Set<String>=[".intent.json",".binding.json",".confirm.json",".completion.json",".completion-binding.json",".completion-confirm.json"]
@@ -605,7 +1452,7 @@ final class DeviceLocalProvisioningIntentStore {
             records[op]=RetainedOperation(baseline:a.baseline,pending:a.candidate,completedHead:completedHead,completed:complete)
             if op == current {
                 guard head == a.baseline || head == a.candidate || head == completedHead else{throw Failure.conflict}
-                if let staged=try read(c.root,"head.json.stage",limit:8192) {
+                if nativePredecessor == nil,let staged=try read(c.root,"head.json.stage",limit:8192) {
                     guard staged == a.candidate || staged == completedHead || live["head.json.stage"] == staged.identity && completionLive[op] != nil else{throw Failure.conflict}
                     nodes["headStage"]=staged
                 }
@@ -952,7 +1799,8 @@ final class DeviceLocalProvisioningIntentStore {
         let o=openat(c.root,"operations",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK);guard o >= 0 else{throw failure()};defer{close(o)}
         guard try identity(l,directory:false) == c.lockID,try identity(o,directory:true) == c.opsID else{throw Failure.conflict}
         let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage","native-join.intent","native-join.intent.stage","native-join.binding","native-join.binding.stage","native-join.candidate","native-join.candidate.stage","native-join.confirm","native-join.confirm.stage"]
-        guard Set(try list(c.root,limit:28)).isSubset(of:allowed) else{throw Failure.conflict}
+        let completionAllowed=nativeCompletionScopeActive ? Self.nativeCompletionNames.union(Self.nativeCompletionNames.map{$0+".stage"}):[]
+        guard Set(try list(c.root,limit:rootScanLimit)).isSubset(of:allowed.union(completionAllowed)) else{throw Failure.conflict}
     }
     private func checkBinding(_ c:Context,_ b:Binding,node:Node)throws {
         guard b.schemaVersion == 1,b.rootID == rootID,b.path.utf8.elementsEqual(root.path.utf8),b.protectedPaths.count == protectedPaths.count,
@@ -1073,7 +1921,7 @@ final class DeviceLocalProvisioningIntentStore {
     struct DeliveryAttachmentDiagnostic {let nativeOperationID:UUID,remoteOperationID:UUID} // No ACK/authority.
     private static let deliveryNames:Set<String>=["delivery.intent","delivery.binding","delivery.command","delivery.plan","delivery.confirm"]
     private func deliveryLeaves(_ c:Context)throws->[String] {
-        try list(c.root,limit:28).filter{Self.deliveryNames.contains($0) || Self.deliveryNames.contains(String($0.dropLast(6))) && $0.hasSuffix(".stage")}
+        try list(c.root,limit:rootScanLimit).filter{Self.deliveryNames.contains($0) || Self.deliveryNames.contains(String($0.dropLast(6))) && $0.hasSuffix(".stage")}
     }
     private func deliveryInput(_ input:DeviceNativeDeliveryCommandBinding)throws->Data {
         guard input.journalRootID == rootID,input.commandBytes.count <= 16384,input.planBytes.count <= 65536 else{throw Failure.conflict}

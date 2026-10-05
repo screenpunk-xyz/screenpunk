@@ -13,6 +13,12 @@ struct CloudAccountJourneyActions {
     let presentation: CloudProviderPresentation
     let availability: CloudJourneyAvailability
     let makeSession: ((CloudProviderPresentation) throws -> CloudHumanSession)?
+    var enrollDevice: ((UUID, UUID, String, String) -> Void)?
+    var enrollmentState: NativeEnrollmentSceneController.State = .idle
+    var deliveryMessage: String?
+    var retainedDeviceName: String?
+    var retainedDeviceProfile: String?
+    var viewScreen: (() throws -> Void)?
     var enabled: Bool { if case .qualified = availability { return true }; return false }
     init(lifecycle: CloudHumanSessionLifecycle, presentation: CloudProviderPresentation,
          availability: CloudJourneyAvailability,
@@ -47,7 +53,8 @@ struct CloudAccountJourneyActions {
     func cancel() { lifecycle.cancelPresentation() }
 }
 
-/// Human identity and workspace setup only. A receipt is never installation/enrollment authority.
+/// Human identity/workspace UI and an injected explicit device intent.
+/// Human receipts never grant installation/enrollment authority.
 struct CloudAccountJourneyView: View {
     @ObservedObject private var lifecycle: CloudHumanSessionLifecycle
     private let actions: CloudAccountJourneyActions
@@ -56,9 +63,17 @@ struct CloudAccountJourneyView: View {
     @State private var dismissalCancellation = CloudJourneyDismissalCancellation()
     init(lifecycle: CloudHumanSessionLifecycle, presentation: CloudProviderPresentation,
          availability: CloudJourneyAvailability = .unavailable("Cloud sign-in is not available in this version."),
-         makeSession: ((CloudProviderPresentation) throws -> CloudHumanSession)? = nil) {
+         makeSession: ((CloudProviderPresentation) throws -> CloudHumanSession)? = nil,
+         enrollDevice: ((UUID, UUID, String, String) -> Void)? = nil,
+         enrollmentState: NativeEnrollmentSceneController.State = .idle,
+         deliveryMessage: String? = nil, viewScreen: (() throws -> Void)? = nil,
+         retainedDeviceName: String? = nil, retainedDeviceProfile: String? = nil) {
         self.lifecycle = lifecycle
-        actions = .init(lifecycle: lifecycle, presentation: presentation, availability: availability, makeSession: makeSession)
+        var actions = CloudAccountJourneyActions(lifecycle: lifecycle, presentation: presentation, availability: availability, makeSession: makeSession)
+        actions.enrollDevice = enrollDevice; actions.enrollmentState = enrollmentState
+        actions.deliveryMessage = deliveryMessage; actions.viewScreen = viewScreen
+        actions.retainedDeviceName = retainedDeviceName; actions.retainedDeviceProfile = retainedDeviceProfile
+        self.actions = actions
     }
     var body: some View {
         NavigationStack {
@@ -95,7 +110,17 @@ struct CloudAccountJourneyView: View {
                 }.frame(maxWidth: 580, alignment: .leading).padding(20).frame(maxWidth: .infinity)
             }
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismissalCancellation.cancel(actions.cancel); dismiss() }.accessibilityIdentifier("cloud.close") } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismissalCancellation.cancel(actions.cancel); dismiss() }.accessibilityIdentifier("cloud.close") }
+                ToolbarItem(placement: .primaryAction) {
+                    if let viewScreen = actions.viewScreen {
+                        Button("View screen") {
+                            do { try dismissalCancellation.preserveCompletedTransition(viewScreen); dismiss() }
+                            catch { actionMessage = "Screen connection needs verification. Check again." }
+                        }.accessibilityIdentifier("cloud.viewScreen")
+                    }
+                }
+            }
             .background(CloudPresentationAnchor(presentation: actions.presentation).frame(width: 0, height: 0).accessibilityHidden(true))
             .background(CloudJourneyDismissalObserver(cancel: { dismissalCancellation.cancel(actions.cancel) }).frame(width: 0, height: 0).accessibilityHidden(true))
         }
@@ -121,6 +146,9 @@ private struct CloudAccountJourneyContent: View {
     @ObservedObject var coordinator: CloudConnectionCoordinator
     let actions: CloudAccountJourneyActions
     let signIn: (CloudNativeSignInProvider) -> Void
+    init(coordinator: CloudConnectionCoordinator, actions: CloudAccountJourneyActions, signIn: @escaping (CloudNativeSignInProvider) -> Void) {
+        self.coordinator = coordinator; self.actions = actions; self.signIn = signIn
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             switch coordinator.signOutState {
@@ -156,6 +184,13 @@ private struct CloudWorkspaceJourney: View {
     let actions: CloudAccountJourneyActions
     @State private var workspace = ""
     @State private var location = ""
+    @State private var deviceName = ""
+    @State private var deviceProfile = ""
+    init(coordinator: CloudConnectionCoordinator, actions: CloudAccountJourneyActions) {
+        self.coordinator = coordinator; self.actions = actions
+        _deviceName = State(initialValue: actions.retainedDeviceName ?? "")
+        _deviceProfile = State(initialValue: actions.retainedDeviceProfile ?? "")
+    }
     private var enabled: Bool { actions.enabled && !coordinator.isWorking }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -189,7 +224,28 @@ private struct CloudWorkspaceJourney: View {
             }
             if coordinator.selectedAccountID != nil {
                 Text("Locations").font(.headline).accessibilityAddTraits(.isHeader)
-                ForEach(coordinator.locations, id: \.id) { item in Text(item.name) }
+                if actions.enrollDevice != nil {
+                    TextField("Device name", text: $deviceName).textFieldStyle(.roundedBorder).disabled(actions.retainedDeviceName != nil)
+                    TextField("Device type", text: $deviceProfile).textFieldStyle(.roundedBorder).disabled(actions.retainedDeviceProfile != nil)
+                    switch actions.enrollmentState {
+                    case .idle: EmptyView()
+                    case .enrolling: ProgressView("Preparing this device and screen…")
+                    case .needsAttention: Text("Device or screen setup needs attention. Retry the original selection and name.").foregroundStyle(.secondary)
+                    case .currentInstallation: Text(actions.deliveryMessage ?? "Current installation verified.").foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(coordinator.locations, id: \.id) { item in
+                    VStack(alignment: .leading) {
+                        Text(item.name)
+                        if let enroll = actions.enrollDevice, let accountID = coordinator.selectedAccountID,
+                            item.capabilities.canEnroll, coordinator.accounts.contains(where: { $0.id == accountID && $0.capabilities.canEnroll }) {
+                            Button(actions.enrollmentState == .currentInstallation ? "Check for screens" : "Enroll this device") { enroll(accountID, item.id, actions.retainedDeviceName ?? deviceName, actions.retainedDeviceProfile ?? deviceProfile) }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!enabled || (actions.retainedDeviceName ?? deviceName).isEmpty || (actions.retainedDeviceProfile ?? deviceProfile).isEmpty || actions.enrollmentState == .enrolling)
+                                .accessibilityLabel("Enroll this device in \(item.name)")
+                        }
+                    }
+                }
                 if !coordinator.isWorking && coordinator.locations.isEmpty && coordinator.failure == nil { Text("No locations in this workspace.").foregroundStyle(.secondary) }
                 if coordinator.failure == .discovery, let id = coordinator.selectedAccountID {
                     Button("Reload locations") { actions.chooseAccount(id) }.disabled(!enabled)
@@ -269,6 +325,10 @@ final class CloudJourneyDismissalCancellation {
     func cancel(_ action: () -> Void) {
         guard !cancelled else { return }
         cancelled = true; action()
+    }
+    func preserveCompletedTransition(_ verifiedPresentation: () throws -> Void) throws {
+        try verifiedPresentation()
+        cancelled = true // Only this verified user transition suppresses UIKit dismissal cancellation.
     }
     func reset() { cancelled = false }
 }

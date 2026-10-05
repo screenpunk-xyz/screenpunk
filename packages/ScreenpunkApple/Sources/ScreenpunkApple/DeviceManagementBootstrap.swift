@@ -8,6 +8,8 @@ import ScreenpunkCore
     @Published public private(set) var statusMessage: String?
     @Published public private(set) var rootGeneration = UUID()
     private var authority: DeviceManagementAuthority?
+    /// Read-only access to the owner already retained by startup; never constructs one.
+    @_spi(NativeInstallation) public var currentAuthority: DeviceManagementAuthority? { authority }
     private var lifecycle: DeviceLocalResetLifecycle?
     private var lifecycleFactory: (() throws -> DeviceLocalResetLifecycle)?
     private let retained: () -> DeviceRetainedContentSnapshot

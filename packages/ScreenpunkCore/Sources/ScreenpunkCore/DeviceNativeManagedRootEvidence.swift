@@ -63,6 +63,11 @@ public struct DeviceNativeManagedRootLocator: Sendable {
 public struct DeviceManagedNamespaceEvidence: Equatable, Sendable {
     public enum Classification: Equatable, Sendable { case confirmedAbsent, managedPresent }
     public let classification: Classification
+    /// Exact descriptor-checked location only; this is not permission to create it.
+    public var namespaceURL: URL { URL(fileURLWithPath: String(decoding: path, as: UTF8.self), isDirectory: true).appendingPathComponent(String(decoding: name, as: UTF8.self), isDirectory: true) }
+    public func hasSameCheckedAnchor(as other: Self) -> Bool {
+        path == other.path && name == other.name && ancestors == other.ancestors
+    }
     fileprivate let path: Data
     fileprivate let name: Data
     fileprivate let ancestors: [ManagedDirectoryIdentity]

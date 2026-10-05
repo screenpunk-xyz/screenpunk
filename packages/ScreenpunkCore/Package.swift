@@ -11,7 +11,8 @@ let package = Package(
         .library(name: "ScreenpunkCore", targets: ["ScreenpunkCore"])
     ],
     targets: [
-        .target(name: "ScreenpunkCore"),
+        .target(name: "CNativeArchive", publicHeadersPath: "include", linkerSettings: [.linkedLibrary("z", .when(platforms: [.iOS, .macOS]))]),
+        .target(name: "ScreenpunkCore", dependencies: ["CNativeArchive"]),
         .testTarget(name: "ScreenpunkCoreTests", dependencies: ["ScreenpunkCore"], resources: [.copy("Fixtures/native-sign-in-fixtures.json"), .copy("Fixtures/native-delivery-codec-fixtures.json"), .copy("Fixtures/resulting-set-codec-fixtures.json")])
     ]
 )

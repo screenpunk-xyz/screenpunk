@@ -66,6 +66,30 @@ final class NativeEnrollmentJournalStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: f.parent.appendingPathComponent("sibling")), Data("keep sibling".utf8))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.root.appendingPathComponent("attempts").path).count, 7)
     }
+    func testNoEffectPhaseRejectionKeepsExactOriginalQualification() throws {
+        let f = try fixture(), store = f.store()
+        _ = try store.initializeExplicit(); _ = try store.prepareIntent(f.bytes, attemptID: UUID())
+        let frames = f.root.appendingPathComponent("frames"), attempts = f.root.appendingPathComponent("attempts")
+        let beforeFrames = try FileManager.default.contentsOfDirectory(atPath: frames.path).sorted()
+        let beforeAttempts = try FileManager.default.contentsOfDirectory(atPath: attempts.path).sorted()
+        XCTAssertThrowsError(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageQualified, attemptID: UUID()))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: frames.path).sorted(), beforeFrames)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: attempts.path).sorted(), beforeAttempts)
+        XCTAssertTrue(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageAttempted, attemptID: UUID()).qualifiesCurrentJournalTip)
+    }
+    func testEffectFailureStillRevokesPriorQualification() throws {
+        let f = try fixture()
+        var armed = false
+        enum Injected: Error { case afterEffect }
+        let store = f.store { boundary in
+            if armed && boundary.kind == .candidate && boundary.point == .published { throw Injected.afterEffect }
+        }
+        _ = try store.initializeExplicit(); _ = try store.prepareIntent(f.bytes, attemptID: UUID())
+        armed = true
+        XCTAssertThrowsError(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageAttempted, attemptID: UUID()))
+        armed = false
+        XCTAssertThrowsError(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageQualified, attemptID: UUID()))
+    }
     func testRestartAndSharedInstancesRequireExactLatestRecommit() throws {
         let f = try fixture(), first = f.store(), initial = UUID()
         _ = try first.initializeExplicit(); _ = try first.prepareIntent(f.bytes, attemptID: initial)

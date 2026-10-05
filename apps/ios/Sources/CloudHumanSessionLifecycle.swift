@@ -12,9 +12,11 @@ final class CloudHumanSession {
     private let callback: (URL) -> Bool
     private let revoke: () -> Void
     private var lease: CloudHumanSessionBroker.Lease?
+    private let enrollmentTokens: (() throws -> any CloudNativeTokenProvider)?
 
     private init(identity: CloudNativeIdentity, coordinator: CloudConnectionCoordinator) {
         self.coordinator = coordinator
+        enrollmentTokens = { try identity.tokenProvider() }
         callback = { identity.handleGoogleCallback($0) }
         revoke = { coordinator.cancel() }
     }
@@ -46,11 +48,26 @@ final class CloudHumanSession {
 
     /// Internal fake seam supplies behavior, never a mismatched production identity/coordinator pair.
     init(testCallback: @escaping (URL) -> Bool, testRevoke: @escaping () -> Void) {
-        coordinator = nil; callback = testCallback; revoke = testRevoke
+        coordinator = nil; enrollmentTokens = nil; callback = testCallback; revoke = testRevoke
     }
-    init(testCoordinator: CloudConnectionCoordinator, testCallback: @escaping (URL) -> Bool) {
+    init(testCoordinator: CloudConnectionCoordinator, testCallback: @escaping (URL) -> Bool,
+         testEnrollmentTokens: (() throws -> any CloudNativeTokenProvider)? = nil) {
+        enrollmentTokens = testEnrollmentTokens
         coordinator = testCoordinator; callback = testCallback
         revoke = { testCoordinator.cancel() }
+    }
+    func enrollmentSelection(accountID: UUID, locationID: UUID) throws -> CloudEnrollmentSelection {
+        guard let lease, let coordinator, let identity = coordinator.humanIdentity, let enrollmentTokens else { throw CloudNativeIdentityError.providerFailed }
+        func validate() throws {
+            try lease.checkHumanAction()
+            guard coordinator.humanIdentity == identity, !coordinator.isWorking, coordinator.signOutState == .idle,
+                coordinator.selectedAccountID == accountID,
+                coordinator.accounts.contains(where: { $0.id == accountID && $0.capabilities.canEnroll }),
+                coordinator.locations.contains(where: { $0.id == locationID && $0.capabilities.canEnroll }) else { throw CancellationError() }
+        }
+        try validate()
+        return CloudEnrollmentSelection(accountID: accountID, locationID: locationID,
+            tokens: CloudEnrollmentTokenScope(provider: try enrollmentTokens(), validate: validate))
     }
     func bind(_ lease: CloudHumanSessionBroker.Lease) { self.lease = lease }
     func handleCallback(_ url: URL) -> Bool {
@@ -75,6 +92,15 @@ final class CloudHumanSessionLifecycle: ObservableObject {
     }
     private let broker: CloudHumanSessionBroker
     private let owner = UUID()
+    private var originalRevocationObservers: [UUID: () -> Void] = [:]
+    @discardableResult func observeOriginalRevocation(_ action: @escaping () -> Void) -> UUID {
+        let id = UUID(); originalRevocationObservers[id] = action; return id
+    }
+    func removeOriginalRevocationObserver(_ id: UUID) { originalRevocationObservers.removeValue(forKey: id) }
+    private func revokeOriginalPresentations() {
+        // Synchronous notifications before human/session mutation. They grant no authority.
+        for action in Array(originalRevocationObservers.values) { action() }
+    }
     @Published private var lease: CloudHumanSessionBroker.Lease?
     @Published private var retired = false
     private var observation: AnyCancellable?
@@ -102,6 +128,10 @@ final class CloudHumanSessionLifecycle: ObservableObject {
                 applePresentation: { try presentation.resolve().window }, transport: CloudNativeURLSessionTransport())
         }
     }
+    func enrollmentSelection(accountID: UUID, locationID: UUID) throws -> CloudEnrollmentSelection {
+        guard !retired, let lease, let session = broker.session(for: lease) else { throw Failure.retired }
+        return try session.enrollmentSelection(accountID: accountID, locationID: locationID)
+    }
     /// A live scene may transport a callback to the process owner, without acquiring
     /// cancellation or session rights. Retired scenes do not transport callbacks.
     func dispatchGoogleCallback(_ url: URL) -> Bool {
@@ -112,7 +142,7 @@ final class CloudHumanSessionLifecycle: ObservableObject {
         guard !retired, let lease else { return false }; return broker.session(for: lease)?.handleCallback(url) ?? false
     }
     @discardableResult func signOut() -> Task<Void, Never>? {
-        guard !retired, let lease else { return nil }; return broker.signOut(lease)
+        guard !retired, let lease else { return nil }; revokeOriginalPresentations(); return broker.signOut(lease)
     }
     @discardableResult func retrySignOut() -> Task<Void, Never>? {
         guard !retired, let lease else { return nil }; return broker.retrySignOut(lease)
@@ -125,11 +155,12 @@ final class CloudHumanSessionLifecycle: ObservableObject {
         guard !retired else { return nil }
         return broker.retryRetiredCleanup(handle)
     }
-    func cancelPresentation() { if !retired, let lease { broker.cancel(lease) } }
+    func cancelPresentation() { if !retired, let lease { revokeOriginalPresentations(); broker.cancel(lease) } }
     func didEnterBackground() { cancelPresentation() }
     func scenePhaseChanged(_ phase: ScenePhase) { if phase == .background { didEnterBackground() } }
     func retirePresentationContext() {
         guard !retired else { return }
+        revokeOriginalPresentations()
         retired = true
         if let lease { broker.retire(lease) }
     }
@@ -142,4 +173,24 @@ private final class CloudSceneRetirement: Sendable {
     let lease: CloudHumanSessionBroker.Lease
     init(broker: CloudHumanSessionBroker, lease: CloudHumanSessionBroker.Lease) { self.broker = broker; self.lease = lease }
     deinit { Task { @MainActor [broker, lease] in _ = broker.retire(lease) } }
+}
+
+/// Genuine selected response IDs, never caller-created identity or admission evidence.
+@MainActor struct CloudEnrollmentSelection {
+    let accountID: UUID, locationID: UUID
+    let tokens: CloudEnrollmentTokenScope
+    func validate() throws { try tokens.validateCurrent() }
+}
+@MainActor final class CloudEnrollmentTokenScope: CloudNativeTokenProvider {
+    private let provider: any CloudNativeTokenProvider
+    private let validate: () throws -> Void
+    init(provider: any CloudNativeTokenProvider, validate: @escaping () throws -> Void) {
+        self.provider = provider; self.validate = validate
+    }
+    func validateCurrent() throws { try validate() }
+    func idToken() async throws -> String {
+        try Task.checkCancellation(); try validate()
+        let token = try await provider.idToken()
+        try Task.checkCancellation(); try validate(); return token
+    }
 }

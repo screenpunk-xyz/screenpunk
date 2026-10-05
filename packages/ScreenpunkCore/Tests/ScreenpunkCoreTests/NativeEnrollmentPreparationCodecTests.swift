@@ -105,7 +105,7 @@ final class NativeEnrollmentPreparationCodecTests: XCTestCase {
         let next = try NativeEnrollmentPreparation.proposing(preparationId: UUID(), enrollmentId: UUID(), stageReference: "next-stage", binding: binding, claimInput: input, history: source, enrollment: laterEnrollment, retained: [old], inventory: inventory(old, staged: true, final: true))
         let encoded = try NativeEnrollmentPreparationCodec.encodeReconstructionProposal(next, retained: [retained])
         let decoded = try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(encoded, retained: [retained])
-        XCTAssertEqual(decoded.sourceHistory.transitions.last?.phase, .locallyFenced)
+        XCTAssertEqual(try decoded.sourceHistory.transitions.last?.phase, .locallyFenced)
         XCTAssertEqual(decoded.sourceEnrollment.enrollments.first?.events.count, 2)
         guard case .terminalClaimObserved(let observation) = decoded.sourceEnrollment.enrollments.first?.events.last else { return XCTFail() }
         XCTAssertTrue(observation.createdAt.utf8.elementsEqual(receipt.createdAt.utf8))

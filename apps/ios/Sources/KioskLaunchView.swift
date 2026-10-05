@@ -2,13 +2,15 @@ import SwiftUI
 import UIKit
 import ScreenpunkApple
 
+@MainActor
 struct KioskLaunchView: View {
     let onCloudAccountRequested: (() -> Void)?
-    init(onCloudAccountRequested: (() -> Void)? = nil) {
+    init(bootstrap: DeviceManagementBootstrap? = nil, onCloudAccountRequested: (() -> Void)? = nil) {
+        _bootstrap = StateObject(wrappedValue: bootstrap ?? DeviceManagementBootstrap())
         self.onCloudAccountRequested = onCloudAccountRequested
     }
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var bootstrap = DeviceManagementBootstrap()
+    @StateObject private var bootstrap: DeviceManagementBootstrap
     var body: some View {
         Group {
             switch bootstrap.state {
