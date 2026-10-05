@@ -1021,6 +1021,54 @@ final class DeviceNativePackageCommandPermit {
     func begin(_ instance: ObjectIdentifier) throws { try read.beginRead(instance) }
     func end() { read.endRead() }
 }
+/// Only the fixed native credential orchestration can dispatch credential additions.
+final class DeviceNativeCredentialCommandPermit {
+    private let read: DeviceLocalResourcePermit
+    fileprivate init(_ read: DeviceLocalResourcePermit) { self.read = read }
+    func begin(_ instance: ObjectIdentifier) throws { try read.beginRead(instance) }
+    func end() { read.endRead() }
+}
+final class DeviceNativeCredentialPublicationPermit {
+    private let transition: DeviceNativeGrantPreparationStore.PendingCredentials
+    fileprivate init(_ transition: DeviceNativeGrantPreparationStore.PendingCredentials) { self.transition = transition }
+    func validate(_ original: DeviceNativeGrantPreparationStore.PendingCredentials) throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        guard transition === original else { throw DeviceLocalResourceGateFailure.invalidScope }
+    }
+}
+/// Credential progress only; original journal/genesis/package evidence is preserved.
+/// No grant terminal/head, structural commit, admission or runtime authority is inferred.
+final class DeviceNativeBoundCredentialProgress: GrantSecretRedacted {
+    let operationID: UUID
+    fileprivate let journal: DeviceLocalProvisioningIntentStore.NativePrivatePrerequisite
+    fileprivate let genesis: DeviceStructuralStore.NativeGenesisCheckpoint
+    fileprivate let resolution: DevicePackageTerminalResolution
+    fileprivate let plan: DeviceValidatedNativeProvisioningPlan
+    fileprivate let receipt: DeviceNativeGrantPreparationStore.CredentialReceipt
+    fileprivate init(_ batch: DeviceNativeBoundPackageBatch, _ receipt: DeviceNativeGrantPreparationStore.CredentialReceipt) {
+        journal = batch.anchor.journal; genesis = batch.anchor.genesis; resolution = batch.resolution
+        plan = batch.anchor.plan; self.receipt = receipt; operationID = receipt.operationID
+    }
+    fileprivate init(_ journal: DeviceLocalProvisioningIntentStore.NativePrivatePrerequisite,
+        _ genesis: DeviceStructuralStore.NativeGenesisCheckpoint, _ resolution: DevicePackageTerminalResolution,
+        _ plan: DeviceValidatedNativeProvisioningPlan, _ receipt: DeviceNativeGrantPreparationStore.CredentialReceipt) {
+        self.journal = journal; self.genesis = genesis; self.resolution = resolution
+        self.plan = plan; self.receipt = receipt; operationID = receipt.operationID
+    }
+}
+final class DeviceNativeCredentialRecovery: GrantSecretRedacted {
+    let operationID: UUID
+    fileprivate let packages: DevicePackagePreparationStore.NativeBatchOriginal
+    fileprivate let grants: DeviceNativeGrantPreparationStore.CredentialRecovery
+    fileprivate let journal: DeviceLocalProvisioningIntentStore.NativeJoinOriginal
+    fileprivate let resources: DeviceNativeGrantRecoveryResources
+    fileprivate init(_ packages: DevicePackagePreparationStore.NativeBatchOriginal,
+        _ grants: DeviceNativeGrantPreparationStore.CredentialRecovery,
+        _ journal: DeviceLocalProvisioningIntentStore.NativeJoinOriginal, _ resources: DeviceNativeGrantRecoveryResources) {
+        operationID = grants.operationID; self.packages = packages; self.grants = grants
+        self.journal = journal; self.resources = resources
+    }
+}
 /// Native immutable package batch only. Consumes the antecedent package checkpoint and binds
 /// a single final actual-tip snapshot; no credential/terminal/structural/admission authority.
 final class DeviceNativeBoundPackageBatch: GrantSecretRedacted {
@@ -1055,8 +1103,9 @@ final class DeviceNativeDeferredJoinPublication: GrantSecretRedacted {
         self.issuer = issuer; self.transition = transition
     }
 }
-/// Native3 fixed initialized four-root command. Package observations never become archive
-/// proof or Cloud admission. Backend/fault seams stay synchronous and nonreentrant under locks.
+/// Native3 fixed initialized four-root private/resource command. Package observations never
+/// become archive proof or Cloud admission. Backend/fault seams stay synchronous and nonreentrant
+/// under locks; publication occurs only after the complete synchronous scope exits.
 final class DeviceNativeGrantPrivateCoordinator {
     private let journal: DeviceLocalProvisioningIntentStore
     private let structural: DeviceStructuralStore
@@ -1148,6 +1197,187 @@ final class DeviceNativeGrantPrivateCoordinator {
             let checked = try nativePackageRequest(request, plan: batch.anchor.plan, inputs: inputs)
             try grants.verifyPrivateAttemptExact(batch.anchor.receipt, request: checked, resourcePermit: permit)
             try verifyNativeBatchResources(batch.anchor, resolution: batch.resolution, permit: permit)
+        }
+    }
+    func credentialReservationSizesForTesting(_ request: DeviceNativeProvisioningRequest,
+        batch: DeviceNativeBoundPackageBatch) throws -> [String: Int] {
+        try checkNativeRoots(request.roots, inputCount: request.packages.count)
+        guard batch.operationID == request.grantOperationID else { throw DeviceNativeGrantPreparationError.conflict }
+        var sizes: [String: Int]?
+        try scope { permit in
+            try verifyNativeBatchResources(batch.anchor, resolution: batch.resolution, permit: permit)
+            let inputs = try nativeInputsFromResolution(request.packages, resolution: batch.resolution, permit: permit)
+            let fresh = try nativePackageRequest(request, plan: batch.anchor.plan, inputs: inputs)
+            try grants.verifyPrivateAttemptExact(batch.anchor.receipt, request: fresh, resourcePermit: permit)
+            sizes = try grants.credentialReservationSizesForTesting(fresh, resourcePermit: permit)
+            try verifyNativeBatchResources(batch.anchor, resolution: batch.resolution, permit: permit)
+        }
+        guard let sizes else { throw DeviceLocalResourceGateFailure.invalidScope }
+        return sizes
+    }
+    func completeCredentialsExact(_ request: DeviceNativeProvisioningRequest,
+        batch: DeviceNativeBoundPackageBatch) throws -> DeviceNativeBoundCredentialProgress {
+        try checkNativeRoots(request.roots, inputCount: request.packages.count)
+        guard batch.operationID == request.grantOperationID else { throw DeviceNativeGrantPreparationError.conflict }
+        var pending: DeviceNativeGrantPreparationStore.PendingCredentials?
+        do {
+            try scope { permit in
+                try verifyNativeBatchResources(batch.anchor, resolution: batch.resolution, permit: permit)
+                let inputs = try nativeInputsFromResolution(request.packages, resolution: batch.resolution, permit: permit)
+                let fresh = try nativePackageRequest(request, plan: batch.anchor.plan, inputs: inputs)
+                try grants.verifyPrivateAttemptExact(batch.anchor.receipt, request: fresh, resourcePermit: permit)
+                try verifyNativeBatchResources(batch.anchor, resolution: batch.resolution, permit: permit)
+                let transition = try grants.performCredentialsExact(fresh, original: batch.anchor.receipt, commandPermit: .init(permit))
+                pending = transition
+                try grants.verifyCredentialPendingExact(transition, request: fresh, resourcePermit: permit)
+                try verifyNativeBatchResources(batch.anchor, resolution: batch.resolution, permit: permit)
+            }
+            guard let pending else { throw DeviceLocalResourceGateFailure.invalidScope }
+            let receipt = try grants.publishCredentialsExact(pending, publicationPermit: .init(pending))
+            return .init(batch, receipt)
+        } catch {
+            if let pending { try grants.discardCredentialPublication(pending) }
+            throw error
+        }
+    }
+    private func verifyCredentialResources(_ progress: DeviceNativeBoundCredentialProgress,
+        permit: DeviceLocalResourcePermit) throws {
+        try structural.verifyNativeGenesisExact(progress.genesis, resourcePermit: permit)
+        try journal.verifyNativePrivatePrerequisiteExact(progress.journal, plan: progress.plan, resourcePermit: permit)
+        try packages.verifyResolutionCheckpoint(progress.resolution.checkpoint, resourcePermit: permit)
+        guard progress.resolution.receipts.count <= 12 else { throw DeviceNativeGrantPreparationError.sizeLimit }
+        for receipt in progress.resolution.receipts { _ = try packages.verify(receipt, resourcePermit: permit) }
+    }
+    func verifyCredentialProgressExact(_ progress: DeviceNativeBoundCredentialProgress,
+        request: DeviceNativeProvisioningRequest) throws {
+        try checkNativeRoots(request.roots, inputCount: request.packages.count)
+        guard progress.operationID == request.grantOperationID else { throw DeviceNativeGrantPreparationError.conflict }
+        try scope { permit in
+            try verifyCredentialResources(progress, permit: permit)
+            let inputs = try nativeInputsFromResolution(request.packages, resolution: progress.resolution, permit: permit)
+            let fresh = try nativePackageRequest(request, plan: progress.plan, inputs: inputs)
+            try grants.verifyCredentialsExact(progress.receipt, request: fresh, resourcePermit: permit)
+            try verifyCredentialResources(progress, permit: permit)
+        }
+    }
+    private func terminalCredentialResources(_ resources: DeviceNativeGrantRecoveryResources) throws -> DeviceNativeGrantRecoveryResources {
+        try checkNativeRoots(resources.roots, inputCount: resources.packages.count)
+        guard resources.candidate.entries.count <= 12, resources.packages.count == resources.candidate.entries.count else {
+            throw DeviceNativeGrantPreparationError.conflict
+        }
+        // Pure terminal inspection, not synchronization/ACK. Original capture below still checks
+        // the complete current inventory under the joint gate and its resolver checks it again.
+        let references = resources.candidate.entries.map(\.preparedPackage)
+        let verified = try packages.inspectRetainedTerminalExact(references)
+        var output: [DeviceProvisioningPackageInput] = []
+        var seen = Set<UUID>()
+        for input in resources.packages {
+            let id: UUID, reference: DevicePreparedPackageReference
+            switch input {
+            case .supplied(let entry, let operation, let package):
+                id = entry
+                reference = try PackagePreparationCodec.expectedReference(.init(operationID: operation, package: package), rootID: packages.rootID)
+            case .retained(let entry, let given, _): id = entry; reference = given
+            }
+            guard seen.insert(id).inserted,
+                  let entry = resources.candidate.entries.first(where: { $0.entryID == id }),
+                  DeviceProvisioningPlanner.exactReference(entry.preparedPackage, reference),
+                  let package = verified.first(where: { DeviceProvisioningPlanner.exactReference($0.reference, reference) }) else {
+                throw DeviceNativeGrantPreparationError.conflict
+            }
+            output.append(.retained(entryID: id, reference: reference, verified: package))
+        }
+        return nativeRecoveryResources(resources, inputs: output)
+    }
+    func captureCredentialRecoveryExact(operationID: UUID,
+        resources: DeviceNativeGrantRecoveryResources) throws -> DeviceNativeCredentialRecovery {
+        let terminal = try terminalCredentialResources(resources)
+        var originalPackages: DevicePackagePreparationStore.NativeBatchOriginal?
+        var originalGrant: DeviceNativeGrantPreparationStore.CredentialRecovery?
+        var originalJournal: DeviceLocalProvisioningIntentStore.NativeJoinOriginal?
+        var freshResources: DeviceNativeGrantRecoveryResources?
+        try scope { permit in
+            try structural.verifyNativeGenesisExact(terminal.baseline, resourcePermit: permit)
+            let p = try packages.captureNativeBatchOriginal(terminal.packages, candidate: terminal.candidate, resourcePermit: permit)
+            let fresh = nativeRecoveryResources(terminal, inputs: p.inputs), expected = nativeExpectations(p.inputs)
+            let g = try grants.captureCredentialRecoveryExact(operationID: operationID, resources: fresh,
+                expectedEntries: expected, resourcePermit: permit)
+            let j = try journal.captureNativeJoinOriginal(g.plan, attachment: nil, resourcePermit: permit)
+            try grants.verifyCredentialRecoveryExact(g, resources: fresh, expectedEntries: expected, resourcePermit: permit)
+            try packages.verifyNativeBatchOriginal(p, resourcePermit: permit)
+            try structural.verifyNativeGenesisExact(terminal.baseline, resourcePermit: permit)
+            originalPackages = p; originalGrant = g; originalJournal = j; freshResources = fresh
+        }
+        guard let originalPackages, let originalGrant, let originalJournal, let freshResources else {
+            throw DeviceLocalResourceGateFailure.invalidScope
+        }
+        return .init(originalPackages, originalGrant, originalJournal, freshResources)
+    }
+    func completeCredentialsRecoveredExact(_ recovery: DeviceNativeCredentialRecovery) throws -> DeviceNativeBoundCredentialProgress {
+        let resources = recovery.resources, plan = recovery.grants.plan
+        try checkNativeRoots(resources.roots, inputCount: resources.packages.count)
+        let references = resources.candidate.entries.map(\.preparedPackage)
+        var j: DeviceLocalProvisioningIntentStore.NativeJoinTransition?
+        var g: DeviceNativeGrantPreparationStore.PendingCredentials?
+        var prerequisite: DeviceLocalProvisioningIntentStore.NativePrivatePrerequisite?
+        do {
+            // Every original and all terminal/mapping branches precede even journal repair.
+            try scope { permit in
+                try packages.verifyNativeTerminalBatchOriginal(recovery.packages, references: references, resourcePermit: permit)
+                try grants.verifyCredentialRecoveryExact(recovery.grants, resources: resources,
+                    expectedEntries: nativeExpectations(resources.packages), resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+                let transition = try journal.performNativeJoinExact(plan, original: recovery.journal, commandPermit: .init(permit))
+                j = transition
+                try journal.verifyNativeJoinTransition(transition, plan: plan, resourcePermit: permit)
+                try packages.verifyNativeTerminalBatchOriginal(recovery.packages, references: references, resourcePermit: permit)
+                try grants.verifyCredentialRecoveryExact(recovery.grants, resources: resources,
+                    expectedEntries: nativeExpectations(resources.packages), resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+            }
+            guard let j else { throw DeviceLocalResourceGateFailure.invalidScope }
+            // Exact original-to-new package repair only. Original grant/genesis and the actual
+            // journal transition are retained; no antecedent is refreshed after this unlock.
+            let resolution = try packages.resolveRetainedTerminalExact(references, original: recovery.packages)
+            var finalResources: DeviceNativeGrantRecoveryResources?
+            try scope { permit in
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                try packages.verifyResolutionCheckpoint(resolution.checkpoint, resourcePermit: permit)
+                let inputs = try nativeInputsFromResolution(resources.packages, resolution: resolution, permit: permit)
+                let fresh = nativeRecoveryResources(resources, inputs: inputs), expected = nativeExpectations(inputs)
+                finalResources = fresh
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+                try grants.verifyCredentialRecoveryExact(recovery.grants, resources: fresh, expectedEntries: expected, resourcePermit: permit)
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                let transition = try grants.performRecoveredCredentialsExact(recovery.grants, resources: fresh,
+                    expectedEntries: expected, commandPermit: .init(permit))
+                g = transition
+                try grants.verifyRecoveredCredentialsExact(transition, original: recovery.grants, resources: fresh,
+                    expectedEntries: expected, resourcePermit: permit)
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                try packages.verifyResolutionCheckpoint(resolution.checkpoint, resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+            }
+            guard let g, let finalResources else { throw DeviceLocalResourceGateFailure.invalidScope }
+            let joined = try journal.publishNativeJoinExact(j, publicationPermit: .init(j))
+            try scope { permit in
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                let inputs = try nativeInputsFromResolution(finalResources.packages, resolution: resolution, permit: permit)
+                let fresh = nativeRecoveryResources(finalResources, inputs: inputs)
+                try grants.verifyRecoveredCredentialsExact(g, original: recovery.grants, resources: fresh,
+                    expectedEntries: nativeExpectations(inputs), resourcePermit: permit)
+                prerequisite = try journal.captureNativePrivatePrerequisiteExact(joined, plan: plan, resourcePermit: permit)
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                try packages.verifyResolutionCheckpoint(resolution.checkpoint, resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+            }
+            guard let prerequisite else { throw DeviceLocalResourceGateFailure.invalidScope }
+            let receipt = try grants.publishCredentialsExact(g, publicationPermit: .init(g))
+            return .init(prerequisite, resources.baseline, resolution, plan, receipt)
+        } catch {
+            if let g { try grants.discardCredentialPublication(g) }
+            if let j { try journal.discardNativeJoinPublication(j) }
+            throw error
         }
     }
     /// Read capture ONLY. Package observations precede the original private ref/epoch capture;
