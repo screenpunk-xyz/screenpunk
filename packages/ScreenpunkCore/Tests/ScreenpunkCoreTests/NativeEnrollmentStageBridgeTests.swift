@@ -248,13 +248,13 @@ final class NativeEnrollmentStageBridgeTests: XCTestCase {
         }
     }
     func testOwnershipWriteBoundaryMatrixPreservesExactAttemptOrBlocksPreRecordOrphan() throws {
-        // Existing journal policy blocks every unpublished attempt, including
-        // exact written/synchronized pending bytes. Only published attempts have
-        // the admitted retained-chain position required for exact live retry.
+        // Generic restart scanning still blocks every unpublished attempt. Only
+        // the retained original can recommit fully written exact pending bytes;
+        // empty/pre-record candidates remain preserved and blocked.
         let cases: [(NativeEnrollmentJournalStore.Kind, NativeEnrollmentJournalStore.Point, Bool)] = [
             (.candidate, .created, false), (.attempt, .created, false),
-            (.attempt, .written, false), (.attempt, .fileSynced, false),
-            (.attempt, .beforePublish, false), (.attempt, .published, true), (.attempt, .directorySynced, true),
+            (.attempt, .written, true), (.attempt, .fileSynced, true),
+            (.attempt, .beforePublish, true), (.attempt, .published, true), (.attempt, .directorySynced, true),
             (.candidate, .written, true), (.candidate, .fileSynced, true),
             (.candidate, .beforePublish, true), (.candidate, .published, true), (.candidate, .directorySynced, true)]
         for (kind, point, recoverable) in cases {
@@ -274,6 +274,98 @@ final class NativeEnrollmentStageBridgeTests: XCTestCase {
             XCTAssertThrowsError(try stage(f, .init(journal: f.journal(), backend: b), ids: ids))
             XCTAssertEqual(b.generations, 1); XCTAssertEqual(b.adds, 1)
         }
+    }
+    private func pendingOriginal() throws -> (Fixture, NativeEnrollmentJournalStore, Backend, NativeEnrollmentStageBridge, (UUID, UUID)) {
+        let f = try fixture(), b = backend(); var armed = true
+        let j = f.journal { event in
+            if armed, b.adds == 1, event.kind == .attempt, event.point == .written {
+                armed = false; throw NativeEnrollmentJournalError.outcomeUncertain
+            }
+        }
+        try start(f, j)
+        let bridge = NativeEnrollmentStageBridge(journal: j, backend: b), ids = (UUID(), UUID())
+        XCTAssertThrowsError(try stage(f, bridge, ids: ids)); XCTAssertFalse(armed)
+        return (f, j, b, bridge, ids)
+    }
+    private func pendingFile(_ root: URL, folder: String) throws -> URL {
+        let files = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent(folder), includingPropertiesForKeys: nil)
+        return try XCTUnwrap(files.first { $0.lastPathComponent.hasSuffix(".pending") })
+    }
+    func testPendingOriginalRejectsPartialReplacementExtraNodesAndRetainedNodeReplacement() throws {
+        for variant in 0..<10 {
+            let (f, _, b, bridge, ids) = try pendingOriginal()
+            let attempt = try pendingFile(f.root, folder: "attempts"), candidate = try pendingFile(f.root, folder: "frames")
+            let original = try Data(contentsOf: attempt)
+            switch variant {
+            case 0: try original.dropLast().write(to: attempt)
+            case 1: try original.write(to: attempt, options: .atomic)
+            case 2: try Data().write(to: candidate, options: .atomic)
+            case 3: try Data([1]).write(to: candidate)
+            case 4: try Data().write(to: f.root.appendingPathComponent("attempts/unknown.pending"))
+            case 5: try Data().write(to: f.root.appendingPathComponent("frames/unknown.pending"))
+            case 6, 7:
+                let folder = variant == 6 ? "attempts" : "frames"
+                let prior = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: f.root.appendingPathComponent(folder), includingPropertiesForKeys: nil)
+                    .sorted { $0.lastPathComponent < $1.lastPathComponent }.first { !$0.lastPathComponent.hasSuffix(".pending") })
+                try Data(contentsOf: prior).write(to: prior, options: .atomic)
+            case 8:
+                let binding = f.root.appendingPathComponent("root-binding.json")
+                try Data(contentsOf: binding).write(to: binding, options: .atomic)
+            default:
+                let retained = f.root.deletingLastPathComponent().appendingPathComponent("retained-original-root")
+                try FileManager.default.moveItem(at: f.root, to: retained)
+                try FileManager.default.copyItem(at: retained, to: f.root)
+            }
+            let reads = b.reads
+            XCTAssertThrowsError(try stage(f, bridge, ids: ids), "variant " + String(variant))
+            XCTAssertEqual(b.reads, reads); XCTAssertEqual(b.generations, 1); XCTAssertEqual(b.adds, 1)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: attempt.path))
+            // Neither a diagnostic nor a fresh issuer can exempt these names.
+            XCTAssertThrowsError(try f.journal().diagnose { _ in })
+            XCTAssertThrowsError(try stage(f, .init(journal: f.journal(), backend: b), ids: ids))
+        }
+    }
+    func testPendingOriginalCannotRefreshForeignEpochAndBackendReentryRemainsOutsideLocks() throws {
+        let (f, _, b, bridge, ids) = try pendingOriginal()
+        _ = try f.journal().initializeExplicit()
+        XCTAssertThrowsError(try stage(f, bridge, ids: ids))
+        XCTAssertEqual(b.generations, 1); XCTAssertEqual(b.adds, 1)
+
+        let (g, j, backend, original, originalIDs) = try pendingOriginal()
+        var callbacks = 0
+        backend.onRead = {
+            callbacks += 1
+            // Generic diagnosis rejects the pending assertion while the original
+            // is privately retryable; completion diagnosis succeeds after commit.
+            if callbacks == 1 { XCTAssertThrowsError(try j.diagnose { _ in }) }
+            else { try j.diagnose { _ in } }
+        }
+        XCTAssertEqual(try stage(g, original, ids: originalIDs).journalAttemptID, originalIDs.1)
+        XCTAssertEqual(callbacks, 2); XCTAssertEqual(backend.generations, 1); XCTAssertEqual(backend.adds, 1)
+
+        let (h, _, changed, captured, changedIDs) = try pendingOriginal()
+        changed.onRead = { _ = try h.journal().initializeExplicit() }
+        XCTAssertThrowsError(try stage(h, captured, ids: changedIDs))
+        changed.onRead = nil
+        XCTAssertThrowsError(try stage(h, captured, ids: changedIDs))
+        XCTAssertEqual(changed.generations, 1); XCTAssertEqual(changed.adds, 1)
+    }
+    func testPendingOriginalScopeExitMutationInvalidatesAllInstances() throws {
+        let (f, _, b, bridge, ids) = try pendingOriginal()
+        let readsBeforeRetry = b.reads; var mutated = false
+        b.onRead = {
+            if b.reads == readsBeforeRetry + 2 {
+                _ = try f.journal().recommitExactLatestTip(expectedAttemptID: ids.1); mutated = true
+            }
+        }
+        XCTAssertThrowsError(try stage(f, bridge, ids: ids))
+        XCTAssertTrue(mutated)
+        b.onRead = nil
+        XCTAssertThrowsError(try stage(f, bridge, ids: ids))
+        let restarted = f.journal()
+        XCTAssertThrowsError(try NativeEnrollmentStageBridge(journal: restarted, backend: b).recoverBoundStage(
+            preparationID: f.preparation.preparationId, currentHistory: f.preparation.sourceHistory, currentEnrollment: f.preparation.sourceEnrollment))
+        XCTAssertEqual(b.generations, 1); XCTAssertEqual(b.adds, 1)
     }
     func testMetadataOnlyStageQualifiedCannotManufacturePersistentReferenceOwnership() throws {
         let f = try fixture(), j = f.journal(), b = backend(); try start(f, j)
