@@ -3,6 +3,10 @@ import UIKit
 import ScreenpunkApple
 
 struct KioskLaunchView: View {
+    let onCloudAccountRequested: (() -> Void)?
+    init(onCloudAccountRequested: (() -> Void)? = nil) {
+        self.onCloudAccountRequested = onCloudAccountRequested
+    }
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var bootstrap = DeviceManagementBootstrap()
     var body: some View {
@@ -10,7 +14,7 @@ struct KioskLaunchView: View {
             switch bootstrap.state {
             case .checking: ProgressView()
             case .resetting: ProgressView("Removing saved device data…")
-            case .localReady(let host): DeviceRuntimeRootView(host: host, onLocalReset: bootstrap.requestLocalReset).id(bootstrap.rootGeneration)
+            case .localReady(let host): DeviceRuntimeRootView(host: host, onLocalReset: bootstrap.requestLocalReset, onCloudAccountRequested: onCloudAccountRequested).id(bootstrap.rootGeneration)
             case .blocked(let snapshot): VStack {
                 if let message = bootstrap.statusMessage { Text(message).multilineTextAlignment(.center).padding() }
                 DeviceManagementBlockedView(snapshot: snapshot, retry: bootstrap.retry)
