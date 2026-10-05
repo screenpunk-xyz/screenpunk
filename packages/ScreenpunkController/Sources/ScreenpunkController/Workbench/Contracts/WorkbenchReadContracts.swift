@@ -53,11 +53,16 @@ public struct WorkbenchDeviceRead: Codable, Sendable, Equatable {
     public let ownerMatchesCurrent: Bool
     public let reachability: String
     public let activeRevision: String?
+    /// Cached observations only; these reads never probe or reconnect a device.
+    public let cachedReachability: String?
+    public let lastSeenAt: String?
     init(_ record: PairedDeviceRecord, currentIdentity: PairingIdentity?) {
         deviceId = record.id; name = record.displayName ?? record.device.profile.name
         ownerMatchesCurrent = currentIdentity.map { $0 == record.device.owner } ?? false
         reachability = "not-probed"
         activeRevision = record.device.activeRevision
+        cachedReachability = record.device.reachable ? "reachable" : "unreachable"
+        lastSeenAt = record.lastSeenAt.map { ISO8601DateFormatter().string(from: $0) }
     }
 }
 

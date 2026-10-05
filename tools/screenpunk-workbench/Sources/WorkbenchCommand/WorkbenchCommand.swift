@@ -12,7 +12,8 @@ public enum WorkbenchCommand {
                            environment: [String: String] = ProcessInfo.processInfo.environment,
                            localReviewTTY: (() throws -> Int32)? = nil,
                            localSecretInput: (() throws -> Data)? = nil,
-                           lifecycleContext: WorkbenchLifecycleContext? = nil) -> Int32 {
+                           lifecycleContext: WorkbenchLifecycleContext? = nil,
+                           statusContext: WorkbenchStatusContext? = nil) -> Int32 {
         let mcpInvocation = arguments.indices.contains { index in
             arguments[index] == "mcp" && index + 1 < arguments.count && arguments[index + 1] == "serve"
         }
@@ -39,8 +40,20 @@ public enum WorkbenchCommand {
                 presentation.success(["text": try helpText(topic: topic)], human: try helpText(topic: topic))
                 return 0
             }
-            let known = ["setup", "workspace", "operation", "project", "screen", "build", "migration", "device", "connection", "approval", "deploy", "service", "doctor", "diagnostics", "agent", "mcp", "toolchain", "config", "install", "update", "uninstall", "package"]
+            let known = ["status", "setup", "workspace", "operation", "project", "screen", "build", "migration", "device", "connection", "approval", "deploy", "service", "doctor", "diagnostics", "agent", "mcp", "toolchain", "config", "install", "update", "uninstall", "package"]
             if !known.contains(words.first ?? "") { throw Options.usage("Unknown command. Use screenpunk help.") }
+            if words.first == "status" {
+                guard words == ["status"], options.workspace == nil, options.profile == nil else {
+                    throw Options.usage("Use screenpunk status without a workspace or profile override.")
+                }
+                let context = try statusContext ?? .production(options: options)
+                let report = context.collect()
+                guard let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any] else {
+                    throw WorkbenchIPCError(.invalidRequest)
+                }
+                presentation.success(value, human: report.human)
+                return 0
+            }
             if let profile = options.profile, profile != "default",
                words.count >= 3, words[0] == "workspace", words[1] == "config",
                ["set", "unset"].contains(words[2]) {
@@ -1196,6 +1209,7 @@ public enum WorkbenchCommand {
     }
 
     private static func helpText(topic: String?) throws -> String {
+        if topic == "status" { return "screenpunk status [--json]\nRead-only release, owned service, workspace, paired device and MCP summary. No service startup or device probe." }
         if let topic, !["service", "doctor", "version", "help", "workspace", "setup", "operation",
                          "project", "screen", "build", "migration", "device", "connection",
                          "approval", "deploy", "agent", "mcp", "config", "diagnostics", "toolchain",
@@ -1295,6 +1309,7 @@ public enum WorkbenchCommand {
           uninstall plan|apply [TOKEN]        Review or remove owned installation; retain data
           agent config --client CLIENT       Print codex, cursor, claude or generic command fragment
           agent list|test                    List the configured tool catalog or test broker access
+          status                            Read-only installation and service summary
           doctor|version|help [topic]
         Options: --json --no-input --approved --timeout SECONDS --workspace PATH --home PATH
                  --runtime-directory PATH --profile NAME --verbose --help --version
