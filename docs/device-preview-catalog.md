@@ -1,5 +1,16 @@
 # Device preview presets
 
+## Preserve user data across updates
+
+Every screen that accepts user-entered data or preferences should persist them
+with native `screenpunk.state.get/set/remove`. Keep dashboardId and versioned keys
+stable, restore before defaults, save user edits, and preserve data on read or
+migration failure. Check persistentState/persistentStateWritable; report unsupported
+or read-only hosts. Verify values survive a screen update and app relaunch.
+Device-local state is not remote agent access or cross-device sync; app deletion,
+device reset and confirmed Disconnect can erase it. See [the authoring default](../docs/screen-authoring-persistence.md).
+
+
 The Screens header has a searchable, centered device picker. The catalog contains 237 presets spanning common Apple and Android families from 2018 through September 2026. It is broad coverage, not a sales ranking or a claim to include every regional variant. Model names, manufacturer and device category are searchable; all query terms must match. Arrow keys move the highlight and Return selects. Choosing a preset only changes the local preview, and the last choice persists.
 
 Apple entries use the logical full-screen canvas and scale from Apple's installed CoreSimulator device capability plists. This correctly preserves the rendered viewport on devices such as iPhone 13 mini, whose logical canvas differs from panel pixels. Duplicate RAM configurations and pre-2018 models are omitted.
