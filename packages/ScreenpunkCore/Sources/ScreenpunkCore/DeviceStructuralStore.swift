@@ -15,8 +15,8 @@ import Glibc
 /// candidate staging is repairable only by the original live attempt, never adopted after restart.
 /// Corrupt/partial staging blocks; records are never pruned to regain capacity. Inode checks are local replacement guards, not portable backup guarantees.
 final class DeviceStructuralStore {
-    enum Kind: Equatable { case binding, intent, envelope, terminal }
-    enum Boundary: Equatable { case afterWrite(Kind), afterFileSync(Kind), beforeReplace(Kind), afterReplace(Kind), afterDirectorySync(Kind) }
+    enum Kind: Equatable { case binding, intent, envelope, terminal, nativeGenesisIntent, nativeGenesisBinding, nativeGenesis, nativeGenesisConfirmation }
+    enum Boundary: Equatable { case afterCreate(Kind), afterWrite(Kind), afterFileSync(Kind), beforeReplace(Kind), afterReplace(Kind), afterDirectorySync(Kind) }
     enum StagingIdentitySite: Equatable { case candidateCreated, replacementRetried(Kind) }
     enum Recovery: Equatable {
         case terminalNeedsDurability(DeviceStructuralOperationRecord)
@@ -24,7 +24,7 @@ final class DeviceStructuralStore {
         case candidateNeedsDurability(DeviceStructuralOperationRecord)
     }
     struct Receipt: Equatable { let record: DeviceStructuralOperationRecord }
-    private typealias Identity = StructuralStoreIdentity
+    fileprivate typealias Identity = StructuralStoreIdentity
     private static let gateLock = NSLock()
     private static var epochs: [String: UInt64] = [:]
     private var qualification: (epoch: UInt64, current: Node, proof: Node)?
@@ -233,6 +233,7 @@ final class DeviceStructuralStore {
         try commandPermit.begin(ObjectIdentifier(self)); defer { commandPermit.end() }
         guard let context = borrowedResourceContext else { throw DeviceLocalResourceGateFailure.invalidScope }
         try check(context)
+        try requireNoNativeGenesis(context.root)
         do {
             let state = try inventory(context)
             let needsPrepare: Bool
@@ -350,6 +351,7 @@ final class DeviceStructuralStore {
     private func filename(_ id: UUID) -> String { id.uuidString.lowercased() + ".json" }
     private func inventory(_ context: Context) throws -> (records: [DeviceStructuralOperationRecord], current: Node?) {
         try check(context)
+        try requireNoNativeGenesis(context.root)
         let files = try names(context.operations)
         // Staging records are retained and strictly checked too; a partial/corrupt staging file blocks.
         var finals: [UUID: DeviceStructuralOperationRecord] = [:]
@@ -400,6 +402,158 @@ final class DeviceStructuralStore {
         return (records, current)
     }
 
+
+    // Native initialization is explicit, unmounted and not a delivery or Cloud authority ACK.
+    private static let nativeGenesisNames:Set<String>=["native-genesis.intent","native-genesis.binding","native-genesis.json","native-genesis.confirm"]
+    private struct NativeGenesisIntent:Codable {let schemaVersion:Int,rootID:UUID;let selfID:Identity,binding:NativeNode;let stateBytes:Data}
+    private struct NativeGenesisBinding:Codable {let schemaVersion:Int,selfID:Identity;let intent:NativeNode;let stateID:Identity,confirmationID:Identity}
+    private struct NativeGenesisConfirmation:Codable {let schemaVersion:Int,selfID:Identity;let binding:NativeNode;let stateID:Identity,stateDigest:String}
+    fileprivate struct NativeNode:Codable,Equatable {let identity:Identity;let bytes:Data}
+    private var nativeGenesisInput:Data?,nativeGenesisLive:[String:Identity]=[:]
+    private var nativeGenesisQualified:NativeGenesisCheckpoint?
+    final class NativeGenesisCheckpoint {
+        let rootID:UUID,state:DeviceNativeStructuralState,stateBytes:Data
+        fileprivate let issuer:ObjectIdentifier,epoch:UInt64,nodes:[String:NativeNode]
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ state:DeviceNativeStructuralState,_ bytes:Data,_ nodes:[String:NativeNode]) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.state=state;stateBytes=bytes;self.nodes=nodes
+        }
+    }
+    private func requireNoNativeGenesis(_ fd:Int32)throws {
+        guard !(try names(fd)).contains(where:{Self.nativeGenesisNames.contains($0) || $0.hasSuffix(".stage") && Self.nativeGenesisNames.contains(String($0.dropLast(6)))}) else{throw DeviceStructuralStoreError.conflict}
+    }
+    private func nativeGenesisInventory(_ c:Context)throws->[String:NativeNode] {
+        let base:Set<String>=["structural.lock","operations","root-binding.json"]
+        let allowed=base.union(Self.nativeGenesisNames).union(Self.nativeGenesisNames.map{$0+".stage"})
+        guard Set(try names(c.root)).isSubset(of:allowed),try names(c.operations).isEmpty else{throw DeviceStructuralStoreError.conflict}
+        var result:[String:NativeNode]=[:]
+        for name in Self.nativeGenesisNames {
+            let final=try readFile(c.root,name,limit:name == "native-genesis.confirm" ? 32768:16384)
+            let staged=try readFile(c.root,name+".stage",limit:name == "native-genesis.confirm" ? 32768:16384)
+            guard final == nil || staged == nil else{throw DeviceStructuralStoreError.conflict}
+            if let n=final ?? staged {result[name] = .init(identity:n.identity,bytes:n.bytes)}
+        }
+        for (name,id) in nativeGenesisLive {guard result[String(name.dropLast(6))]?.identity == id else{throw DeviceStructuralStoreError.conflict}}
+        return result
+    }
+    private func nativeGenesisEncode<T:Encodable>(_ value:T,limit:Int=16384)throws->Data {try DeviceLocalCompleteSetBounds.encode(value,maximum:limit)}
+    private func nativeGenesisDecode<T:Decodable>(_ type:T.Type,_ bytes:Data,fields:Set<String>,limit:Int=16384)throws->T where T:Encodable {
+        let o=try StructuralStoreCodec.object(bytes,limit:limit);try StructuralStoreCodec.keys(o,required:fields)
+        for key in ["selfID","stateID","confirmationID"] where o[key] != nil {
+            guard let id=o[key] as? [String:Any] else{throw DeviceStructuralStoreError.invalidRecord};try StructuralStoreCodec.keys(id,required:["device","inode"])
+        }
+        for key in ["intent","binding"] where o[key] != nil {
+            guard let node=o[key] as? [String:Any],let id=node["identity"] as? [String:Any] else{throw DeviceStructuralStoreError.invalidRecord}
+            try StructuralStoreCodec.keys(node,required:["identity","bytes"]);try StructuralStoreCodec.keys(id,required:["device","inode"])
+        }
+        let value=try JSONDecoder().decode(type,from:bytes)
+        guard try nativeGenesisEncode(value,limit:limit) == bytes else{throw DeviceStructuralStoreError.invalidRecord};return value
+    }
+    private func nativeAllocate(_ c:Context,_ name:String,_ kind:Kind)throws->Identity {
+        if let n=try readFile(c.root,name+".stage",limit:32768) {guard nativeGenesisLive[name+".stage"] == n.identity else{throw DeviceStructuralStoreError.conflict};return n.identity}
+        guard try readFile(c.root,name,limit:32768) == nil else{throw DeviceStructuralStoreError.conflict}
+        let fd=openat(c.root,name+".stage",O_CREAT|O_EXCL|O_RDWR|O_NOFOLLOW|O_NONBLOCK,0o600)
+        guard fd >= 0 else{throw failure()};defer{close(fd)}
+        let id=try identity(fd,directory:false);nativeGenesisLive[name+".stage"]=id;try boundary(.afterCreate(kind));return id
+    }
+    private func nativeFill(_ c:Context,_ name:String,_ node:NativeNode,_ kind:Kind)throws {
+        let fd=openat(c.root,name+".stage",O_RDWR|O_NOFOLLOW|O_NONBLOCK);guard fd >= 0 else{throw failure()};defer{close(fd)}
+        guard try identity(fd,directory:false) == node.identity,ftruncate(fd,0) == 0 else{throw DeviceStructuralStoreError.conflict}
+        try node.bytes.withUnsafeBytes {b in var offset=0;while offset < b.count {let n=write(fd,b.baseAddress!.advanced(by:offset),b.count-offset);if n < 0 && errno == EINTR{continue};guard n > 0 else{throw failure()};offset+=n}}
+        try boundary(.afterWrite(kind));try sync(fd);try boundary(.afterFileSync(kind))
+        guard try readFile(c.root,name+".stage",limit:32768) == Node(identity:node.identity,bytes:node.bytes) else{throw DeviceStructuralStoreError.conflict}
+    }
+    private func nativePromote(_ c:Context,_ name:String,_ node:NativeNode,_ kind:Kind)throws {
+        if let existing=try readFile(c.root,name,limit:32768) {
+            guard existing == Node(identity:node.identity,bytes:node.bytes),try readFile(c.root,name+".stage",limit:32768) == nil else{throw DeviceStructuralStoreError.conflict}
+            try syncExisting(c.root,name,expected:existing);try boundary(.afterFileSync(kind))
+        } else {
+            let expected=Node(identity:node.identity,bytes:node.bytes)
+            guard try readFile(c.root,name+".stage",limit:32768) == expected else{throw DeviceStructuralStoreError.conflict}
+            try syncExisting(c.root,name+".stage",expected:expected);try boundary(.afterFileSync(kind));try boundary(.beforeReplace(kind));try check(c)
+            guard renameat(c.root,name+".stage",c.root,name) == 0 else{throw failure()};try boundary(.afterReplace(kind))
+        }
+        try sync(c.root);try boundary(.afterDirectorySync(kind));try check(c)
+    }
+    private func checkedNativeGenesis(_ c:Context)throws->(DeviceNativeStructuralState,[String:NativeNode]) {
+        let nodes=try nativeGenesisInventory(c)
+        guard let intent=nodes["native-genesis.intent"],let binding=nodes["native-genesis.binding"],let state=nodes["native-genesis.json"],let proof=nodes["native-genesis.confirm"],
+              let rootBinding=try readFile(c.root,"root-binding.json",limit:8192) else{throw DeviceStructuralStoreError.conflict}
+        let i=try nativeGenesisDecode(NativeGenesisIntent.self,intent.bytes,fields:["schemaVersion","rootID","selfID","binding","stateBytes"])
+        let b=try nativeGenesisDecode(NativeGenesisBinding.self,binding.bytes,fields:["schemaVersion","selfID","intent","stateID","confirmationID"])
+        let f=try nativeGenesisDecode(NativeGenesisConfirmation.self,proof.bytes,fields:["schemaVersion","selfID","binding","stateID","stateDigest"],limit:32768)
+        let parsed=try DeviceNativeStructuralStateCodec.decode(state.bytes)
+        guard i.schemaVersion == 1,b.schemaVersion == 1,f.schemaVersion == 1,i.rootID == rootID,i.selfID == intent.identity,
+              i.binding == NativeNode(identity:rootBinding.identity,bytes:rootBinding.bytes),b.selfID == binding.identity,b.intent == intent,b.stateID == state.identity,b.confirmationID == proof.identity,
+              f.selfID == proof.identity,f.binding == binding,f.stateID == state.identity,try DeviceNativeDeliveryAttachmentCodec.hash(state.bytes).utf8.elementsEqual(f.stateDigest.utf8),
+              state.bytes == i.stateBytes,parsed.entries.isEmpty,parsed.configuredEntryID == nil,try DeviceNativeStructuralStateCodec.encode(parsed) == state.bytes else{throw DeviceStructuralStoreError.conflict}
+        var original=nodes;original["root-binding.json"]=i.binding;return(parsed,original)
+    }
+    /// Exact explicitly supplied empty baseline only; does not install a committed delivery envelope.
+    func initializeNativeGenesisExplicit(_ state:DeviceNativeStructuralState)throws->NativeGenesisCheckpoint {
+        guard root.isFileURL,state.entries.isEmpty,state.configuredEntryID == nil else{throw DeviceStructuralStoreError.conflict}
+        let bytes=try DeviceNativeStructuralStateCodec.encode(state)
+        let result=try disk(allowNative:true){c in
+            let nodes=try nativeGenesisInventory(c)
+            if let input=nativeGenesisInput {guard input == bytes else{throw DeviceStructuralStoreError.conflict}}
+            guard let rootBinding=try readFile(c.root,"root-binding.json",limit:8192) else{throw DeviceStructuralStoreError.unsafeBinding}
+            let originalBinding=NativeNode(identity:rootBinding.identity,bytes:rootBinding.bytes)
+            var intent:NativeNode
+            if let n=nodes["native-genesis.intent"],!n.bytes.isEmpty {
+                let i=try nativeGenesisDecode(NativeGenesisIntent.self,n.bytes,fields:["schemaVersion","rootID","selfID","binding","stateBytes"])
+                guard i.schemaVersion == 1,i.rootID == rootID,i.selfID == n.identity,i.binding == originalBinding,i.stateBytes == bytes else{throw DeviceStructuralStoreError.conflict};intent=n
+            } else {
+                guard nodes.isEmpty || nativeGenesisInput == bytes,nodes.allSatisfy({nativeGenesisLive[$0.key+".stage"] == $0.value.identity && $0.value.bytes.isEmpty}) else{throw DeviceStructuralStoreError.conflict}
+                intent=NativeNode(identity:Identity(device:0,inode:0),bytes:Data())
+            }
+            // Entire persisted or live-prefix identity graph is checked BEFORE epoch/sync/write.
+            var reciprocal:NativeGenesisBinding?
+            if let n=nodes["native-genesis.binding"],!n.bytes.isEmpty {
+                let b=try nativeGenesisDecode(NativeGenesisBinding.self,n.bytes,fields:["schemaVersion","selfID","intent","stateID","confirmationID"])
+                guard b.schemaVersion == 1,b.selfID == n.identity,b.intent == intent,nodes["native-genesis.json"]?.identity == b.stateID,nodes["native-genesis.confirm"]?.identity == b.confirmationID else{throw DeviceStructuralStoreError.conflict};reciprocal=b
+                let expectedProof=try nativeGenesisEncode(NativeGenesisConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:nodes["native-genesis.binding"]!,stateID:b.stateID,stateDigest:DeviceNativeDeliveryAttachmentCodec.hash(bytes)),limit:32768)
+                for key in ["native-genesis.json","native-genesis.confirm"] {guard let n=nodes[key],n.bytes.isEmpty || key == "native-genesis.json" && n.bytes == bytes || key == "native-genesis.confirm" && n.bytes == expectedProof else{throw DeviceStructuralStoreError.conflict}}
+            } else {
+                for (key,node) in nodes where key != "native-genesis.intent" {guard nativeGenesisInput == bytes,nativeGenesisLive[key+".stage"] == node.identity,node.bytes.isEmpty else{throw DeviceStructuralStoreError.conflict}}
+            }
+            nativeGenesisInput=bytes;nativeGenesisQualified=nil;bindingQualified=false;let now=epoch(invalidate:true)
+            if intent.bytes.isEmpty {
+                let id=try nativeAllocate(c,"native-genesis.intent",.nativeGenesisIntent)
+                intent=NativeNode(identity:id,bytes:try nativeGenesisEncode(NativeGenesisIntent(schemaVersion:1,rootID:rootID,selfID:id,binding:originalBinding,stateBytes:bytes)))
+                try nativeFill(c,"native-genesis.intent",intent,.nativeGenesisIntent)
+            }
+            try nativePromote(c,"native-genesis.intent",intent,.nativeGenesisIntent)
+            let binding:NativeNode
+            if let b=reciprocal {binding=nodes["native-genesis.binding"]!;_ = b}
+            else {
+                let stateID=try nativeAllocate(c,"native-genesis.json",.nativeGenesis),proofID=try nativeAllocate(c,"native-genesis.confirm",.nativeGenesisConfirmation),bindingID=try nativeAllocate(c,"native-genesis.binding",.nativeGenesisBinding)
+                binding=NativeNode(identity:bindingID,bytes:try nativeGenesisEncode(NativeGenesisBinding(schemaVersion:1,selfID:bindingID,intent:intent,stateID:stateID,confirmationID:proofID)))
+                try nativeFill(c,"native-genesis.binding",binding,.nativeGenesisBinding)
+            }
+            try nativePromote(c,"native-genesis.binding",binding,.nativeGenesisBinding)
+            let b=try nativeGenesisDecode(NativeGenesisBinding.self,binding.bytes,fields:["schemaVersion","selfID","intent","stateID","confirmationID"])
+            let data=NativeNode(identity:b.stateID,bytes:bytes)
+            let proof=NativeNode(identity:b.confirmationID,bytes:try nativeGenesisEncode(NativeGenesisConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:binding,stateID:b.stateID,stateDigest:DeviceNativeDeliveryAttachmentCodec.hash(bytes)),limit:32768))
+            for (name,n,kind) in [("native-genesis.json",data,Kind.nativeGenesis),("native-genesis.confirm",proof,Kind.nativeGenesisConfirmation)] {
+                if try readFile(c.root,name,limit:32768) == nil {try nativeFill(c,name,n,kind)}
+                try nativePromote(c,name,n,kind)
+            }
+            try syncExisting(c.root,"root-binding.json",expected:rootBinding);try sync(c.lock);try sync(c.operations);try sync(c.root);try check(c)
+            let final=try checkedNativeGenesis(c);guard epoch() == now,final.0 == state else{throw DeviceStructuralStoreError.conflict}
+            return NativeGenesisCheckpoint(ObjectIdentifier(self),rootID,now,state,bytes,final.1)
+        }
+        // Qualification occurs after disk scope exit; other instances invalidate this epoch globally.
+        try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
+        mutex.lock();defer{mutex.unlock()};guard result.epoch == epoch() else{throw DeviceStructuralStoreError.conflict}
+        nativeGenesisQualified=result;return result
+    }
+    func verifyNativeGenesisExact(_ original:NativeGenesisCheckpoint,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(allowNative:true,resourcePermit:resourcePermit){c in
+            guard original.issuer == ObjectIdentifier(self),original.rootID == rootID,original.epoch == epoch(),nativeGenesisQualified === original else{throw DeviceStructuralStoreError.conflict}
+            let current=try checkedNativeGenesis(c)
+            guard current.0 == original.state,current.1 == original.nodes,epoch() == original.epoch else{throw DeviceStructuralStoreError.conflict}
+        }
+    }
+
     private var borrowedResourceContext: Context?
     var resourceGateDescriptor: DeviceLocalResourceDescriptor { get throws { try .existing(instance:ObjectIdentifier(self),path:root.path,rootID:rootID) } }
     func withResourceGateScope(_ permit: DeviceLocalResourcePermit, _ body: () throws -> Void) throws {
@@ -412,24 +566,26 @@ final class DeviceStructuralStore {
             try check(context)
         }
     }
-    private func disk<T>(create: Bool = false, resourcePermit: DeviceLocalResourcePermit? = nil,
+    private func disk<T>(create: Bool = false, allowNative: Bool = false, resourcePermit: DeviceLocalResourcePermit? = nil,
                          _ operation: (Context) throws -> T) throws -> T {
         if let permit = resourcePermit {
             guard !create else { throw DeviceLocalResourceGateFailure.invalidScope }
             try permit.beginRead(ObjectIdentifier(self)); defer { permit.endRead() }
             guard let context = borrowedResourceContext else { throw DeviceLocalResourceGateFailure.invalidScope }
             try check(context)
+            if !allowNative { try requireNoNativeGenesis(context.root) }
             do { let result = try operation(context); try check(context); return result }
             catch { try check(context); throw error }
         }
         try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
         mutex.lock(); defer { mutex.unlock() }
-        return try diskContext(create:create,operation)
+        return try diskContext(create:create,allowNative:allowNative,operation)
     }
-    private func diskContext<T>(create: Bool, releasePermit: DeviceLocalResourcePermit? = nil, _ operation: (Context) throws -> T) throws -> T {
+    private func diskContext<T>(create: Bool, allowNative: Bool = true, releasePermit: DeviceLocalResourcePermit? = nil, _ operation: (Context) throws -> T) throws -> T {
         guard root.path.utf8.count <= 4096, root.resolvingSymlinksInPath().path == root.path else { throw DeviceStructuralStoreError.unsafeBinding }
         let rootFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
         guard rootFD >= 0 else { throw failure() }; defer { close(rootFD) }
+        if !allowNative { try requireNoNativeGenesis(rootFD) }
         let rootIdentity = try identity(rootFD, directory: true)
         let lockFD = openat(rootFD, "structural.lock", O_RDWR | O_NOFOLLOW | O_NONBLOCK | (create ? O_CREAT : 0), 0o600)
         guard lockFD >= 0 else { throw failure() }; defer { close(lockFD) }
