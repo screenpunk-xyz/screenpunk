@@ -1,5 +1,16 @@
 # React screen authoring
 
+## Preserve user data across updates
+
+Every screen that accepts user-entered data or preferences should persist them
+with native `screenpunk.state.get/set/remove`. Keep dashboardId and versioned keys
+stable, restore before defaults, save user edits, and preserve data on read or
+migration failure. Check persistentState/persistentStateWritable; report unsupported
+or read-only hosts. Verify values survive a screen update and app relaunch.
+Device-local state is not remote agent access or cross-device sync; app deletion,
+device reset and confirmed Disconnect can erase it. See [the authoring default](PERSISTENCE.md).
+
+
 React screens are ordinary schema-1 web packages. They use the same native grants,
 validator, previews and device deployment as HTML/JavaScript screens. No React
 Native renderer, CDN, development server or device-side Node runtime is included.
@@ -29,7 +40,7 @@ grants require their existing review and approval.
 Source files live outside the app, in the controller's authoring/projects store.
 Reveal Source supports external editors; reread the source version before building.
 Build failures keep the previous valid dashboard. Builds snapshot source and reject
-concurrent changes. Each project pins kit version 1.0.0. Kits are retained locally;
+concurrent changes. Existing projects retain their pinned kit, including published version 1.0.0.\nThe next reviewed kit source is 1.0.1 and includes the persistence adapter/templates.\nIt is not an installed upgrade until separately assembled, signed and published. Kits are retained locally;
 missing versions fail explicitly. To upgrade, create a new project with the desired
 kit and migrate/review source explicitly. Never modify an existing published kit.
 
