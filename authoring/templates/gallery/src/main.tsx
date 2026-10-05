@@ -25,10 +25,9 @@ function Gallery() {
       <fieldset disabled={!prefs.editable}><div className="sp-row">
         <Button onClick={() => save({ ...prefs.value, count: prefs.value.count + 1 })}>Count {prefs.value.count}</Button>
         <Choice label="Period" value={prefs.value.period} onChange={period => save({ ...prefs.value, period })} options={['Day', 'Week', 'Month']}/>
-        <InfoDialog title="Open dialog">Keyboard focus stays inside this dialog and returns to its trigger when closed.</InfoDialog>
         <Input aria-label="Example input" placeholder="Type something" maxLength={1024} value={text} onChange={event => setText(event.target.value)}/>
         <Button onClick={() => save({ ...prefs.value, text })}>Save text</Button>
-      </div></fieldset></Card>
+      </div></fieldset><InfoDialog title="Open dialog">Keyboard focus stays inside this dialog and returns to its trigger when closed.</InfoDialog></Card>
       <Card><h2>Tabs</h2><TabGroup tabs={[{id:'one',label:'Overview',content:<p>Reusable UI, one theme.</p>},{id:'two',label:'Details',content:<p>Arrow keys move between tabs.</p>}]}/></Card>
     </div><Card><TrendChart kind="bar" label="Sample trend" data={[{name:'Mon',value:4},{name:'Tue',value:7},{name:'Wed',value:5}]}/></Card>
     <div className="sp-grid"><Card><h2>Sortable table</h2><DataTable data={[{name:'North',value:12},{name:'South',value:7}]} columns={[{accessorKey:'name',header:'Region'},{accessorKey:'value',header:'Value'}]}/></Card>
