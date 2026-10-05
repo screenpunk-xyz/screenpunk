@@ -1516,6 +1516,9 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                 guard bytes.count <= PackageLimits.expandedBytes - total else { throw WorkbenchIPCError(.resourceLimit) }
                 total += bytes.count
             }
+            if case .packageValidate = request {
+                try PackageWebContentValidation.requireCompatible(record.files)
+            }
             let detail = WorkbenchPackageRead(dashboardId: manifest.dashboardId,
                 revision: manifest.revision, name: manifest.name, digest: digest,
                 fileCount: manifest.files.count, bytes: total,

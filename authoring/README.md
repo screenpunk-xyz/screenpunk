@@ -9,16 +9,22 @@ Native renderer, CDN, development server or device-side Node runtime is included
 The authoring-enabled Mac app includes Node, TypeScript, esbuild and local dependencies.
 Read `screenpunk://authoring/catalog` for pinned versions and verification status.
 
-1. `create_screen_project` with `starter: "earthquakes"` or `"gallery"`.
-2. `get_screen_project` with the project ID and optional `paths` to read source.
-3. `update_screen_project` with `projectId`, returned `sourceVersion`, and `files`
-   entries containing `path` and `text`/`base64`, or `delete: true`.
-4. `build_screen_project` with the current `sourceVersion`. After the first build,
-   also pass the current dashboard `baseRevision` from `get_dashboard`.
-5. Use `validate_dashboard`, then `preview_dashboard` for that exact revision.
-6. Inspect and approve the public connection declaration before live reads. The
-   earthquake starter defaults to synthetic fixtures and never treats fixtures as live data.
-7. Deploy the previewed revision through the existing deployment approval workflow.
+Use the shipped broker's `tools/list` schemas. Current routes are
+`create_workspace_project`, `inspect_workspace_project`,
+`get_workspace_source_file`, `patch_workspace_project`, `get_workspace_build`
+and `run_workspace_build`. Patches carry the current `expectedSourceVersion` and
+canonical base64 members; subsequent builds also carry the current built
+`baseRevision`. Inspect immutable output with `get_workspace_package_file`
+(empty path selects its manifest) and validate that exact revision. A broker
+without an attached compatible preview helper returns `preview_required`; retain
+that result and use a supported visual review instead of claiming success.
+Then prepare, plan, review and obtain matching human approval before applying a
+deployment. Read [the exact workflow](../docs/web-package-authoring.md).
+
+The old standalone-router create/update/build_screen_project names are not a
+fallback for missing broker capabilities. The earthquake starter defaults to
+synthetic fixtures and never treats them as live data. New public connection
+grants require their existing review and approval.
 
 Source files live outside the app, in the controller's authoring/projects store.
 Reveal Source supports external editors; reread the source version before building.
@@ -87,3 +93,7 @@ Only the fixed bundling child starts without `--jitless` to enable the exact tru
 The WASM runtime receives an inventory-only filesystem, synthetic metadata, readonly descriptors and bounded128MiB protocol input/output. Controller packets have closed shapes and bounded counts/bytes; diagnostics are capped at20 messages/16000 characters. stdin/stdout descriptors remain separate from captured file descriptors. The compiler VM receives no Node module loader or network/native filesystem capability. The adapter relies on the pinned upstream Go/browser syscall interface; dependency updates require regression qualification.
 
 These JavaScript guards are not a kernel filesystem sandbox. The VM is capability shaping for trusted compiler code, not isolation for hostile JavaScript; source is parsed, never executed during compilation. Permissions0400/0700 are not same-UID isolation, and portable Node path checks cannot promise elimination of all malicious concurrent ancestor races. Operator-installed kit/bootstrap must remain immutable. Cloud activation still requires readonly/nonroot/no-network process isolation, CPU/RSS/PID/deadline enforcement and the external sandbox qualification. Earlier arm64-host/amd64-guest timing is emulated feasibility evidence, not native cloud sizing or production cost acceptance.
+
+## Package-local web assets
+
+The host CSP requires CSS and JavaScript in packaged files. Inline style/script and event handlers are blocked. React builds emit linked screen.css and screen.js; plain HTML uses linked .css and .js files and includes them in the package inventory. Read get_help with topic authoring and [web package authoring](../docs/web-package-authoring.md) before changing a screen. The complete example is examples/local-web-package. Static validation is authoring guidance; visually inspect the exact revision before its review and approval.
