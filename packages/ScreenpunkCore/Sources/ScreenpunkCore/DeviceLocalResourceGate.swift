@@ -906,3 +906,77 @@ final class DeviceBoundPackagePreparationCoordinator {
         try acquire(0)
     }
 }
+
+/// Fixed native intent join only. Read scopes cannot construct this permit or dispatch mutation.
+final class DeviceNativeProvisioningCommandPermit {
+    private let read:DeviceLocalResourcePermit
+    fileprivate init(_ read:DeviceLocalResourcePermit){self.read=read}
+    func begin(_ instance:ObjectIdentifier)throws{try read.beginRead(instance)}
+    func end(){read.endRead()}
+}
+/// Native-specific publication token issued only by the fixed coordinator AFTER all scope exits.
+/// A legacy completion token cannot publish a native pending object, nor can read scopes mint it.
+final class DeviceNativeProvisioningPublicationPermit {
+    private let transition:DeviceLocalProvisioningIntentStore.NativeJoinTransition
+    fileprivate init(_ transition:DeviceLocalProvisioningIntentStore.NativeJoinTransition){self.transition=transition}
+    func validate(_ original:DeviceLocalProvisioningIntentStore.NativeJoinTransition)throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        guard transition === original else{throw DeviceLocalResourceGateFailure.invalidScope}
+    }
+}
+/// The two-root command reserves intent only; it admits no resource/structural/runtime execution.
+final class DeviceNativeProvisioningCoordinator {
+    private let journal:DeviceLocalProvisioningIntentStore,structural:DeviceStructuralStore
+    init(journal:DeviceLocalProvisioningIntentStore,structural:DeviceStructuralStore){self.journal=journal;self.structural=structural}
+    func joinExact(_ request:DeviceNativeProvisioningRequest,plan:DeviceValidatedNativeProvisioningPlan,
+                   attachment:DeviceLocalProvisioningIntentStore.DeliveryAttachmentReceipt?)throws->DeviceLocalProvisioningIntentStore.NativeJoinReceipt {
+        guard request.roots.journalID == journal.rootID,request.roots.structuralID == structural.rootID,
+              request.roots == plan.roots else{throw DeviceStructuralStoreError.conflict}
+        let fresh=try DeviceNativeProvisioningPlanner.qualify(request)
+        guard fresh.intentBytes == plan.intentBytes,fresh.candidateBytes == plan.candidateBytes,
+              fresh.delivery.commandBytes == plan.delivery.commandBytes,fresh.delivery.planBytes == plan.delivery.planBytes else{throw DeviceStructuralStoreError.conflict}
+        var pending:DeviceLocalProvisioningIntentStore.NativeJoinTransition?
+        do {
+            try scope {permit in
+                try structural.verifyNativeGenesisExact(request.baseline,resourcePermit:permit)
+                let original=try journal.captureNativeJoinOriginal(plan,attachment:attachment,resourcePermit:permit)
+                try structural.verifyNativeGenesisExact(request.baseline,resourcePermit:permit)
+                let transition=try journal.performNativeJoinExact(plan,original:original,commandPermit:.init(permit))
+                pending=transition // Retained only for failure cleanup; no publication token yet.
+                try structural.verifyNativeGenesisExact(request.baseline,resourcePermit:permit)
+                try journal.verifyNativeJoinTransition(transition,plan:plan,resourcePermit:permit)
+            }
+        } catch {
+            if let transition=pending {try journal.discardNativeJoinPublication(transition)}
+            throw error
+        }
+        guard let transition=pending else{throw DeviceLocalResourceGateFailure.invalidScope}
+        do {return try journal.publishNativeJoinExact(transition,publicationPermit:.init(transition))}
+        catch {try journal.discardNativeJoinPublication(transition);throw error}
+    }
+    func verifyExact(_ receipt:DeviceLocalProvisioningIntentStore.NativeJoinReceipt,plan:DeviceValidatedNativeProvisioningPlan,
+                     baseline:DeviceStructuralStore.NativeGenesisCheckpoint)throws {
+        try scope {permit in
+            try structural.verifyNativeGenesisExact(baseline,resourcePermit:permit)
+            try journal.verifyNativeJoinExact(receipt,plan:plan,resourcePermit:permit)
+            try structural.verifyNativeGenesisExact(baseline,resourcePermit:permit)
+        }
+    }
+    private func scope(_ body:(DeviceLocalResourcePermit)throws->Void)throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        let descriptors=try [journal.resourceGateDescriptor,structural.resourceGateDescriptor].sorted {
+            if $0.path.utf8.elementsEqual($1.path.utf8){return $0.rootID.uuidString < $1.rootID.uuidString}
+            return $0.path.utf8.lexicographicallyPrecedes($1.path.utf8)
+        }
+        guard descriptors[0].instance != descriptors[1].instance,
+              !DeviceLocalResourceDescriptor.pathsOverlap(descriptors[0].path,descriptors[1].path) else{throw DeviceLocalResourceGateFailure.invalidRoots}
+        let permit=DeviceLocalResourcePermit(descriptors)
+        try DeviceLocalResourceRegistry.begin(permit);defer{permit.invalidate();DeviceLocalResourceRegistry.finish(permit)}
+        func acquire(_ index:Int)throws {
+            if index == descriptors.count {try DeviceLocalResourceRegistry.execute(permit);try body(permit);return}
+            if descriptors[index].instance == ObjectIdentifier(journal){try journal.withNativeResourceGateScope(permit){try acquire(index+1)}}
+            else{try structural.withResourceGateScope(permit){try acquire(index+1)}}
+        }
+        try acquire(0)
+    }
+}

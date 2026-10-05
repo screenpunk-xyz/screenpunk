@@ -179,3 +179,31 @@ enum StructuralStoreCodec {
         }
     }
 }
+
+/// Additive native candidate encoding only. Existing Local envelope1/record1 decoders reject it.
+/// No stored native operation or structural execution is implemented by this slice.
+struct DeviceNativeStructuralEnvelope:Codable {
+    let schemaVersion:Int
+    let operationID:UUID,expectedGenerationID:UUID
+    let snapshotBytes:Data
+    init(operationID:UUID,expectedGenerationID:UUID,snapshotBytes:Data) {
+        schemaVersion=2;self.operationID=operationID;self.expectedGenerationID=expectedGenerationID;self.snapshotBytes=snapshotBytes
+    }
+}
+enum DeviceNativeStructuralEnvelopeCodec {
+    static func encode(_ value:DeviceNativeStructuralEnvelope)throws->Data {
+        guard value.schemaVersion == 2,value.snapshotBytes.count <= 65536 else{throw DeviceStructuralStoreError.tooLarge}
+        let snapshot=try DeviceNativeStructuralStateCodec.decode(value.snapshotBytes)
+        guard snapshot.generationID != value.expectedGenerationID,
+              try DeviceNativeStructuralStateCodec.encode(snapshot) == value.snapshotBytes else{throw DeviceStructuralStoreError.invalidRecord}
+        return try DeviceLocalCompleteSetBounds.encode(value,maximum:128*1024)
+    }
+    static func decode(_ bytes:Data)throws->DeviceNativeStructuralEnvelope {
+        let o=try StructuralStoreCodec.object(bytes,limit:128*1024)
+        try StructuralStoreCodec.keys(o,required:["schemaVersion","operationID","expectedGenerationID","snapshotBytes"])
+        // Bound base64 before JSONDecoder allocates the supplied snapshot.
+        guard let raw=o["snapshotBytes"] as? String,raw.utf8.count <= 87384 else{throw DeviceStructuralStoreError.tooLarge}
+        let value=try JSONDecoder().decode(DeviceNativeStructuralEnvelope.self,from:bytes)
+        guard try encode(value) == bytes else{throw DeviceStructuralStoreError.invalidRecord};return value
+    }
+}

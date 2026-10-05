@@ -16,8 +16,8 @@ import Glibc
 /// store work. This adds no UI/notification callback and no physical or hostile same-UID guarantee.
 final class DeviceLocalProvisioningIntentStore {
     enum Failure:Error {case unsafeRoot, conflict, uncertain, capacity, io(Int32)}
-    enum Kind:Equatable {case binding,genesis,head,intent,attempt,confirmation,completion,completionBinding,completionHead,completionConfirmation,deliveryIntent,deliveryBinding,deliveryCommand,deliveryPlan,deliveryConfirmation}
-    enum Boundary:Equatable {case afterCreate(Kind),afterWrite(Kind),afterFileSync(Kind),beforeReplace(Kind),afterReplace(Kind),afterDirectorySync(Kind),beforeDeliveryScopeExit}
+    enum Kind:Equatable {case binding,genesis,head,intent,attempt,confirmation,completion,completionBinding,completionHead,completionConfirmation,deliveryIntent,deliveryBinding,deliveryCommand,deliveryPlan,deliveryConfirmation,nativeJoinIntent,nativeJoinBinding,nativeJoinCandidate,nativeJoinConfirmation}
+    enum Boundary:Equatable {case afterCreate(Kind),afterWrite(Kind),afterFileSync(Kind),beforeReplace(Kind),afterReplace(Kind),afterDirectorySync(Kind),beforeDeliveryScopeExit,beforeNativeJoinScopeExit}
     fileprivate struct ID:Codable,Equatable {let device:UInt64,inode:UInt64}
     fileprivate struct Node:Codable,Equatable {let identity:ID;let bytes:Data}
     private struct Binding:Codable,Equatable {
@@ -118,6 +118,183 @@ final class DeviceLocalProvisioningIntentStore {
     private func requireSameLiveInput(_ plan:DeviceValidatedProvisioningPlan)throws {
         if let original=liveInputs[plan.operationID] {guard original == plan.canonicalBytes else{throw Failure.conflict}}
     }
+
+    // Fixed same-reservation native join. Never terminal, capacity release, effects or admission.
+    private static let nativeJoinNames:Set<String>=["native-join.intent","native-join.binding","native-join.candidate","native-join.confirm"]
+    fileprivate struct NativeFingerprint:Codable,Equatable {let identity:ID,byteCount:Int,digest:String}
+    private struct NativeJoinBinding:Codable {
+        let schemaVersion:Int,rootID:UUID,operationID:UUID,selfID:ID
+        let intent:Node,candidateID:ID,confirmationID:ID
+        let original:[String:NativeFingerprint]
+    }
+    private struct NativeJoinConfirmation:Codable {let schemaVersion:Int,selfID:ID,binding:Node,candidate:NativeFingerprint}
+    final class NativeJoinOriginal {
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,nodes:[String:Node],join:[String:Node]
+        fileprivate let intent:Data,candidate:Data
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ nodes:[String:Node],_ join:[String:Node],_ plan:DeviceValidatedNativeProvisioningPlan) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;self.nodes=nodes;self.join=join;intent=plan.intentBytes;candidate=plan.candidateBytes
+        }
+    }
+    final class NativeJoinTransition {
+        let nativeOperationID:UUID
+        fileprivate let original:NativeJoinOriginal,epoch:UInt64,nodes:[String:Node]
+        fileprivate init(_ original:NativeJoinOriginal,_ epoch:UInt64,_ operationID:UUID,_ nodes:[String:Node]){self.original=original;self.epoch=epoch;nativeOperationID=operationID;self.nodes=nodes}
+    }
+    final class NativeJoinReceipt {
+        let nativeOperationID:UUID
+        fileprivate let transition:NativeJoinTransition
+        fileprivate init(_ transition:NativeJoinTransition){self.transition=transition;nativeOperationID=transition.nativeOperationID}
+    }
+    private var nativeJoinInput:Data?,nativeJoinQualified:NativeJoinTransition?,nativeJoinPending:NativeJoinTransition?
+    private func nativeJoinLeaves(_ c:Context)throws->[String] {try list(c.root,limit:28).filter{Self.nativeJoinNames.contains($0) || $0.hasSuffix(".stage") && Self.nativeJoinNames.contains(String($0.dropLast(6)))}}
+    private func requireNoNativeJoin(_ c:Context)throws {
+        guard nativeJoinInput == nil,nativeJoinPending == nil,nativeJoinQualified == nil,try nativeJoinLeaves(c).isEmpty else{throw Failure.conflict}
+    }
+    private func nativeJoinExactInput(_ plan:DeviceValidatedNativeProvisioningPlan)throws->Data {
+        guard plan.roots.journalID == rootID,plan.intentBytes.count <= 32768,plan.candidateBytes.count <= 128*1024 else{throw Failure.conflict}
+        var bytes=Data();bytes.append(plan.intentBytes);bytes.append(0);bytes.append(plan.candidateBytes);return bytes
+    }
+    private func fingerprint(_ node:Node)throws->NativeFingerprint {.init(identity:node.identity,byteCount:node.bytes.count,digest:try DeviceNativeDeliveryAttachmentCodec.hash(node.bytes))}
+    private func nativeJoinNodes(_ c:Context)throws->[String:Node] {
+        var result:[String:Node]=[:]
+        for name in Self.nativeJoinNames {if let n=try either(c.root,name,limit:name == "native-join.candidate" ? 128*1024:name == "native-join.confirm" ? 65536:32768){result[name]=n}}
+        for name in Self.nativeJoinNames {if let id=live[name+".stage"] {guard result[name]?.identity == id else{throw Failure.conflict}}}
+        return result
+    }
+    private func decodeNativeJoinBinding(_ bytes:Data)throws->NativeJoinBinding {
+        let o=try shape(bytes,["schemaVersion","rootID","operationID","selfID","intent","candidateID","confirmationID","original"])
+        try ids(o,["selfID","candidateID","confirmationID"]);try node(o,"intent")
+        guard let original=o["original"] as? [String:Any],Set(original.keys) == Self.deliveryNames.union(["rootBinding","genesis","head"]) else{throw Failure.conflict}
+        for value in original.values {guard let f=value as? [String:Any] else{throw Failure.conflict};try StructuralStoreCodec.keys(f,required:["identity","byteCount","digest"]);try ids(f,["identity"])}
+        let b=try canonical(NativeJoinBinding.self,bytes)
+        guard b.schemaVersion == 1,b.rootID == rootID,b.intent.bytes.count <= 32768 else{throw Failure.conflict}
+        for f in b.original.values {guard (0...65536).contains(f.byteCount) else{throw Failure.conflict};_ = try DeviceNativeDeliveryAttachmentCodec.hashText(f.digest)}
+        return b
+    }
+    private func decodeNativeJoinConfirmation(_ bytes:Data)throws->NativeJoinConfirmation {
+        let o=try shape(bytes,["schemaVersion","selfID","binding","candidate"]);try ids(o,["selfID"]);try node(o,"binding")
+        guard let candidate=o["candidate"] as? [String:Any] else{throw Failure.conflict};try StructuralStoreCodec.keys(candidate,required:["identity","byteCount","digest"]);try ids(candidate,["identity"])
+        let f=try canonical(NativeJoinConfirmation.self,bytes)
+        guard f.schemaVersion == 1,(1...128*1024).contains(f.candidate.byteCount) else{throw Failure.conflict};_ = try DeviceNativeDeliveryAttachmentCodec.hashText(f.candidate.digest);return f
+    }
+    private func nativeJoinPreflight(_ c:Context,_ plan:DeviceValidatedNativeProvisioningPlan,_ original:[String:Node])throws->[String:Node] {
+        let exact=try nativeJoinExactInput(plan)
+        if let old=nativeJoinInput {guard old == exact else{throw Failure.conflict}}
+        let body=try DeviceNativeProvisioningIntentCodec.decode(plan.intentBytes)
+        let envelope=try DeviceNativeStructuralEnvelopeCodec.decode(plan.candidateBytes)
+        guard body.nativeOperationID == plan.nativeOperationID,body.roots == plan.roots,
+              body.association == plan.delivery.association,envelope.operationID == plan.nativeOperationID,
+              envelope.expectedGenerationID == body.expectedGenerationID,body.desiredGenerationID == (try DeviceNativeStructuralStateCodec.decode(envelope.snapshotBytes)).generationID,
+              body.candidateByteCount == plan.candidateBytes.count,try DeviceNativeDeliveryAttachmentCodec.hash(plan.candidateBytes).utf8.elementsEqual(body.candidateDigest.utf8),
+              original["delivery.command"]?.bytes == plan.delivery.commandBytes,original["delivery.plan"]?.bytes == plan.delivery.planBytes else{throw Failure.conflict}
+        let join=try nativeJoinNodes(c)
+        if let intent=join["native-join.intent"] {guard intent.bytes == plan.intentBytes || intent.bytes.isEmpty && live["native-join.intent.stage"] == intent.identity && nativeJoinInput == exact else{throw Failure.conflict}}
+        if let binding=join["native-join.binding"],!binding.bytes.isEmpty {
+            let b=try decodeNativeJoinBinding(binding.bytes)
+            guard b.operationID == plan.nativeOperationID,b.selfID == binding.identity,b.intent == join["native-join.intent"],b.intent.bytes == plan.intentBytes,
+                  join["native-join.candidate"]?.identity == b.candidateID,join["native-join.confirm"]?.identity == b.confirmationID else{throw Failure.conflict}
+            for (key,node) in original {guard b.original[key] == (try fingerprint(node)) else{throw Failure.conflict}}
+            guard let candidate=join["native-join.candidate"],candidate.bytes.isEmpty || candidate.bytes == plan.candidateBytes else{throw Failure.conflict}
+            let expected=try encode(NativeJoinConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:binding,candidate:NativeFingerprint(identity:b.candidateID,byteCount:plan.candidateBytes.count,digest:body.candidateDigest)))
+            guard let proof=join["native-join.confirm"],proof.bytes.isEmpty || proof.bytes == expected else{throw Failure.conflict}
+        } else {
+            // Until the reciprocal inode graph is durable, only the original live prefix can repair.
+            // A visible same-byte intent is NOT portable restart provenance.
+            if !join.isEmpty {guard nativeJoinInput == exact,let intent=join["native-join.intent"],live["native-join.intent.stage"] == intent.identity else{throw Failure.conflict}}
+            for (name,node) in join where name != "native-join.intent" {guard nativeJoinInput == exact,live[name+".stage"] == node.identity,node.bytes.isEmpty,try read(c.root,name,limit:128*1024) == nil else{throw Failure.conflict}}
+        }
+        // Reserve ALL actual new encoded bytes including binding/proof BEFORE effects.
+        let dummy=ID(device:UInt64.max,inode:UInt64.max)
+        var refs:[String:NativeFingerprint]=[:];for(key,node)in original{refs[key]=try fingerprint(node)}
+        let sample=Node(identity:dummy,bytes:try encode(NativeJoinBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,intent:Node(identity:dummy,bytes:plan.intentBytes),candidateID:dummy,confirmationID:dummy,original:refs)))
+        guard sample.bytes.count <= 32768 else{throw Failure.capacity}
+        let confirmation=try encode(NativeJoinConfirmation(schemaVersion:1,selfID:dummy,binding:sample,candidate:NativeFingerprint(identity:dummy,byteCount:plan.candidateBytes.count,digest:body.candidateDigest)))
+        let bytes=plan.intentBytes.count+plan.candidateBytes.count+sample.bytes.count+confirmation.count+Self.deliveryNames.reduce(0){$0+(original[$1]?.bytes.count ?? 0)}
+        let state=try inventory(c,allowDeliveryAttachment:true)
+        guard state.terminalCount < Self.terminalLimit,state.operation == nil || state.completed,state.intentBytes <= Self.retainedIntentLimit-bytes else{throw Failure.capacity}
+        return join
+    }
+    /// A captured prerequisite is diagnostic/attempt evidence, NOT an acknowledgment. On retry the
+    /// genuine full plan is requalified by the fixed gate; persisted nodes never prove secret identity.
+    func captureNativeJoinOriginal(_ plan:DeviceValidatedNativeProvisioningPlan,attachment:DeliveryAttachmentReceipt?,resourcePermit:DeviceLocalResourcePermit)throws->NativeJoinOriginal {
+        try disk(resourcePermit:resourcePermit){c in
+            let before=epoch(),intent=try decodeDeliveryIntent(require(c.root,"delivery.intent",limit:32768).bytes)
+            let original=try checkedDeliveryNodes(c,intent)
+            let join=try nativeJoinPreflight(c,plan,original)
+            if join.isEmpty {guard let receipt=attachment,receipt.issuer == ObjectIdentifier(self),receipt.rootID == rootID,receipt.epoch == before,receipt.nodes == original,attachmentQualified === receipt else{throw Failure.uncertain}}
+            guard epoch() == before else{throw Failure.uncertain}
+            return .init(ObjectIdentifier(self),rootID,before,original,join,plan)
+        }
+    }
+    private func verifyNativeJoinOriginal(_ c:Context,_ original:NativeJoinOriginal,_ plan:DeviceValidatedNativeProvisioningPlan)throws {
+        guard original.issuer == ObjectIdentifier(self),original.rootID == rootID,original.epoch == epoch(),original.intent == plan.intentBytes,original.candidate == plan.candidateBytes else{throw Failure.uncertain}
+        let delivery=try decodeDeliveryIntent(require(c.root,"delivery.intent",limit:32768).bytes)
+        guard try checkedDeliveryNodes(c,delivery) == original.nodes,try nativeJoinPreflight(c,plan,original.nodes) == original.join else{throw Failure.conflict}
+    }
+    func performNativeJoinExact(_ plan:DeviceValidatedNativeProvisioningPlan,original:NativeJoinOriginal,commandPermit:DeviceNativeProvisioningCommandPermit)throws->NativeJoinTransition {
+        try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
+        guard let c=borrowedResourceContext else{throw Failure.uncertain}
+        try verifyNativeJoinOriginal(c,original,plan)
+        nativeJoinInput=try nativeJoinExactInput(plan);nativeJoinQualified=nil;nativeJoinPending=nil;attachmentQualified=nil;pendingAttachment=nil;qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;qualifiedCompletion=nil;pendingCompletion=nil
+        let now=epoch(true)
+        let intent:Node
+        if let n=original.join["native-join.intent"],!n.bytes.isEmpty {intent=n}
+        else {let id=try allocate(c.root,"native-join.intent.stage",kind:.nativeJoinIntent);intent=Node(identity:id,bytes:plan.intentBytes);try fill(c.root,"native-join.intent.stage",intent,kind:.nativeJoinIntent)}
+        try promote(c,parent:c.root,name:"native-join.intent",expected:intent,kind:.nativeJoinIntent)
+        let binding:Node
+        if let n=original.join["native-join.binding"],!n.bytes.isEmpty {binding=n}
+        else {
+            let candidateID=try allocate(c.root,"native-join.candidate.stage",kind:.nativeJoinCandidate),confirmationID=try allocate(c.root,"native-join.confirm.stage",kind:.nativeJoinConfirmation),id=try allocate(c.root,"native-join.binding.stage",kind:.nativeJoinBinding)
+            var refs:[String:NativeFingerprint]=[:];for(key,node)in original.nodes{refs[key]=try fingerprint(node)}
+            binding=Node(identity:id,bytes:try encode(NativeJoinBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:id,intent:intent,candidateID:candidateID,confirmationID:confirmationID,original:refs)))
+            try fill(c.root,"native-join.binding.stage",binding,kind:.nativeJoinBinding)
+        }
+        try promote(c,parent:c.root,name:"native-join.binding",expected:binding,kind:.nativeJoinBinding)
+        let b=try decodeNativeJoinBinding(binding.bytes),candidate=Node(identity:b.candidateID,bytes:plan.candidateBytes)
+        let proof=Node(identity:b.confirmationID,bytes:try encode(NativeJoinConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:binding,candidate:try fingerprint(candidate))))
+        for(name,node,kind)in[("native-join.candidate",candidate,Kind.nativeJoinCandidate),("native-join.confirm",proof,Kind.nativeJoinConfirmation)] {
+            if try read(c.root,name,limit:128*1024) == nil {try fill(c.root,name+".stage",node,kind:kind)}
+            try promote(c,parent:c.root,name:name,expected:node,kind:kind)
+        }
+        for(key,node)in original.nodes {
+            let name=key == "rootBinding" ? "root-binding.json":key == "genesis" ? "genesis.json":key == "head" ? "head.json":key
+            try syncExisting(c.root,name,node,kind:key == "rootBinding" ? .binding:key == "genesis" ? .genesis:key == "head" ? .head:.deliveryConfirmation)
+        }
+        try sync(c.lock);try sync(c.ops);try sync(c.root);try check(c)
+        let joined=try nativeJoinPreflight(c,plan,original.nodes)
+        guard Set(try nativeJoinLeaves(c)) == Self.nativeJoinNames,epoch() == now,try checkedDeliveryNodes(c,decodeDeliveryIntent(require(c.root,"delivery.intent",limit:32768).bytes)) == original.nodes else{throw Failure.uncertain}
+        let transition=NativeJoinTransition(original,now,plan.nativeOperationID,joined);nativeJoinPending=transition
+        do {try boundary(.beforeNativeJoinScopeExit)} catch {
+            nativeJoinPending=nil;nativeJoinQualified=nil;throw error
+        }
+        return transition
+    }
+    func verifyNativeJoinTransition(_ transition:NativeJoinTransition,plan:DeviceValidatedNativeProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){c in
+            guard transition.original.issuer == ObjectIdentifier(self),transition.original.rootID == rootID,transition.epoch == epoch(),transition.original.intent == plan.intentBytes,transition.original.candidate == plan.candidateBytes,
+                  try nativeJoinPreflight(c,plan,transition.original.nodes) == transition.nodes,
+                  try checkedDeliveryNodes(c,decodeDeliveryIntent(require(c.root,"delivery.intent",limit:32768).bytes)) == transition.original.nodes,epoch() == transition.epoch else{throw Failure.uncertain}
+        }
+    }
+    func publishNativeJoinExact(_ transition:NativeJoinTransition,publicationPermit:DeviceNativeProvisioningPublicationPermit)throws->NativeJoinReceipt {
+        try publicationPermit.validate(transition);try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
+        mutex.lock();defer{mutex.unlock()}
+        guard nativeJoinPending === transition,transition.epoch == epoch() else{nativeJoinQualified=nil;throw Failure.uncertain}
+        nativeJoinQualified=transition;nativeJoinPending=nil;return .init(transition)
+    }
+    /// Fixed coordinator failure cleanup only; retains reservation/bytes/latch. Does not read disk,
+    /// acknowledge, repair, release capacity or invalidate an unrelated newer attempt.
+    func discardNativeJoinPublication(_ transition:NativeJoinTransition)throws {
+        try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
+        mutex.lock();defer{mutex.unlock()}
+        if nativeJoinPending === transition {nativeJoinPending=nil}
+        if nativeJoinQualified === transition {nativeJoinQualified=nil}
+    }
+    func verifyNativeJoinExact(_ receipt:NativeJoinReceipt,plan:DeviceValidatedNativeProvisioningPlan,resourcePermit:DeviceLocalResourcePermit)throws {
+        try disk(resourcePermit:resourcePermit){_ in guard nativeJoinQualified === receipt.transition else{throw Failure.uncertain}}
+        try verifyNativeJoinTransition(receipt.transition,plan:plan,resourcePermit:resourcePermit)
+    }
+
     private struct Context {let root:Int32,lock:Int32,ops:Int32;let directory:ID,lockID:ID,opsID:ID}
     init(root:URL,rootID:UUID,protectedRoots:[URL],boundary:@escaping(Boundary)throws->Void={_ in}) {
         self.root=root;self.rootID=rootID;self.boundary=boundary
@@ -136,8 +313,8 @@ final class DeviceLocalProvisioningIntentStore {
         try disk(create:true){c in
             try requireNoDeliveryReservation(c)
             qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;let initialEpoch=epoch(true)
-            let names=try list(c.root,limit:20)
-            let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage"]
+            let names=try list(c.root,limit:28)
+            let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage","native-join.intent","native-join.intent.stage","native-join.binding","native-join.binding.stage","native-join.candidate","native-join.candidate.stage","native-join.confirm","native-join.confirm.stage"]
             guard Set(names).isSubset(of:allowed) else{throw Failure.conflict}
             let binding:Node
             if let existing=try either(c.root,"root-binding.json",limit:16384), !isLiveEmpty(existing,"root-binding.json.stage") {
@@ -325,7 +502,8 @@ final class DeviceLocalProvisioningIntentStore {
     private struct RetainedOperation {let baseline:Node,pending:Node,completedHead:Node?,completed:Bool}
     private func inventory(_ c:Context,allowDeliveryAttachment:Bool=false)throws->State {
         try check(c)
-        if !allowDeliveryAttachment {guard try deliveryLeaves(c).isEmpty else{throw Failure.conflict}}
+        if !allowDeliveryAttachment {try requireNoNativeJoin(c)
+            guard try deliveryLeaves(c).isEmpty else{throw Failure.conflict}}
         guard try read(c.root,"root-binding.json.stage",limit:16384) == nil,try read(c.root,"genesis.json.stage",limit:32768) == nil else{throw Failure.conflict}
         let binding=try require(c.root,"root-binding.json",limit:16384),genesis=try require(c.root,"genesis.json",limit:32768)
         let b=try decodeBinding(binding.bytes),g=try decodeGenesis(genesis.bytes);try checkBinding(c,b,node:binding)
@@ -517,7 +695,10 @@ final class DeviceLocalProvisioningIntentStore {
         try permit.requireIdle()
         try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
         mutex.lock();defer{mutex.unlock()}
-        guard attachmentInput == nil,pendingAttachment == nil,attachmentQualified == nil else{throw Failure.conflict}
+        // Publication has no disk context. A genuine transition retains its original epoch/nodes;
+        // native join start invalidates that epoch before effects. Never recapture disk proof here.
+        guard nativeJoinInput == nil,nativeJoinPending == nil,nativeJoinQualified == nil,
+              attachmentInput == nil,pendingAttachment == nil,attachmentQualified == nil else{throw Failure.conflict}
         guard pendingCompletion === transition,transition.issuer == ObjectIdentifier(self),transition.rootID == rootID,transition.epoch == epoch() else{throw Failure.uncertain}
         qualifiedCompletion=transition;return CompletionReceipt(transition)
     }
@@ -543,6 +724,19 @@ final class DeviceLocalProvisioningIntentStore {
         mutex.lock();defer{permit.invalidate();mutex.unlock()}
         try diskContext(create:false,releasePermit:permit){c in
             _ = try inventory(c)
+            borrowedResourceContext=c
+            defer{borrowedResourceContext=nil;permit.invalidate()}
+            try body();try check(c)
+        }
+    }
+    /// Initialized-root native reservation scope only. Existing legacy scope above remains strict.
+    /// A read permit supplies no mutation capability. Only the fixed native coordinator can issue
+    /// its separate command permit after checked attachment/join/original genesis validation.
+    func withNativeResourceGateScope(_ permit:DeviceLocalResourcePermit,_ body:()throws->Void)throws {
+        try permit.beginAcquisition(resourceGateDescriptor)
+        mutex.lock();defer{permit.invalidate();mutex.unlock()}
+        try diskContext(create:false,releasePermit:permit){c in
+            _ = try inventory(c,allowDeliveryAttachment:true)
             borrowedResourceContext=c
             defer{borrowedResourceContext=nil;permit.invalidate()}
             try body();try check(c)
@@ -732,8 +926,8 @@ final class DeviceLocalProvisioningIntentStore {
         let l=openat(c.root,"provisioning.lock",O_RDONLY|O_NOFOLLOW|O_NONBLOCK);guard l >= 0 else{throw failure()};defer{close(l)}
         let o=openat(c.root,"operations",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK);guard o >= 0 else{throw failure()};defer{close(o)}
         guard try identity(l,directory:false) == c.lockID,try identity(o,directory:true) == c.opsID else{throw Failure.conflict}
-        let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage"]
-        guard Set(try list(c.root,limit:20)).isSubset(of:allowed) else{throw Failure.conflict}
+        let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage","native-join.intent","native-join.intent.stage","native-join.binding","native-join.binding.stage","native-join.candidate","native-join.candidate.stage","native-join.confirm","native-join.confirm.stage"]
+        guard Set(try list(c.root,limit:28)).isSubset(of:allowed) else{throw Failure.conflict}
     }
     private func checkBinding(_ c:Context,_ b:Binding,node:Node)throws {
         guard b.schemaVersion == 1,b.rootID == rootID,b.path.utf8.elementsEqual(root.path.utf8),b.protectedPaths.count == protectedPaths.count,
@@ -854,7 +1048,7 @@ final class DeviceLocalProvisioningIntentStore {
     struct DeliveryAttachmentDiagnostic {let nativeOperationID:UUID,remoteOperationID:UUID} // No ACK/authority.
     private static let deliveryNames:Set<String>=["delivery.intent","delivery.binding","delivery.command","delivery.plan","delivery.confirm"]
     private func deliveryLeaves(_ c:Context)throws->[String] {
-        try list(c.root,limit:20).filter{Self.deliveryNames.contains($0) || Self.deliveryNames.contains(String($0.dropLast(6))) && $0.hasSuffix(".stage")}
+        try list(c.root,limit:28).filter{Self.deliveryNames.contains($0) || Self.deliveryNames.contains(String($0.dropLast(6))) && $0.hasSuffix(".stage")}
     }
     private func deliveryInput(_ input:DeviceNativeDeliveryCommandBinding)throws->Data {
         guard input.journalRootID == rootID,input.commandBytes.count <= 16384,input.planBytes.count <= 65536 else{throw Failure.conflict}
@@ -883,6 +1077,7 @@ final class DeviceLocalProvisioningIntentStore {
     func recommitDeliveryAttachmentExact(_ input:DeviceNativeDeliveryCommandBinding)throws->DeliveryAttachmentReceipt {
         let exact=try deliveryInput(input)
         let pending=try disk{c in
+            try requireNoNativeJoin(c)
             if let old=attachmentInput {guard old == exact else{throw Failure.conflict}}
             let state=try inventory(c,allowDeliveryAttachment:true)
             guard state.terminalCount < Self.terminalLimit,state.operation == nil || state.completed else{throw Failure.capacity}
@@ -925,6 +1120,7 @@ final class DeviceLocalProvisioningIntentStore {
         }
     }
     private func requireNoDeliveryReservation(_ c:Context)throws {
+        try requireNoNativeJoin(c)
         guard attachmentInput == nil,pendingAttachment == nil,attachmentQualified == nil,
               try deliveryLeaves(c).isEmpty else{throw Failure.conflict}
     }
