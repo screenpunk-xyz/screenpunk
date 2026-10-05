@@ -492,7 +492,8 @@ public final class LegacyBrokerAdapter {
               ProcessInfo.processInfo.systemUptime < deadline else {
             throw WorkbenchIPCError(.workspaceConflict)
         }
-        return PackageWebContentDiagnostics.inspect(files: files)
+        return PackageWebContentDiagnostics.inspect(files: files,
+            shouldContinue: { ProcessInfo.processInfo.systemUptime < deadline })
     }
 
     static func packageSchema(_ name: String) -> JSONValue {

@@ -66,4 +66,21 @@ final class PackageWebContentDiagnosticsTests: XCTestCase {
         XCTAssertTrue(PackageWebContentDiagnostics.inspect(files: ["app.js": Data("const x='<style>x</style>';".utf8)]).isEmpty)
         XCTAssertTrue(inspect("<style> \n </style><script>\n</script><div data-onclick='annotation'></div>").isEmpty)
     }
+
+    func testExpiredInspectionCannotReportCompatibility() {
+        let issues = PackageWebContentDiagnostics.inspect(files: ["index.html": Data("<p>OK</p>".utf8)], shouldContinue: { false })
+        XCTAssertEqual(issues.count, 1)
+        XCTAssertTrue(issues[0].reason.contains("compatibility is unverified"))
+    }
+
+    func testRawTextInspectionChecksBudgetBeforeScanningFollowingMarkup() {
+        var calls = 0
+        let html = "<script type='application/json'>" + String(repeating: "x", count: 65536) + "</script><p style='color:red'>later</p>"
+        let issues = PackageWebContentDiagnostics.inspect(files: ["index.html": Data(html.utf8)], shouldContinue: {
+            calls += 1
+            return calls < 4
+        })
+        XCTAssertTrue(issues.contains { $0.reason.contains("compatibility is unverified") })
+        XCTAssertFalse(issues.contains { $0.reason.contains("style attribute") }, "Do not inspect later markup using expired evidence")
+    }
 }

@@ -3,7 +3,9 @@ import ScreenpunkCore
 
 enum PackageWebContentValidation {
     static func requireCompatible(_ files: [String: Data]) throws {
-        let issues = PackageWebContentDiagnostics.inspect(files: files)
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        let issues = PackageWebContentDiagnostics.inspect(files: files,
+            shouldContinue: { ProcessInfo.processInfo.systemUptime < deadline })
         guard issues.isEmpty else {
             throw ControllerError.validationFailed(detail: "Package HTML conflicts with the native host CSP. " +
                 issues.map(\.message).joined(separator: "\n") +
