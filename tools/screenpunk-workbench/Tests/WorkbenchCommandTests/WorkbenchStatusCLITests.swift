@@ -8,34 +8,39 @@ import ScreenpunkDistribution
 private final class StatusFixtureBroker: WorkbenchStatusBrokerReading {
     var calls: [String] = []
     var offline = false
+    var budgets: [String: TimeInterval] = [:]
+    var afterRead: (String, TimeInterval) -> Void = { _, _ in }
+    private func record(_ name: String, timeout: TimeInterval) {
+        calls.append(name); budgets[name] = timeout; afterRead(name, timeout)
+    }
     var home = "/fixture/controller"
     var jobs = ["fixture-job"]
-    func connect() throws { calls.append("connect"); if offline { throw WorkbenchIPCError(.unavailable) } }
+    func connect(timeout: TimeInterval) throws { record("connect", timeout: timeout); if offline { throw WorkbenchIPCError(.unavailable) } }
     func close() { calls.append("close") }
     private func decode<T: Decodable>(_ value: [String: Any]) throws -> T {
         try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: value))
     }
-    func health() throws -> WorkbenchBrokerSnapshot {
-        calls.append("health")
+    func health(timeout: TimeInterval) throws -> WorkbenchBrokerSnapshot {
+        record("health", timeout: timeout)
         return try decode(["apiVersion": "1.0", "instanceId": "fixture-instance", "status": "ready",
             "supportedMethods": ["system.health", "workspace.status", "device.list"],
             "workspaceState": "selected", "build": "available", "devices": "read-only",
             "screenshots": "unavailable", "controllerHomePath": home])
     }
-    func serviceLifecycle() throws -> WorkbenchServiceLifecycleResult {
-        calls.append("lifecycle")
+    func serviceLifecycle(timeout: TimeInterval) throws -> WorkbenchServiceLifecycleResult {
+        record("lifecycle", timeout: timeout)
         return try decode(["schemaVersion": 1, "kind": "status", "state": jobs.isEmpty ? "healthy" : "busy",
             "activeJobIDs": jobs, "interruptedJobIDs": [], "authenticatedConnections": 1,
             "guiConsumersKnown": false, "guiConsumers": []])
     }
-    func workspaceStatus() throws -> WorkbenchWorkspaceStatus {
-        calls.append("workspace")
+    func workspaceStatus(timeout: TimeInterval) throws -> WorkbenchWorkspaceStatus {
+        record("workspace", timeout: timeout)
         return try decode(["state": "selected", "workspaceId": "fixture-workspace", "path": "/fixture/workspace",
             "generation": 6, "selectionGeneration": 1, "coverageComplete": true,
             "externalProjectCount": 0, "historyAuthority": "historical-only"])
     }
-    func listDevices() throws -> [WorkbenchDeviceRead] {
-        calls.append("devices")
+    func listDevices(timeout: TimeInterval) throws -> [WorkbenchDeviceRead] {
+        record("devices", timeout: timeout)
         let value: WorkbenchDeviceRead = try decode(["deviceId": "fixture-device", "name": "iPhone\u{1b}[2J",
             "ownerMatchesCurrent": true, "reachability": "not-probed", "cachedReachability": "reachable",
             "lastSeenAt": "2026-10-05T12:00:00Z"])
@@ -47,7 +52,7 @@ final class WorkbenchStatusCLITests: XCTestCase {
     private func context(_ broker: StatusFixtureBroker, installed: String = "1.0.7",
                          running: String = "1.0.7") -> WorkbenchStatusContext {
         .init(installedRelease: { .init(evidence: "verified", version: installed, packagePath: "/fixture/package") },
-              process: { .init(evidence: "verified", state: "running", releaseVersion: running,
+              process: { _ in .init(evidence: "verified", state: "running", releaseVersion: running,
                                pid: 123, uid: UInt32(geteuid()), executablePath: "/fixture/service") },
               broker: { broker }, expectedHome: "/fixture/controller", toolCatalogCount: { 72 },
               uptime: { 100 }, timeout: 3)
@@ -137,12 +142,39 @@ final class WorkbenchStatusCLITests: XCTestCase {
         let broker = StatusFixtureBroker()
         let value = WorkbenchStatusContext(installedRelease: {
             now = 104; return .init(evidence: "verified", version: "1.0.7", packagePath: "/fixture/package")
-        }, process: { XCTFail("Expired budget"); throw WorkbenchIPCError(.unavailable) },
+        }, process: { _ in XCTFail("Expired budget"); throw WorkbenchIPCError(.unavailable) },
            broker: { XCTFail("Expired budget"); return broker }, expectedHome: "/fixture/controller",
            toolCatalogCount: { 72 }, uptime: { now }, timeout: 3)
         let report = value.collect()
         XCTAssertEqual(report.service.process.state, "timeout")
         XCTAssertTrue(broker.calls.isEmpty)
+    }
+
+    func testNearDeadlineReadsReceiveOnlyRemainingBudgetAndStopAfterItExpires() {
+        var now: TimeInterval = 100
+        let broker = StatusFixtureBroker()
+        broker.afterRead = { name, budget in
+            if name == "connect" { now += 0.025 }
+            if name == "health" { now += budget }
+        }
+        let value = WorkbenchStatusContext(installedRelease: {
+            now += 2.8
+            return .init(evidence: "verified", version: "1.0.7", packagePath: "/fixture/package")
+        }, process: { budget in
+            XCTAssertEqual(budget, 0.2, accuracy: 0.000001)
+            now += 0.1
+            return .init(evidence: "verified", state: "running", releaseVersion: "1.0.7",
+                         pid: 123, uid: UInt32(geteuid()), executablePath: "/fixture/service")
+        }, broker: { broker }, expectedHome: "/fixture/controller", toolCatalogCount: { 72 },
+           uptime: { now }, timeout: 3)
+        let report = value.collect()
+        XCTAssertEqual(broker.budgets["connect"] ?? -1, 0.1, accuracy: 0.000001)
+        XCTAssertEqual(broker.budgets["health"] ?? -1, 0.075, accuracy: 0.000001)
+        XCTAssertEqual(broker.calls, ["connect", "health", "close"])
+        XCTAssertEqual(report.service.healthEvidence, "verified_broker_reply")
+        XCTAssertNil(report.service.activeJobCount)
+        XCTAssertEqual(report.workspace.evidence, "unavailable")
+        XCTAssertNil(report.devices.pairedCount)
     }
 
     func testRealStatusDispatchDoesNotCreateAbsentRuntimeWorkspaceOrStartService() throws {
@@ -180,6 +212,22 @@ final class WorkbenchStatusCLITests: XCTestCase {
         }
         """
     }
+    func testNativeVerificationThatConsumesBudgetSkipsIdentityReread() throws {
+        let paths = InstallationPaths(home: URL(fileURLWithPath: "/fixture/home"))
+        let program = "/opt/homebrew/Caskroom/screenpunk-cli/1.0.5/Screenpunk CLI 1.0.5/libexec/screenpunk-service"
+        let identity = WorkbenchStatusNativeProcess.Identity(pid: 123, uid: UInt32(geteuid()), path: program,
+                                                           started: 10, image: Data(repeating: 1, count: 16))
+        var now: TimeInterval = 102.95
+        var reads = 0
+        XCTAssertThrowsError(try WorkbenchStatusNativeProcess.parse(text: launchd(program, paths: paths), paths: paths,
+            readProcess: { _ in reads += 1; return identity }, authenticate: { _ in
+                now = 103.01; return "1.0.5"
+            }, checkBudget: {
+                guard now < 103 else { throw DistributionError.unavailable }
+            }))
+        XCTAssertEqual(reads, 1)
+    }
+
     func testOwnedProcessVersionRequiresExactLaunchdArgumentsUIDAndStableNativeImage() throws {
         let paths = InstallationPaths(home: URL(fileURLWithPath: "/fixture/home"))
         let program = "/opt/homebrew/Caskroom/screenpunk-cli/1.0.5/Screenpunk CLI 1.0.5/libexec/screenpunk-service"

@@ -98,29 +98,37 @@ struct WorkbenchStatusReport: Codable {
 }
 
 protocol WorkbenchStatusBrokerReading {
-    func connect() throws
+    func connect(timeout: TimeInterval) throws
     func close()
-    func health() throws -> WorkbenchBrokerSnapshot
-    func serviceLifecycle() throws -> WorkbenchServiceLifecycleResult
-    func workspaceStatus() throws -> WorkbenchWorkspaceStatus
-    func listDevices() throws -> [WorkbenchDeviceRead]
+    func health(timeout: TimeInterval) throws -> WorkbenchBrokerSnapshot
+    func serviceLifecycle(timeout: TimeInterval) throws -> WorkbenchServiceLifecycleResult
+    func workspaceStatus(timeout: TimeInterval) throws -> WorkbenchWorkspaceStatus
+    func listDevices(timeout: TimeInterval) throws -> [WorkbenchDeviceRead]
 }
 extension WorkbenchBrokerClient: WorkbenchStatusBrokerReading {}
 
 public struct WorkbenchStatusContext {
     let installedRelease: () throws -> WorkbenchStatusRelease
-    let process: () throws -> WorkbenchStatusProcess
+    let process: (TimeInterval) throws -> WorkbenchStatusProcess
     let broker: () throws -> any WorkbenchStatusBrokerReading
     let expectedHome: String
     let toolCatalogCount: () -> Int
     let uptime: () -> TimeInterval
     let timeout: TimeInterval
 
+    /// The budget bounds transport waits and launchctl. Filesystem and Security
+    /// verification is synchronous and cannot be interrupted; after it returns,
+    /// expired budgets prevent further evidence reads. This is not a hard wall-
+    /// clock limit for those local verification calls.
     func collect() -> WorkbenchStatusReport {
         let deadline = uptime() + timeout
+        func remaining() -> TimeInterval? {
+            let value = deadline - uptime()
+            return value > 0 ? value : nil
+        }
         let release = (try? installedRelease()) ?? .init(evidence: "unavailable", version: nil, packagePath: nil)
-        let identity = uptime() < deadline ? ((try? process()) ??
-            .init(evidence: "unavailable", state: "unavailable", releaseVersion: nil, pid: nil, uid: nil, executablePath: nil)) :
+        let identity = remaining().map { (try? process($0)) ??
+            .init(evidence: "unavailable", state: "unavailable", releaseVersion: nil, pid: nil, uid: nil, executablePath: nil) } ??
             .init(evidence: "unavailable", state: "timeout", releaseVersion: nil, pid: nil, uid: nil, executablePath: nil)
         var report = WorkbenchStatusReport(installedRelease: release, service: .init(process: identity))
         if release.evidence == "verified", identity.evidence == "verified",
@@ -128,10 +136,11 @@ public struct WorkbenchStatusContext {
             report.service.versionComparison = installed == running ? "match" : "mismatch"
         }
         report.mcp.installedServerEvidence = release.evidence
-        guard uptime() < deadline, let client = try? broker() else { return report }
+        guard remaining() != nil, let client = try? broker() else { return report }
         defer { client.close() }
-        do { try client.connect() } catch { return report }
-        guard uptime() < deadline, let health = try? client.health() else { return report }
+        guard let connectBudget = remaining() else { return report }
+        do { try client.connect(timeout: connectBudget) } catch { return report }
+        guard let healthBudget = remaining(), let health = try? client.health(timeout: healthBudget) else { return report }
         guard health.apiVersion == "1.0", health.controllerHomePath == expectedHome else {
             report.service.health = "controller_home_mismatch"
             return report
@@ -140,16 +149,16 @@ public struct WorkbenchStatusContext {
         report.service.healthEvidence = "verified_broker_reply"
         report.service.controllerHomePath = health.controllerHomePath
         report.service.instanceId = health.instanceId
-        if uptime() < deadline, let lifecycle = try? client.serviceLifecycle() {
+        if let budget = remaining(), let lifecycle = try? client.serviceLifecycle(timeout: budget) {
             report.service.activeJobCount = lifecycle.activeJobIDs.count
             report.service.lifecycleState = lifecycle.state
             report.service.lifecycleEvidence = "verified_broker_reply"
         }
-        if uptime() < deadline, let workspace = try? client.workspaceStatus() {
+        if let budget = remaining(), let workspace = try? client.workspaceStatus(timeout: budget) {
             report.workspace = .init(evidence: "verified_broker_reply", state: workspace.state,
                                      workspaceId: workspace.workspaceId, path: workspace.path)
         }
-        if uptime() < deadline, let devices = try? client.listDevices() {
+        if let budget = remaining(), let devices = try? client.listDevices(timeout: budget) {
             report.devices.evidence = "verified_broker_reply"
             report.devices.pairedCount = devices.count
             report.devices.items = devices.map { .init(deviceId: $0.deviceId, name: $0.name,
@@ -177,12 +186,12 @@ public struct WorkbenchStatusContext {
             guard let root else { return .init(evidence: "not_assessed", version: nil, packagePath: nil) }
             let version = try WorkbenchProductionTrust.verifyPackage(root).version
             return .init(evidence: "verified", version: version, packagePath: root.path)
-        }, process: {
+        }, process: { remaining in
             guard packagedInvocation, options.home == nil, options.runtime == nil else {
                 return .init(evidence: "not_assessed", state: "not_assessed", releaseVersion: nil,
                              pid: nil, uid: nil, executablePath: nil)
             }
-            return try WorkbenchStatusNativeProcess.observe(timeout: min(2, budget))
+            return try WorkbenchStatusNativeProcess.observe(timeout: min(2, remaining))
         }, broker: {
             let runtime = try options.runtimeURL()
             let environment = try WorkbenchBrokerEnvironment(runtimeDirectory: runtime,
@@ -197,6 +206,7 @@ public struct WorkbenchStatusContext {
 /// launchctl mutation, receipt edit, service start or Keychain operation occurs.
 enum WorkbenchStatusNativeProcess {
     static func observe(timeout: TimeInterval) throws -> WorkbenchStatusProcess {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
         let paths = InstallationPaths(home: FileManager.default.homeDirectoryForCurrentUser)
         let target = "gui/\(geteuid())/com.screenpunk.workbench"
         let result = try BoundedArgumentProcess().run(executable: URL(fileURLWithPath: "/bin/launchctl"),
@@ -205,7 +215,10 @@ enum WorkbenchStatusNativeProcess {
         guard result.exitStatus == 0, let text = String(data: result.stdout, encoding: .utf8),
               text.hasPrefix(target + " = {") else { throw DistributionError.unavailable }
         return try parse(text: text, paths: paths, readProcess: nativeIdentity,
-                         authenticate: { try WorkbenchProductionTrust.verifyPackage($0).version })
+                         authenticate: { try WorkbenchProductionTrust.verifyPackage($0).version },
+                         checkBudget: {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw DistributionError.unavailable }
+        })
     }
 
     struct Identity: Equatable {
@@ -217,7 +230,9 @@ enum WorkbenchStatusNativeProcess {
     }
     static func parse(text: String, paths: InstallationPaths,
                       readProcess: (Int32) throws -> Identity,
-                      authenticate: (URL) throws -> String) throws -> WorkbenchStatusProcess {
+                      authenticate: (URL) throws -> String,
+                      checkBudget: () throws -> Void = {}) throws -> WorkbenchStatusProcess {
+        try checkBudget()
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
         guard lines.filter({ $0.hasPrefix("path = ") }) == ["path = " + paths.launchAgent.path],
               lines.filter({ $0.hasPrefix("program = ") }).count == 1 else { throw DistributionError.conflict }
@@ -239,11 +254,15 @@ enum WorkbenchStatusNativeProcess {
         guard pidLines.count == 1, let pid = Int32(pidLines[0].dropFirst("pid = ".count)), pid > 0 else {
             throw DistributionError.conflict
         }
+        try checkBudget()
         let before = try readProcess(pid)
         guard before.pid == pid, before.uid == geteuid(), before.path == program,
               before.started > 0, before.image.count == 16 else { throw DistributionError.conflict }
+        try checkBudget()
         let version = try authenticate(root)
+        try checkBudget()
         let after = try readProcess(pid)
+        try checkBudget()
         guard before == after else { throw DistributionError.conflict }
         return .init(evidence: "verified", state: "running", releaseVersion: version,
                      pid: pid, uid: before.uid, executablePath: program)
