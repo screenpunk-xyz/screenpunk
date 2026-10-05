@@ -16,8 +16,8 @@ import Glibc
 /// store work. This adds no UI/notification callback and no physical or hostile same-UID guarantee.
 final class DeviceLocalProvisioningIntentStore {
     enum Failure:Error {case unsafeRoot, conflict, uncertain, capacity, io(Int32)}
-    enum Kind:Equatable {case binding,genesis,head,intent,attempt,confirmation,completion,completionBinding,completionHead,completionConfirmation}
-    enum Boundary:Equatable {case afterCreate(Kind),afterWrite(Kind),afterFileSync(Kind),beforeReplace(Kind),afterReplace(Kind),afterDirectorySync(Kind)}
+    enum Kind:Equatable {case binding,genesis,head,intent,attempt,confirmation,completion,completionBinding,completionHead,completionConfirmation,deliveryIntent,deliveryBinding,deliveryCommand,deliveryPlan,deliveryConfirmation}
+    enum Boundary:Equatable {case afterCreate(Kind),afterWrite(Kind),afterFileSync(Kind),beforeReplace(Kind),afterReplace(Kind),afterDirectorySync(Kind),beforeDeliveryScopeExit}
     fileprivate struct ID:Codable,Equatable {let device:UInt64,inode:UInt64}
     fileprivate struct Node:Codable,Equatable {let identity:ID;let bytes:Data}
     private struct Binding:Codable,Equatable {
@@ -111,6 +111,10 @@ final class DeviceLocalProvisioningIntentStore {
     // invalidation/effects. Never reconstructed from visible bytes or a staging inode, and never
     // cleared to release capacity. Restart without persisted identity evidence remains blocked.
     private var liveInputs:[UUID:Data]=[:]
+    private var attachmentInput:Data?
+    private var attachmentQualified:DeliveryAttachmentReceipt?
+    private var pendingAttachment:DeliveryAttachmentReceipt?
+
     private func requireSameLiveInput(_ plan:DeviceValidatedProvisioningPlan)throws {
         if let original=liveInputs[plan.operationID] {guard original == plan.canonicalBytes else{throw Failure.conflict}}
     }
@@ -130,9 +134,10 @@ final class DeviceLocalProvisioningIntentStore {
     /// Explicit caller binding only. All root-level files are synchronized; ancestors are untouched.
     func initializeExplicit()throws {
         try disk(create:true){c in
+            try requireNoDeliveryReservation(c)
             qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;let initialEpoch=epoch(true)
-            let names=try list(c.root,limit:10)
-            let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage"]
+            let names=try list(c.root,limit:20)
+            let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage"]
             guard Set(names).isSubset(of:allowed) else{throw Failure.conflict}
             let binding:Node
             if let existing=try either(c.root,"root-binding.json",limit:16384), !isLiveEmpty(existing,"root-binding.json.stage") {
@@ -184,6 +189,7 @@ final class DeviceLocalProvisioningIntentStore {
     func stageExact(_ plan:DeviceValidatedProvisioningPlan)throws->Receipt {
         let body = try checked(plan)
         return try disk{c in
+            try requireNoDeliveryReservation(c) // Outside the legacy recovery catch; cannot be swallowed.
             try requireSameLiveInput(plan)
             let state=try inventory(c)
             if state.operation == nil {
@@ -203,6 +209,7 @@ final class DeviceLocalProvisioningIntentStore {
     func recommitExact(_ plan:DeviceValidatedProvisioningPlan)throws->Receipt {
         _ = try checked(plan)
         return try disk{c in
+            try requireNoDeliveryReservation(c) // Outside the legacy recovery catch; cannot be swallowed.
             try requireSameLiveInput(plan)
             do {
                 let state=try inventory(c)
@@ -243,6 +250,7 @@ final class DeviceLocalProvisioningIntentStore {
         guard b.roots.journalID == rootID,b.roots == plan.roots,b.operationID == plan.operationID else{throw Failure.conflict};return b
     }
     private func finish(_ c:Context,plan:DeviceValidatedProvisioningPlan)throws->Receipt {
+        try requireNoDeliveryReservation(c)
         try requireSameLiveInput(plan)
         if liveInputs[plan.operationID] == nil {
             guard liveInputs.count < Self.terminalLimit+1,liveInputs.values.reduce(0,{$0+$1.count}) <= Self.retainedIntentLimit-plan.canonicalBytes.count else{throw Failure.capacity}
@@ -315,8 +323,9 @@ final class DeviceLocalProvisioningIntentStore {
         return Receipt(ObjectIdentifier(self),rootID,attemptEpoch,state.nodes)
     }
     private struct RetainedOperation {let baseline:Node,pending:Node,completedHead:Node?,completed:Bool}
-    private func inventory(_ c:Context)throws->State {
+    private func inventory(_ c:Context,allowDeliveryAttachment:Bool=false)throws->State {
         try check(c)
+        if !allowDeliveryAttachment {guard try deliveryLeaves(c).isEmpty else{throw Failure.conflict}}
         guard try read(c.root,"root-binding.json.stage",limit:16384) == nil,try read(c.root,"genesis.json.stage",limit:32768) == nil else{throw Failure.conflict}
         let binding=try require(c.root,"root-binding.json",limit:16384),genesis=try require(c.root,"genesis.json",limit:32768)
         let b=try decodeBinding(binding.bytes),g=try decodeGenesis(genesis.bytes);try checkBinding(c,b,node:binding)
@@ -432,6 +441,7 @@ final class DeviceLocalProvisioningIntentStore {
         guard envelope == body.candidate,candidate.operationID == plan.operationID else{throw Failure.conflict}
         try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
         guard let c=borrowedResourceContext else{throw DeviceLocalResourceGateFailure.invalidScope}
+        try requireNoDeliveryReservation(c)
         try completionAntecedent(receipt,plan:plan,c:c)
         let state=try inventory(c)
         guard state.completed || state.terminalCount < Self.terminalLimit,let intent=state.nodes["intent"],let originalAttempt=state.nodes["attempt"] else{throw Failure.capacity}
@@ -507,6 +517,7 @@ final class DeviceLocalProvisioningIntentStore {
         try permit.requireIdle()
         try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
         mutex.lock();defer{mutex.unlock()}
+        guard attachmentInput == nil,pendingAttachment == nil,attachmentQualified == nil else{throw Failure.conflict}
         guard pendingCompletion === transition,transition.issuer == ObjectIdentifier(self),transition.rootID == rootID,transition.epoch == epoch() else{throw Failure.uncertain}
         qualifiedCompletion=transition;return CompletionReceipt(transition)
     }
@@ -563,6 +574,7 @@ final class DeviceLocalProvisioningIntentStore {
     func repairCompletedCurrentExact(_ original:CompletedCurrentCheckpoint,commandPermit:DeviceBoundCompletedRestorePermit)throws->CompletedRestoreTransition {
         try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
         guard let c=borrowedResourceContext else{throw Failure.uncertain}
+        try requireNoDeliveryReservation(c)
         try verifyCompleted(original,c,at:original.epoch)
         let now=epoch(true);qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;qualifiedCompletion=nil;pendingCompletion=nil
         let prefix=original.operationID.uuidString.lowercased()
@@ -619,6 +631,7 @@ final class DeviceLocalProvisioningIntentStore {
     func repairSuccessorPredecessorExact(_ original:SuccessorPredecessorCheckpoint,commandPermit:DeviceBoundGrantCommandPermit)throws->SuccessorTransition {
         try commandPermit.begin(ObjectIdentifier(self));defer{commandPermit.end()}
         guard let c=borrowedResourceContext else{throw Failure.uncertain}
+        try requireNoDeliveryReservation(c)
         _ = try verifySuccessor(original,c,at:original.epoch)
         let now=epoch(true);qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil
         for (name,node) in original.retained {
@@ -719,8 +732,8 @@ final class DeviceLocalProvisioningIntentStore {
         let l=openat(c.root,"provisioning.lock",O_RDONLY|O_NOFOLLOW|O_NONBLOCK);guard l >= 0 else{throw failure()};defer{close(l)}
         let o=openat(c.root,"operations",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK);guard o >= 0 else{throw failure()};defer{close(o)}
         guard try identity(l,directory:false) == c.lockID,try identity(o,directory:true) == c.opsID else{throw Failure.conflict}
-        let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage"]
-        guard Set(try list(c.root,limit:10)).isSubset(of:allowed) else{throw Failure.conflict}
+        let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage"]
+        guard Set(try list(c.root,limit:20)).isSubset(of:allowed) else{throw Failure.conflict}
     }
     private func checkBinding(_ c:Context,_ b:Binding,node:Node)throws {
         guard b.schemaVersion == 1,b.rootID == rootID,b.path.utf8.elementsEqual(root.path.utf8),b.protectedPaths.count == protectedPaths.count,
@@ -818,6 +831,278 @@ final class DeviceLocalProvisioningIntentStore {
     private func decodeCompletionConfirmation(_ bytes:Data)throws->CompletionConfirmation {
         let o=try shape(bytes,["schemaVersion","selfID","binding","head"]);try ids(o,["selfID"]);try node(o,"binding");try node(o,"head")
         let value=try canonical(CompletionConfirmation.self,bytes);guard value.schemaVersion == 2 else{throw Failure.conflict};return value
+    }
+    /// Pending immutable attachment only. No stage/release/terminal/native execution API.
+    /// Its reservation occupies the same journal pending slot; all legacy inventory consumers block.
+    private struct DeliveryIntent:Codable {
+        let schemaVersion:Int,rootID:UUID,nativeOperationID:UUID
+        let association:DeviceNativeDeliveryCommandBinding.Association
+        let commandBytes:Int,commandHash:String
+        let bindingID:ID,genesisID:ID,head:Node,bindingHash:String,genesisHash:String
+    }
+    private struct DeliveryBinding:Codable {
+        let schemaVersion:Int,selfID:ID,intent:Node,commandID:ID,planID:ID,confirmationID:ID
+    }
+    private struct DeliveryConfirmation:Codable {let schemaVersion:Int,selfID:ID,binding:Node,command:Node,plan:Node}
+    final class DeliveryAttachmentReceipt {
+        let nativeOperationID:UUID,remoteOperationID:UUID
+        fileprivate let issuer:ObjectIdentifier,rootID:UUID,epoch:UInt64,nodes:[String:Node]
+        fileprivate init(_ issuer:ObjectIdentifier,_ rootID:UUID,_ epoch:UInt64,_ op:UUID,_ remote:UUID,_ nodes:[String:Node]) {
+            self.issuer=issuer;self.rootID=rootID;self.epoch=epoch;nativeOperationID=op;remoteOperationID=remote;self.nodes=nodes
+        }
+    }
+    struct DeliveryAttachmentDiagnostic {let nativeOperationID:UUID,remoteOperationID:UUID} // No ACK/authority.
+    private static let deliveryNames:Set<String>=["delivery.intent","delivery.binding","delivery.command","delivery.plan","delivery.confirm"]
+    private func deliveryLeaves(_ c:Context)throws->[String] {
+        try list(c.root,limit:20).filter{Self.deliveryNames.contains($0) || Self.deliveryNames.contains(String($0.dropLast(6))) && $0.hasSuffix(".stage")}
+    }
+    private func deliveryInput(_ input:DeviceNativeDeliveryCommandBinding)throws->Data {
+        guard input.journalRootID == rootID,input.commandBytes.count <= 16384,input.planBytes.count <= 65536 else{throw Failure.conflict}
+        // Exact bounded raw-byte latch; not a persisted private credential or authority assertion.
+        var b=Data();b.append(contentsOf:input.nativeOperationID.uuidString.utf8);b.append(input.commandBytes);b.append(0);b.append(input.planBytes)
+        return b
+    }
+    func publishDeliveryAttachmentExact(_ input:DeviceNativeDeliveryCommandBinding)throws->DeliveryAttachmentReceipt {
+        let exact=try deliveryInput(input)
+        let pending=try disk{c in
+            guard try deliveryLeaves(c).isEmpty else{throw Failure.conflict}
+            let state=try inventory(c,allowDeliveryAttachment:true)
+            guard state.terminalCount < Self.terminalLimit,state.operation == nil || state.completed else{throw Failure.capacity}
+            if state.operation == nil {
+                guard qualifiedBinding,bindingEpoch == epoch(),bindingEvidence == state.nodes else{throw Failure.uncertain}
+            } else {guard let q=qualifiedCompletion,q.epoch == epoch(),q.nodes == state.nodes else{throw Failure.uncertain}}
+            // Reserve against full original journal state before attachment creation.
+            if let old=attachmentInput {guard old == exact else{throw Failure.conflict}}
+            let intent=try makeDeliveryIntent(input,state)
+            try deliveryRepresentationPreflight(intent)
+            attachmentInput=exact
+            return try finishDelivery(c,input,intent)
+        }
+        return try publishPendingAttachment(pending)
+    }
+    func recommitDeliveryAttachmentExact(_ input:DeviceNativeDeliveryCommandBinding)throws->DeliveryAttachmentReceipt {
+        let exact=try deliveryInput(input)
+        let pending=try disk{c in
+            if let old=attachmentInput {guard old == exact else{throw Failure.conflict}}
+            let state=try inventory(c,allowDeliveryAttachment:true)
+            guard state.terminalCount < Self.terminalLimit,state.operation == nil || state.completed else{throw Failure.capacity}
+            let intent:Node
+            if let node=try either(c.root,"delivery.intent",limit:32768),!node.bytes.isEmpty {
+                let recorded=try decodeDeliveryIntent(node.bytes)
+                try matchDelivery(recorded,input,state)
+                if let binding=try either(c.root,"delivery.binding",limit:32768),!binding.bytes.isEmpty {
+                    guard try decodeDeliveryBinding(binding.bytes).intent == node else{throw Failure.conflict}
+                } else {
+                    // Before reciprocal binding exists, only the original live inode/input can repair.
+                    guard attachmentInput == exact,live["delivery.intent.stage"] == node.identity else{throw Failure.conflict}
+                }
+                intent=node
+            } else {
+                guard attachmentInput == exact,let node=try read(c.root,"delivery.intent.stage",limit:32768),live["delivery.intent.stage"] == node.identity else{throw Failure.conflict}
+                intent=Node(identity:node.identity,bytes:try makeDeliveryIntent(input,state))
+            }
+            try deliveryRepresentationPreflight(intent.bytes)
+            try preflightDeliveryRetry(c,input,intent)
+            attachmentInput=exact
+            return try finishDelivery(c,input,intent.bytes,expectedIntent:intent.identity)
+        }
+        return try publishPendingAttachment(pending)
+    }
+    func inspectDeliveryAttachmentExact()throws->DeliveryAttachmentDiagnostic? {
+        try disk{c in
+            guard !(try deliveryLeaves(c)).isEmpty else{return nil}
+            let n=try requireEither(c.root,"delivery.intent",limit:32768),d=try decodeDeliveryIntent(n.bytes)
+            _ = try checkedDeliveryNodes(c,d)
+            return .init(nativeOperationID:d.nativeOperationID,remoteOperationID:d.association.operationID)
+        }
+    }
+    func verifyDeliveryAttachmentExact(_ receipt:DeliveryAttachmentReceipt)throws {
+        try disk{c in
+            let intent=try decodeDeliveryIntent(require(c.root,"delivery.intent",limit:32768).bytes)
+            let nodes=try checkedDeliveryNodes(c,intent)
+            guard receipt.issuer == ObjectIdentifier(self),receipt.rootID == rootID,receipt.epoch == epoch(),receipt.nodes == nodes,
+                  attachmentQualified === receipt else{throw Failure.uncertain}
+        }
+    }
+    private func requireNoDeliveryReservation(_ c:Context)throws {
+        guard attachmentInput == nil,pendingAttachment == nil,attachmentQualified == nil,
+              try deliveryLeaves(c).isEmpty else{throw Failure.conflict}
+    }
+    private func publishPendingAttachment(_ pending:DeliveryAttachmentReceipt)throws->DeliveryAttachmentReceipt {
+        try DeviceLocalResourceRegistry.beginOrdinary();defer{DeviceLocalResourceRegistry.endOrdinary()}
+        mutex.lock();defer{mutex.unlock()}
+        guard pendingAttachment === pending,pending.issuer == ObjectIdentifier(self),pending.rootID == rootID,
+              pending.epoch == epoch() else {
+            if pendingAttachment === pending {pendingAttachment=nil}
+            attachmentQualified=nil;throw Failure.uncertain
+        }
+        attachmentQualified=pending;pendingAttachment=nil;return pending
+    }
+    /// Full bounded original-node preflight: no epoch, sync, promotion or writes. Every expected
+    /// raw/proof node is checked before retry effects. Only the creating live instance may repair
+    /// a partial prefix on its captured inode; recorded empty raw/proof nodes may be filled after restart.
+    private func preflightDeliveryRetry(_ c:Context,_ input:DeviceNativeDeliveryCommandBinding,_ intent:Node)throws {
+        let leaves=try deliveryLeaves(c)
+        guard !leaves.isEmpty else{throw Failure.conflict}
+        var nodes:[String:Node]=[:]
+        for name in Self.deliveryNames {
+            if let node=try either(c.root,name,limit:name == "delivery.plan" ? 65536:32768) {nodes[name]=node}
+        }
+        guard nodes["delivery.intent"]?.identity == intent.identity,
+              nodes["delivery.intent"]?.bytes == intent.bytes || nodes["delivery.intent"]?.bytes.isEmpty == true && live["delivery.intent.stage"] == intent.identity else{throw Failure.conflict}
+        guard let binding=nodes["delivery.binding"],!binding.bytes.isEmpty else {
+            // No reciprocal persisted identities yet: the exact live input and original captured
+            // nodes are mandatory. Restart preserves these unknown creations rather than adopts them.
+            guard attachmentInput == (try deliveryInput(input)),live["delivery.intent.stage"] == intent.identity else{throw Failure.conflict}
+            // Captured absence is NOT permission to recreate a leaf whose original inode was
+            // already observed by this live attempt. Check the COMPLETE expected live prefix,
+            // including nodes currently missing, before allocate can run or epoch can advance.
+            for name in Self.deliveryNames {
+                if let original=live[name+".stage"] {
+                    guard let node=nodes[name],node.identity == original else{throw Failure.conflict}
+                }
+            }
+            for (name,node) in nodes where name != "delivery.intent" {
+                guard live[name+".stage"] == node.identity,try read(c.root,name,limit:65536) == nil,node.bytes.isEmpty else{throw Failure.conflict}
+            }
+            return
+        }
+        let d=try decodeDeliveryBinding(binding.bytes)
+        guard d.selfID == binding.identity,d.intent == intent else{throw Failure.conflict}
+        for (name,id,bytes) in [("delivery.command",d.commandID,input.commandBytes),("delivery.plan",d.planID,input.planBytes)] {
+            guard let node=nodes[name],node.identity == id else{throw Failure.conflict}
+            if try read(c.root,name,limit:65536) != nil {guard node.bytes == bytes else{throw Failure.conflict}}
+            else {guard node.bytes == bytes || node.bytes.isEmpty || live[name+".stage"] == id && bytes.starts(with:node.bytes) else{throw Failure.conflict}}
+        }
+        guard let confirmation=nodes["delivery.confirm"],confirmation.identity == d.confirmationID else{throw Failure.conflict}
+        let proof=try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryConfirmation(schemaVersion:1,selfID:d.confirmationID,binding:binding,command:Node(identity:d.commandID,bytes:Data()),plan:Node(identity:d.planID,bytes:Data())))
+        if try read(c.root,"delivery.confirm",limit:32768) != nil {guard confirmation.bytes == proof else{throw Failure.conflict}}
+        else {guard confirmation.bytes == proof || confirmation.bytes.isEmpty || live["delivery.confirm.stage"] == d.confirmationID && proof.starts(with:confirmation.bytes) else{throw Failure.conflict}}
+    }
+    private func makeDeliveryIntent(_ input:DeviceNativeDeliveryCommandBinding,_ s:State)throws->Data {
+        guard let b=s.nodes["binding"],let g=s.nodes["genesis"],let h=s.nodes["head"] else{throw Failure.conflict}
+        return try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryIntent(schemaVersion:1,rootID:rootID,nativeOperationID:input.nativeOperationID,association:input.association,commandBytes:input.commandBytes.count,commandHash:DeviceNativeDeliveryAttachmentCodec.hash(input.commandBytes),bindingID:b.identity,genesisID:g.identity,head:h,bindingHash:DeviceNativeDeliveryAttachmentCodec.hash(b.bytes),genesisHash:DeviceNativeDeliveryAttachmentCodec.hash(g.bytes)))
+    }
+    private func matchDelivery(_ d:DeliveryIntent,_ input:DeviceNativeDeliveryCommandBinding,_ s:State)throws {
+        guard d.rootID == rootID,d.nativeOperationID == input.nativeOperationID,d.association == input.association,
+              d.commandBytes == input.commandBytes.count,try DeviceNativeDeliveryAttachmentCodec.hash(input.commandBytes).utf8.elementsEqual(d.commandHash.utf8),
+              let b=s.nodes["binding"],let g=s.nodes["genesis"],s.nodes["head"] == d.head,b.identity == d.bindingID,g.identity == d.genesisID,
+              try DeviceNativeDeliveryAttachmentCodec.hash(b.bytes).utf8.elementsEqual(d.bindingHash.utf8),
+              try DeviceNativeDeliveryAttachmentCodec.hash(g.bytes).utf8.elementsEqual(d.genesisHash.utf8) else{throw Failure.conflict}
+    }
+    private func deliveryRepresentationPreflight(_ intent:Data)throws {
+        let id=ID(device:UInt64.max,inode:UInt64.max)
+        let n=Node(identity:id,bytes:intent)
+        let binding=try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryBinding(schemaVersion:1,selfID:id,intent:n,commandID:id,planID:id,confirmationID:id))
+        _ = try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryConfirmation(schemaVersion:1,selfID:id,binding:Node(identity:id,bytes:binding),command:Node(identity:id,bytes:Data()),plan:Node(identity:id,bytes:Data())))
+    }
+    private func finishDelivery(_ c:Context,_ input:DeviceNativeDeliveryCommandBinding,_ intentBytes:Data,expectedIntent:ID?=nil)throws->DeliveryAttachmentReceipt {
+        let state=try inventory(c,allowDeliveryAttachment:true),decoded=try decodeDeliveryIntent(intentBytes)
+        try matchDelivery(decoded,input,state)
+        attachmentQualified=nil;pendingAttachment=nil;qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;qualifiedCompletion=nil;pendingCompletion=nil
+        let originalEpoch=epoch(true)
+        let intent:Node
+        if let existing=try either(c.root,"delivery.intent",limit:32768),!existing.bytes.isEmpty {
+            guard existing.bytes == intentBytes,expectedIntent == nil || existing.identity == expectedIntent else{throw Failure.conflict};intent=existing
+        } else {
+            let id=try allocate(c.root,"delivery.intent.stage",kind:.deliveryIntent)
+            guard expectedIntent == nil || id == expectedIntent else{throw Failure.conflict}
+            intent=Node(identity:id,bytes:intentBytes);try fill(c.root,"delivery.intent.stage",intent,kind:.deliveryIntent)
+        }
+        try promote(c,parent:c.root,name:"delivery.intent",expected:intent,kind:.deliveryIntent)
+        let binding:Node
+        if let existing=try either(c.root,"delivery.binding",limit:32768),!existing.bytes.isEmpty {binding=existing}
+        else {
+            let command=try allocate(c.root,"delivery.command.stage",kind:.deliveryCommand)
+            let plan=try allocate(c.root,"delivery.plan.stage",kind:.deliveryPlan)
+            let confirmation=try allocate(c.root,"delivery.confirm.stage",kind:.deliveryConfirmation)
+            let id=try allocate(c.root,"delivery.binding.stage",kind:.deliveryBinding)
+            binding=Node(identity:id,bytes:try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryBinding(schemaVersion:1,selfID:id,intent:intent,commandID:command,planID:plan,confirmationID:confirmation)))
+            try fill(c.root,"delivery.binding.stage",binding,kind:.deliveryBinding)
+        }
+        let d=try decodeDeliveryBinding(binding.bytes)
+        guard d.selfID == binding.identity,d.intent == intent else{throw Failure.conflict}
+        // Recorded raw inode bindings are durable BEFORE writes/promotions of raw content.
+        try promote(c,parent:c.root,name:"delivery.binding",expected:binding,kind:.deliveryBinding)
+        for (name,id,bytes,kind) in [("delivery.command",d.commandID,input.commandBytes,Kind.deliveryCommand),("delivery.plan",d.planID,input.planBytes,Kind.deliveryPlan)] {
+            let expected=Node(identity:id,bytes:bytes)
+            if let final=try read(c.root,name,limit:65536) {guard final == expected else{throw Failure.conflict}}
+            else {
+                let staged=try require(c.root,name+".stage",limit:65536)
+                guard staged.identity == id else{throw Failure.conflict}
+                if staged.bytes != bytes {
+                    guard staged.bytes.isEmpty || live[name+".stage"] == id else{throw Failure.conflict}
+                    try fill(c.root,name+".stage",expected,kind:kind)
+                }
+            }
+            try promote(c,parent:c.root,name:name,expected:expected,kind:kind)
+        }
+        let proof=Node(identity:d.confirmationID,bytes:try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryConfirmation(schemaVersion:1,selfID:d.confirmationID,binding:binding,command:Node(identity:d.commandID,bytes:Data()),plan:Node(identity:d.planID,bytes:Data()))))
+        if let final=try read(c.root,"delivery.confirm",limit:32768) {guard final == proof else{throw Failure.conflict}}
+        else {
+            let staged=try require(c.root,"delivery.confirm.stage",limit:32768)
+            guard staged.identity == d.confirmationID,staged.bytes.isEmpty || staged == proof || live["delivery.confirm.stage"] == d.confirmationID else{throw Failure.conflict}
+            try fill(c.root,"delivery.confirm.stage",proof,kind:.deliveryConfirmation)
+        }
+        try promote(c,parent:c.root,name:"delivery.confirm",expected:proof,kind:.deliveryConfirmation)
+        let b=try require(c.root,"root-binding.json",limit:16384),g=try require(c.root,"genesis.json",limit:32768)
+        guard b.identity == decoded.bindingID,g.identity == decoded.genesisID,
+              try DeviceNativeDeliveryAttachmentCodec.hash(b.bytes).utf8.elementsEqual(decoded.bindingHash.utf8),
+              try DeviceNativeDeliveryAttachmentCodec.hash(g.bytes).utf8.elementsEqual(decoded.genesisHash.utf8),
+              try require(c.root,"head.json",limit:8192) == decoded.head else{throw Failure.conflict}
+        try syncExisting(c.root,"root-binding.json",b,kind:.binding);try syncExisting(c.root,"genesis.json",g,kind:.genesis)
+        try sync(c.lock);try sync(c.ops);try sync(c.root);try check(c)
+        let finalState=try inventory(c,allowDeliveryAttachment:true);try matchDelivery(decoded,input,finalState)
+        let nodes=try checkedDeliveryNodes(c,decoded)
+        guard epoch() == originalEpoch else{throw Failure.uncertain}
+        let receipt=DeliveryAttachmentReceipt(ObjectIdentifier(self),rootID,originalEpoch,input.nativeOperationID,input.association.operationID,nodes)
+        pendingAttachment=receipt
+        // No qualification is published in this scope. Throwing body or post-body check leaves
+        // only a pending object; no caller can obtain it and ordinary mutation remains fenced.
+        try boundary(.beforeDeliveryScopeExit)
+        return receipt
+    }
+    private func checkedDeliveryNodes(_ c:Context,_ intent:DeliveryIntent)throws->[String:Node] {
+        let leaves=try deliveryLeaves(c)
+        guard Set(leaves) == Self.deliveryNames else{throw Failure.conflict}
+        var result:[String:Node]=[:]
+        for name in Self.deliveryNames {result[name]=try require(c.root,name,limit:name == "delivery.plan" ? 65536:32768)}
+        let binding=try decodeDeliveryBinding(result["delivery.binding"]!.bytes),proof=try decodeDeliveryConfirmation(result["delivery.confirm"]!.bytes)
+        guard binding.selfID == result["delivery.binding"]!.identity,binding.intent == result["delivery.intent"],
+              binding.commandID == result["delivery.command"]!.identity,binding.planID == result["delivery.plan"]!.identity,
+              proof.selfID == result["delivery.confirm"]!.identity,binding.confirmationID == proof.selfID,proof.binding == result["delivery.binding"],
+              proof.command == Node(identity:binding.commandID,bytes:Data()),proof.plan == Node(identity:binding.planID,bytes:Data()),
+              result["delivery.command"]!.bytes.count == intent.commandBytes,result["delivery.plan"]!.bytes.count == intent.association.planByteLength,
+              try DeviceNativeDeliveryAttachmentCodec.hash(result["delivery.command"]!.bytes).utf8.elementsEqual(intent.commandHash.utf8),
+              try DeviceNativeDeliveryAttachmentCodec.hash(result["delivery.plan"]!.bytes).utf8.elementsEqual(intent.association.planDigest.utf8) else{throw Failure.conflict}
+        let state=try inventory(c,allowDeliveryAttachment:true)
+        guard state.nodes["head"] == intent.head,let b=state.nodes["binding"],let g=state.nodes["genesis"],b.identity == intent.bindingID,g.identity == intent.genesisID,
+              try DeviceNativeDeliveryAttachmentCodec.hash(b.bytes).utf8.elementsEqual(intent.bindingHash.utf8),try DeviceNativeDeliveryAttachmentCodec.hash(g.bytes).utf8.elementsEqual(intent.genesisHash.utf8) else{throw Failure.conflict}
+        result["rootBinding"]=b;result["genesis"]=g;result["head"]=intent.head;return result
+    }
+    private func decodeDeliveryIntent(_ bytes:Data)throws->DeliveryIntent {
+        let o=try DeviceNativeDeliveryAttachmentCodec.object(bytes,limit:32768,keys:["schemaVersion","rootID","nativeOperationID","association","commandBytes","commandHash","bindingID","genesisID","head","bindingHash","genesisHash"])
+        try ids(o,["bindingID","genesisID"]);try node(o,"head")
+        guard let association=o["association"] as? [String:Any] else{throw Failure.conflict}
+        try StructuralStoreCodec.keys(association,required:["operationID","planID","installationID","accountID","locationID","transitionID","planDigest","planByteLength"])
+        let value=try JSONDecoder().decode(DeliveryIntent.self,from:bytes)
+        guard value.schemaVersion == 1,(1...16384).contains(value.commandBytes),(1...65536).contains(value.association.planByteLength),try DeviceNativeDeliveryAttachmentCodec.encode(value) == bytes else{throw Failure.conflict}
+        _ = try DeviceNativeDeliveryAttachmentCodec.hashText(value.commandHash);_ = try DeviceNativeDeliveryAttachmentCodec.hashText(value.bindingHash);_ = try DeviceNativeDeliveryAttachmentCodec.hashText(value.genesisHash);_ = try DeviceNativeDeliveryAttachmentCodec.hashText(value.association.planDigest)
+        return value
+    }
+    private func decodeDeliveryBinding(_ bytes:Data)throws->DeliveryBinding {
+        let o=try DeviceNativeDeliveryAttachmentCodec.object(bytes,limit:32768,keys:["schemaVersion","selfID","intent","commandID","planID","confirmationID"])
+        try ids(o,["selfID","commandID","planID","confirmationID"]);try node(o,"intent")
+        let value=try JSONDecoder().decode(DeliveryBinding.self,from:bytes)
+        _ = try decodeDeliveryIntent(value.intent.bytes)
+        guard value.schemaVersion == 1,try DeviceNativeDeliveryAttachmentCodec.encode(value) == bytes else{throw Failure.conflict};return value
+    }
+    private func decodeDeliveryConfirmation(_ bytes:Data)throws->DeliveryConfirmation {
+        let o=try DeviceNativeDeliveryAttachmentCodec.object(bytes,limit:32768,keys:["schemaVersion","selfID","binding","command","plan"])
+        try ids(o,["selfID"]);try node(o,"binding");try node(o,"command");try node(o,"plan")
+        let value=try JSONDecoder().decode(DeliveryConfirmation.self,from:bytes)
+        _ = try decodeDeliveryBinding(value.binding.bytes)
+        guard value.schemaVersion == 1,value.command.bytes.isEmpty,value.plan.bytes.isEmpty,try DeviceNativeDeliveryAttachmentCodec.encode(value) == bytes else{throw Failure.conflict};return value
     }
     private func canonical<T:Decodable & Encodable>(_ type:T.Type,_ bytes:Data)throws->T {let value=try JSONDecoder().decode(type,from:bytes);guard try encode(value) == bytes else{throw Failure.conflict};return value}
 }
