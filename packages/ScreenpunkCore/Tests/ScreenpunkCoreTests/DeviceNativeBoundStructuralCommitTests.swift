@@ -341,6 +341,11 @@ final class DeviceNativeBoundStructuralCommitTests:XCTestCase {
         maximumNames=true
         let f=try privateFixture(generic:false,count:12),t=try terminal(f)
         let before=try snapshot(f.original.structuralRoot),events=f.original.probe.events
+        var journalSites:[DeviceLocalProvisioningIntentStore.Boundary]=[]
+        var structuralSites:[DeviceStructuralStore.Boundary]=[]
+        f.original.probe.journalAction={journalSites.append($0)}
+        f.original.probe.structuralAction={structuralSites.append($0)}
+        defer {f.original.probe.journalAction=nil;f.original.probe.structuralAction=nil}
         let sizes=try f.coordinator.nativeStructuralReservationSizesForTesting(f.original.request,terminal:t)
         print("NATIVE_STRUCTURAL_GENUINE_MAX_SHAPE_BYTES",sizes)
         XCTAssertLessThanOrEqual(try XCTUnwrap(sizes["envelope"]),128*1024)
@@ -348,7 +353,9 @@ final class DeviceNativeBoundStructuralCommitTests:XCTestCase {
         XCTAssertLessThanOrEqual(try XCTUnwrap(sizes["binding"]),32768)
         XCTAssertLessThanOrEqual(try XCTUnwrap(sizes["terminal"]),32768)
         XCTAssertLessThanOrEqual(try XCTUnwrap(sizes["reservedPublicBytes"]),128*1024*1024)
-        XCTAssertEqual(try snapshot(f.original.structuralRoot),before);XCTAssertEqual(f.original.probe.events,events+1) // Read scope-exit validation only.
+        XCTAssertEqual(try snapshot(f.original.structuralRoot),before);XCTAssertEqual(journalSites,[.beforeNativeHTTPScopeExit,.beforeNativeCompletionScopeExit])
+        XCTAssertEqual(structuralSites,[.beforeNativeCommandScopeExit])
+        XCTAssertEqual(f.original.probe.events,events+journalSites.count+structuralSites.count) // Only the exact read scope-exit validation sites above.
     }
     func testIndependentFieldCeilingsDoNotBypassAggregateEnvelopeLimit() throws {
         let value=DeviceNativeStructuralEnvelope(operationID:UUID(),expectedGenerationID:UUID(),snapshotBytes:Data(repeating:65,count:64*1024))
