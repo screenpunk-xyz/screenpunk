@@ -1014,6 +1014,47 @@ final class DeviceNativeGrantPrivateAnchor: GrantSecretRedacted {
         self.packages = packages; self.genesis = genesis; self.plan = plan
     }
 }
+/// Only fixed native package orchestration can dispatch immutable package effects.
+final class DeviceNativePackageCommandPermit {
+    private let read: DeviceLocalResourcePermit
+    fileprivate init(_ read: DeviceLocalResourcePermit) { self.read = read }
+    func begin(_ instance: ObjectIdentifier) throws { try read.beginRead(instance) }
+    func end() { read.endRead() }
+}
+/// Native immutable package batch only. Consumes the antecedent package checkpoint and binds
+/// a single final actual-tip snapshot; no credential/terminal/structural/admission authority.
+final class DeviceNativeBoundPackageBatch: GrantSecretRedacted {
+    let operationID: UUID
+    fileprivate let anchor: DeviceNativeGrantPrivateAnchor
+    fileprivate let resolution: DevicePackageTerminalResolution
+    fileprivate init(_ anchor: DeviceNativeGrantPrivateAnchor, _ resolution: DevicePackageTerminalResolution) {
+        operationID = anchor.operationID; self.anchor = anchor; self.resolution = resolution
+    }
+}
+/// Captured original private/journal/package nodes for one explicit recovery, not an ACK.
+/// No public construction, secret getter, refreshed antecedent or automatic recovery.
+final class DeviceNativePackageBatchRecovery: GrantSecretRedacted {
+    let operationID: UUID
+    fileprivate let packages: DevicePackagePreparationStore.NativeBatchOriginal
+    fileprivate let grants: DeviceNativeGrantPreparationStore.RecoveryCheckpoint
+    fileprivate let journal: DeviceLocalProvisioningIntentStore.NativeJoinOriginal
+    fileprivate let resources: DeviceNativeGrantRecoveryResources
+    fileprivate init(_ packages: DevicePackagePreparationStore.NativeBatchOriginal,
+        _ grants: DeviceNativeGrantPreparationStore.RecoveryCheckpoint,
+        _ journal: DeviceLocalProvisioningIntentStore.NativeJoinOriginal, _ resources: DeviceNativeGrantRecoveryResources) {
+        operationID = grants.operationID; self.packages = packages; self.grants = grants
+        self.journal = journal; self.resources = resources
+    }
+}
+/// Test-only opaque pending publication, issued by genuine fixed recovery after scope exit.
+/// No construction or mutation capability and no receipt/qualification until exact publish.
+final class DeviceNativeDeferredJoinPublication: GrantSecretRedacted {
+    fileprivate let issuer: ObjectIdentifier
+    fileprivate let transition: DeviceLocalProvisioningIntentStore.NativeJoinTransition
+    fileprivate init(_ issuer: ObjectIdentifier, _ transition: DeviceLocalProvisioningIntentStore.NativeJoinTransition) {
+        self.issuer = issuer; self.transition = transition
+    }
+}
 /// Native3 fixed initialized four-root command. Package observations never become archive
 /// proof or Cloud admission. Backend/fault seams stay synchronous and nonreentrant under locks.
 final class DeviceNativeGrantPrivateCoordinator {
@@ -1070,6 +1111,240 @@ final class DeviceNativeGrantPrivateCoordinator {
             try verifyOriginal(anchor.genesis, journal: anchor.journal, plan: anchor.plan,
                 packages: anchor.packages, permit: permit)
         }
+    }
+    /// Live package dispatch: the genuine original four-store private anchor is checked before
+    /// ANY package epoch/effects. Its package antecedent is then deliberately consumed; only the
+    /// returned final batch can describe the newer package tip. No old anchor is renewed.
+    func preparePackagesExact(_ request: DeviceNativeProvisioningRequest,
+        anchor: DeviceNativeGrantPrivateAnchor) throws -> DeviceNativeBoundPackageBatch {
+        try checkNativeRoots(request.roots, inputCount: request.packages.count)
+        guard anchor.operationID == request.grantOperationID else { throw DeviceNativeGrantPreparationError.conflict }
+        var completed: DevicePackageTerminalResolution?
+        try scope { permit in
+            try verifyOriginal(anchor.genesis, journal: anchor.journal, plan: anchor.plan,
+                               packages: anchor.packages, permit: permit)
+            let inputs = try packages.inspectNativeBoundPackages(request.packages, plan: anchor.plan, resourcePermit: permit)
+            let privateRequest = try nativePackageRequest(request, plan: anchor.plan, inputs: inputs)
+            try grants.verifyPrivateAttemptExact(anchor.receipt, request: privateRequest, resourcePermit: permit)
+            try verifyOriginal(anchor.genesis, journal: anchor.journal, plan: anchor.plan,
+                               packages: anchor.packages, permit: permit)
+            let resolution = try packages.performNativeBoundPackagesExact(inputs, plan: anchor.plan, commandPermit: .init(permit))
+            let finalInputs = try nativeInputsFromResolution(inputs, resolution: resolution, permit: permit)
+            let finalPrivate = try nativePackageRequest(request, plan: anchor.plan, inputs: finalInputs)
+            try grants.verifyPrivateAttemptExact(anchor.receipt, request: finalPrivate, resourcePermit: permit)
+            try verifyNativeBatchResources(anchor, resolution: resolution, permit: permit)
+            completed = resolution
+        }
+        guard let completed else { throw DeviceLocalResourceGateFailure.invalidScope }
+        return .init(anchor, completed)
+    }
+    func verifyPackageBatchExact(_ batch: DeviceNativeBoundPackageBatch,
+        request: DeviceNativeProvisioningRequest) throws {
+        try checkNativeRoots(request.roots, inputCount: request.packages.count)
+        guard batch.operationID == request.grantOperationID else { throw DeviceNativeGrantPreparationError.conflict }
+        try scope { permit in
+            try verifyNativeBatchResources(batch.anchor, resolution: batch.resolution, permit: permit)
+            let inputs = try nativeInputsFromResolution(request.packages, resolution: batch.resolution, permit: permit)
+            let checked = try nativePackageRequest(request, plan: batch.anchor.plan, inputs: inputs)
+            try grants.verifyPrivateAttemptExact(batch.anchor.receipt, request: checked, resourcePermit: permit)
+            try verifyNativeBatchResources(batch.anchor, resolution: batch.resolution, permit: permit)
+        }
+    }
+    /// Read capture ONLY. Package observations precede the original private ref/epoch capture;
+    /// both are rechecked jointly. No outside package/journal repair is performed here.
+    func capturePackagesRecoveryExact(operationID: UUID,
+        resources: DeviceNativeGrantRecoveryResources) throws -> DeviceNativePackageBatchRecovery {
+        try checkNativeRoots(resources.roots, inputCount: resources.packages.count)
+        var originalPackages: DevicePackagePreparationStore.NativeBatchOriginal?
+        try scope { permit in
+            try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+            originalPackages = try packages.captureNativeBatchOriginal(resources.packages,
+                candidate: resources.candidate, resourcePermit: permit)
+        }
+        guard let originalPackages else { throw DeviceLocalResourceGateFailure.invalidScope }
+        let fresh = nativeRecoveryResources(resources, inputs: originalPackages.inputs)
+        let expected = nativeExpectations(originalPackages.inputs)
+        // No arbitrary callbacks/gate locks held while this ordinary store command enters.
+        let originalGrant = try grants.inspectRecoveryExact(operationID: operationID, resources: fresh, expectedEntries: expected)
+        var originalJournal: DeviceLocalProvisioningIntentStore.NativeJoinOriginal?
+        try scope { permit in
+            try packages.verifyNativeBatchOriginal(originalPackages, resourcePermit: permit)
+            _ = try packages.inspectNativeBoundPackages(originalPackages.inputs, plan: originalGrant.plan, resourcePermit: permit)
+            try grants.verifyRecoveryExact(originalGrant, resources: fresh, expectedEntries: expected, resourcePermit: permit)
+            try structural.verifyNativeGenesisExact(fresh.baseline, resourcePermit: permit)
+            originalJournal = try journal.captureNativeJoinOriginal(originalGrant.plan, attachment: nil, resourcePermit: permit)
+            try packages.verifyNativeBatchOriginal(originalPackages, resourcePermit: permit)
+            try grants.verifyRecoveryExact(originalGrant, resources: fresh, expectedEntries: expected, resourcePermit: permit)
+        }
+        guard let originalJournal else { throw DeviceLocalResourceGateFailure.invalidScope }
+        return .init(originalPackages, originalGrant, originalJournal, fresh)
+    }
+    /// Fixed mapped-pending recovery. Does not call the ordinary terminal-only package resolver
+    /// or PR149 journal helper: either would block while package2 has genuine pending evidence.
+    func preparePackagesRecoveredExact(_ recovery: DeviceNativePackageBatchRecovery) throws -> DeviceNativeBoundPackageBatch {
+        let resources = recovery.resources, plan = recovery.grants.plan
+        try checkNativeRoots(resources.roots, inputCount: resources.packages.count)
+        var journalPending: DeviceLocalProvisioningIntentStore.NativeJoinTransition?
+        var grantPending: DeviceNativeGrantPreparationStore.PendingPrivateAttempt?
+        var finalResolution: DevicePackageTerminalResolution?
+        var finalResources: DeviceNativeGrantRecoveryResources?
+        var originalJournal: DeviceLocalProvisioningIntentStore.NativePrivatePrerequisite?
+        do {
+            try scope { permit in
+                try packages.verifyNativeBatchOriginal(recovery.packages, resourcePermit: permit)
+                let inputs = try packages.inspectNativeBoundPackages(resources.packages, plan: plan, resourcePermit: permit)
+                let fresh = nativeRecoveryResources(resources, inputs: inputs), expected = nativeExpectations(inputs)
+                try grants.verifyRecoveryExact(recovery.grants, resources: fresh, expectedEntries: expected, resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+                try packages.verifyNativeBatchOriginal(recovery.packages, resourcePermit: permit)
+                // Existing fixed entry validates the ORIGINAL captured journal nodes before its
+                // first epoch/sync, after all package and original private-input preflight above.
+                let j = try journal.performNativeJoinExact(plan, original: recovery.journal, commandPermit: .init(permit))
+                journalPending = j
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                try grants.verifyRecoveryExact(recovery.grants, resources: fresh, expectedEntries: expected, resourcePermit: permit)
+                try packages.verifyNativeBatchOriginal(recovery.packages, resourcePermit: permit)
+                let resolution = try packages.performNativeBoundPackagesExact(inputs, plan: plan, commandPermit: .init(permit))
+                finalResolution = resolution
+                let finalInputs = try nativeInputsFromResolution(inputs, resolution: resolution, permit: permit)
+                let repaired = nativeRecoveryResources(resources, inputs: finalInputs), finalExpected = nativeExpectations(finalInputs)
+                finalResources = repaired
+                try grants.verifyRecoveryExact(recovery.grants, resources: repaired, expectedEntries: finalExpected, resourcePermit: permit)
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                let g = try grants.performRecoveredPrivateAttemptExact(recovery.grants, resources: repaired,
+                    expectedEntries: finalExpected, commandPermit: .init(permit))
+                grantPending = g
+                try grants.verifyRecoveredPendingExact(g, original: recovery.grants, resources: repaired,
+                    expectedEntries: finalExpected, resourcePermit: permit)
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                try packages.verifyResolutionCheckpoint(resolution.checkpoint, resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+            }
+            guard let j = journalPending, let g = grantPending,
+                  let resolution = finalResolution, let repaired = finalResources else {
+                throw DeviceLocalResourceGateFailure.invalidScope
+            }
+            // Publication permits exist only after the entire FIRST scope exited successfully.
+            let joined = try journal.publishNativeJoinExact(j, publicationPermit: .init(j))
+            try scope { permit in
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                let finalInputs = try nativeInputsFromResolution(repaired.packages, resolution: resolution, permit: permit)
+                let checked = nativeRecoveryResources(repaired, inputs: finalInputs)
+                try grants.verifyRecoveredPendingExact(g, original: recovery.grants, resources: checked,
+                    expectedEntries: nativeExpectations(finalInputs), resourcePermit: permit)
+                originalJournal = try journal.captureNativePrivatePrerequisiteExact(joined, plan: plan, resourcePermit: permit)
+                try journal.verifyNativeJoinTransition(j, plan: plan, resourcePermit: permit)
+                try packages.verifyResolutionCheckpoint(resolution.checkpoint, resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+            }
+            guard let originalJournal else { throw DeviceLocalResourceGateFailure.invalidScope }
+            // No fresh recapture of the old grant record or epoch: this exact pending object is the
+            // deliberate transition from recovery.grants and only now can be published.
+            let receipt = try grants.publishPrivateAttemptExact(g, publicationPermit: .init(g))
+            let anchor = DeviceNativeGrantPrivateAnchor(receipt, originalJournal, resolution.checkpoint, resources.baseline, plan)
+            return .init(anchor, resolution)
+        } catch {
+            if let grantPending { try grants.discardPrivatePublication(grantPending) }
+            if let journalPending { try journal.discardNativeJoinPublication(journalPending) }
+            throw error
+        }
+    }
+    /// Narrow deterministic publication regression seam. Performs only the same genuine fixed
+    /// journal repair and returns its sealed pending object AFTER whole scope exit; no callbacks,
+    /// private bytes, generic command permit or fabricated publication token are exposed.
+    func deferRecoveredJournalPublicationForTesting(_ recovery: DeviceNativePackageBatchRecovery) throws -> DeviceNativeDeferredJoinPublication {
+        let resources = recovery.resources, plan = recovery.grants.plan
+        try checkNativeRoots(resources.roots, inputCount: resources.packages.count)
+        var pending: DeviceLocalProvisioningIntentStore.NativeJoinTransition?
+        do {
+            try scope { permit in
+                try packages.verifyNativeBatchOriginal(recovery.packages, resourcePermit: permit)
+                let inputs = try packages.inspectNativeBoundPackages(resources.packages, plan: plan, resourcePermit: permit)
+                let fresh = nativeRecoveryResources(resources, inputs: inputs)
+                try grants.verifyRecoveryExact(recovery.grants, resources: fresh,
+                    expectedEntries: nativeExpectations(inputs), resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+                let transition = try journal.performNativeJoinExact(plan, original: recovery.journal, commandPermit: .init(permit))
+                pending = transition
+                try journal.verifyNativeJoinTransition(transition, plan: plan, resourcePermit: permit)
+                try grants.verifyRecoveryExact(recovery.grants, resources: fresh,
+                    expectedEntries: nativeExpectations(inputs), resourcePermit: permit)
+                try packages.verifyNativeBatchOriginal(recovery.packages, resourcePermit: permit)
+                try structural.verifyNativeGenesisExact(resources.baseline, resourcePermit: permit)
+            }
+        } catch { if let pending { try journal.discardNativeJoinPublication(pending) }; throw error }
+        guard let pending else { throw DeviceLocalResourceGateFailure.invalidScope }
+        return .init(ObjectIdentifier(self), pending)
+    }
+    func publishDeferredJournalForTesting(_ pending: DeviceNativeDeferredJoinPublication) throws -> DeviceLocalProvisioningIntentStore.NativeJoinReceipt {
+        guard pending.issuer == ObjectIdentifier(self) else { throw DeviceLocalResourceGateFailure.invalidScope }
+        do { return try journal.publishNativeJoinExact(pending.transition, publicationPermit: .init(pending.transition)) }
+        catch { try journal.discardNativeJoinPublication(pending.transition); throw error }
+    }
+    func discardDeferredJournalForTesting(_ pending: DeviceNativeDeferredJoinPublication) throws {
+        guard pending.issuer == ObjectIdentifier(self) else { throw DeviceLocalResourceGateFailure.invalidScope }
+        try journal.discardNativeJoinPublication(pending.transition)
+    }
+    private func checkNativeRoots(_ roots: DeviceProvisioningRoots, inputCount: Int) throws {
+        guard inputCount <= 12, roots.journalID == journal.rootID, roots.structuralID == structural.rootID,
+              roots.packageID == packages.rootID, roots.grantID == grants.rootID else { throw DeviceNativeGrantPreparationError.conflict }
+    }
+    private func nativeExpectations(_ inputs: [DeviceProvisioningPackageInput]) -> [DeviceGrantEntryExpectation] {
+        inputs.map { input in
+            switch input {
+            case .supplied(let entryID, _, let package): return .init(entryID: entryID, package: package)
+            case .retained(let entryID, _, let verified): return .init(entryID: entryID, package: verified.package)
+            }
+        }
+    }
+    private func nativeRecoveryResources(_ original: DeviceNativeGrantRecoveryResources,
+        inputs: [DeviceProvisioningPackageInput]) -> DeviceNativeGrantRecoveryResources {
+        .init(roots: original.roots, delivery: original.delivery, baseline: original.baseline,
+              candidate: original.candidate, packages: inputs)
+    }
+    private func nativePackageRequest(_ request: DeviceNativeProvisioningRequest, plan: DeviceValidatedNativeProvisioningPlan,
+        inputs: [DeviceProvisioningPackageInput]) throws -> DeviceNativeGrantPreparationRequest {
+        try checkNativeRoots(request.roots, inputCount: inputs.count)
+        let fresh = DeviceNativeProvisioningRequest(roots: request.roots, delivery: request.delivery,
+            grantOperationID: request.grantOperationID, baseline: request.baseline, candidate: request.candidate,
+            packages: inputs, grantInput: request.grantInput, qualifiedGrant: request.qualifiedGrant)
+        let qualified = try DeviceNativeProvisioningPlanner.qualify(fresh)
+        guard qualified.intentBytes == plan.intentBytes, qualified.candidateBytes == plan.candidateBytes,
+              qualified.delivery.commandBytes == plan.delivery.commandBytes,
+              qualified.delivery.planBytes == plan.delivery.planBytes else { throw DeviceNativeGrantPreparationError.conflict }
+        return .init(operationID: request.grantOperationID, input: request.grantInput, qualified: request.qualifiedGrant,
+                     expectedEntries: nativeExpectations(inputs), plan: plan)
+    }
+    private func nativeInputsFromResolution(_ inputs: [DeviceProvisioningPackageInput],
+        resolution: DevicePackageTerminalResolution, permit: DeviceLocalResourcePermit) throws -> [DeviceProvisioningPackageInput] {
+        guard inputs.count <= 12, resolution.receipts.count == inputs.count else { throw DeviceNativeGrantPreparationError.conflict }
+        try packages.verifyResolutionCheckpoint(resolution.checkpoint, resourcePermit: permit)
+        var output: [DeviceProvisioningPackageInput] = []
+        for input in inputs {
+            let entryID: UUID, reference: DevicePreparedPackageReference, suppliedOperation: UUID?
+            switch input {
+            case .supplied(let id, let operation, let package):
+                entryID = id; suppliedOperation = operation
+                reference = try PackagePreparationCodec.expectedReference(.init(operationID: operation, package: package), rootID: packages.rootID)
+            case .retained(let id, let given, _): entryID = id; reference = given; suppliedOperation = nil
+            }
+            guard let receipt = resolution.receipts.first(where: { DeviceProvisioningPlanner.exactReference($0.reference, reference) }) else {
+                throw DeviceNativeGrantPreparationError.conflict
+            }
+            let verified = try packages.verify(receipt, resourcePermit: permit)
+            if let suppliedOperation { output.append(.supplied(entryID: entryID, operationID: suppliedOperation, package: verified.package)) }
+            else { output.append(.retained(entryID: entryID, reference: reference, verified: verified)) }
+        }
+        try packages.verifyResolutionCheckpoint(resolution.checkpoint, resourcePermit: permit)
+        return output
+    }
+    private func verifyNativeBatchResources(_ anchor: DeviceNativeGrantPrivateAnchor,
+        resolution: DevicePackageTerminalResolution, permit: DeviceLocalResourcePermit) throws {
+        try structural.verifyNativeGenesisExact(anchor.genesis, resourcePermit: permit)
+        try journal.verifyNativePrivatePrerequisiteExact(anchor.journal, plan: anchor.plan, resourcePermit: permit)
+        try packages.verifyResolutionCheckpoint(resolution.checkpoint, resourcePermit: permit)
+        guard resolution.receipts.count <= 12 else { throw DeviceNativeGrantPreparationError.sizeLimit }
+        for receipt in resolution.receipts { _ = try packages.verify(receipt, resourcePermit: permit) }
     }
     private func checkedRequest(_ request: DeviceNativeProvisioningRequest, plan: DeviceValidatedNativeProvisioningPlan,
         resolution: DevicePackageTerminalResolution, permit: DeviceLocalResourcePermit) throws -> DeviceNativeGrantPreparationRequest {
