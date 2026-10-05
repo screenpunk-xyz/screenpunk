@@ -221,10 +221,21 @@ final class PromotionHTTPFixture {
                 let data = try fixture.reply(request)
                 fputs("PROMOTION_HTTP reply.after\n", stderr); fflush(stderr)
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"] )!
+                fputs("PROMOTION_HTTP didReceive.before\n", stderr); fflush(stderr)
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-                client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+                fputs("PROMOTION_HTTP didReceive.after\n", stderr); fflush(stderr)
+                fputs("PROMOTION_HTTP didLoad.before\n", stderr); fflush(stderr)
+                client?.urlProtocol(self, didLoad: data)
+                fputs("PROMOTION_HTTP didLoad.after\n", stderr); fflush(stderr)
+                fputs("PROMOTION_HTTP didFinish.before\n", stderr); fflush(stderr)
+                client?.urlProtocolDidFinishLoading(self)
+                fputs("PROMOTION_HTTP didFinish.after\n", stderr); fflush(stderr)
                 fputs("PROMOTION_HTTP finish\n", stderr); fflush(stderr)
-            } catch { client?.urlProtocol(self, didFailWithError: error) }
+            } catch {
+                fputs("PROMOTION_HTTP didFail.before\n", stderr); fflush(stderr)
+                client?.urlProtocol(self, didFailWithError: error)
+                fputs("PROMOTION_HTTP didFail.after\n", stderr); fflush(stderr)
+            }
         }
         override func stopLoading() { fputs("PROMOTION_HTTP stop\n", stderr); fflush(stderr) }
     }
