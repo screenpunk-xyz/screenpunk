@@ -212,17 +212,21 @@ final class PromotionHTTPFixture {
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
+            fputs("PROMOTION_HTTP start\n", stderr); fflush(stderr)
             let host = request.url?.host
             Self.lock.lock(); let fixture = host.flatMap { Self.fixtures[$0] }; Self.lock.unlock()
             do {
                 guard let fixture else { throw NativeEnrollmentPromotionError.blocked }
+                fputs("PROMOTION_HTTP reply.before\n", stderr); fflush(stderr)
                 let data = try fixture.reply(request)
+                fputs("PROMOTION_HTTP reply.after\n", stderr); fflush(stderr)
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"] )!
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
                 client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+                fputs("PROMOTION_HTTP finish\n", stderr); fflush(stderr)
             } catch { client?.urlProtocol(self, didFailWithError: error) }
         }
-        override func stopLoading() {}
+        override func stopLoading() { fputs("PROMOTION_HTTP stop\n", stderr); fflush(stderr) }
     }
     let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".fixture.test")!
     let input: NativeClaimInput, installationID = UUID(), challengeID = UUID(), generationID = UUID()
@@ -231,7 +235,7 @@ final class PromotionHTTPFixture {
     private(set) var claims = 0, activations = 0
     init(input: NativeClaimInput) { self.input = input; Interceptor.register(self) }
     func close() { Interceptor.remove(self) }
-    var configuration: URLSessionConfiguration { let c = URLSessionConfiguration.ephemeral; c.protocolClasses = [Interceptor.self]; return c }
+    var configuration: URLSessionConfiguration { let c = URLSessionConfiguration.ephemeral; c.protocolClasses = [Interceptor.self]; c.timeoutIntervalForRequest = 10; c.timeoutIntervalForResource = 15; return c }
     func prepare(_ bridge: NativeEnrollmentPromotionBridge, _ original: NativeEnrollmentPromotionBridge.Attempt) async throws {
         try await bridge.prepareOriginalActivation(original, origin: origin, tokenProvider: Provider(), activationRequestID: activationRequestID,
             associationAttemptID: associationAttemptID, configuration: configuration)

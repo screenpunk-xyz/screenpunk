@@ -1065,17 +1065,26 @@ final class NativeEnrollmentPairedEvidenceStoreTests: XCTestCase {
             currentHistory: f.preparation.targetHistory, currentEnrollment: f.preparation.targetEnrollment))
     }
 
+    private func promotionMarker(_ stage: String) {
+        fputs("PROMOTION_LOCALIZATION " + stage + "\n", stderr)
+        fflush(stderr)
+    }
     private func preparePromotion(_ f: Fixture, journal j: NativeEnrollmentJournalStore, backend b: PromotionBackend, prepareProposal: Bool = true) async throws -> (NativeEnrollmentPromotionBridge, NativeEnrollmentPromotionBridge.Attempt, PromotionHTTPFixture) {
-        _ = try j.initializeExplicit(); _ = try j.preparePromotionIntent(f.bytes, attemptID: UUID())
+        promotionMarker("prepare.init.before")
+        _ = try j.initializeExplicit(); promotionMarker("prepare.init.after")
+        _ = try j.preparePromotionIntent(f.bytes, attemptID: UUID()); promotionMarker("prepare.intent.after")
         _ = try NativeEnrollmentStageBridge(journal: j, backend: b).stageOriginalExact(preparationID: f.preparation.preparationId,
             stageAttemptID: UUID(), ownershipAttemptID: UUID(), currentHistory: f.preparation.sourceHistory, currentEnrollment: f.preparation.sourceEnrollment)
+        promotionMarker("prepare.stage.after")
         let pair = NativeEnrollmentPairedEvidenceStore(journal: j)
         _ = try pair.continueExact(pair.beginOriginal(preparationID: f.preparation.preparationId))
+        promotionMarker("prepare.pair.after")
         let bridge = NativeEnrollmentPromotionBridge(journal: j, backend: b)
         let original = try bridge.beginOriginal(preparationID: f.preparation.preparationId, promotionAttemptID: UUID(), ownershipAttemptID: UUID(),
             currentHistory: f.preparation.targetHistory, currentEnrollment: f.preparation.targetEnrollment)
+        promotionMarker("prepare.capture.after")
         let http = PromotionHTTPFixture(input: f.preparation.claimInput); addTeardownBlock { http.close() }
-        if prepareProposal { try await http.prepare(bridge, original) }
+        if prepareProposal { promotionMarker("prepare.claim.before"); try await http.prepare(bridge, original); promotionMarker("prepare.claim.after") }
         return (bridge, original, http)
     }
     func testPromotionFinalAcknowledgmentLossRecommitsWithoutSecondAdd() async throws {
@@ -1094,29 +1103,50 @@ final class NativeEnrollmentPairedEvidenceStoreTests: XCTestCase {
     }
     func testPromotionAmbiguousAddNeverRepeatsAndReentryDoesNotDeadlock() async throws {
         let f = try fixture(), j = f.journal(), b = PromotionBackend()
+        promotionMarker("ambiguous.prepare.before")
         let (bridge, original, _) = try await preparePromotion(f, journal: j, backend: b)
+        promotionMarker("ambiguous.prepare.after")
         b.onAdd = {
+            self.promotionMarker("ambiguous.add.enter")
+            self.promotionMarker("ambiguous.continue.before")
             XCTAssertThrowsError(try bridge.continueExact(original))
+            self.promotionMarker("ambiguous.continue.after")
+            self.promotionMarker("ambiguous.reentry.return")
             throw NativeEnrollmentPromotionError.outcomeUncertain
         }
+        promotionMarker("ambiguous.continue.before")
         XCTAssertThrowsError(try bridge.continueExact(original))
+        promotionMarker("ambiguous.continue.after")
+        promotionMarker("ambiguous.continue.before")
         XCTAssertThrowsError(try bridge.continueExact(original))
+        promotionMarker("ambiguous.continue.after")
         XCTAssertEqual(b.finalAdds, 1)
     }
 
     func testOrdinarySuccessorDoesNotInheritCompletedPromotionCapability() async throws {
         let f = try fixture(), j = f.journal(), b = PromotionBackend()
+        promotionMarker("successor.prepare.before")
         let (bridge, original, http) = try await preparePromotion(f, journal: j, backend: b)
-        _ = try bridge.continueExact(original)
+        promotionMarker("successor.prepare.after")
+        _ = try bridge.continueExact(original); promotionMarker("successor.promote.after")
         XCTAssertThrowsError(try j.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .complete, attemptID: UUID()))
-        _ = try await http.activate(bridge, original)
+        promotionMarker("successor.activate.before")
+        _ = try await http.activate(bridge, original); promotionMarker("successor.activate.after")
         let modelBackend = Backend(); modelBackend.items = b.items
+        promotionMarker("successor.model.before")
         let completed = try completedModel(f.preparation, retained: [], backend: modelBackend)
+        promotionMarker("successor.model.after")
         let prior = try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(NativeJournalCodec.effectiveIntent(f.bytes, phase: 6))
+        promotionMarker("successor.prior.after")
         let successor = try next(completed, retained: [completed], index: 1)
+        promotionMarker("successor.next.after")
         let bytes = try NativeEnrollmentPreparationCodec.encodeReconstructionProposal(successor, retained: [prior]), id = UUID()
+        promotionMarker("successor.write.before")
         _ = try j.prepareIntent(bytes, attemptID: id)
+        promotionMarker("successor.write.after")
+        promotionMarker("successor.write.before")
         _ = try j.prepareIntent(bytes, attemptID: id)
+        promotionMarker("successor.write.after")
         let names = try FileManager.default.contentsOfDirectory(atPath: f.root.appendingPathComponent("attempts").path).sorted()
         let method = try NativeJournalCodec.attempt(Data(contentsOf: f.root.appendingPathComponent("attempts").appendingPathComponent(XCTUnwrap(names.last))))
         let frame = try NativeJournalCodec.frame(method.targetPayload)

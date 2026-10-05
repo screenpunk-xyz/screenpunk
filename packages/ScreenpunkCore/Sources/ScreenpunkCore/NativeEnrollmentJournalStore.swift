@@ -42,6 +42,7 @@ final class NativeEnrollmentJournalStore {
         let latestInstalled: Bool
         let preparationCount: Int, reservedBytes: Int
         let context: NativePreparationReconstructionContext
+        let firstNativePreparationIDs: Set<UUID>
         let unfinishedIntent: Data?
         let stageOwnerships: [NativeJournalStageOwnership]
         let paired: NativePairReplay
@@ -198,7 +199,7 @@ final class NativeEnrollmentJournalStore {
                 let a = try loadAttempt(d, ref).value
                 guard a.method == .prepareIntent, a.intentPayload == encodedRecord,
                     try NativeJournalCodec.frame(a.targetPayload).promotionProtocolVersion == promotionProtocolVersion,
-                    try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(encodedRecord).source.isFirstNative == firstNative else { throw NativeEnrollmentJournalError.conflict }
+                    state.firstNativePreparationIDs.contains(ref.preparationID) == firstNative else { throw NativeEnrollmentJournalError.conflict }
                 return try recommit(d, state: state, ref: ref)
             }
             guard state.unfinishedIntent == nil, state.preparationCount < NativeJournalCodec.preparationLimit else { throw NativeEnrollmentJournalError.capacity }
@@ -908,7 +909,7 @@ final class NativeEnrollmentJournalStore {
                 // Fixed original recommit wrote these issued bytes to its bound
                 // inode; no diagnostic bytes are accepted as a refreshed tip.
                 pairScanView = .init(refs: current.refs, tip: .init(identity: loaded.value.candidateIdentity, bytes: loaded.value.targetPayload), latestInstalled: false,
-                    preparationCount: current.preparationCount, reservedBytes: current.reservedBytes, context: current.context,
+                    preparationCount: current.preparationCount, reservedBytes: current.reservedBytes, context: current.context, firstNativePreparationIDs: current.firstNativePreparationIDs,
                     unfinishedIntent: current.unfinishedIntent, stageOwnerships: current.stageOwnerships, paired: current.paired)
             }
             try event(.candidate, .written)
@@ -918,7 +919,7 @@ final class NativeEnrollmentJournalStore {
         if ref.index == state.refs.count {
             if pairCommandScope, let current = pairScanView, !current.latestInstalled {
                 pairScanView = .init(refs: current.refs, tip: .init(identity: loaded.value.candidateIdentity, bytes: loaded.value.targetPayload), latestInstalled: true,
-                    preparationCount: current.preparationCount, reservedBytes: current.reservedBytes, context: current.context,
+                    preparationCount: current.preparationCount, reservedBytes: current.reservedBytes, context: current.context, firstNativePreparationIDs: current.firstNativePreparationIDs,
                     unfinishedIntent: current.unfinishedIntent, stageOwnerships: current.stageOwnerships, paired: current.paired)
                 pairPendingWitness = nil
             }
@@ -978,6 +979,7 @@ final class NativeEnrollmentJournalStore {
         guard frameNames.isSubset(of: boundNames) else { throw NativeEnrollmentJournalError.outcomeUncertain }
         var usedFrames = Set<String>(), refs: [Ref] = [], tip: NativeJournalNode?
         var ownerships: [NativeJournalStageOwnership] = [], persistentRefs = Set<Data>(), paired = NativePairReplay()
+        var firstNativePreparationIDs = Set<UUID>()
         var context = NativePreparationReconstructionContext.empty(), intent: Data?, intentAttemptID: UUID?
         var preparationID: UUID?, phase = -1, count = 0, reserved = 0, installed = true
         var promotionProtocol: Int?
@@ -996,6 +998,7 @@ final class NativeEnrollmentJournalStore {
                     !refs.contains(where: { $0.preparationID == a.preparationID }), let initial = a.intentPayload else { throw NativeEnrollmentJournalError.conflict }
                 let step = try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(initial, context: context)
                 guard step.proposal.phase == .intent, step.proposal.preparationId == a.preparationID else { throw NativeEnrollmentJournalError.invalidRecord }
+                if step.proposal.source.isFirstNative { firstNativePreparationIDs.insert(a.preparationID) }
                 intent = initial; intentAttemptID = a.attemptID; preparationID = a.preparationID; promotionProtocol = f.promotionProtocolVersion; activationProposal = nil; finalOwnershipAttemptID = nil
                 count += 1; reserved += a.reservation
                 guard count <= 64, reserved <= NativeJournalCodec.totalReservationLimit else { throw NativeEnrollmentJournalError.capacity }
@@ -1076,7 +1079,7 @@ final class NativeEnrollmentJournalStore {
             }
         }
         guard usedFrames == frameNames else { throw NativeEnrollmentJournalError.outcomeUncertain }
-        let result = Scan(refs: refs, tip: tip, latestInstalled: installed, preparationCount: count, reservedBytes: reserved, context: context, unfinishedIntent: intent, stageOwnerships: ownerships, paired: paired)
+        let result = Scan(refs: refs, tip: tip, latestInstalled: installed, preparationCount: count, reservedBytes: reserved, context: context, firstNativePreparationIDs: firstNativePreparationIDs, unfinishedIntent: intent, stageOwnerships: ownerships, paired: paired)
         if pairCommandScope || captureOrdinary {
             guard !captureOrdinary || (ordinaryScopeActive && ordinaryPhaseAnchor == nil) else { throw NativeEnrollmentJournalError.outcomeUncertain }
             pairScanView = result
@@ -1746,14 +1749,16 @@ extension NativeEnrollmentJournalStore {
         try validateIssuedOrdinaryPhase(attempt, command: command, anchor: anchor, view: old)
         let tip = NativeJournalNode(identity: attempt.candidateIdentity, bytes: attempt.targetPayload)
         var context = old.context, intent = old.unfinishedIntent, count = old.preparationCount, reserved = old.reservedBytes, paired = old.paired
+        var firstNativePreparationIDs = old.firstNativePreparationIDs
         if command.phase == 0 {
+            if let step = command.step, step.proposal.source.isFirstNative { firstNativePreparationIDs.insert(command.preparationID) }
             intent = command.intent; count += 1; reserved += command.reservation; paired.newPreparation()
         } else if command.phase == 6 {
             guard let step = command.step else { throw NativeEnrollmentJournalError.invalidRecord }
             context = try requireContinuation(step); intent = nil
         }
         pairScanView = .init(refs: old.refs + [ref], tip: tip, latestInstalled: true,
-            preparationCount: count, reservedBytes: reserved, context: context,
+            preparationCount: count, reservedBytes: reserved, context: context, firstNativePreparationIDs: firstNativePreparationIDs,
             unfinishedIntent: intent, stageOwnerships: old.stageOwnerships, paired: paired)
         pairFrameIdentities.append(attempt.candidateIdentity); pairPendingWitness = nil
         try check(d)
@@ -1856,7 +1861,7 @@ extension NativeEnrollmentJournalStore {
             tip = pending
         }
         pairScanView = .init(refs: old.refs + [ref], tip: tip, latestInstalled: installed,
-            preparationCount: old.preparationCount, reservedBytes: old.reservedBytes, context: old.context,
+            preparationCount: old.preparationCount, reservedBytes: old.reservedBytes, context: old.context, firstNativePreparationIDs: old.firstNativePreparationIDs,
             unfinishedIntent: old.unfinishedIntent, stageOwnerships: old.stageOwnerships, paired: replay)
         pairFrameIdentities.append(attempt.candidateIdentity); pairPendingWitness = nil
         try check(d)
