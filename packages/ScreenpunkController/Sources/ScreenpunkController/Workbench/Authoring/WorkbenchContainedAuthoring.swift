@@ -152,9 +152,14 @@ public final class WorkbenchContainedAuthoring {
         let screenConfig = try JSONSerialization.data(withJSONObject: ["name": name, "connections": []], options: [.sortedKeys])
         let source = kind == "react"
             ? Data("import { createRoot } from 'react-dom/client';\nimport { ScreenpunkProvider, useScreenReady } from '@screenpunk/react';\nfunction App(){ useScreenReady(); return <main><h1>New screen</h1></main>; }\ncreateRoot(document.getElementById('root')!).render(<ScreenpunkProvider><App/></ScreenpunkProvider>);\n".utf8)
-            : Data("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>New screen</title><main><h1>New screen</h1></main></html>\n".utf8)
+            : Data("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"stylesheet\" href=\"styles.css\"><title>New screen</title></head><body><main><h1>New screen</h1></main><script src=\"app.js\"></script></body></html>\n".utf8)
         let descriptorBytes = try WorkspaceJSON.encode(descriptor)
-        let sourceFiles = ["screenpunk.project.json": descriptorBytes, "screen.json": screenConfig, entry: source]
+        var sourceFiles = ["screenpunk.project.json": descriptorBytes, "screen.json": screenConfig, entry: source]
+        if kind == "web" {
+            // Package CSP requires bundled assets; teach the supported shape in the blank template.
+            sourceFiles["web/styles.css"] = Data("body { margin: 0; font-family: -apple-system, sans-serif; } main { padding: 24px; }\n".utf8)
+            sourceFiles["web/app.js"] = Data("// Add behavior here using addEventListener; inline script/event handlers are blocked.\n".utf8)
+        }
         try commitSource(project: project, before: [:], after: sourceFiles,
                          expected: overview, register: true, root: root)
         return try readAfterSourceCommit(project.projectId,

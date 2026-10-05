@@ -142,6 +142,7 @@ public final class ControllerService: @unchecked Sendable {
     public func validateDashboard(dashboardId: String, revision: String?) throws -> DashboardManifest {
         let record = try store.getRevision(dashboardId: dashboardId, revision: revision)
         try PackageValidator.validate(record.manifest)
+        try PackageWebContentValidation.requireCompatible(record.files)
         return record.manifest
     }
 
@@ -154,6 +155,7 @@ public final class ControllerService: @unchecked Sendable {
         _ = ensureHelper()
         let record = try store.getRevision(dashboardId: dashboardId, revision: revision)
         try PackageValidator.validate(record.manifest)
+        try PackageWebContentValidation.requireCompatible(record.files)
         guard let renderer else {
             throw ControllerError.snapshotUnavailable(reason: "helper_not_found")
         }
@@ -293,6 +295,7 @@ public final class ControllerService: @unchecked Sendable {
         // Prepare every package before obtaining credentials or sending a mutation.
         let packages = try records.enumerated().map { index, record -> LANDeployBody in
             try PackageValidator.validate(record.manifest)
+            try PackageWebContentValidation.requireCompatible(record.files)
             let revision = try storedRevision(for: record.manifest)
             return LANDeployBody(deployment: DeploymentRecord(deploymentId: records.count == 1 ? id : "\(id)-\(index)",
                 revision: revision.revision, dashboardId: revision.dashboardId, deviceId: deviceId, phase: .queued),

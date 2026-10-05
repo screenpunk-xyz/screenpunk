@@ -167,6 +167,7 @@ public final class DashboardPackageStore: @unchecked Sendable {
                 )
             }
 
+            try PackageWebContentValidation.requireCompatible(Dictionary(uniqueKeysWithValues: assets.map { ($0.path, $0.data) }))
             let settings = try ScreenDesignSettings.read(files: Dictionary(uniqueKeysWithValues: assets.map { ($0.path, $0.data) }))
             guard let orientation = DeviceOrientation(rawValue: target.orientation), settings.orientations.allows(orientation) else {
                 throw ControllerError.validationFailed(detail: "The target orientation is not supported by this screen.")
