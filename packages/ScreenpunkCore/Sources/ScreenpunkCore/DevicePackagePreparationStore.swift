@@ -366,23 +366,24 @@ final class DevicePackagePreparationStore {
                                        bytes, identities, freshInputs(items))
         }
     }
-    func verifyNativeBatchOriginal(_ original: NativeBatchOriginal, resourcePermit: DeviceLocalResourcePermit) throws {
-        try disk(resourcePermit: resourcePermit) { c in
-            guard original.issuer == ObjectIdentifier(self), original.rootID == rootID,
-                  original.epoch == epoch(),
-                  try readFile(c.root, "root-binding.json", limit: PackagePreparationCodec.metadataLimit) ==
-                    Node(identity: original.bindingID, bytes: original.bindingBytes),
-                  Set(try names(c.operations, maximum: 260)) == Set(original.bytes.keys) else {
-                throw DevicePackagePreparationError.conflict
-            }
-            _ = try inventory(c)
-            for (name, bytes) in original.bytes {
-                guard let identity = original.identities[name],
-                      try readFile(c.operations, name, limit: PackagePreparationCodec.metadataLimit) ==
-                        Node(identity: identity, bytes: bytes) else { throw DevicePackagePreparationError.conflict }
-            }
-            guard original.epoch == epoch() else { throw DevicePackagePreparationError.conflict }
+    private func checkNativeBatchOriginal(_ c: Context, _ original: NativeBatchOriginal) throws {
+        guard original.issuer == ObjectIdentifier(self), original.rootID == rootID,
+              original.epoch == epoch(),
+              try readFile(c.root, "root-binding.json", limit: PackagePreparationCodec.metadataLimit) ==
+                Node(identity: original.bindingID, bytes: original.bindingBytes),
+              Set(try names(c.operations, maximum: 260)) == Set(original.bytes.keys) else {
+            throw DevicePackagePreparationError.conflict
         }
+        _ = try inventory(c)
+        for (name, bytes) in original.bytes {
+            guard let identity = original.identities[name],
+                  try readFile(c.operations, name, limit: PackagePreparationCodec.metadataLimit) ==
+                    Node(identity: identity, bytes: bytes) else { throw DevicePackagePreparationError.conflict }
+        }
+        guard original.epoch == epoch() else { throw DevicePackagePreparationError.conflict }
+    }
+    func verifyNativeBatchOriginal(_ original: NativeBatchOriginal, resourcePermit: DeviceLocalResourcePermit) throws {
+        try disk(resourcePermit: resourcePermit) { c in try checkNativeBatchOriginal(c, original) }
     }
     /// Fixed native command only. Reference matching and all capacity/pending branches precede
     /// invalidation/effects; neither a Local plan nor a mutable alias is synthesized.
@@ -463,6 +464,44 @@ final class DevicePackagePreparationStore {
                   binding.bytes == (try PackagePreparationCodec.encode(context.binding)) else { throw DevicePackagePreparationError.unsafeBinding }
             let result=try resolveTerminalSelection(context,state:state,selected:selected,attemptEpoch:attemptEpoch,binding:binding)
             bindingQualified=true;completed=true
+            return result
+        }
+    }
+    /// Fixed read preflight for the native credential command. Validates all original and
+    /// terminal branches without synchronization, renewal, callbacks or mutation dispatch.
+    func verifyNativeTerminalBatchOriginal(_ original: NativeBatchOriginal,
+        references: [DevicePreparedPackageReference], resourcePermit: DeviceLocalResourcePermit) throws {
+        try validateResolutionReferences(references)
+        try disk(resourcePermit: resourcePermit) { c in
+            try checkNativeBatchOriginal(c, original)
+            let state = try inventory(c), selected = try resolutionEntries(references, state: state)
+            for entry in selected {
+                _ = try checkedPackage(c, record: entry.record, directory: entry.record.plan.leaf, synchronize: false)
+            }
+            try checkNativeBatchOriginal(c, original)
+        }
+    }
+    /// Exact original-to-new terminal repair. The earlier captured inventory is checked under
+    /// this same disk lock before any epoch/sync. No absent/pending package is created or adopted.
+    func resolveRetainedTerminalExact(_ references: [DevicePreparedPackageReference],
+        original: NativeBatchOriginal) throws -> DevicePackageTerminalResolution {
+        try validateResolutionReferences(references)
+        return try disk { context in
+            try checkNativeBatchOriginal(context, original)
+            let state = try inventory(context)
+            let selected = try resolutionEntries(references, state: state)
+            guard let binding = try readFile(context.root, "root-binding.json", limit: PackagePreparationCodec.metadataLimit),
+                  binding.bytes == (try PackagePreparationCodec.encode(context.binding)) else {
+                throw DevicePackagePreparationError.unsafeBinding
+            }
+            // All mappings, stages, terminal branches and original evidence precede invalidation.
+            try checkNativeBatchOriginal(context, original)
+            let attemptEpoch = epoch(invalidate: true); qualification = nil; bindingQualified = false
+            var completed = false
+            defer { if !completed { qualification = nil; bindingQualified = false } }
+            let result = try resolveTerminalSelection(context, state: state, selected: selected,
+                attemptEpoch: attemptEpoch, binding: binding)
+            bindingQualified = true; completed = true
             return result
         }
     }
