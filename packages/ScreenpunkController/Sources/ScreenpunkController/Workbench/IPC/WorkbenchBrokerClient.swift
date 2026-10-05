@@ -15,10 +15,12 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
                 credentialScope: WorkbenchBrokerCredentialScope = .ordinary) {
         self.environment = environment; self.credentialScope = credentialScope
     }
-    public func connect() throws {
+    public func connect() throws { try connect(timeout: environment.limits.timeout) }
+    /// A caller may shorten the transport budget without changing authentication.
+    public func connect(timeout: TimeInterval) throws {
         lock.lock(); defer { lock.unlock() }
         guard fd < 0 else { throw WorkbenchIPCError(.invalidConfiguration) }
-        let deadline = environment.clock.now() + environment.limits.timeout
+        let deadline = try readDeadline(timeout: timeout)
         do {
             let directory = try WorkbenchRuntimeDirectory(environment: environment, create: false)
             let locator = try directory.locator()
@@ -71,8 +73,14 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
     public func hello() throws -> WorkbenchBrokerSnapshot { try requestSnapshot("system.hello") }
     public func capabilities() throws -> WorkbenchBrokerSnapshot { try requestSnapshot("system.capabilities") }
     public func health() throws -> WorkbenchBrokerSnapshot { try requestSnapshot("system.health") }
+    public func health(timeout: TimeInterval) throws -> WorkbenchBrokerSnapshot {
+        try requestSnapshot("system.health", timeout: timeout)
+    }
     public func stopService() throws -> WorkbenchBrokerSnapshot { try requestSnapshot("service.stop") }
     public func serviceLifecycle() throws -> WorkbenchServiceLifecycleResult { try requestLifecycle("service.lifecycle") }
+    public func serviceLifecycle(timeout: TimeInterval) throws -> WorkbenchServiceLifecycleResult {
+        try requestLifecycle("service.lifecycle", timeout: timeout)
+    }
     public func drainService() throws -> WorkbenchServiceLifecycleResult { try requestLifecycle("service.drain") }
     /// Private package lifecycle RPC, like service.stop. It is intentionally
     /// absent from the public capability list that older API 1.0 clients pin.
@@ -569,6 +577,11 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
         guard let value = try requestRead(.workspaceStatus, params: ["schemaVersion": 1]).workspace else { throw WorkbenchIPCError(.invalidRequest) }
         return value
     }
+    public func workspaceStatus(timeout: TimeInterval) throws -> WorkbenchWorkspaceStatus {
+        guard let value = try requestRead(.workspaceStatus, params: ["schemaVersion": 1],
+                                         timeout: timeout).workspace else { throw WorkbenchIPCError(.invalidRequest) }
+        return value
+    }
     public func workspaceCoverage(validate: Bool = false) throws -> WorkbenchCoverageRead {
         guard let value = try requestRead(validate ? .workspaceValidate : .workspaceCoverage,
                                           params: ["schemaVersion": 1]).coverage else { throw WorkbenchIPCError(.invalidRequest) }
@@ -608,6 +621,11 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
     }
     public func listDevices() throws -> [WorkbenchDeviceRead] {
         guard let value = try requestRead(.deviceList, params: ["schemaVersion": 1]).devices else { throw WorkbenchIPCError(.invalidRequest) }
+        return value
+    }
+    public func listDevices(timeout: TimeInterval) throws -> [WorkbenchDeviceRead] {
+        guard let value = try requestRead(.deviceList, params: ["schemaVersion": 1],
+                                         timeout: timeout).devices else { throw WorkbenchIPCError(.invalidRequest) }
         return value
     }
     public func getDevice(deviceId: String) throws -> WorkbenchDeviceRead {
@@ -836,27 +854,28 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
         guard let method = WorkbenchReadMethod(rawValue: route.method) else { throw WorkbenchIPCError(.methodNotFound) }
         return try requestRead(method, params: route.params)
     }
-    private func requestSnapshot(_ method: String) throws -> WorkbenchBrokerSnapshot {
+    private func requestSnapshot(_ method: String, timeout: TimeInterval? = nil) throws -> WorkbenchBrokerSnapshot {
         lock.lock(); defer { lock.unlock() }
         do {
-            guard case .snapshot(let value) = try call(method, params: [:]) else { throw WorkbenchIPCError(.invalidRequest) }
+            guard case .snapshot(let value) = try call(method, params: [:], deadline: timeout.map(readDeadline)) else { throw WorkbenchIPCError(.invalidRequest) }
             return value
         } catch { closeLocked(); throw error }
     }
-    private func requestLifecycle(_ method: String) throws -> WorkbenchServiceLifecycleResult {
+    private func requestLifecycle(_ method: String, timeout: TimeInterval? = nil) throws -> WorkbenchServiceLifecycleResult {
         lock.lock(); defer { lock.unlock() }
         do {
-            guard case .lifecycle(let value) = try call(method, params: ["schemaVersion": 1]) else {
+            guard case .lifecycle(let value) = try call(method, params: ["schemaVersion": 1], deadline: timeout.map(readDeadline)) else {
                 throw WorkbenchIPCError(.invalidRequest)
             }
             try value.validate(for: method)
             return value
         } catch { closeLocked(); throw error }
     }
-    private func requestRead(_ method: WorkbenchReadMethod, params: [String: Any]) throws -> WorkbenchReadResult {
+    private func requestRead(_ method: WorkbenchReadMethod, params: [String: Any],
+                             timeout: TimeInterval? = nil) throws -> WorkbenchReadResult {
         lock.lock(); defer { lock.unlock() }
         do {
-            guard case .read(let value) = try call(method.rawValue, params: params) else { throw WorkbenchIPCError(.invalidRequest) }
+            guard case .read(let value) = try call(method.rawValue, params: params, deadline: timeout.map(readDeadline)) else { throw WorkbenchIPCError(.invalidRequest) }
             return value
         } catch { closeLocked(); throw error }
     }
@@ -891,6 +910,10 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
             }
             return workspace
         } catch { closeLocked(); throw error }
+    }
+    private func readDeadline(timeout: TimeInterval) throws -> TimeInterval {
+        guard timeout.isFinite, timeout > 0 else { throw WorkbenchIPCError(.invalidConfiguration) }
+        return environment.clock.now() + min(timeout, environment.limits.timeout)
     }
     private func call(_ method: String, params: [String: Any], deadline: TimeInterval? = nil,
                       requestId: String? = nil) throws -> WorkbenchRPCResult {
