@@ -4,7 +4,19 @@ sp_fast_mode=${1:-fixtures}
 case "$sp_fast_mode" in fixtures|native) ;; *) echo 'Use fixtures (default) or native.' >&2; exit 64;; esac
 if [ "$#" -gt 1 ]; then echo 'Use fixtures (default) or native.' >&2; exit 64; fi
 sp_fast_root=${SCREENPUNK_FAST_LOOP_ROOT:-/private/tmp/screenpunk-cli-upgrade-diagnostic-2026-10-05}
-case "$sp_fast_root" in /private/tmp/*) ;; *) echo 'Scratch must be under /private/tmp.' >&2; exit 64;; esac
+# Validate lexical components and the existing physical parent before writing.
+if [[ ! "$sp_fast_root" =~ ^/private/tmp/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]]; then
+    echo 'Scratch needs an unambiguous absolute path under /private/tmp.' >&2; exit 64
+fi
+sp_fast_relative=${sp_fast_root#/private/tmp/}
+IFS=/ read -r -a sp_fast_components <<< "$sp_fast_relative"
+for sp_fast_component in "${sp_fast_components[@]}"; do
+    case "$sp_fast_component" in .|..) echo 'Dot path components are refused.' >&2; exit 64;; esac
+done
+sp_fast_parent=${sp_fast_root%/*}
+if [ ! -d "$sp_fast_parent" ] || [ "$(cd "$sp_fast_parent" && pwd -P)" != "$sp_fast_parent" ]; then
+    echo 'Scratch parent must already exist without symlink components.' >&2; exit 73
+fi
 sp_fast_owner=01a0ed60-173a-7db3-9a6d-d3ec593130f9
 umask 077
 if [ -L "$sp_fast_root" ]; then echo 'Refusing symlink scratch root.' >&2; exit 73; fi
@@ -21,12 +33,10 @@ if [ -e "$sp_fast_root" ]; then
             echo 'Scratch belongs to another task or is unowned.' >&2; exit 73
         fi
     fi
-else
-    mkdir "$sp_fast_root"
-    chmod 700 "$sp_fast_root"
-    printf '%s\n' "$sp_fast_owner" > "$sp_fast_root/owner.txt"
+    if [ "$(cd "$sp_fast_root" && pwd -P)" != "$sp_fast_root" ]; then
+        echo 'Refusing symlink path component.' >&2; exit 73
+    fi
 fi
-if [ "$(cd "$sp_fast_root" && pwd -P)" != "$sp_fast_root" ]; then echo 'Refusing symlink path component.' >&2; exit 73; fi
 for sp_fast_member in fast-loop-source.swift fast-loop fast-loop-ownership.json module-cache evidence run.lock; do
     if [ -L "$sp_fast_root/$sp_fast_member" ]; then echo 'Refusing symlink output member.' >&2; exit 73; fi
 done
@@ -37,6 +47,39 @@ for sp_fast_member in fast-loop-source.swift fast-loop fast-loop-ownership.json;
         fi
     fi
 done
+# Pure guard is also tested with controlled disk/usage samples; no cleanup.
+sp_fast_storage_guard() {
+    local available=$1 used=$2 cache=$3 receipts=$4 evidence=$5 reserve=$6 new_receipts=$7 value
+    for value in "$available" "$used" "$cache" "$receipts" "$evidence" "$reserve" "$new_receipts"; do
+        case "$value" in ''|*[!0-9]*) echo 'Storage measurement unavailable.' >&2; return 75;; esac
+        if [ "${#value}" -gt 12 ]; then echo 'Storage measurement out of range.' >&2; return 75; fi
+    done
+    if (( available < 20971520 )); then
+        echo 'Insufficient disk space: at least 20 GiB free is required; no cleanup performed.' >&2; return 75
+    fi
+    if (( used + reserve > 131072 || cache > 98304 || evidence + new_receipts * 8 > 12288 || receipts + new_receipts > 200 )); then
+        echo 'Scratch budget reached: 128 MiB total, 96 MiB cache, 12 MiB evidence, 200 JSON receipts; retain evidence and review exact owned cleanup.' >&2; return 75
+    fi
+}
+sp_fast_measure_storage() {
+    sp_fast_available=$(/bin/df -Pk "$sp_fast_parent" | /usr/bin/awk 'NR == 2 { print $4 }')
+    sp_fast_used=0; sp_fast_cache=0; sp_fast_evidence=0; sp_fast_receipts=0
+    if [ -d "$sp_fast_root" ]; then sp_fast_used=$(du -sk "$sp_fast_root" | /usr/bin/awk '{print $1}'); fi
+    if [ -d "$sp_fast_root/module-cache" ]; then sp_fast_cache=$(du -sk "$sp_fast_root/module-cache" | /usr/bin/awk '{print $1}'); fi
+    if [ -d "$sp_fast_root/evidence" ]; then
+        sp_fast_evidence=$(du -sk "$sp_fast_root/evidence" | /usr/bin/awk '{print $1}')
+        local json_files=( "$sp_fast_root/evidence/"*.json )
+        if [ -e "${json_files[0]}" ]; then sp_fast_receipts=${#json_files[@]}; fi
+    fi
+    printf 'Storage KiB: free=%s scratch=%s cache=%s evidence=%s; JSON receipts=%s; budget=131072\n' "$sp_fast_available" "$sp_fast_used" "$sp_fast_cache" "$sp_fast_evidence" "$sp_fast_receipts" >&2
+}
+sp_fast_measure_storage
+# Reserve 32 MiB for this fixed tiny source and two per-run JSON receipts.
+sp_fast_storage_guard "$sp_fast_available" "$sp_fast_used" "$sp_fast_cache" "$sp_fast_receipts" "$sp_fast_evidence" 32768 2 || exit $?
+if [ ! -e "$sp_fast_root" ]; then
+    mkdir "$sp_fast_root"
+    printf '%s\n' "$sp_fast_owner" > "$sp_fast_root/owner.txt"
+fi
 if ! mkdir "$sp_fast_root/run.lock"; then echo 'Another run or retained lock exists; stop.' >&2; exit 75; fi
 trap 'rmdir "$sp_fast_root/run.lock"' EXIT
 mkdir -p "$sp_fast_root/module-cache" "$sp_fast_root/evidence"
@@ -351,6 +394,9 @@ printf '41732a1e8f99a629e476b03a216ecb8a772a47199f07df3b0acd715000276db0  %s\n' 
 xcrun --find swiftc > "$sp_fast_root/evidence/$sp_fast_run.toolchain.txt"
 xcrun swiftc -target arm64-apple-macosx14.0 -module-cache-path "$sp_fast_root/module-cache" \
     "$sp_fast_root/fast-loop-source.swift" -o "$sp_fast_root/fast-loop" > "$sp_fast_root/evidence/$sp_fast_run.compile.log" 2>&1
+sp_fast_measure_storage
+printf '{"availableKiB":%s,"scratchKiB":%s,"moduleCacheKiB":%s,"evidenceKiB":%s,"jsonReceiptCount":%s,"budgetKiB":131072,"cleanupPerformed":false}\n' "$sp_fast_available" "$sp_fast_used" "$sp_fast_cache" "$sp_fast_evidence" "$sp_fast_receipts" > "$sp_fast_root/evidence/$sp_fast_run.storage.json"
+sp_fast_storage_guard "$sp_fast_available" "$sp_fast_used" "$sp_fast_cache" "$sp_fast_receipts" "$sp_fast_evidence" 16 2 || exit $?
 if "$sp_fast_root/fast-loop" "$sp_fast_mode" > "$sp_fast_root/evidence/$sp_fast_run.$sp_fast_mode.json"; then
     sp_fast_exit=0
 else
