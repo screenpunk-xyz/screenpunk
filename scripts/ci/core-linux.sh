@@ -30,7 +30,18 @@ done
 echo "=== ScreenpunkCore swift test (Linux) ==="
 mkdir -p "$ROOT/.ci-derived"
 log="$ROOT/.ci-derived/core-linux.log"
-(cd packages/ScreenpunkCore && swift test 2>&1 | tee "$log")
+# Keep the test process off the live runner/tee output pipe. Preserve the full
+# regular-file log and the actual Swift exit status, including under set -e.
+if (cd packages/ScreenpunkCore && swift test) >"$log" 2>&1; then
+  swift_status=0
+else
+  swift_status=$?
+fi
+tail -n 200 "$log"
+if (( swift_status != 0 )); then
+  echo "swift test failed with exit status $swift_status"
+  exit "$swift_status"
+fi
 
 if ! grep -qE "Executed [0-9]+ tests, with 0 failures" "$log"; then
   echo "swift test did not report a clean run"
