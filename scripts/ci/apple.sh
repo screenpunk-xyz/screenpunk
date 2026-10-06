@@ -29,7 +29,57 @@ if ! command -v swift >/dev/null 2>&1; then
   exit 1
 fi
 
-(cd packages/ScreenpunkCore && swift test)
+# This package currently uses generated XCTest discovery only. Fail closed if
+# another framework or custom entry point is added instead of omitting its tests.
+if grep -REq '(^|[[:space:]])import[[:space:]]+Testing([[:space:]]|$)|@(Test|Suite)([^[:alnum:]_]|$)' packages/ScreenpunkCore/Tests; then
+  echo "direct XCTest runner requires review for Swift Testing tests"
+  exit 1
+else
+  test_search_status=$?
+  if (( test_search_status != 1 )); then
+    echo "cannot inspect Core test sources"
+    exit "$test_search_status"
+  fi
+fi
+if custom_test_entries=$(find packages/ScreenpunkCore/Tests -type f \( -name LinuxMain.swift -o -name XCTestManifests.swift \) -print); then
+  if [[ -n "$custom_test_entries" ]]; then
+    echo "direct XCTest runner requires generated discovery, not a custom entry point"
+    exit 1
+  fi
+else
+  test_search_status=$?
+  echo "cannot enumerate Core test entry points"
+  exit "$test_search_status"
+fi
+
+mkdir -p "$ROOT/.ci-derived"
+core_log="$ROOT/.ci-derived/core-apple.log"
+# Bypass SwiftPM child-output capture while retaining the full generated suite.
+run_full_core_xctest() {
+  cd packages/ScreenpunkCore || return $?
+  swift build --build-tests || return $?
+  core_bin_dir=$(swift build --show-bin-path) || return $?
+  core_test_bundle="$core_bin_dir/ScreenpunkCorePackageTests.xctest"
+  if [[ ! -d "$core_test_bundle" ]]; then
+    echo "missing generated ScreenpunkCore XCTest bundle"
+    return 1
+  fi
+  xcrun xctest "$core_test_bundle"
+}
+if (run_full_core_xctest) >"$core_log" 2>&1; then
+  core_status=0
+else
+  core_status=$?
+fi
+tail -n 200 "$core_log"
+if (( core_status != 0 )); then
+  echo "Core build or full XCTest run failed with exit status $core_status"
+  exit "$core_status"
+fi
+if ! grep -qE "Executed [0-9]+ tests, with 0 failures" "$core_log"; then
+  echo "Core XCTest did not report a clean full run"
+  exit 1
+fi
 # SwiftPM buffers XCTest output until the process exits. Run the built XCTest
 # bundle directly so a stalled test is visible and bounded on hosted runners.
 (
