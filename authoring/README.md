@@ -15,6 +15,19 @@ React screens are ordinary schema-1 web packages. They use the same native grant
 validator, previews and device deployment as HTML/JavaScript screens. No React
 Native renderer, CDN, development server or device-side Node runtime is included.
 
+## Mac CLI startup
+
+macOS may show a permission or security prompt on the first service start after
+an install or update. Surface it early and wait for the user to review and
+approve the appropriate prompt for their verified Screenpunk installation; an
+agent cannot approve or dismiss it for them. After a pending prompt is resolved,
+retry `screenpunk service start --json` once outside the Codex sandbox through
+normal approval. If it still fails, preserve the complete error and collect
+service logs and launchd status before recovery. Keep workspace, pairing,
+preferences and drafts. See [service startup guidance](../docs/help/service.md);
+future bundled help includes `get_help(topic: service)` and offline
+`screenpunk help service`. Startup errors do not identify the prompt type.
+
 ## Installed Mac workflow
 
 The authoring-enabled Mac app includes Node, TypeScript, esbuild and local dependencies.

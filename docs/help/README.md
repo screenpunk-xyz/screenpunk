@@ -19,6 +19,7 @@ here, then update the copy constants that quote it.
 
 | Topic | File | Also shown in |
 | --- | --- | --- |
+| `service` | [service.md](service.md) | CLI setup/service help, MCP onboarding, activation troubleshooting |
 | `unlink` | [unlink.md](unlink.md) | Unlink panel, Forget dialog, unpaired screen, onboarding |
 | `pairing` | [pairing.md](pairing.md) | Unpaired screen, Add Device |
 | `offline` | [offline.md](offline.md) | Offline ring accessibility announcement |

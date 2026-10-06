@@ -74,7 +74,8 @@ enum WorkbenchPackageLifecycle {
         }
         return CommandFailure(error.cleanup == nil ? "service_activation_failed" : "service_activation_recovery_required",
             "The Homebrew service could not start. Its package and user data are retained.", 9,
-            nextActions: ["Inspect screenpunk service logs and launchctl print gui/\(geteuid())/com.screenpunk.workbench before retrying screenpunk service start."],
+            nextActions: ["Surface any pending macOS permission/security prompt and wait for the user to review and approve the appropriate prompt for their verified Screenpunk installation; an agent cannot approve or dismiss it. After resolving a pending prompt, retry screenpunk service start --json once outside the Codex sandbox through normal approval.",
+                          "If startup still fails, preserve the complete error and inspect screenpunk service logs --json and launchctl print gui/\(geteuid())/com.screenpunk.workbench before another attempt. Preserve workspace, pairing, preferences and drafts; do not reset, chmod, delete sockets or delete Keychain entries."],
             details: ["activationError": code(error.activation),
                       "cleanupError": error.cleanup.map(code) ?? "none"])
     }
