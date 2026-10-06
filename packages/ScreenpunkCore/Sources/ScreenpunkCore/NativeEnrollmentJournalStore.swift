@@ -88,6 +88,7 @@ final class NativeEnrollmentJournalStore {
         let directory: NativeJournalIdentity, lockIdentity: NativeJournalIdentity
         let attemptsIdentity: NativeJournalIdentity, framesIdentity: NativeJournalIdentity
         let binding: NativeJournalNode?
+        let diagnosticWitness: DiagnosticPhysicalWitness?
     }
     fileprivate struct Qualification {
         let epoch: UInt64
@@ -259,6 +260,7 @@ final class NativeEnrollmentJournalStore {
         let installed: Bool
         let epoch: UInt64
         let count: Int
+        let physical: DiagnosticPhysicalWitness
     }
     /// Delivers one historical, nonqualifying proposal at a time outside all locks.
     /// Each replay validates the captured chain; callback mutations invalidate the
@@ -266,10 +268,11 @@ final class NativeEnrollmentJournalStore {
     /// is manufactured, and read-only diagnosis does not alter tip qualification.
     func diagnose(_ visit: (Diagnostic) throws -> Void) throws {
         let captured = try disk { d in
-            let generation = epoch(), state = try scan(d)
-            guard epoch() == generation else { throw NativeEnrollmentJournalError.outcomeUncertain }
+            let generation = epoch(), physical = try diagnosticPhysicalWitness(d)
+            let state = try scan(d)
+            guard try diagnosticPhysicalWitness(d) == physical, epoch() == generation else { throw NativeEnrollmentJournalError.outcomeUncertain }
             return DiagnosticSnapshot(refs: state.refs, binding: d.binding, tip: state.tip,
-                installed: state.latestInstalled, epoch: generation, count: state.preparationCount)
+                installed: state.latestInstalled, epoch: generation, count: state.preparationCount, physical: physical)
         }
         for selected in 0..<captured.count {
             guard let value = try diagnosticReplay(captured, selected: selected) else { throw NativeEnrollmentJournalError.outcomeUncertain }
@@ -279,15 +282,11 @@ final class NativeEnrollmentJournalStore {
     }
     private func diagnosticReplay(_ captured: DiagnosticSnapshot, selected: Int?) throws -> Diagnostic? {
         do {
-            return try disk { d in
+            return try disk(diagnosticWitness: captured.physical) { d in
                 guard epoch() == captured.epoch, d.binding == captured.binding else { throw NativeEnrollmentJournalError.outcomeUncertain }
-                let state = try scan(d)
-                guard epoch() == captured.epoch, state.refs == captured.refs,
-                    state.tip == captured.tip, state.latestInstalled == captured.installed,
-                    state.preparationCount == captured.count else { throw NativeEnrollmentJournalError.outcomeUncertain }
                 guard let selected else { return nil }
-                // The complete chain was checked under this same root lock. Stop
-                // the second replay at the selected value so later proposals never
+                // The original complete semantic admission is bound to unchanged bytes.
+                // Stop the selected prefix so later proposals never
                 // coexist with the retained delivery value.
                 enum Selected: Error { case found }
                 var index = 0, result: Diagnostic?
@@ -1111,21 +1110,21 @@ final class NativeEnrollmentJournalStore {
     private func requireContinuation(_ step: NativePreparationReconstructionStep) throws -> NativePreparationReconstructionContext {
         guard let continuation = step.continuation else { throw NativeEnrollmentJournalError.invalidRecord }; return continuation
     }
-    private func disk<T>(create: Bool = false, pairOriginal: PairAttempt? = nil, ordinaryPhase: OrdinaryPhaseCommand? = nil, ordinaryPreparation: OrdinaryPreparationRequest? = nil, _ operation: (Disk) throws -> T) throws -> T {
+    private func disk<T>(create: Bool = false, pairOriginal: PairAttempt? = nil, ordinaryPhase: OrdinaryPhaseCommand? = nil, ordinaryPreparation: OrdinaryPreparationRequest? = nil, diagnosticWitness: DiagnosticPhysicalWitness? = nil, _ operation: (Disk) throws -> T) throws -> T {
         // One synchronous command lifetime only. The inner command releases all
         // locks/descriptors and checks its throwing exit before this pool drains.
         // The generic return remains strongly owned; callbacks execute elsewhere.
 #if canImport(Darwin)
         return try autoreleasepool {
             try diskCommand(create: create, pairOriginal: pairOriginal, ordinaryPhase: ordinaryPhase,
-                ordinaryPreparation: ordinaryPreparation, operation)
+                ordinaryPreparation: ordinaryPreparation, diagnosticWitness: diagnosticWitness, operation)
         }
 #else
         return try diskCommand(create: create, pairOriginal: pairOriginal, ordinaryPhase: ordinaryPhase,
-            ordinaryPreparation: ordinaryPreparation, operation)
+            ordinaryPreparation: ordinaryPreparation, diagnosticWitness: diagnosticWitness, operation)
 #endif
     }
-    private func diskCommand<T>(create: Bool = false, pairOriginal: PairAttempt? = nil, ordinaryPhase: OrdinaryPhaseCommand? = nil, ordinaryPreparation: OrdinaryPreparationRequest? = nil, _ operation: (Disk) throws -> T) throws -> T {
+    private func diskCommand<T>(create: Bool = false, pairOriginal: PairAttempt? = nil, ordinaryPhase: OrdinaryPhaseCommand? = nil, ordinaryPreparation: OrdinaryPreparationRequest? = nil, diagnosticWitness: DiagnosticPhysicalWitness? = nil, _ operation: (Disk) throws -> T) throws -> T {
         guard mutex.try() else { throw NativeEnrollmentJournalError.outcomeUncertain }; defer { mutex.unlock() }
         let entryQualification = qualification
         let entryEpoch = epoch()
@@ -1170,7 +1169,7 @@ final class NativeEnrollmentJournalStore {
         let binding = try readFile(rootFD, "root-binding.json", limit: NativeJournalCodec.frameLimit)
         guard create || binding != nil else { throw NativeEnrollmentJournalError.unsafeRoot }
         let d = Disk(root: rootFD, lock: lockFD, attempts: attemptsFD, frames: framesFD, directory: directory, lockIdentity: lockIdentity,
-            attemptsIdentity: try identity(attemptsFD, directory: true), framesIdentity: try identity(framesFD, directory: true), binding: binding)
+            attemptsIdentity: try identity(attemptsFD, directory: true), framesIdentity: try identity(framesFD, directory: true), binding: binding, diagnosticWitness: diagnosticWitness)
         try check(d)
         var operationReturned = false
         do {
@@ -1200,6 +1199,101 @@ final class NativeEnrollmentJournalStore {
             throw error
         }
     }
+    /// Compact, nonauthorizing, command-local evidence. No decoded proposals retained.
+    private struct DiagnosticPhysicalWitness: Equatable {
+        let nodes: [PhysicalNode]
+        let namespaces: [[String]]
+    }
+    private struct PhysicalNode: Equatable {
+        let metadata: [UInt64]
+        let digest: [UInt8]
+    }
+    private func physicalMetadata(_ fd: Int32, directory: Bool) throws -> [UInt64] {
+        var value = stat()
+        guard fstat(fd, &value) == 0 else { throw failure() }
+        guard (value.st_mode & mode_t(S_IFMT)) == mode_t(directory ? S_IFDIR : S_IFREG),
+            directory || value.st_nlink == 1, value.st_size >= 0 else { throw NativeEnrollmentJournalError.unsafeRoot }
+#if canImport(Darwin)
+        let modified = value.st_mtimespec, changed = value.st_ctimespec
+#else
+        let modified = value.st_mtim, changed = value.st_ctim
+#endif
+        return [UInt64(truncatingIfNeeded: value.st_dev), UInt64(value.st_ino), UInt64(value.st_mode),
+            UInt64(value.st_uid), UInt64(value.st_gid), UInt64(value.st_nlink), UInt64(value.st_size),
+            UInt64(truncatingIfNeeded: modified.tv_sec), UInt64(truncatingIfNeeded: modified.tv_nsec),
+            UInt64(truncatingIfNeeded: changed.tv_sec), UInt64(truncatingIfNeeded: changed.tv_nsec)]
+    }
+    private func physicalFile(_ parent: Int32, _ name: String, limit: Int) throws -> PhysicalNode {
+        let fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw failure() }; defer { close(fd) }
+        let before = try physicalMetadata(fd, directory: false)
+        guard before[6] <= UInt64(limit) else { throw NativeEnrollmentJournalError.capacity }
+        var hash = NativeJournalSHA256(), count = 0, buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let amount = read(fd, &buffer, buffer.count)
+            if amount < 0 { if errno == EINTR { continue }; throw failure() }
+            if amount == 0 { break }
+            guard amount <= limit - count else { throw NativeEnrollmentJournalError.capacity }
+            count += amount; try hash.update(buffer.prefix(amount))
+        }
+        guard UInt64(count) == before[6], try physicalMetadata(fd, directory: false) == before else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        let reopened = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard reopened >= 0 else { throw failure() }; defer { close(reopened) }
+        guard try physicalMetadata(reopened, directory: false) == before else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        return .init(metadata: before, digest: hash.finalized())
+    }
+    private func diagnosticPhysicalWitness(_ d: Disk) throws -> DiagnosticPhysicalWitness {
+        var nodes: [PhysicalNode] = [], namespaces: [[String]] = []
+        var totalBytes: UInt64 = 0
+        func retain(_ node: PhysicalNode) throws {
+            guard node.metadata[6] <= 167_772_160 - totalBytes else { throw NativeEnrollmentJournalError.capacity }
+            totalBytes += node.metadata[6]; nodes.append(node)
+        }
+        let rootNames = try names(d.root).sorted()
+        guard Set(rootNames).isSubset(of: ["journal.lock", "attempts", "frames", "root-binding.json", "evidence"]) else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        namespaces.append(rootNames)
+        nodes.append(.init(metadata: try physicalMetadata(d.root, directory: true), digest: []))
+        for (directory, limit) in [(d.attempts, NativeJournalCodec.attemptLimit), (d.frames, NativeJournalCodec.frameLimit)] {
+            let before = try physicalMetadata(directory, directory: true), entries = try names(directory).sorted()
+            guard entries.count <= NativeJournalCodec.nodeLimit else { throw NativeEnrollmentJournalError.capacity }
+            namespaces.append(entries); nodes.append(.init(metadata: before, digest: []))
+            for name in entries { try retain(physicalFile(directory, name, limit: limit)) }
+            let role = directory == d.attempts ? "attempts" : "frames"
+            let reopened = openat(d.root, role, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+            guard reopened >= 0 else { throw failure() }; defer { close(reopened) }
+            guard try physicalMetadata(reopened, directory: true) == before,
+                try names(directory).sorted() == entries, try physicalMetadata(directory, directory: true) == before else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        }
+        for name in rootNames where name == "journal.lock" || name == "root-binding.json" {
+            try retain(physicalFile(d.root, name, limit: NativeJournalCodec.frameLimit))
+        }
+        if rootNames.contains("evidence") {
+            let fd = openat(d.root, "evidence", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+            guard fd >= 0 else { throw failure() }; defer { close(fd) }
+            let before = try physicalMetadata(fd, directory: true), entries = try names(fd).sorted()
+            let allowed: Set<String> = ["pair.lock", "pair-binding.json", "pair-binding.json.pending", NativePairFiles.historyName,
+                NativePairFiles.enrollmentName, NativePairFiles.sourceHistory, NativePairFiles.sourceEnrollment,
+                NativePairFiles.targetHistory, NativePairFiles.targetEnrollment]
+            guard Set(entries).isSubset(of: allowed) else { throw NativeEnrollmentJournalError.outcomeUncertain }
+            namespaces.append(entries); nodes.append(.init(metadata: before, digest: []))
+            for name in entries {
+                let history: Set<String> = [NativePairFiles.historyName, NativePairFiles.sourceHistory, NativePairFiles.targetHistory]
+                let enrollment: Set<String> = [NativePairFiles.enrollmentName, NativePairFiles.sourceEnrollment, NativePairFiles.targetEnrollment]
+                let limit = history.contains(name) ? 65536 : (enrollment.contains(name) ? 1048576 : NativeJournalCodec.frameLimit)
+                try retain(physicalFile(fd, name, limit: limit))
+            }
+            let reopened = openat(d.root, "evidence", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+            guard reopened >= 0 else { throw failure() }; defer { close(reopened) }
+            guard try physicalMetadata(reopened, directory: true) == before, try names(fd).sorted() == entries,
+                try physicalMetadata(fd, directory: true) == before else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        }
+        let reopenedRoot = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+        guard reopenedRoot >= 0 else { throw failure() }; defer { close(reopenedRoot) }
+        guard try physicalMetadata(reopenedRoot, directory: true) == nodes[0].metadata,
+            try names(d.root).sorted() == rootNames,
+            try physicalMetadata(d.root, directory: true) == nodes[0].metadata else { throw NativeEnrollmentJournalError.outcomeUncertain }
+        return .init(nodes: nodes, namespaces: namespaces)
+    }
     private func check(_ d: Disk, expectedBinding: NativeJournalNode? = nil) throws {
         guard root.path.utf8.elementsEqual(root.resolvingSymlinksInPath().path.utf8) else { throw NativeEnrollmentJournalError.unsafeRoot }
         var info = stat()
@@ -1222,7 +1316,9 @@ final class NativeEnrollmentJournalStore {
         let allowed: Set<String> = ["journal.lock", "attempts", "frames", "root-binding.json", "root-binding.json.pending", "evidence"]
         guard names.isSubset(of: allowed), d.binding == nil || !names.contains("root-binding.json.pending") else { throw NativeEnrollmentJournalError.outcomeUncertain }
         if d.binding != nil {
-            if ordinaryScopeActive {
+            if let witness = d.diagnosticWitness {
+                guard try diagnosticPhysicalWitness(d) == witness else { throw NativeEnrollmentJournalError.outcomeUncertain }
+            } else if ordinaryScopeActive {
                 if let view = pairScanView {
                     try checkOrdinaryPhaseWitnesses(d, view: view)
                     try checkPairNamespace(d, replay: view.paired)

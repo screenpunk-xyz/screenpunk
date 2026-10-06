@@ -27,7 +27,7 @@ jobs:
   apple-precheck:
     name: apple-precheck
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Unsigned Apple tests and compile
@@ -42,6 +42,10 @@ jobs:
     env:
       IOS_MARKETING_VERSION: ${{ inputs.ios_marketing_version }}
       IOS_BUILD_NUMBER: ${{ inputs.ios_build_number }}
+      # Internal staging only. Missing configuration fails closed; production
+      # requires a separately reviewed release path.
+      IOS_STAGING_INFO_PLIST_BASE64: ${{ secrets.IOS_STAGING_INFO_PLIST_BASE64 }}
+      IOS_STAGING_INFO_SHA256: ${{ vars.IOS_STAGING_INFO_SHA256 }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       IOS_SIGNING_CERT_P12_BASE64: ${{ secrets.IOS_SIGNING_CERT_P12_BASE64 }}
       IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
