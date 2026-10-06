@@ -303,46 +303,31 @@ final class DeviceManagementAuthorityTests: XCTestCase {
         XCTAssertFalse(DeviceManagementAuthority.cloudStatusFresh(requestStartedAt: .nan, now: 100))
         XCTAssertFalse(DeviceManagementAuthority.cloudStatusFresh(requestStartedAt: 100, now: .infinity))
     }
-    /// Existing fenced legacy fixture, not a claim that first-native empty history is supported.
+    /// Explicit first-native fixture with the original owner and isolated real reset evidence.
     func testGenuineCloudContextRetiresOnResetEvidenceChangeAndCannotAdoptNewBaseline() async throws {
         let parent = testPhysicalTemporaryDirectory().appendingPathComponent("cloud-context-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+        let anchor = parent.appendingPathComponent("Application Support"), local = parent.appendingPathComponent("local")
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: local, withIntermediateDirectories: false)
         addTeardownBlock { try? FileManager.default.removeItem(at: parent) }
-        let local = parent.appendingPathComponent("local"), journalRoot = parent.appendingPathComponent("cloud"), namespace = parent.appendingPathComponent(DeviceNativeManagedRootLocator.namespaceName)
-        for path in [local, journalRoot, namespace] { try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false) }
-        let backend = AuthorityPromotionBackend()
-        let legacy = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: "fixture-legacy", format: .legacyLocal32)
-        let history = try DeviceManagementFormatHistory(transitions: [.init(transitionID: legacy.transitionID, phase: .locallyFenced)], credentials: [legacy])
-        let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: "fixture-native", format: .nativeInstallationV1)
-        let input = try NativeClaimInput(requestId: UUID(), transitionId: binding.transitionID, accountId: UUID(), locationId: UUID(), name: "Fixture", profile: "Fixture")
-        let preparation = try NativeEnrollmentPreparation.proposing(preparationId: UUID(), enrollmentId: UUID(), stageReference: "fixture-stage", binding: binding,
-            claimInput: input, history: history, enrollment: .init(), retained: [], inventory: .init(finalItems: ["fixture-legacy": .legacy32], stageItems: [:]))
-        let journal = NativeEnrollmentJournalStore(root: journalRoot, cloudRootID: UUID(), excludedLocalResetRoot: local)
-        _ = try journal.initializeExplicit(); _ = try journal.preparePromotionIntent(NativeEnrollmentPreparationCodec.encodeReconstructionProposal(preparation), attemptID: UUID())
-        _ = try NativeEnrollmentStageBridge(journal: journal, backend: backend).stageOriginalExact(preparationID: preparation.preparationId, stageAttemptID: UUID(), ownershipAttemptID: UUID(), currentHistory: history, currentEnrollment: .init())
-        let pair = NativeEnrollmentPairedEvidenceStore(journal: journal)
-        _ = try pair.continueExact(pair.beginOriginal(preparationID: preparation.preparationId))
-        let bridge = NativeEnrollmentPromotionBridge(journal: journal, backend: backend)
-        let attempt = try bridge.beginOriginal(preparationID: preparation.preparationId, promotionAttemptID: UUID(), ownershipAttemptID: UUID(), currentHistory: preparation.targetHistory, currentEnrollment: preparation.targetEnrollment)
-        let http = AuthorityPromotionHTTP(input); addTeardownBlock { http.close() }
-        try await bridge.prepareOriginalActivation(attempt, origin: http.origin, tokenProvider: AuthorityPromotionHTTP.Provider(), activationRequestID: http.remoteID, associationAttemptID: UUID(), configuration: http.configuration)
-        _ = try bridge.continueExact(attempt)
-        let handle = try await bridge.activateOriginal(attempt, origin: http.origin, tokenProvider: AuthorityPromotionHTTP.Provider(), configuration: http.configuration)
-        let roots = DeviceNativeManagedRootLocator.futureChildNames.map { namespace.appendingPathComponent($0) }
-        for path in roots { try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false) }
-        let scope = DevicePackageProtectedScope(legacyStateRoot: local, legacyArchiveRoot: parent.appendingPathComponent("archive"), resetRoot: parent.appendingPathComponent("reset"), cloudRoot: journalRoot,
-            managementRoot: parent.appendingPathComponent("management"), preferencesRoot: parent.appendingPathComponent("preferences"), otherProtectedRoots: [])
-        let installation = try handle.bindManagedRoots(namespace: namespace,
-            packages: DevicePackagePreparationStore(root: roots[0], rootID: UUID(), protectedScope: scope),
-            grants: DeviceGrantPreparationStore(root: roots[1], rootID: UUID(), protectedScope: scope, backend: AuthorityUnusedGrantBackend()),
-            structural: DeviceStructuralStore(root: roots[2], rootID: UUID()),
-            provisioning: DeviceLocalProvisioningIntentStore(root: roots[3], rootID: UUID(), protectedRoots: scope.roots))
         let resetDirectory = parent.appendingPathComponent("reset"), resetStore = DeviceLocalResetStore(directory: resetDirectory)
         let resetScope = try DeviceLocalResetScope(deviceRoot: local, preferencesRoot: parent.appendingPathComponent("preferences"), managementDirectory: parent.appendingPathComponent("management"), resetDirectory: resetDirectory, credentialItems: DeviceLocalResetScope.allowedCredentialItems)
         let authority = DeviceManagementAuthority(journal: AuthorityJournal(), credentials: .init(backend: AuthorityBackend(), random: { XCTFail("No Keychain"); return Data() }),
-            reset: DeviceLocalResetEvidenceAdapter(scope: resetScope, store: resetStore), managedNamespace: try .fixture(existingPhysicalAnchor: parent))
-        try authority.enterCloudForeground()
-        let context = try authority.bindOperationalInstallation(installation: installation, activation: http.activation(), origin: http.origin)
+            reset: DeviceLocalResetEvidenceAdapter(scope: resetScope, store: resetStore), managedNamespace: try .fixture(existingPhysicalAnchor: anchor),
+            supportAnchorSetup: try .fixture(existingPhysicalParent: parent))
+        try authority.prepareProductionSupportAnchor(); try authority.enterCloudForeground()
+        let claim = try NativeClaimInput(requestId: UUID(), transitionId: UUID(), accountId: UUID(), locationId: UUID(), name: "Fixture", profile: "Fixture")
+        let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: claim.transitionId, credentialReference: "native." + UUID().uuidString, format: .nativeInstallationV1)
+        let proposal = try NativeFirstEnrollmentPreparation(preparationId: UUID(), enrollmentId: UUID(), stageReference: "stage." + UUID().uuidString, binding: binding, claimInput: claim)
+        let roots = try authority.prepareFreshCloudEnrollmentRoots(claim: claim)
+        let protection = NativeManagedProtectedRoots(legacyState: local, legacyArchive: parent.appendingPathComponent("archive"),
+            reset: resetDirectory, cloudEnrollment: roots.journalRoot, management: parent.appendingPathComponent("management"), preferences: parent.appendingPathComponent("preferences"))
+        let stores = try NativeFirstManagedStores(namespace: roots.namespace, ids: roots.localIDs, protectedRoots: protection, grantTransport: FreshGrantTransport(rootID: roots.localIDs.grant))
+        let session = try authority.makeFirstEnrollmentSession(roots: roots, proposal: proposal, excludedLocalResetRoot: resetDirectory, storage: FreshCredentialStorage())
+        let http = FreshOwnerHTTP(claim: claim); addTeardownBlock { http.close() }
+        let result = try await session.enroll(origin: http.origin, tokenProvider: FreshOwnerTokens(), activationRequestID: http.activationRequestID,
+            associationAttemptID: UUID(), stores: stores, configuration: http.configuration)
+        let context = try authority.bindOperationalInstallation(installation: result.installation, activation: result.activation, origin: http.origin)
         // Real fixed status collector, same owner start and private observation; no direct receipt constructor grants admission.
         let request = try authority.prepareCloudStatusRequest(context)
         try authority.beginCloudStatusRequest(context, requestID: request.requestID)
