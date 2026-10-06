@@ -54,12 +54,12 @@ else
 fi
 
 # Run the full generated binary directly: SwiftPM's child output capture can
-# stall before the suite finishes. Default Debug build and no test arguments
-# match the existing unfiltered XCTest invocation.
+# stall before the suite finishes.
+# Run the complete unfiltered XCTest suite in Release with testing enabled.
 run_full_xctest() {
   cd packages/ScreenpunkCore || return $?
-  swift build --build-tests || return $?
-  test_bin_dir=$(swift build --show-bin-path) || return $?
+  swift build -c release --build-tests -Xswiftc -enable-testing || return $?
+  test_bin_dir=$(swift build -c release --show-bin-path) || return $?
   test_binary="$test_bin_dir/ScreenpunkCorePackageTests.xctest"
   if [[ ! -f "$test_binary" || ! -x "$test_binary" ]]; then
     echo "missing generated ScreenpunkCore XCTest executable"

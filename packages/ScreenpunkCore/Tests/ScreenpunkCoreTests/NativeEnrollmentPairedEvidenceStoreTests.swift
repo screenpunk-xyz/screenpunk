@@ -583,6 +583,7 @@ final class NativeEnrollmentPairedEvidenceStoreTests: XCTestCase {
         var retained: [NativeEnrollmentPreparation] = [], declarations: [NativeEnrollmentPreparationReconstructionProposal] = []
         var current = f.preparation
         for index in 0..<63 {
+            promotionMarker("capacity.operation.\(index).begin")
             let bytes = try NativeEnrollmentPreparationCodec.encodeReconstructionProposal(current, retained: declarations)
             _ = try j.prepareIntent(bytes, attemptID: UUID()); try stage(current, journal: j, backend: b)
             let paired = NativeEnrollmentPairedEvidenceStore(journal: j)
@@ -592,6 +593,7 @@ final class NativeEnrollmentPairedEvidenceStoreTests: XCTestCase {
             declarations.append(try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(NativeJournalCodec.effectiveIntent(bytes, phase: 6), retained: declarations))
             retained.append(completed)
             if index < 62 { current = try next(completed, retained: retained, index: index + 1) }
+            promotionMarker("capacity.operation.\(index).end")
         }
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.root.appendingPathComponent("attempts").path).count, 759)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.root.appendingPathComponent("frames").path).count, 759)
