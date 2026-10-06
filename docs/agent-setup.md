@@ -11,6 +11,19 @@ Device-local state is not remote agent access or cross-device sync; app deletion
 device reset and confirmed Disconnect can erase it. See [the authoring default](../docs/screen-authoring-persistence.md).
 
 
+## Mac CLI startup prompts
+
+During the first service start after an install or update, macOS may show a
+permission or security prompt. Surface it early and wait for the user to review
+and approve the appropriate prompt for their verified Screenpunk installation.
+An agent cannot dismiss or approve it for them. After resolving a pending
+prompt, retry `screenpunk service start --json` once outside the Codex sandbox
+through its normal approval flow. If it still fails, retain the complete error,
+collect service logs and launchd status, and preserve workspace, pairing,
+preferences and drafts. The error does not establish the prompt type. See
+[service startup](help/service.md); future bundled help includes
+`get_help(topic: service)` and offline `screenpunk help service`.
+
 The native Connect an Agent sheet provides Cursor, Claude Desktop, Codex, and Generic / Local Models profiles. Changing profile changes its numbered instructions, configuration format, documentation link, and SCREENPUNK_AGENT_NAME. Copy exports only the displayed configuration (or the launch command for Codex); the app never overwrites client settings. Install the app in Applications and reopen the sheet before copying its executable path.
 
 - Cursor: Customize → MCPs → + New MCP Server; global ~/.cursor/mcp.json or project .cursor/mcp.json; stdio command/args/env JSON.
