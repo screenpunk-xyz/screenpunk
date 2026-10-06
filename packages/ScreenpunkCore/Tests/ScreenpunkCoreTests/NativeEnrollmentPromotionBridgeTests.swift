@@ -212,32 +212,32 @@ final class PromotionHTTPFixture {
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
-            fputs("PROMOTION_HTTP start\n", stderr); fflush(stderr)
+            try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP start\n".utf8))
             let host = request.url?.host
             Self.lock.lock(); let fixture = host.flatMap { Self.fixtures[$0] }; Self.lock.unlock()
             do {
                 guard let fixture else { throw NativeEnrollmentPromotionError.blocked }
-                fputs("PROMOTION_HTTP reply.before\n", stderr); fflush(stderr)
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP reply.before\n".utf8))
                 let data = try fixture.reply(request)
-                fputs("PROMOTION_HTTP reply.after\n", stderr); fflush(stderr)
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP reply.after\n".utf8))
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"] )!
-                fputs("PROMOTION_HTTP didReceive.before\n", stderr); fflush(stderr)
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP didReceive.before\n".utf8))
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-                fputs("PROMOTION_HTTP didReceive.after\n", stderr); fflush(stderr)
-                fputs("PROMOTION_HTTP didLoad.before\n", stderr); fflush(stderr)
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP didReceive.after\n".utf8))
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP didLoad.before\n".utf8))
                 client?.urlProtocol(self, didLoad: data)
-                fputs("PROMOTION_HTTP didLoad.after\n", stderr); fflush(stderr)
-                fputs("PROMOTION_HTTP didFinish.before\n", stderr); fflush(stderr)
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP didLoad.after\n".utf8))
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP didFinish.before\n".utf8))
                 client?.urlProtocolDidFinishLoading(self)
-                fputs("PROMOTION_HTTP didFinish.after\n", stderr); fflush(stderr)
-                fputs("PROMOTION_HTTP finish\n", stderr); fflush(stderr)
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP didFinish.after\n".utf8))
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP finish\n".utf8))
             } catch {
-                fputs("PROMOTION_HTTP didFail.before\n", stderr); fflush(stderr)
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP didFail.before\n".utf8))
                 client?.urlProtocol(self, didFailWithError: error)
-                fputs("PROMOTION_HTTP didFail.after\n", stderr); fflush(stderr)
+                try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP didFail.after\n".utf8))
             }
         }
-        override func stopLoading() { fputs("PROMOTION_HTTP stop\n", stderr); fflush(stderr) }
+        override func stopLoading() { try? FileHandle.standardOutput.write(contentsOf: Data("PROMOTION_HTTP stop\n".utf8)) }
     }
     let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".fixture.test")!
     let input: NativeClaimInput, installationID = UUID(), challengeID = UUID(), generationID = UUID()

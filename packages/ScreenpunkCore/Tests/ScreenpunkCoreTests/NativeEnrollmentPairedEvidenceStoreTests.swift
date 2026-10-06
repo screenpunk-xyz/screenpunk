@@ -1094,8 +1094,7 @@ final class NativeEnrollmentPairedEvidenceStoreTests: XCTestCase {
     }
 
     private func promotionMarker(_ stage: String) {
-        fputs("PROMOTION_LOCALIZATION " + stage + "\n", stderr)
-        fflush(stderr)
+        try? FileHandle.standardOutput.write(contentsOf: Data(("PROMOTION_LOCALIZATION " + stage + "\n").utf8))
     }
     private func preparePromotion(_ f: Fixture, journal j: NativeEnrollmentJournalStore, backend b: PromotionBackend, prepareProposal: Bool = true) async throws -> (NativeEnrollmentPromotionBridge, NativeEnrollmentPromotionBridge.Attempt, PromotionHTTPFixture) {
         promotionMarker("prepare.init.before")
