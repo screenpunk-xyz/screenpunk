@@ -85,11 +85,13 @@ final class DeviceGrantCredentialTransportBackend: DeviceGrantCredentialBackend 
     }
     func inventory(service: String, maximum: Int, visit: (DeviceGrantCredentialItem) throws -> Void) throws {
         try binding(service)
-        guard (1...DeviceGrantCredentialTransportBounds.itemLimit).contains(maximum) else { throw DeviceGrantCredentialTransportFailure.capacity }
+        // A store may request one overflow witness; this never widens the actual snapshot capacity.
+        guard (1...DeviceGrantCredentialTransportBounds.itemLimit + 1).contains(maximum) else { throw DeviceGrantCredentialTransportFailure.capacity }
+        let transportLimit = min(maximum, DeviceGrantCredentialTransportBounds.itemLimit)
         var count = 0, seen = Set<String>(), references = Set<Data>()
-        try transport.inventory(maximum:maximum) { observation in
+        try transport.inventory(maximum:transportLimit) { observation in
             count += 1
-            guard count <= maximum else { throw DeviceGrantCredentialTransportFailure.capacity }
+            guard count <= transportLimit else { throw DeviceGrantCredentialTransportFailure.capacity }
             guard seen.insert(observation.account).inserted, references.insert(observation.persistentReference).inserted else { throw DeviceGrantCredentialTransportFailure.changedInventory }
             try binding(service); try visit(item(observation))
         }

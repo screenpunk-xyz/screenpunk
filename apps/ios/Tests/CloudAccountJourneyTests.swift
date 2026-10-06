@@ -6,6 +6,32 @@ import ScreenpunkCore
 
 @MainActor
 final class CloudAccountJourneyTests: XCTestCase {
+    func testOnlyVerifiedViewScreenTransitionPreservesDismissal() throws {
+        let state = CloudJourneyDismissalCancellation(); var revocations = 0
+        enum Failure: Error { case stale }
+        XCTAssertThrowsError(try state.preserveCompletedTransition { throw Failure.stale })
+        state.cancel { revocations += 1 }
+        XCTAssertEqual(revocations, 1)
+        state.reset()
+        try state.preserveCompletedTransition {}
+        state.cancel { revocations += 1 }
+        XCTAssertEqual(revocations, 1)
+        state.reset(); state.cancel { revocations += 1 }
+        XCTAssertEqual(revocations, 2)
+    }
+
+    func testEnrollmentActionPreservesActualSelectedIDsAndExplicitInputs() {
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
+        var actions = CloudAccountJourneyActions(lifecycle: lifecycle, presentation: CloudProviderPresentation(), availability: .qualified)
+        let account = UUID(), location = UUID()
+        var captured: (UUID, UUID, String, String)?
+        actions.enrollDevice = { captured = ($0, $1, $2, $3) }
+        actions.enrollDevice?(account, location, "Tester device", "iPad")
+        XCTAssertEqual(captured?.0, account); XCTAssertEqual(captured?.1, location)
+        XCTAssertEqual(captured?.2, "Tester device"); XCTAssertEqual(captured?.3, "iPad")
+        XCTAssertNil(lifecycle.coordinator)
+    }
+
     func testOccupiedEntryRaceHasSpecificCopyAndZeroLosingFactoryEffects() async throws {
         let broker = CloudHumanSessionBroker()
         let owner = JourneyFixture(broker: broker), later = JourneyFixture(broker: broker)

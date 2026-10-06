@@ -8,14 +8,19 @@ public struct NativeEnrollmentPreparationReconstructionProposal: Sendable {
     public let binding: DeviceManagementFormatHistory.Binding
     public let claimInput: NativeClaimInput
     public let phase: NativeEnrollmentPreparation.Phase
-    public let sourceHistory: DeviceManagementFormatHistory, targetHistory: DeviceManagementFormatHistory
+    public let source: NativeEnrollmentPreparationSource
+    public let targetHistory: DeviceManagementFormatHistory
+    /// Existing history only. A first-native tag cannot be projected into an ordinary history.
+    public var sourceHistory: DeviceManagementFormatHistory { get throws {
+        guard case .existingHistory(let history) = source else { throw NativeEnrollmentPreparationCodec.Failure.invalidContext }; return history
+    } }
     public let sourceEnrollment: NativeEnrollmentEvidence, targetEnrollment: NativeEnrollmentEvidence
     public let reservedBytes: Int
     fileprivate init(id: UUID, enrollmentId: UUID, stage: String, binding: DeviceManagementFormatHistory.Binding,
-        input: NativeClaimInput, phase: NativeEnrollmentPreparation.Phase, source: DeviceManagementFormatHistory,
+        input: NativeClaimInput, phase: NativeEnrollmentPreparation.Phase, source: NativeEnrollmentPreparationSource,
         target: DeviceManagementFormatHistory, enrollment: NativeEnrollmentEvidence, proposed: NativeEnrollmentEvidence, bytes: Int) {
         preparationId = id; self.enrollmentId = enrollmentId; stageReference = stage; self.binding = binding
-        claimInput = input; self.phase = phase; sourceHistory = source; targetHistory = target
+        claimInput = input; self.phase = phase; self.source = source; targetHistory = target
         sourceEnrollment = enrollment; targetEnrollment = proposed; reservedBytes = bytes
     }
 }
@@ -107,6 +112,17 @@ public enum NativeEnrollmentPreparationCodec {
         _ = try decodeReconstructionProposal(data, retained: retained)
         return data
     }
+    public static func encodeFirstNativeProposal(_ preparation: NativeFirstEnrollmentPreparation) throws -> Data {
+        let source = NativeEnrollmentPreparationSource.firstNativeGenesis
+        let object: [String: Any] = ["schemaVersion": 2, "preparationId": preparation.preparationId.uuidString,
+            "enrollmentId": preparation.enrollmentId.uuidString, "stageReference": preparation.stageReference,
+            "binding": try json(preparation.binding), "claimInput": try json(preparation.claimInput), "phase": 0,
+            "sourceHistory": try json(source), "sourceEnrollment": try JSONSerialization.jsonObject(with: source.enrollmentBytes(.init())),
+            "targetHistory": try json(preparation.targetHistory),
+            "targetEnrollment": try JSONSerialization.jsonObject(with: NativeEnrollmentEvidenceCodec.encode(preparation.targetEnrollment, history: preparation.targetHistory))]
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        _ = try decodeReconstructionProposal(data); return data
+    }
     public static func decodeReconstructionProposal(_ data: Data,
         retained: [NativeEnrollmentPreparationReconstructionProposal] = []) throws -> NativeEnrollmentPreparationReconstructionProposal {
         guard retained.count < 64 else { throw Failure.capacityExceeded }
@@ -124,13 +140,25 @@ public enum NativeEnrollmentPreparationCodec {
         guard declarations.count < 64 else { throw Failure.capacityExceeded }
         var parser = PreparationJSONParser(data)
         let o = try fields(parser.parse(), ["schemaVersion", "preparationId", "enrollmentId", "stageReference", "binding", "claimInput", "phase", "sourceHistory", "targetHistory", "sourceEnrollment", "targetEnrollment"])
-        guard case .integer(1) = o["schemaVersion"], case .integer(let p) = o["phase"], let phase = NativeEnrollmentPreparation.Phase(rawValue: p) else { throw Failure.invalidSchema }
+        guard case .integer(let version) = o["schemaVersion"], [1, 2].contains(version), case .integer(let p) = o["phase"], let phase = NativeEnrollmentPreparation.Phase(rawValue: p) else { throw Failure.invalidSchema }
         let id = try uuid(o["preparationId"]), enrollmentId = try uuid(o["enrollmentId"]), stage = try string(o["stageReference"])
         let binding = try parseBinding(o["binding"])
         let c = try fields(o["claimInput"], ["requestId", "transitionId", "accountId", "locationId", "name", "profile"])
         let input = try NativeClaimInput(requestId: uuid(c["requestId"]), transitionId: uuid(c["transitionId"]), accountId: uuid(c["accountId"]), locationId: uuid(c["locationId"]), name: string(c["name"]), profile: string(c["profile"]))
-        let source = try history(o["sourceHistory"]), assertedTarget = try history(o["targetHistory"])
-        let enrollment = try NativeEnrollmentEvidenceCodec.decode(bytes(o["sourceEnrollment"], limit: NativeEnrollmentEvidenceCodec.maximumBytes), history: source)
+        let source: NativeEnrollmentPreparationSource
+        let enrollment: NativeEnrollmentEvidence
+        if version == 2 {
+            let tag = try fields(o["sourceHistory"], ["schemaVersion", "sourceKind"])
+            guard case .integer(1) = tag["schemaVersion"], try string(tag["sourceKind"]) == "first-native-genesis",
+                declarations.isEmpty, targets.isEmpty else { throw Failure.invalidContext }
+            let empty = try fields(o["sourceEnrollment"], ["schemaVersion", "enrollments"])
+            guard case .integer(1) = empty["schemaVersion"], case .array(let values) = empty["enrollments"], values.isEmpty else { throw Failure.invalidSchema }
+            source = .firstNativeGenesis; enrollment = .init()
+        } else {
+            let h = try history(o["sourceHistory"]); source = .existingHistory(h)
+            enrollment = try NativeEnrollmentEvidenceCodec.decode(bytes(o["sourceEnrollment"], limit: NativeEnrollmentEvidenceCodec.maximumBytes), history: h)
+        }
+        let assertedTarget = try history(o["targetHistory"])
         let assertedEnrollment = try NativeEnrollmentEvidenceCodec.decode(bytes(o["targetEnrollment"], limit: NativeEnrollmentEvidenceCodec.maximumBytes), history: assertedTarget)
         _ = try DeviceManagementCredentialBinding(credentialGenerationID: binding.credentialGenerationID, transitionID: binding.transitionID, credentialReference: stage)
         let newIDs = [id, enrollmentId, binding.transitionID, binding.credentialGenerationID, input.requestId]

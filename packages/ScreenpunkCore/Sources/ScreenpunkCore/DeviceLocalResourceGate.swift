@@ -1153,6 +1153,123 @@ final class DeviceNativeDeferredJoinPublication: GrantSecretRedacted {
 /// Native3 fixed initialized four-root private/resource command. Package observations never
 /// become archive proof or Cloud admission. Backend/fault seams stay synchronous and nonreentrant
 /// under locks; publication occurs only after the complete synchronous scope exits.
+
+/// Fixed native structural dispatch only; a read permit cannot construct this capability.
+final class DeviceNativeStructuralCommandPermit {
+    private let read:DeviceLocalResourcePermit
+    fileprivate init(_ read:DeviceLocalResourcePermit){self.read=read}
+    func begin(_ instance:ObjectIdentifier)throws{try read.beginRead(instance)}
+    func end(){read.endRead()}
+}
+final class DeviceNativeStructuralPublicationPermit {
+    private let original:DeviceStructuralStore.NativeCommandCapture
+    fileprivate init(_ original:DeviceStructuralStore.NativeCommandCapture){self.original=original}
+    func requireIdle()throws{try DeviceLocalResourceRegistry.requireIdle()}
+}
+/// Exact mechanical structural durability only. Not a delivery receipt, admission or capacity release.
+final class DeviceNativeStructuralCommitAcknowledgment:GrantSecretRedacted {
+    let operationID:UUID
+    fileprivate let terminal:DeviceNativeBoundGrantTerminal
+    fileprivate let capture:DeviceStructuralStore.NativeCommandCapture
+    fileprivate init(_ terminal:DeviceNativeBoundGrantTerminal,_ capture:DeviceStructuralStore.NativeCommandCapture) {
+        self.terminal=terminal;self.capture=capture;operationID=capture.operationID
+    }
+}
+
+/// Durable bytes for the fixed HTTP owner. Not current admission or a live dispatch lease.
+final class DeviceNativeActivationRequestReceipt:GrantSecretRedacted {
+    let requestID:UUID,requestBytes:Data
+    fileprivate let terminal:DeviceNativeBoundGrantTerminal
+    fileprivate let receipt:DeviceLocalProvisioningIntentStore.NativeHTTPReceipt
+    fileprivate init(_ id:UUID,_ bytes:Data,_ terminal:DeviceNativeBoundGrantTerminal,
+        _ receipt:DeviceLocalProvisioningIntentStore.NativeHTTPReceipt){requestID=id;requestBytes=bytes;self.terminal=terminal;self.receipt=receipt}
+}
+/// Original authorization can be reported after expiry. No time/admission capability is persisted.
+final class DeviceNativeRetainedAuthorization:GrantSecretRedacted {
+    let requestID:UUID,responseBytes:Data
+    fileprivate let request:DeviceNativeActivationRequestReceipt
+    fileprivate let receipt:DeviceLocalProvisioningIntentStore.NativeHTTPReceipt
+    fileprivate init(_ request:DeviceNativeActivationRequestReceipt,_ bytes:Data,
+        _ receipt:DeviceLocalProvisioningIntentStore.NativeHTTPReceipt){self.request=request;requestID=request.requestID;responseBytes=bytes;self.receipt=receipt}
+}
+final class DeviceNativeOutgoingActivatedReceipt:GrantSecretRedacted {
+    let bytes:Data
+    fileprivate let completed:DeviceNativeProvisioningCompletionAcknowledgment
+    fileprivate let authorization:DeviceNativeRetainedAuthorization
+    fileprivate let receipt:DeviceLocalProvisioningIntentStore.NativeHTTPReceipt
+    fileprivate init(_ bytes:Data,_ completed:DeviceNativeProvisioningCompletionAcknowledgment,
+        _ authorization:DeviceNativeRetainedAuthorization,_ receipt:DeviceLocalProvisioningIntentStore.NativeHTTPReceipt){self.bytes=bytes;self.completed=completed;self.authorization=authorization;self.receipt=receipt}
+}
+final class DeviceNativeReportedActivatedReceipt:GrantSecretRedacted {
+    let receiptID:UUID
+    fileprivate let outgoing:DeviceNativeOutgoingActivatedReceipt
+    fileprivate let receipt:DeviceLocalProvisioningIntentStore.NativeHTTPReceipt
+    fileprivate init(_ id:UUID,_ outgoing:DeviceNativeOutgoingActivatedReceipt,
+        _ receipt:DeviceLocalProvisioningIntentStore.NativeHTTPReceipt){receiptID=id;self.outgoing=outgoing;self.receipt=receipt}
+}
+final class DeviceNativeHTTPCommandPermit {
+    private let read:DeviceLocalResourcePermit
+    fileprivate init(_ read:DeviceLocalResourcePermit){self.read=read}
+    func begin(_ instance:ObjectIdentifier)throws{try read.beginRead(instance)}
+    func end(){read.endRead()}
+}
+final class DeviceNativeHTTPPublicationPermit {
+    private let original:DeviceLocalProvisioningIntentStore.NativeHTTPTransition
+    fileprivate init(_ original:DeviceLocalProvisioningIntentStore.NativeHTTPTransition){self.original=original}
+    func validate(_ transition:DeviceLocalProvisioningIntentStore.NativeHTTPTransition)throws {
+        guard transition === original else{throw DeviceLocalResourceGateFailure.invalidScope}
+        try DeviceLocalResourceRegistry.requireIdle()
+    }
+}
+
+/// Fixed journal completion capability issued only by this file's four-root orchestration.
+final class DeviceNativeCompletionCommandPermit {
+    private let read:DeviceLocalResourcePermit
+    fileprivate init(_ read:DeviceLocalResourcePermit){self.read=read}
+    func begin(_ instance:ObjectIdentifier)throws{try read.beginRead(instance)}
+    func end(){read.endRead()}
+}
+final class DeviceNativeCompletionPublicationPermit {
+    private let original:DeviceLocalProvisioningIntentStore.NativeCompletionTransition
+    fileprivate init(_ original:DeviceLocalProvisioningIntentStore.NativeCompletionTransition){self.original=original}
+    func validate(_ transition:DeviceLocalProvisioningIntentStore.NativeCompletionTransition)throws {
+        guard transition === original else{throw DeviceLocalResourceGateFailure.invalidScope}
+        try DeviceLocalResourceRegistry.requireIdle()
+    }
+}
+/// Genuine mechanical completion only. No wire receipt construction, new dispatch admission,
+/// original authorization, runtime or migration can be inferred from this acknowledgment.
+final class DeviceNativeProvisioningCompletionAcknowledgment:GrantSecretRedacted {
+    let operationID:UUID
+    fileprivate let structural:DeviceNativeStructuralCommitAcknowledgment?
+    fileprivate let recovered:DeviceNativeCompletedRecoveryEvidence?
+    fileprivate let completion:DeviceLocalProvisioningIntentStore.NativeCompletionReceipt
+    fileprivate init(_ structural:DeviceNativeStructuralCommitAcknowledgment,_ completion:DeviceLocalProvisioningIntentStore.NativeCompletionReceipt){self.structural=structural;recovered=nil;self.completion=completion;operationID=structural.operationID}
+    fileprivate init(_ recovered:DeviceNativeCompletedRecoveryEvidence,_ completion:DeviceLocalProvisioningIntentStore.NativeCompletionReceipt){structural=nil;self.recovered=recovered;self.completion=completion;operationID=recovered.plan.nativeOperationID}
+}
+
+/// Separate native completed-head recovery evidence. No conversion to a NativeJoinReceipt,
+/// Local receipt or reconstructed structural ACK; genuine private grant repair remains required.
+final class DeviceNativeCompletedResourceRecovery:GrantSecretRedacted {
+    fileprivate let journal:DeviceLocalProvisioningIntentStore.NativeCompletionRecoveryOriginal
+    fileprivate let grants:DeviceNativeGrantPreparationStore.TerminalRecovery
+    fileprivate let packages:DevicePackagePreparationStore.NativeBatchOriginal
+    fileprivate let resources:DeviceNativeGrantRecoveryResources
+    fileprivate init(_ journal:DeviceLocalProvisioningIntentStore.NativeCompletionRecoveryOriginal,
+        _ grants:DeviceNativeGrantPreparationStore.TerminalRecovery,_ packages:DevicePackagePreparationStore.NativeBatchOriginal,
+        _ resources:DeviceNativeGrantRecoveryResources){self.journal=journal;self.grants=grants;self.packages=packages;self.resources=resources}
+}
+fileprivate final class DeviceNativeCompletedRecoveryEvidence:GrantSecretRedacted {
+    let plan:DeviceValidatedNativeProvisioningPlan
+    let structural:DeviceStructuralStore.NativeCommandCapture
+    let grants:DeviceNativeGrantPreparationStore.TerminalReceipt
+    let packages:DevicePackageTerminalResolution
+    let original:DeviceNativeCompletedResourceRecovery
+    init(_ plan:DeviceValidatedNativeProvisioningPlan,_ structural:DeviceStructuralStore.NativeCommandCapture,
+         _ grants:DeviceNativeGrantPreparationStore.TerminalReceipt,_ packages:DevicePackageTerminalResolution,
+         _ original:DeviceNativeCompletedResourceRecovery){self.plan=plan;self.structural=structural;self.grants=grants;self.packages=packages;self.original=original}
+}
+
 final class DeviceNativeGrantPrivateCoordinator {
     private let journal: DeviceLocalProvisioningIntentStore
     private let structural: DeviceStructuralStore
@@ -1744,6 +1861,420 @@ final class DeviceNativeGrantPrivateCoordinator {
         return (.init(roots: resources.roots, delivery: resources.delivery, baseline: resources.baseline,
             candidate: resources.candidate, packages: inputs), expected)
     }
+
+    private struct NativeStructuralOutcome:Encodable {
+        let schemaVersion:Int,operationID:UUID,generationID:UUID
+    }
+    private struct NativeStructuralResources:Encodable {
+        let journalRootID:UUID,packageRootID:UUID,grantRootID:UUID,grantOperationID:UUID
+        let grantIdentity:DeviceGrantRevisionIdentity
+    }
+    private func nativeStructuralCommand(_ request:DeviceNativeProvisioningRequest,
+        terminal:DeviceNativeBoundGrantTerminal,permit:DeviceLocalResourcePermit) throws -> (candidate:Data,assertions:Data,intent:Data,outcome:Data) {
+        try checkNativeRoots(request.roots,inputCount:request.packages.count)
+        guard request.grantOperationID == terminal.operationID,
+              request.delivery.nativeOperationID == terminal.plan.nativeOperationID,
+              request.baseline.rootID == structural.rootID else {throw DeviceStructuralStoreError.conflict}
+        let inputs=try nativeInputsFromResolution(request.packages,resolution:terminal.resolution,permit:permit)
+        let fresh=try nativePackageRequest(request,plan:terminal.plan,inputs:inputs)
+        try journal.verifyNativePrivatePrerequisiteExact(terminal.journal,plan:terminal.plan,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(terminal.resolution.checkpoint,resourcePermit:permit)
+        for receipt in terminal.resolution.receipts {_ = try packages.verify(receipt,resourcePermit:permit)}
+        try grants.verifyTerminalExact(terminal.receipt,request:fresh,resourcePermit:permit)
+        try structural.verifyNativeGenesisNodesForDispatch(terminal.genesis,resourcePermit:permit)
+        let outcome=try DeviceNativeStructuralCommandCodec.encode(NativeStructuralOutcome(schemaVersion:2,operationID:terminal.plan.nativeOperationID,generationID:request.candidate.generationID),limit:32768)
+        let bytes=terminal.plan.candidateBytes
+        let envelope=try DeviceNativeStructuralEnvelopeCodec.decode(bytes)
+        guard envelope.operationID == terminal.plan.nativeOperationID,
+              envelope.expectedGenerationID == terminal.genesis.state.generationID,
+              envelope.snapshotBytes == (try DeviceNativeStructuralStateCodec.encode(request.candidate)),
+              terminal.plan.intentBytes.count <= 32768 else {throw DeviceStructuralStoreError.conflict}
+        let resources=try DeviceNativeStructuralCommandCodec.encode(NativeStructuralResources(journalRootID:request.roots.journalID,packageRootID:request.roots.packageID,grantRootID:request.roots.grantID,grantOperationID:request.grantOperationID,grantIdentity:request.grantInput.identity),limit:8192)
+        return(bytes,resources,terminal.plan.intentBytes,outcome)
+    }
+    func nativeStructuralReservationSizesForTesting(_ request:DeviceNativeProvisioningRequest,
+        terminal:DeviceNativeBoundGrantTerminal) throws -> [String:Int] {
+        var sizes:[String:Int]?
+        try nativeStructuralScope {permit in
+            let command=try nativeStructuralCommand(request,terminal:terminal,permit:permit)
+            sizes=try structural.nativeDispatchReservationSizesForTesting(candidate:command.candidate,assertions:command.assertions,intent:command.intent,outcome:command.outcome,operationID:terminal.plan.nativeOperationID,resourcePermit:permit)
+        }
+        guard let sizes else {throw DeviceLocalResourceGateFailure.invalidScope};return sizes
+    }
+    /// Retained exact method is checked before qualified-current capture inside the fixed store.
+    /// Same operation repairs candidate/terminal uncertainty; a different/second operation rejects.
+    func commitNativeStructuralExact(_ request:DeviceNativeProvisioningRequest,
+        terminal:DeviceNativeBoundGrantTerminal) throws -> DeviceNativeStructuralCommitAcknowledgment {
+        var pending:DeviceStructuralStore.NativeCommandCapture?
+        do {
+            try nativeStructuralScope {permit in
+                let before=try nativeStructuralCommand(request,terminal:terminal,permit:permit)
+                let capture=try structural.performNativeCommandExact(candidate:before.candidate,assertions:before.assertions,intent:before.intent,outcome:before.outcome,baseline:terminal.genesis,commandPermit:.init(permit))
+                pending=capture
+                let after=try nativeStructuralCommand(request,terminal:terminal,permit:permit)
+                guard before.candidate == after.candidate,before.assertions == after.assertions,before.intent == after.intent,before.outcome == after.outcome else {throw DeviceStructuralStoreError.conflict}
+                try structural.verifyNativeCommandCapture(capture,resourcePermit:permit)
+            }
+            guard let pending else {throw DeviceLocalResourceGateFailure.invalidScope}
+            let capture=try structural.publishNativeCommandExact(pending,permit:.init(pending))
+            return .init(terminal,capture)
+        } catch {
+            if let pending {try structural.discardNativeCommandExact(pending)}
+            throw error
+        }
+    }
+    func verifyNativeStructuralAcknowledgmentExact(_ original:DeviceNativeStructuralCommitAcknowledgment,
+        request:DeviceNativeProvisioningRequest) throws {
+        try nativeStructuralScope {permit in
+            let command=try nativeStructuralCommand(request,terminal:original.terminal,permit:permit)
+            guard command.candidate == original.capture.envelopeBytes,original.operationID == request.delivery.nativeOperationID else {throw DeviceStructuralStoreError.conflict}
+            try structural.verifyNativeCommandCapture(original.capture,resourcePermit:permit)
+        }
+    }
+
+    private func verifyNativeCompletionResources(_ request:DeviceNativeProvisioningRequest,
+        original:DeviceNativeStructuralCommitAcknowledgment,permit:DeviceLocalResourcePermit)throws {
+        let terminal=original.terminal
+        try checkNativeRoots(request.roots,inputCount:request.packages.count)
+        guard original.operationID == request.delivery.nativeOperationID,
+              request.grantOperationID == terminal.operationID,
+              terminal.plan.candidateBytes == original.capture.envelopeBytes else{throw DeviceStructuralStoreError.conflict}
+        let inputs=try nativeInputsFromResolution(request.packages,resolution:terminal.resolution,permit:permit)
+        let fresh=try nativePackageRequest(request,plan:terminal.plan,inputs:inputs)
+        // Original private resources and structural capture are retained; journal alone has
+        // an explicitly validated intentional transition. No current checkpoint recapture.
+        try journal.verifyNativeCompletionAntecedentsExact(terminal.journal,plan:terminal.plan,
+            envelope:original.capture.envelopeBytes,structuralRootID:structural.rootID,resourcePermit:permit)
+        try packages.verifyResolutionCheckpoint(terminal.resolution.checkpoint,resourcePermit:permit)
+        for receipt in terminal.resolution.receipts {_ = try packages.verify(receipt,resourcePermit:permit)}
+        try grants.verifyTerminalExact(terminal.receipt,request:fresh,resourcePermit:permit)
+        try structural.verifyNativeCommandCapture(original.capture,resourcePermit:permit)
+        let encoded=try DeviceNativeStructuralStateCodec.encode(request.candidate)
+        let envelope=try DeviceNativeStructuralEnvelopeCodec.decode(original.capture.envelopeBytes)
+        guard envelope.snapshotBytes == encoded,envelope.operationID == request.delivery.nativeOperationID,
+              request.delivery.commandBytes == terminal.plan.delivery.commandBytes,
+              request.delivery.planBytes == terminal.plan.delivery.planBytes else{throw DeviceStructuralStoreError.conflict}
+    }
+    /// Genuine resource-bound durable request only. The HTTP owner separately supplies current
+    /// authenticated admission; this method neither performs POST nor admits structural dispatch.
+    func retainNativeActivationRequestExact(_ request:DeviceNativeProvisioningRequest,
+        terminal:DeviceNativeBoundGrantTerminal,requestID:UUID)throws->DeviceNativeActivationRequestReceipt {
+        let bytes=try DeviceNativeDeliveryHTTPCodec.activationRequest(binding:request.delivery,requestID:requestID)
+        var pending:DeviceLocalProvisioningIntentStore.NativeHTTPTransition?
+        do {
+            try nativeCompletionScope {permit in
+                _ = try nativeStructuralCommand(request,terminal:terminal,permit:permit)
+                let transition=try journal.performNativeHTTPExact(terminal.journal,plan:terminal.plan,
+                    phase:.activation,requestID:requestID,request:bytes,response:nil,completed:nil,commandPermit:.init(permit))
+                pending=transition
+                _ = try nativeStructuralCommand(request,terminal:terminal,permit:permit)
+                try journal.verifyNativeHTTPTransitionExact(transition,resourcePermit:permit)
+            }
+            guard let pending else{throw DeviceLocalResourceGateFailure.invalidScope}
+            return .init(requestID,bytes,terminal,try journal.publishNativeHTTPExact(pending,publicationPermit:.init(pending)))
+        } catch {if let pending{try journal.discardNativeHTTPExact(pending)};throw error}
+    }
+    /// Exact original response is retained before a future admitted dispatch. Server dates are
+    /// historical bytes here; expiry never discards the original reporting association.
+    func retainNativeAuthorizationExact(_ request:DeviceNativeProvisioningRequest,
+        original:DeviceNativeActivationRequestReceipt,response:Data)throws->DeviceNativeRetainedAuthorization {
+        guard response.count <= 4096 else{throw DeviceNativeDeliveryAttachmentCodec.Failure.capacity}
+        _ = try DeviceNativeDeliveryHTTPCodec.observe(response,kind:.activationResponse,
+            binding:request.delivery,requestID:original.requestID)
+        var pending:DeviceLocalProvisioningIntentStore.NativeHTTPTransition?
+        do {
+            try nativeCompletionScope {permit in
+                _ = try nativeStructuralCommand(request,terminal:original.terminal,permit:permit)
+                try journal.verifyNativeHTTPExact(original.receipt,resourcePermit:permit)
+                let transition=try journal.performNativeHTTPExact(original.terminal.journal,plan:original.terminal.plan,
+                    phase:.activation,requestID:original.requestID,request:original.requestBytes,response:response,
+                    completed:nil,commandPermit:.init(permit))
+                pending=transition
+                _ = try nativeStructuralCommand(request,terminal:original.terminal,permit:permit)
+                try journal.verifyNativeHTTPTransitionExact(transition,resourcePermit:permit)
+            }
+            guard let pending else{throw DeviceLocalResourceGateFailure.invalidScope}
+            return .init(original,response,try journal.publishNativeHTTPExact(pending,publicationPermit:.init(pending)))
+        } catch {if let pending{try journal.discardNativeHTTPExact(pending)};throw error}
+    }
+    /// Read-only original authorization check. This is not the promotion owner's foreground
+    /// admission/monotonic-deadline handle and must never substitute for one.
+    func verifyNativeRetainedAuthorizationExact(_ request:DeviceNativeProvisioningRequest,
+        original:DeviceNativeRetainedAuthorization)throws {
+        try nativeCompletionScope {permit in
+            _ = try nativeStructuralCommand(request,terminal:original.request.terminal,permit:permit)
+            try journal.verifyNativeHTTPExact(original.receipt,resourcePermit:permit)
+            _ = try DeviceNativeDeliveryHTTPCodec.observe(original.responseBytes,kind:.activationResponse,
+                binding:request.delivery,requestID:original.requestID)
+        }
+    }
+    private func verifyNativeCompletedForHTTP(_ request:DeviceNativeProvisioningRequest,
+        completed:DeviceNativeProvisioningCompletionAcknowledgment,permit:DeviceLocalResourcePermit)throws->DeviceValidatedNativeProvisioningPlan {
+        guard completed.operationID == request.delivery.nativeOperationID else{throw DeviceStructuralStoreError.conflict}
+        let plan:DeviceValidatedNativeProvisioningPlan
+        if let live=completed.structural {
+            try verifyNativeCompletionResources(request,original:live,permit:permit);plan=live.terminal.plan
+        } else if let recovered=completed.recovered {
+            try checkNativeRoots(request.roots,inputCount:request.packages.count)
+            let inputs=try nativeInputsFromResolution(request.packages,resolution:recovered.packages,permit:permit)
+            let fresh=try nativePackageRequest(request,plan:recovered.plan,inputs:inputs)
+            try packages.verifyResolutionCheckpoint(recovered.packages.checkpoint,resourcePermit:permit)
+            for receipt in recovered.packages.receipts{_ = try packages.verify(receipt,resourcePermit:permit)}
+            try grants.verifyTerminalExact(recovered.grants,request:fresh,resourcePermit:permit)
+            try structural.verifyNativeCommandCapture(recovered.structural,resourcePermit:permit)
+            guard recovered.structural.envelopeBytes == recovered.plan.candidateBytes,
+                  request.delivery.commandBytes == recovered.plan.delivery.commandBytes,
+                  request.delivery.planBytes == recovered.plan.delivery.planBytes else{throw DeviceStructuralStoreError.conflict}
+            plan=recovered.plan
+        } else{throw DeviceLocalResourceGateFailure.invalidScope}
+        try journal.verifyNativeCompletionReceiptExact(completed.completion,plan:plan,resourcePermit:permit)
+        return plan
+    }
+    /// Read-only completed native projection. Keeps original FOUR-root evidence; no admission,
+    /// checkpoint recapture or parsed HTTP acknowledgment can construct static content.
+    func projectNativeCompletedStaticExact(_ request:DeviceNativeProvisioningRequest,
+        completed:DeviceNativeProvisioningCompletionAcknowledgment)throws->DeviceManagedStaticContent {
+        var result:DeviceManagedStaticContent?
+        try nativeCompletionScope {permit in
+            _ = try verifyNativeCompletedForHTTP(request,completed:completed,permit:permit)
+            guard let selected=request.candidate.configuredEntryID,
+                  let entry=request.candidate.entries.first(where:{$0.entryID == selected}) else {
+                throw DeviceManagedRenderFailure.emptySelection
+            }
+            let resolution:DevicePackageTerminalResolution
+            if let live=completed.structural {resolution=live.terminal.resolution}
+            else if let recovered=completed.recovered {resolution=recovered.packages}
+            else {throw DeviceLocalResourceGateFailure.invalidScope}
+            guard let receipt=resolution.receipts.first(where:{$0.reference == entry.preparedPackage}) else {
+                throw DeviceManagedRenderFailure.invalidContent
+            }
+            let verified=try packages.verify(receipt,resourcePermit:permit)
+            result=try DeviceManagedRenderProjection.make(package:verified.package,
+                operationID:completed.operationID,generationID:request.candidate.generationID,
+                entryID:entry.entryID,displayName:entry.displayName,validate:{[self] in
+                    try verifyNativeCompletedStaticResourcesExact(request,completed:completed)
+                })
+            _ = try verifyNativeCompletedForHTTP(request,completed:completed,permit:permit)
+        }
+        guard let result else {throw DeviceLocalResourceGateFailure.invalidScope};return result
+    }
+    private func verifyNativeCompletedStaticResourcesExact(_ request:DeviceNativeProvisioningRequest,
+        completed:DeviceNativeProvisioningCompletionAcknowledgment)throws {
+        try nativeCompletionScope {permit in
+            _ = try verifyNativeCompletedForHTTP(request,completed:completed,permit:permit)
+        }
+    }
+    /// Activated bytes originate only from genuine whole-scope completion and immutable original
+    /// authorization. No boolean, parsed outcome or absence can manufacture this outgoing body.
+    func retainNativeActivatedReceiptExact(_ request:DeviceNativeProvisioningRequest,
+        completed:DeviceNativeProvisioningCompletionAcknowledgment,
+        authorization:DeviceNativeRetainedAuthorization)throws->DeviceNativeOutgoingActivatedReceipt {
+        let observed=try DeviceNativeDeliveryHTTPCodec.observe(authorization.responseBytes,kind:.activationResponse,
+            binding:request.delivery,requestID:authorization.requestID)
+        guard let digest=observed.authorizationDigest else{throw DeviceLocalResourceGateFailure.invalidScope}
+        var object=try DeviceNativeDeliveryAttachmentCodec.object(authorization.request.requestBytes,limit:4096,
+            keys:["schemaVersion","operationId","planId","installationId","accountId","locationId","transitionId","expectedInstalledSetGenerationId","desiredSetGenerationId","planDigest","planByteLength","sequence","resultingSetDigest","activationRequestId"])
+        object["authorizationDigest"]=digest;object["outcome"]="activated"
+        object["previousGenerationId"]=request.delivery.expectedGenerationID.uuidString.lowercased()
+        object["resultingGenerationId"]=request.delivery.desiredGenerationID.uuidString.lowercased()
+        object["renderState"]="not-observed"
+        let bytes=try JSONSerialization.data(withJSONObject:object,options:[.sortedKeys,.withoutEscapingSlashes])
+        guard bytes.count <= 16384 else{throw DeviceNativeDeliveryAttachmentCodec.Failure.capacity}
+        _ = try DeviceNativeDeliveryHTTPCodec.observe(bytes,kind:.terminalRequest,binding:request.delivery,
+            requestID:authorization.requestID,authorizationDigest:digest,expectedOutcome:"activated")
+        var pending:DeviceLocalProvisioningIntentStore.NativeHTTPTransition?
+        do {
+            try nativeCompletionScope {permit in
+                let plan=try verifyNativeCompletedForHTTP(request,completed:completed,permit:permit)
+                // Old activation epoch is intentionally consumed by genuine completion; actual
+                // original request/response nodes and association are checked by the fixed store.
+                let transition=try journal.performNativeHTTPExact(completed.structural?.terminal.journal,
+                    plan:plan,phase:.receipt,requestID:authorization.requestID,request:bytes,response:nil,
+                    completed:completed.completion,commandPermit:.init(permit))
+                pending=transition
+                _ = try verifyNativeCompletedForHTTP(request,completed:completed,permit:permit)
+                try journal.verifyNativeHTTPTransitionExact(transition,resourcePermit:permit)
+            }
+            guard let pending else{throw DeviceLocalResourceGateFailure.invalidScope}
+            return .init(bytes,completed,authorization,try journal.publishNativeHTTPExact(pending,publicationPermit:.init(pending)))
+        } catch {if let pending{try journal.discardNativeHTTPExact(pending)};throw error}
+    }
+    func retainNativeReceiptAcknowledgmentExact(_ request:DeviceNativeProvisioningRequest,
+        outgoing:DeviceNativeOutgoingActivatedReceipt,response:Data)throws->DeviceNativeReportedActivatedReceipt {
+        guard response.count <= 16384 else{throw DeviceNativeDeliveryAttachmentCodec.Failure.capacity}
+        let observation=try DeviceNativeDeliveryHTTPCodec.observe(response,kind:.terminalResponse,
+            binding:request.delivery,requestID:outgoing.authorization.requestID,expectedOutcome:"activated")
+        guard let receiptID=observation.receiptID else{throw DeviceLocalResourceGateFailure.invalidScope}
+        var pending:DeviceLocalProvisioningIntentStore.NativeHTTPTransition?
+        do {
+            try nativeCompletionScope {permit in
+                let plan=try verifyNativeCompletedForHTTP(request,completed:outgoing.completed,permit:permit)
+                try journal.verifyNativeHTTPExact(outgoing.receipt,resourcePermit:permit)
+                let transition=try journal.performNativeHTTPExact(outgoing.completed.structural?.terminal.journal,
+                    plan:plan,phase:.receipt,requestID:outgoing.authorization.requestID,request:outgoing.bytes,response:response,
+                    completed:outgoing.completed.completion,commandPermit:.init(permit))
+                pending=transition
+                _ = try verifyNativeCompletedForHTTP(request,completed:outgoing.completed,permit:permit)
+                try journal.verifyNativeHTTPTransitionExact(transition,resourcePermit:permit)
+            }
+            guard let pending else{throw DeviceLocalResourceGateFailure.invalidScope}
+            return .init(receiptID,outgoing,try journal.publishNativeHTTPExact(pending,publicationPermit:.init(pending)))
+        } catch {if let pending{try journal.discardNativeHTTPExact(pending)};throw error}
+    }
+
+    func completeNativeProvisioningExact(_ request:DeviceNativeProvisioningRequest,
+        original:DeviceNativeStructuralCommitAcknowledgment)throws->DeviceNativeProvisioningCompletionAcknowledgment {
+        var pending:DeviceLocalProvisioningIntentStore.NativeCompletionTransition?
+        do {
+            try nativeCompletionScope {permit in
+                try verifyNativeCompletionResources(request,original:original,permit:permit)
+                let transition=try journal.performNativeCompletionExact(original.terminal.journal,
+                    plan:original.terminal.plan,envelope:original.capture.envelopeBytes,
+                    structuralRootID:structural.rootID,commandPermit:.init(permit))
+                pending=transition
+                try verifyNativeCompletionResources(request,original:original,permit:permit)
+                try journal.verifyNativeCompletionTransitionExact(transition,plan:original.terminal.plan,resourcePermit:permit)
+            }
+            guard let pending else{throw DeviceLocalResourceGateFailure.invalidScope}
+            let receipt=try journal.publishNativeCompletionExact(pending,publicationPermit:.init(pending))
+            return .init(original,receipt)
+        } catch {
+            if let pending {try journal.discardNativeCompletionExact(pending)}
+            throw error
+        }
+    }
+    func captureNativeCompletedRecoveryExact(operationID:UUID,
+        resources:DeviceNativeGrantRecoveryResources)throws->DeviceNativeCompletedResourceRecovery {
+        let supplied=try terminalCredentialResources(resources)
+        var result:DeviceNativeCompletedResourceRecovery?
+        try nativeCompletionScope {permit in
+            try structural.verifyNativeGenesisExact(supplied.baseline,resourcePermit:permit)
+            let p=try packages.captureNativeBatchOriginal(supplied.packages,candidate:supplied.candidate,resourcePermit:permit)
+            let fresh=nativeRecoveryResources(supplied,inputs:p.inputs),expected=nativeExpectations(p.inputs)
+            let g=try grants.captureTerminalRecoveryExact(operationID:operationID,resources:fresh,expectedEntries:expected,resourcePermit:permit)
+            let j=try journal.captureNativeCompletionRecoveryOriginalExact(g.plan,resourcePermit:permit)
+            try packages.verifyNativeTerminalBatchOriginal(p,references:fresh.candidate.entries.map(\.preparedPackage),resourcePermit:permit)
+            try grants.verifyTerminalRecoveryExact(g,resources:fresh,expectedEntries:expected,resourcePermit:permit)
+            try structural.verifyNativeGenesisExact(fresh.baseline,resourcePermit:permit)
+            try journal.verifyNativeCompletionRecoveryOriginalExact(j,plan:g.plan,resourcePermit:permit)
+            result = .init(j,g,p,fresh)
+        }
+        guard let result else{throw DeviceLocalResourceGateFailure.invalidScope};return result
+    }
+    /// Restart repair explicitly requalifies real private items and exact original resources.
+    /// The retained native predecessor/current head never becomes a legacy join receipt.
+    func completeNativeProvisioningRecoveredExact(_ original:DeviceNativeCompletedResourceRecovery)throws->DeviceNativeProvisioningCompletionAcknowledgment {
+        let resources=original.resources,plan=original.grants.plan
+        try checkNativeRoots(resources.roots,inputCount:resources.packages.count)
+        let references=resources.candidate.entries.map(\.preparedPackage)
+        var journalTransition:DeviceLocalProvisioningIntentStore.NativeCompletionRecoveryTransition?
+        var grantPending:DeviceNativeGrantPreparationStore.PendingTerminal?
+        var structuralPending:DeviceStructuralStore.NativeCommandCapture?
+        var completionPending:DeviceLocalProvisioningIntentStore.NativeCompletionTransition?
+        do {
+            try nativeCompletionScope {permit in
+                try journal.verifyNativeCompletionRecoveryOriginalExact(original.journal,plan:plan,resourcePermit:permit)
+                try packages.verifyNativeTerminalBatchOriginal(original.packages,references:references,resourcePermit:permit)
+                try grants.verifyTerminalRecoveryExact(original.grants,resources:resources,expectedEntries:nativeExpectations(resources.packages),resourcePermit:permit)
+                try structural.verifyNativeGenesisExact(resources.baseline,resourcePermit:permit)
+                let transition=try journal.performNativeCompletionRecoveryExact(original.journal,plan:plan,commandPermit:.init(permit))
+                journalTransition=transition
+                try journal.verifyNativeCompletionRecoveryTransitionExact(transition,plan:plan,resourcePermit:permit)
+                try packages.verifyNativeTerminalBatchOriginal(original.packages,references:references,resourcePermit:permit)
+                try grants.verifyTerminalRecoveryExact(original.grants,resources:resources,expectedEntries:nativeExpectations(resources.packages),resourcePermit:permit)
+                try structural.verifyNativeGenesisExact(resources.baseline,resourcePermit:permit)
+            }
+            guard let journalTransition else{throw DeviceLocalResourceGateFailure.invalidScope}
+            let resolution=try packages.resolveRetainedTerminalExact(references,original:original.packages)
+            var finalResources:DeviceNativeGrantRecoveryResources?
+            try nativeCompletionScope {permit in
+                try journal.verifyNativeCompletionRecoveryTransitionExact(journalTransition,plan:plan,resourcePermit:permit)
+                try packages.verifyResolutionCheckpoint(resolution.checkpoint,resourcePermit:permit)
+                let inputs=try nativeInputsFromResolution(resources.packages,resolution:resolution,permit:permit)
+                let fresh=nativeRecoveryResources(resources,inputs:inputs),expected=nativeExpectations(inputs)
+                finalResources=fresh
+                try structural.verifyNativeGenesisExact(resources.baseline,resourcePermit:permit)
+                try grants.verifyTerminalRecoveryExact(original.grants,resources:fresh,expectedEntries:expected,resourcePermit:permit)
+                let pending=try grants.performTerminalRecoveredExact(original.grants,resources:fresh,expectedEntries:expected,commandPermit:.init(permit))
+                grantPending=pending
+                try grants.verifyRecoveredTerminalPendingExact(pending,original:original.grants,resources:fresh,expectedEntries:expected,resourcePermit:permit)
+                try journal.verifyNativeCompletionRecoveryTransitionExact(journalTransition,plan:plan,resourcePermit:permit)
+                try packages.verifyResolutionCheckpoint(resolution.checkpoint,resourcePermit:permit)
+                try structural.verifyNativeGenesisExact(resources.baseline,resourcePermit:permit)
+            }
+            guard let grantPending,let finalResources else{throw DeviceLocalResourceGateFailure.invalidScope}
+            func verifyResources(_ permit:DeviceLocalResourcePermit)throws {
+                try packages.verifyResolutionCheckpoint(resolution.checkpoint,resourcePermit:permit)
+                for receipt in resolution.receipts {_ = try packages.verify(receipt,resourcePermit:permit)}
+                try grants.verifyRecoveredTerminalPendingExact(grantPending,original:original.grants,resources:finalResources,
+                    expectedEntries:nativeExpectations(finalResources.packages),resourcePermit:permit)
+                try structural.verifyNativeGenesisNodesForDispatch(resources.baseline,resourcePermit:permit)
+            }
+            try nativeCompletionScope {permit in
+                try journal.verifyNativeCompletionRecoveryTransitionExact(journalTransition,plan:plan,resourcePermit:permit)
+                try verifyResources(permit)
+                let body=try DeviceNativeProvisioningIntentCodec.decode(plan.intentBytes)
+                let assertions=try DeviceNativeStructuralCommandCodec.encode(NativeStructuralResources(journalRootID:resources.roots.journalID,
+                    packageRootID:resources.roots.packageID,grantRootID:resources.roots.grantID,grantOperationID:original.grants.operationID,
+                    grantIdentity:body.grantIdentity),limit:8192)
+                let outcome=try DeviceNativeStructuralCommandCodec.encode(NativeStructuralOutcome(schemaVersion:2,operationID:plan.nativeOperationID,
+                    generationID:resources.candidate.generationID),limit:32768)
+                let capture=try structural.performNativeCommandExact(candidate:plan.candidateBytes,assertions:assertions,intent:plan.intentBytes,
+                    outcome:outcome,baseline:resources.baseline,commandPermit:.init(permit))
+                structuralPending=capture
+                try structural.verifyNativeCommandCapture(capture,resourcePermit:permit)
+                try journal.verifyNativeCompletionRecoveryTransitionExact(journalTransition,plan:plan,resourcePermit:permit)
+                try verifyResources(permit)
+            }
+            guard let structuralPending else{throw DeviceLocalResourceGateFailure.invalidScope}
+            // A genuine new exact structural capture exists before journal completion effects.
+            // Original package/private terminal checkpoints remain fixed across both transitions.
+            try nativeCompletionScope {permit in
+                try journal.verifyNativeCompletionRecoveryTransitionExact(journalTransition,plan:plan,resourcePermit:permit)
+                try verifyResources(permit);try structural.verifyNativeCommandCapture(structuralPending,resourcePermit:permit)
+                let transition=try journal.performNativeCompletionRecoveredExact(journalTransition,plan:plan,commandPermit:.init(permit))
+                completionPending=transition
+                try journal.verifyNativeCompletionTransitionExact(transition,plan:plan,resourcePermit:permit)
+                try verifyResources(permit);try structural.verifyNativeCommandCapture(structuralPending,resourcePermit:permit)
+            }
+            guard let completionPending else{throw DeviceLocalResourceGateFailure.invalidScope}
+            let grantReceipt=try grants.publishTerminalExact(grantPending,publicationPermit:.init(grantPending))
+            let structuralCapture=try structural.publishNativeCommandExact(structuralPending,permit:.init(structuralPending))
+            let completed=try journal.publishNativeCompletionExact(completionPending,publicationPermit:.init(completionPending))
+            return .init(.init(plan,structuralCapture,grantReceipt,resolution,original),completed)
+        } catch {
+            if let completionPending {try journal.discardNativeCompletionExact(completionPending)}
+            if let structuralPending {try structural.discardNativeCommandExact(structuralPending)}
+            if let grantPending {try grants.discardTerminalPublication(grantPending)}
+            throw error
+        }
+    }
+
+    private func nativeCompletionScope(_ body:(DeviceLocalResourcePermit)throws->Void)throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        let descriptors=try [journal.resourceGateDescriptor,structural.resourceGateDescriptor,
+            packages.resourceGateDescriptor,grants.resourceGateDescriptor].sorted {
+                if $0.path.utf8.elementsEqual($1.path.utf8){return $0.rootID.uuidString < $1.rootID.uuidString}
+                return $0.path.utf8.lexicographicallyPrecedes($1.path.utf8)
+            }
+        for i in descriptors.indices {for j in descriptors.indices where j > i {
+            guard descriptors[i].instance != descriptors[j].instance,
+                  !DeviceLocalResourceDescriptor.pathsOverlap(descriptors[i].path,descriptors[j].path) else{throw DeviceLocalResourceGateFailure.invalidRoots}
+        }}
+        let permit=DeviceLocalResourcePermit(descriptors)
+        try DeviceLocalResourceRegistry.begin(permit)
+        defer{permit.invalidate();DeviceLocalResourceRegistry.finish(permit)}
+        func acquire(_ index:Int)throws {
+            if index == descriptors.count {try DeviceLocalResourceRegistry.execute(permit);try body(permit);return}
+            let instance=descriptors[index].instance
+            if instance == ObjectIdentifier(journal){try journal.withNativeHTTPResourceGateScope(permit){try acquire(index+1)}}
+            else if instance == ObjectIdentifier(structural){try structural.withNativeStructuralResourceGateScope(permit){try acquire(index+1)}}
+            else if instance == ObjectIdentifier(packages){try packages.withResourceGateScope(permit){try acquire(index+1)}}
+            else{try grants.withNativeTerminalResourceGateScope(permit){try acquire(index+1)}}
+        }
+        try acquire(0)
+    }
+
     func terminalReservationSizesForTesting(_ request: DeviceNativeProvisioningRequest,
         progress: DeviceNativeBoundCredentialProgress) throws -> [String: Int] {
         try checkNativeRoots(request.roots, inputCount: request.packages.count)
@@ -1894,6 +2425,32 @@ final class DeviceNativeGrantPrivateCoordinator {
             if let j { try journal.discardNativeJoinPublication(j) }
             throw error
         }
+    }
+    private func nativeStructuralScope(_ body: (DeviceLocalResourcePermit) throws -> Void) throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        let descriptors = try [journal.resourceGateDescriptor, structural.resourceGateDescriptor,
+            packages.resourceGateDescriptor, grants.resourceGateDescriptor].sorted {
+                if $0.path.utf8.elementsEqual($1.path.utf8) { return $0.rootID.uuidString < $1.rootID.uuidString }
+                return $0.path.utf8.lexicographicallyPrecedes($1.path.utf8)
+            }
+        for i in descriptors.indices { for j in descriptors.indices where j > i {
+            guard descriptors[i].instance != descriptors[j].instance,
+                  !DeviceLocalResourceDescriptor.pathsOverlap(descriptors[i].path, descriptors[j].path) else {
+                throw DeviceLocalResourceGateFailure.invalidRoots
+            }
+        } }
+        let permit = DeviceLocalResourcePermit(descriptors)
+        try DeviceLocalResourceRegistry.begin(permit)
+        defer { permit.invalidate(); DeviceLocalResourceRegistry.finish(permit) }
+        func acquire(_ index: Int) throws {
+            if index == descriptors.count { try DeviceLocalResourceRegistry.execute(permit); try body(permit); return }
+            let instance = descriptors[index].instance
+            if instance == ObjectIdentifier(journal) { try journal.withNativeHTTPResourceGateScope(permit) { try acquire(index + 1) } }
+            else if instance == ObjectIdentifier(structural) { try structural.withNativeStructuralResourceGateScope(permit) { try acquire(index + 1) } }
+            else if instance == ObjectIdentifier(packages) { try packages.withResourceGateScope(permit) { try acquire(index + 1) } }
+            else { try grants.withNativeTerminalResourceGateScope(permit) { try acquire(index + 1) } }
+        }
+        try acquire(0)
     }
     private func terminalScope(_ body: (DeviceLocalResourcePermit) throws -> Void) throws {
         try DeviceLocalResourceRegistry.requireIdle()

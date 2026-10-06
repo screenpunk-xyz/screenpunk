@@ -66,6 +66,30 @@ final class NativeEnrollmentJournalStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: f.parent.appendingPathComponent("sibling")), Data("keep sibling".utf8))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: f.root.appendingPathComponent("attempts").path).count, 7)
     }
+    func testNoEffectPhaseRejectionKeepsExactOriginalQualification() throws {
+        let f = try fixture(), store = f.store()
+        _ = try store.initializeExplicit(); _ = try store.prepareIntent(f.bytes, attemptID: UUID())
+        let frames = f.root.appendingPathComponent("frames"), attempts = f.root.appendingPathComponent("attempts")
+        let beforeFrames = try FileManager.default.contentsOfDirectory(atPath: frames.path).sorted()
+        let beforeAttempts = try FileManager.default.contentsOfDirectory(atPath: attempts.path).sorted()
+        XCTAssertThrowsError(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageQualified, attemptID: UUID()))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: frames.path).sorted(), beforeFrames)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: attempts.path).sorted(), beforeAttempts)
+        XCTAssertTrue(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageAttempted, attemptID: UUID()).qualifiesCurrentJournalTip)
+    }
+    func testEffectFailureStillRevokesPriorQualification() throws {
+        let f = try fixture()
+        var armed = false
+        enum Injected: Error { case afterEffect }
+        let store = f.store { boundary in
+            if armed && boundary.kind == .candidate && boundary.point == .published { throw Injected.afterEffect }
+        }
+        _ = try store.initializeExplicit(); _ = try store.prepareIntent(f.bytes, attemptID: UUID())
+        armed = true
+        XCTAssertThrowsError(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageAttempted, attemptID: UUID()))
+        armed = false
+        XCTAssertThrowsError(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageQualified, attemptID: UUID()))
+    }
     func testRestartAndSharedInstancesRequireExactLatestRecommit() throws {
         let f = try fixture(), first = f.store(), initial = UUID()
         _ = try first.initializeExplicit(); _ = try first.prepareIntent(f.bytes, attemptID: initial)
@@ -315,6 +339,42 @@ final class NativeEnrollmentJournalStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.diagnose { _ in throw Failure.injected }) { XCTAssertTrue($0 is Failure) }
         try f.store().diagnose { _ in }
         XCTAssertTrue(try store.appendPhaseAssertion(preparationID: f.preparation.preparationId, next: .stageAttempted, attemptID: UUID()).qualifiesCurrentJournalTip)
+    }
+
+    func testDiagnosticPhysicalWitnessRejectsFinalCallbackMutation() throws {
+        for mutation in 0..<7 {
+            let f = try fixture(), store = f.store(), id = UUID()
+            _ = try store.initializeExplicit(); _ = try store.prepareIntent(f.bytes, attemptID: id)
+            let candidate = f.root.appendingPathComponent("frames").appendingPathComponent(filename(1, id))
+            var delivered = 0
+            XCTAssertThrowsError(try store.diagnose { _ in
+                delivered += 1
+                let original = try Data(contentsOf: candidate)
+                switch mutation {
+                case 0: // Same inode and same size, different content.
+                    let handle = try FileHandle(forWritingTo: candidate); defer { try? handle.close() }
+                    var changed = original; changed[0] ^= 1; try handle.write(contentsOf: changed)
+                case 1: // Append to the original inode.
+                    let handle = try FileHandle(forWritingTo: candidate); defer { try? handle.close() }
+                    try handle.seekToEnd(); try handle.write(contentsOf: Data([0]))
+                case 2: // Identical bytes, replacement inode.
+                    try original.write(to: candidate, options: .atomic)
+                case 3:
+                    try FileManager.default.removeItem(at: candidate)
+                    try FileManager.default.createSymbolicLink(at: candidate, withDestinationURL: f.local.appendingPathComponent("sentinel"))
+                case 4:
+                    try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: candidate.path)
+                case 5:
+                    try Data([0]).write(to: f.root.appendingPathComponent("frames/unknown"))
+                default:
+                    let binding = f.root.appendingPathComponent("root-binding.json")
+                    let handle = try FileHandle(forWritingTo: binding); defer { try? handle.close() }
+                    try handle.write(contentsOf: Data([0]))
+                }
+            }) { XCTAssertEqual($0 as? NativeEnrollmentJournalError, .outcomeUncertain) }
+            XCTAssertEqual(delivered, 1)
+            XCTAssertEqual(try Data(contentsOf: f.local.appendingPathComponent("sentinel")), Data("keep local".utf8))
+        }
     }
 
 }

@@ -18,6 +18,7 @@ final class NativeEnrollmentStageBridge {
     private let journal: NativeEnrollmentJournalStore
     private let backend: any NativeEnrollmentStageBackend
     private let mutex = NSLock()
+    private var driving = false
     private var attempted = false
     private var attempt: Attempt?
     init(journal: NativeEnrollmentJournalStore, backend: any NativeEnrollmentStageBackend) { self.journal = journal; self.backend = backend }
@@ -48,19 +49,30 @@ final class NativeEnrollmentStageBridge {
     /// Local immutable stage ownership only; does not qualify paired files or
     /// current installation authority. No secret is returned to a caller.
     struct Result { let preparationID: UUID; let persistentReference: Data; let journalAttemptID: UUID }
+    private func reserveDriver() throws {
+        mutex.lock(); defer { mutex.unlock() }
+        guard !driving else { throw NativeEnrollmentStageError.outcomeUncertain }; driving = true
+    }
+    private func releaseDriver() { mutex.lock(); driving = false; mutex.unlock() }
+    func stageFirstNativeOriginalExact(preparationID: UUID, stageAttemptID: UUID, ownershipAttemptID: UUID) throws -> Result {
+        try reserveDriver(); defer { releaseDriver() }
+        do { return try stageFixed(preparationID: preparationID, stageAttemptID: stageAttemptID, ownershipAttemptID: ownershipAttemptID,
+            source: .firstNativeGenesis, currentEnrollment: .init()) }
+        catch { journal.invalidateStageQualification(original: attempt); throw error }
+    }
     func stageOriginalExact(preparationID: UUID, stageAttemptID: UUID, ownershipAttemptID: UUID,
         currentHistory: DeviceManagementFormatHistory, currentEnrollment: NativeEnrollmentEvidence) throws -> Result {
-        guard mutex.try() else { throw NativeEnrollmentStageError.outcomeUncertain }; defer { mutex.unlock() }
+        try reserveDriver(); defer { releaseDriver() }
         do { return try stageFixed(preparationID: preparationID, stageAttemptID: stageAttemptID, ownershipAttemptID: ownershipAttemptID,
-            currentHistory: currentHistory, currentEnrollment: currentEnrollment) }
+            source: .existingHistory(currentHistory), currentEnrollment: currentEnrollment) }
         catch { journal.invalidateStageQualification(original: attempt); throw error }
     }
     private func stageFixed(preparationID: UUID, stageAttemptID: UUID, ownershipAttemptID: UUID,
-        currentHistory: DeviceManagementFormatHistory, currentEnrollment: NativeEnrollmentEvidence) throws -> Result {
+        source: NativeEnrollmentPreparationSource, currentEnrollment: NativeEnrollmentEvidence) throws -> Result {
         if let attempt {
             guard attempt.envelope.binding.preparationID == preparationID,
                 attempt.checkpoint.stageAttemptID == stageAttemptID, attempt.ownershipAttemptID == ownershipAttemptID,
-                try nativeEnrollmentBytes(currentHistory) == nativeEnrollmentBytes(attempt.checkpoint.step.proposal.sourceHistory),
+                try nativeEnrollmentBytes(source) == nativeEnrollmentBytes(attempt.checkpoint.step.proposal.source),
                 try nativeEnrollmentBytes(currentEnrollment) == nativeEnrollmentBytes(attempt.checkpoint.step.proposal.sourceEnrollment) else { throw NativeEnrollmentStageError.conflict }
             return try finishOriginal(attempt)
         }
@@ -69,14 +81,15 @@ final class NativeEnrollmentStageBridge {
         let original = try journal.captureStageIntent(preparationID: preparationID)
         let p = original.step.proposal
         let reserved = [p.preparationId, p.enrollmentId, p.binding.credentialGenerationID, p.binding.transitionID, p.claimInput.requestId]
-            + p.sourceHistory.transitions.map(\.transitionID)
-            + p.sourceHistory.credentials.flatMap { [$0.credentialGenerationID, $0.transitionID] }
+            + p.source.transitions.map(\.transitionID)
+            + p.source.credentials.flatMap { [$0.credentialGenerationID, $0.transitionID] }
             + p.sourceEnrollment.enrollments.flatMap { [$0.localEnrollmentId, $0.binding.credentialGenerationID, $0.binding.transitionID, $0.claimInput.requestId] }
             + original.step.priorDeclarations.flatMap { [$0.preparationId, $0.enrollmentId, $0.binding.credentialGenerationID, $0.binding.transitionID, $0.claimInput.requestId] }
         guard stageAttemptID != ownershipAttemptID, !reserved.contains(stageAttemptID), !reserved.contains(ownershipAttemptID) else { throw NativeEnrollmentStageError.conflict }
-        guard try nativeEnrollmentBytes(currentHistory) == nativeEnrollmentBytes(p.sourceHistory),
+        guard try nativeEnrollmentBytes(source) == nativeEnrollmentBytes(p.source),
             try nativeEnrollmentBytes(currentEnrollment) == nativeEnrollmentBytes(p.sourceEnrollment) else { throw NativeEnrollmentStageError.conflict }
         let baseline = try rawInventory(original, current: nil)
+        if source.isFirstNative { guard baseline.isEmpty, p.source.isFirstNative else { throw NativeEnrollmentStageError.inventoryBlocked } }
         try journal.verifyStageCheckpoint(original)
         // Reserve IDs and durable original stage intent BEFORE key generation/add.
         attempted = true
@@ -91,6 +104,8 @@ final class NativeEnrollmentStageBridge {
         // Fixed backend dispatch is OUTSIDE journal mutex/flock. Any callback
         // changing journal epoch/root/tip invalidates original qualification.
         try journal.verifyStageCheckpoint(captured)
+        guard sameRawItems(baseline, try rawInventory(captured, current: nil)) else { throw NativeEnrollmentStageError.inventoryBlocked }
+        try journal.verifyStageCheckpoint(captured)
         let result = try backend.addStageOnce(account: binding.stage, payload: envelope.keychainPayload())
         switch result { case .duplicate: throw NativeEnrollmentStageError.outcomeUncertain; case .added(let ref): try attempt.capture(ref) }
         return try finishOriginal(attempt)
@@ -98,10 +113,10 @@ final class NativeEnrollmentStageBridge {
     /// Explicit restart read recovery requires real latest-tip recommit FIRST.
     /// Bound reference ownership only; never rebuilds an in-process write attempt.
     func recoverBoundStage(preparationID: UUID, currentHistory: DeviceManagementFormatHistory, currentEnrollment: NativeEnrollmentEvidence) throws -> Result {
-        guard mutex.try() else { throw NativeEnrollmentStageError.outcomeUncertain }; defer { mutex.unlock() }
+        try reserveDriver(); defer { releaseDriver() }
         do {
             let c = try journal.captureBoundStage(preparationID: preparationID), p = c.step.proposal
-            guard try nativeEnrollmentBytes(currentHistory) == nativeEnrollmentBytes(p.sourceHistory),
+            guard try nativeEnrollmentBytes(currentHistory) == nativeEnrollmentBytes(p.source),
                 try nativeEnrollmentBytes(currentEnrollment) == nativeEnrollmentBytes(p.sourceEnrollment) else { throw NativeEnrollmentStageError.conflict }
             let binding = try NativeEnrollmentStageBinding(cloudRootID: journal.cloudRootID, proposal: p)
             let owners = c.retainedOwnerships.filter { $0.matches(binding) }
@@ -148,7 +163,7 @@ final class NativeEnrollmentStageBridge {
         guard raw.count <= Self.maximumRawItems else { throw NativeEnrollmentStageError.capacity }
         let proposal = checkpoint.step.proposal
         var expected: [Data: DeviceManagementFormatHistory.Binding] = [:]
-        for b in proposal.sourceHistory.credentials {
+        for b in proposal.source.credentials {
             let ref = try NativeEnrollmentStageBinding.reference(Data(b.credentialReference.utf8))
             guard expected.updateValue(b, forKey: ref) == nil else { throw NativeEnrollmentStageError.inventoryBlocked }
         }

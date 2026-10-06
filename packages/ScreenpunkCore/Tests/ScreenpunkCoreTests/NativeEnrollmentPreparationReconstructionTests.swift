@@ -23,8 +23,8 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
         .init(finalItems: final ? ["legacy": .legacy32, "native": .native48] : ["legacy": .legacy32], stageItems: staged ? [p.stageReference: .descriptor(descriptor(p))] : [:])
     }
     private func assess(_ s: NativePreparationReconstructionStep, h: DeviceManagementFormatHistory? = nil,
-        e: NativeEnrollmentEvidence? = nil, inventory: NativeEnrollmentPreparation.Inventory) -> NativePreparationReconstructionAssessment {
-        NativeEnrollmentPreparation.assessingReconstruction(s, currentHistory: h ?? s.proposal.sourceHistory,
+        e: NativeEnrollmentEvidence? = nil, inventory: NativeEnrollmentPreparation.Inventory) throws -> NativePreparationReconstructionAssessment {
+        NativeEnrollmentPreparation.assessingReconstruction(s, currentHistory: try h ?? s.proposal.sourceHistory,
             currentEnrollment: e ?? s.proposal.sourceEnrollment, inventory: inventory)
     }
     func testEveryPhaseAndAllExactPairCombinations() throws {
@@ -33,7 +33,7 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
             let s = try step(p, phase: phase), items = inventory(p, staged: phase >= 2, final: phase >= 5)
             for targetHistory in [false, true] {
                 for targetEnrollment in [false, true] {
-                    let result = assess(s, h: targetHistory ? p.targetHistory : p.sourceHistory,
+                    let result = try assess(s, h: targetHistory ? p.targetHistory : p.sourceHistory,
                         e: targetEnrollment ? p.targetEnrollment : p.sourceEnrollment, inventory: items)
                     let expected: NativeEnrollmentPreparation.Recovery
                     if phase < 2 {
@@ -51,15 +51,15 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
     }
     func testAttemptAbsenceNeverAllowsRegenerationAndMetadataNeverProvesSecrets() throws {
         let p = try fixture(), attempted = try step(p, phase: 1)
-        XCTAssertEqual(assess(attempted, inventory: inventory(p, staged: false, final: false)).recovery, .ambiguousStageAttempt)
-        let observed = assess(attempted, inventory: inventory(p, staged: true, final: false))
+        XCTAssertEqual(try assess(attempted, inventory: inventory(p, staged: false, final: false)).recovery, .ambiguousStageAttempt)
+        let observed = try assess(attempted, inventory: inventory(p, staged: true, final: false))
         XCTAssertEqual(observed.recovery, .envelopeQualificationRequired)
         XCTAssertEqual(observed.stagingEnvelopeReferencesRequiringExternalQualification, ["stage"])
         for phase in 2...6 {
             let s = try step(p, phase: phase)
-            XCTAssertEqual(assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: inventory(p, staged: false, final: phase >= 5)).recovery, .blocked)
+            XCTAssertEqual(try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: inventory(p, staged: false, final: phase >= 5)).recovery, .blocked)
         }
-        let terminal = assess(try step(p, phase: 6), h: p.targetHistory, e: p.targetEnrollment, inventory: inventory(p, staged: true, final: true))
+        let terminal = try assess(try step(p, phase: 6), h: p.targetHistory, e: p.targetEnrollment, inventory: inventory(p, staged: true, final: true))
         XCTAssertEqual(terminal.recovery, .completedEvidenceOnly)
         XCTAssertEqual(terminal.stagingEnvelopeReferencesRequiringExternalQualification, ["stage"])
         XCTAssertEqual(terminal.native48ReferencesRequiringExternalQualification, ["native"])
@@ -81,15 +81,15 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
             .init(finalItems: ["legacy": .legacy32, "native": .native48], stageItems: ["stage": .malformed])
         ]
         for items in cases {
-            let result = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: items)
+            let result = try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: items)
             XCTAssertEqual(result.recovery, .blocked)
             XCTAssertTrue(result.requiresExternalInventoryQualification)
             XCTAssertTrue(result.stagingEnvelopeReferencesRequiringExternalQualification.isEmpty)
         }
         let oversized = NativeEnrollmentPreparation.Inventory(finalItems: Dictionary(uniqueKeysWithValues: (0..<129).map { ("item-\($0)", .native48) }), stageItems: [:])
-        XCTAssertEqual(assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: oversized).recovery, .blocked)
+        XCTAssertEqual(try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: oversized).recovery, .blocked)
         let tooManyStages = NativeEnrollmentPreparation.Inventory(finalItems: ["legacy": .legacy32, "native": .native48], stageItems: Dictionary(uniqueKeysWithValues: (0..<65).map { ("stage-\($0)", .malformed) }))
-        XCTAssertEqual(assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: tooManyStages).recovery, .blocked)
+        XCTAssertEqual(try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: tooManyStages).recovery, .blocked)
         XCTAssertEqual(p.classify(history: p.sourceHistory, enrollment: p.sourceEnrollment, inventory: inventory(p, staged: false, final: false), retained: Array(repeating: p, count: 64)), .blocked)
     }
     func testExactUTF8CurrentEvidenceAndStageInputsRequired() throws {
@@ -97,14 +97,14 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
         let equivalent = try NativeClaimInput(requestId: p.claimInput.requestId, transitionId: p.claimInput.transitionId, accountId: p.claimInput.accountId,
             locationId: p.claimInput.locationId, name: "Café", profile: p.claimInput.profile)
         let wrongStage = NativeEnrollmentPreparation.Inventory(finalItems: ["legacy": .legacy32, "native": .native48], stageItems: ["stage": .descriptor(descriptor(p, input: equivalent))])
-        XCTAssertEqual(assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: wrongStage).recovery, .blocked)
+        XCTAssertEqual(try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: wrongStage).recovery, .blocked)
         let r = p.targetEnrollment.enrollments[0]
         let changed = try NativeEnrollmentEvidence([.init(localEnrollmentId: r.localEnrollmentId, binding: r.binding, claimInput: equivalent, events: r.events)])
-        XCTAssertEqual(assess(s, h: p.targetHistory, e: changed, inventory: inventory(p, staged: true, final: true)).recovery, .blocked)
+        XCTAssertEqual(try assess(s, h: p.targetHistory, e: changed, inventory: inventory(p, staged: true, final: true)).recovery, .blocked)
         let extra = try NativeEnrollmentEvidence([.init(localEnrollmentId: r.localEnrollmentId, binding: r.binding, claimInput: r.claimInput, events: r.events + [.claimProposed])])
-        XCTAssertEqual(assess(s, h: p.targetHistory, e: extra, inventory: inventory(p, staged: true, final: true)).recovery, .blocked)
+        XCTAssertEqual(try assess(s, h: p.targetHistory, e: extra, inventory: inventory(p, staged: true, final: true)).recovery, .blocked)
         let dropped = try DeviceManagementFormatHistory(transitions: [.init(transitionID: p.binding.transitionID, phase: .intent)], credentials: [p.binding])
-        XCTAssertEqual(assess(s, h: dropped, e: p.targetEnrollment, inventory: inventory(p, staged: true, final: true)).recovery, .blocked)
+        XCTAssertEqual(try assess(s, h: dropped, e: p.targetEnrollment, inventory: inventory(p, staged: true, final: true)).recovery, .blocked)
     }
     func testRetainedProvenanceRequiresEveryHistoricalStageAndFinal() throws {
         var old = try fixture()
@@ -121,22 +121,22 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
             history: h, enrollment: old.targetEnrollment, retained: [old], inventory: inventory(old, staged: true, final: true))
         let s = try step(next, phase: 2, context: context, retained: [previous.proposal])
         let items = NativeEnrollmentPreparation.Inventory(finalItems: ["legacy": .legacy32, "native": .native48], stageItems: ["stage": .descriptor(descriptor(old)), "next-stage": .descriptor(descriptor(next))])
-        let assessment = assess(s, inventory: items)
+        let assessment = try assess(s, inventory: items)
         XCTAssertEqual(assessment.recovery, .pairedEvidenceQualificationRequired)
         XCTAssertEqual(assessment.stagingEnvelopeReferencesRequiringExternalQualification, ["next-stage", "stage"])
         XCTAssertEqual(assessment.native48ReferencesRequiringExternalQualification, ["native"])
         XCTAssertEqual(s.priorDeclarations.count, 1)
         for reference in ["stage", "next-stage"] {
             var stages = items.stageItems; stages.removeValue(forKey: reference)
-            XCTAssertEqual(assess(s, inventory: .init(finalItems: items.finalItems, stageItems: stages)).recovery, .blocked)
+            XCTAssertEqual(try assess(s, inventory: .init(finalItems: items.finalItems, stageItems: stages)).recovery, .blocked)
         }
         for reference in ["legacy", "native"] {
             var finals = items.finalItems; finals.removeValue(forKey: reference)
-            XCTAssertEqual(assess(s, inventory: .init(finalItems: finals, stageItems: items.stageItems)).recovery, .blocked)
+            XCTAssertEqual(try assess(s, inventory: .init(finalItems: finals, stageItems: items.stageItems)).recovery, .blocked)
         }
         var stages = items.stageItems
         stages["stage"] = .descriptor(.init(preparationId: old.preparationId, enrollmentId: old.enrollmentId, stageReference: "stage", binding: old.binding, claimInput: input))
-        XCTAssertEqual(assess(s, inventory: .init(finalItems: items.finalItems, stageItems: stages)).recovery, .blocked)
+        XCTAssertEqual(try assess(s, inventory: .init(finalItems: items.finalItems, stageItems: stages)).recovery, .blocked)
         XCTAssertEqual(context.retainedDeclarationCount, 1)
         XCTAssertLessThanOrEqual(context.retainedCanonicalPayloadBytes, NativePreparationReconstructionContext.maximumRetainedCanonicalPayloadBytes)
     }
@@ -144,13 +144,13 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
         let p = try fixture(finalReference: "K"), s = try step(p, phase: 6)
         let stages: [String: NativeEnrollmentPreparation.StageItem] = ["stage": .descriptor(descriptor(p))]
         let valid = NativeEnrollmentPreparation.Inventory(finalItems: ["legacy": .legacy32, "K": .native48], stageItems: stages)
-        let control = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: valid)
+        let control = try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: valid)
         XCTAssertEqual(control.recovery, .completedEvidenceOnly)
         XCTAssertEqual(control.native48ReferencesRequiringExternalQualification, ["K"])
         let alias = NativeEnrollmentPreparation.Inventory(finalItems: ["legacy": .legacy32, "\u{212A}": .native48], stageItems: stages)
         XCTAssertNotNil(alias.finalItems["K"]) // Actual stdlib normalized lookup.
         XCTAssertFalse("K".utf8.elementsEqual("\u{212A}".utf8))
-        let rejected = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: alias)
+        let rejected = try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: alias)
         XCTAssertEqual(rejected.recovery, .blocked)
         XCTAssertTrue(rejected.native48ReferencesRequiringExternalQualification.isEmpty)
         XCTAssertTrue(rejected.stagingEnvelopeReferencesRequiringExternalQualification.isEmpty)
@@ -159,12 +159,12 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
         let p = try fixture(stageReference: "K"), s = try step(p, phase: 6)
         let finals: [String: NativeEnrollmentPreparation.FinalItem] = ["legacy": .legacy32, "native": .native48]
         let valid = NativeEnrollmentPreparation.Inventory(finalItems: finals, stageItems: ["K": .descriptor(descriptor(p))])
-        let control = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: valid)
+        let control = try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: valid)
         XCTAssertEqual(control.recovery, .completedEvidenceOnly)
         XCTAssertEqual(control.stagingEnvelopeReferencesRequiringExternalQualification, ["K"])
         let alias = NativeEnrollmentPreparation.Inventory(finalItems: finals, stageItems: ["\u{212A}": .descriptor(descriptor(p))])
         XCTAssertNotNil(alias.stageItems["K"]) // Descriptor itself still declares ASCII K.
-        let rejected = assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: alias)
+        let rejected = try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: alias)
         XCTAssertEqual(rejected.recovery, .blocked)
         XCTAssertTrue(rejected.stagingEnvelopeReferencesRequiringExternalQualification.isEmpty)
         XCTAssertTrue(rejected.native48ReferencesRequiringExternalQualification.isEmpty)
@@ -173,9 +173,9 @@ final class NativeEnrollmentPreparationReconstructionTests: XCTestCase {
         let p = try fixture(), s = try step(p, phase: 6)
         for key in ["", "space key", "slash/key", String(repeating: "x", count: 129), "é"] {
             var finals = inventory(p, staged: true, final: true).finalItems; finals[key] = .native48
-            XCTAssertEqual(assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: .init(finalItems: finals, stageItems: inventory(p, staged: true, final: true).stageItems)).recovery, .blocked)
+            XCTAssertEqual(try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: .init(finalItems: finals, stageItems: inventory(p, staged: true, final: true).stageItems)).recovery, .blocked)
             var stages = inventory(p, staged: true, final: true).stageItems; stages[key] = .descriptor(descriptor(p))
-            XCTAssertEqual(assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: .init(finalItems: inventory(p, staged: true, final: true).finalItems, stageItems: stages)).recovery, .blocked)
+            XCTAssertEqual(try assess(s, h: p.targetHistory, e: p.targetEnrollment, inventory: .init(finalItems: inventory(p, staged: true, final: true).finalItems, stageItems: stages)).recovery, .blocked)
         }
         XCTAssertEqual(p.classify(history: p.sourceHistory, enrollment: p.sourceEnrollment, inventory: .init(finalItems: ["legacy": .legacy32, "\u{212A}": .native48], stageItems: [:]), retained: []), .blocked)
     }

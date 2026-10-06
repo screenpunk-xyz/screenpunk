@@ -14,10 +14,13 @@ final class DeviceGrantCredentialTransportTests: XCTestCase {
         var values: [String:DeviceGrantCredentialTransportSecret] = [:]
         var observations: [DeviceGrantCredentialObservation]?
         var calls = 0
+        var inventoryMaximums: [Int] = []
         var readHook: (() -> Void)?
         func inventory(maximum: Int, visit: (DeviceGrantCredentialObservation) throws -> Void) throws {
-            calls += 1
-            for observation in observations ?? values.values.map(\.observation).sorted(by:{$0.account < $1.account}) { try visit(observation) }
+            calls += 1; inventoryMaximums.append(maximum)
+            let snapshot = observations ?? values.values.map(\.observation).sorted(by:{$0.account < $1.account})
+            guard snapshot.count <= maximum else { throw DeviceGrantCredentialTransportFailure.capacity }
+            for observation in snapshot { try visit(observation) }
         }
         func read(account: String, maximumBytes: Int) throws -> DeviceGrantCredentialTransportSecret? { calls += 1; readHook?(); return values[account] }
         func add(account: String, bytes: Data) throws -> DeviceGrantCredentialObservation {
@@ -30,6 +33,36 @@ final class DeviceGrantCredentialTransportTests: XCTestCase {
     private func account(_ n: Int = 2, kind: DeviceGrantCredentialAccount.Kind = .credential) -> String { DeviceGrantCredentialAccount(kind:kind,id:id(n)).name }
     private func backend(_ transport: Transport) throws -> DeviceGrantCredentialTransportBackend { try .init(rootID:id(1),transport:transport) }
     private var service: String { DeviceGrantCredentialNamespace(rootID:id(1)).service }
+    func testNativeInventoryWitnessUsesBoundedSnapshotBeforeAnyVisit() throws {
+        let transport = Transport(), backend = try backend(transport)
+        let limit = DeviceGrantCredentialTransportBounds.itemLimit
+        try backend.inventory(service: service, maximum: limit + 1) { _ in XCTFail("Empty snapshot") }
+        XCTAssertEqual(transport.inventoryMaximums, [limit])
+        try backend.inventory(service: service, maximum: limit) { _ in XCTFail("Empty snapshot") }
+        XCTAssertEqual(transport.inventoryMaximums, [limit, limit])
+        let calls = transport.calls
+        XCTAssertThrowsError(try backend.inventory(service: service, maximum: limit + 2) { _ in })
+        XCTAssertEqual(transport.calls, calls)
+        transport.observations = try (2...(limit + 2)).map {
+            try DeviceGrantCredentialObservation(account: account($0), persistentReference: Data("ref-\($0)".utf8), byteCount: 1)
+        }
+        var visits = 0
+        XCTAssertThrowsError(try backend.inventory(service: service, maximum: limit + 1) { _ in visits += 1 })
+        XCTAssertEqual(visits, 0)
+        XCTAssertEqual(transport.inventoryMaximums.last, limit)
+    }
+    func testNativeEmptyInitializationUsesRealTransportAdapter() throws {
+        let physical = try XCTUnwrap(realpath(FileManager.default.temporaryDirectory.path, nil)); defer { free(physical) }
+        let root = URL(fileURLWithPath: String(cString: physical), isDirectory: true)
+            .appendingPathComponent("native-grant-transport-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let transport = Transport()
+        let store = DeviceNativeGrantPreparationStore(root: root, rootID: id(1), protectedPaths: [], backend: try backend(transport))
+        try store.initializeExplicit()
+        XCTAssertEqual(transport.inventoryMaximums, [DeviceGrantCredentialTransportBounds.itemLimit])
+        XCTAssertTrue(transport.values.isEmpty)
+    }
     func testExactNamespaceAccountsAndExistingInternalBackendConversion() throws {
         let transport = Transport(), backend: any DeviceGrantCredentialBackend = try backend(transport), secret = Data("PRIVATE_TRANSPORT_CANARY_31".utf8)
         let item = try backend.add(service:service,account:account(),bytes:secret)
@@ -60,7 +93,7 @@ final class DeviceGrantCredentialTransportTests: XCTestCase {
         XCTAssertThrowsError(try backend.add(service:service,account:account(),bytes:Data(repeating:1,count:8193)))
         XCTAssertThrowsError(try backend.add(service:service,account:account(kind:.attempt),bytes:Data(repeating:1,count:4*1024*1024+1)))
         XCTAssertThrowsError(try backend.add(service:service,account:account(),bytes:Data()))
-        XCTAssertThrowsError(try backend.inventory(service:service,maximum:4226) {_ in})
+        XCTAssertThrowsError(try backend.inventory(service:service,maximum:4227) {_ in})
         XCTAssertThrowsError(try backend.read(service:service,account:account(),maximumBytes:8193))
         XCTAssertEqual(transport.calls,0)
         XCTAssertNoThrow(try DeviceGrantCredentialObservation(account:account(),persistentReference:Data([1]),byteCount:8192))

@@ -207,3 +207,101 @@ enum DeviceNativeStructuralEnvelopeCodec {
         guard try encode(value) == bytes else{throw DeviceStructuralStoreError.invalidRecord};return value
     }
 }
+
+
+// Native schema2 dispatch is isolated from the Local envelope/reader above. These internal
+// values are mechanical persistence, never installation admission, archive proof or a Cloud ACK.
+struct DeviceNativeStructuralMarker: Codable, Equatable {
+    let identity: StructuralStoreIdentity
+    let byteCount: Int
+    let digest: String // Only secret-free public node bytes, not an authority claim.
+}
+struct DeviceNativeStructuralMethod: Codable, Equatable {
+    let schemaVersion: Int
+    let rootID: UUID
+    let operationID: UUID
+    let selfID: StructuralStoreIdentity
+    let genesisStateBytes: Data
+    let original: [String: DeviceNativeStructuralMarker]
+    let candidate: Data
+    let resourceAssertions: Data
+    let intent: Data
+    let outcome: Data
+}
+struct DeviceNativeStructuralPreparedBinding: Codable, Equatable {
+    let schemaVersion: Int
+    let rootID: UUID
+    let operationID: UUID
+    let selfID: StructuralStoreIdentity
+    let method: DeviceNativeStructuralMarker
+    let candidateID: StructuralStoreIdentity
+    let terminalID: StructuralStoreIdentity
+}
+struct DeviceNativeStructuralTerminalProof: Codable, Equatable {
+    let schemaVersion: Int
+    let rootID: UUID
+    let operationID: UUID
+    let selfID: StructuralStoreIdentity
+    let binding: DeviceNativeStructuralMarker
+    let candidate: DeviceNativeStructuralMarker
+}
+enum DeviceNativeStructuralCommandCodec {
+    static let envelopeLimit = 128 * 1024, methodLimit = 384 * 1024, metadataLimit = 32 * 1024
+    static func encode<T: Encodable>(_ value: T, limit: Int) throws -> Data {
+        try DeviceLocalCompleteSetBounds.encode(value, maximum: limit)
+    }
+    private static func object(_ bytes: Data, limit: Int, keys: Set<String>) throws -> [String: Any] {
+        let object = try StructuralStoreCodec.object(bytes, limit: limit)
+        try StructuralStoreCodec.keys(object, required: keys)
+        return object
+    }
+    private static func identity(_ value: Any?) throws {
+        guard let value = value as? [String: Any] else { throw DeviceStructuralStoreError.invalidRecord }
+        try StructuralStoreCodec.keys(value, required: ["device", "inode"])
+    }
+    private static func marker(_ value: Any?) throws {
+        guard let value = value as? [String: Any] else { throw DeviceStructuralStoreError.invalidRecord }
+        try StructuralStoreCodec.keys(value, required: ["identity", "byteCount", "digest"])
+        try identity(value["identity"])
+        guard let digest = value["digest"] as? String, digest.utf8.count == 64,
+              digest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              let count = value["byteCount"] as? Int, count >= 0, count <= methodLimit else {
+            throw DeviceStructuralStoreError.invalidRecord
+        }
+    }
+    private static func canonical<T: Codable>(_ type: T.Type, _ bytes: Data, limit: Int) throws -> T {
+        let value = try JSONDecoder().decode(type, from: bytes)
+        guard try encode(value, limit: limit) == bytes else { throw DeviceStructuralStoreError.invalidRecord }
+        return value
+    }
+    static func envelope(_ bytes: Data) throws -> DeviceNativeStructuralEnvelope {
+        try DeviceNativeStructuralEnvelopeCodec.decode(bytes)
+    }
+    static func method(_ bytes: Data) throws -> DeviceNativeStructuralMethod {
+        let object = try object(bytes, limit: methodLimit, keys: ["schemaVersion", "rootID", "operationID", "selfID", "genesisStateBytes", "original", "candidate", "resourceAssertions", "intent", "outcome"])
+        try identity(object["selfID"])
+        guard let originals = object["original"] as? [String: Any],
+              Set(originals.keys) == ["root-binding.json", "native-genesis.intent", "native-genesis.binding", "native-genesis.json", "native-genesis.confirm"] else { throw DeviceStructuralStoreError.invalidRecord }
+        for value in originals.values { try marker(value) }
+        let value = try canonical(DeviceNativeStructuralMethod.self, bytes, limit: methodLimit)
+        guard value.schemaVersion == 2, value.genesisStateBytes.count <= 64 * 1024,
+              value.resourceAssertions.count <= 8192, value.intent.count <= 32768, value.outcome.count <= 32768 else { throw DeviceStructuralStoreError.invalidRecord }
+        let old = try DeviceNativeStructuralStateCodec.decode(value.genesisStateBytes)
+        let candidate = try envelope(value.candidate), next = try DeviceNativeStructuralStateCodec.decode(candidate.snapshotBytes)
+        guard old.entries.isEmpty, old.configuredEntryID == nil, old.owner == next.owner,
+              old.generationID == candidate.expectedGenerationID, candidate.operationID == value.operationID else { throw DeviceStructuralStoreError.invalidRecord }
+        return value
+    }
+    static func binding(_ bytes: Data) throws -> DeviceNativeStructuralPreparedBinding {
+        let o = try object(bytes, limit: metadataLimit, keys: ["schemaVersion", "rootID", "operationID", "selfID", "method", "candidateID", "terminalID"])
+        for name in ["selfID", "candidateID", "terminalID"] { try identity(o[name]) }; try marker(o["method"])
+        let value = try canonical(DeviceNativeStructuralPreparedBinding.self, bytes, limit: metadataLimit)
+        guard value.schemaVersion == 2 else { throw DeviceStructuralStoreError.invalidRecord }; return value
+    }
+    static func terminal(_ bytes: Data) throws -> DeviceNativeStructuralTerminalProof {
+        let o = try object(bytes, limit: metadataLimit, keys: ["schemaVersion", "rootID", "operationID", "selfID", "binding", "candidate"])
+        try identity(o["selfID"]); try marker(o["binding"]); try marker(o["candidate"])
+        let value = try canonical(DeviceNativeStructuralTerminalProof.self, bytes, limit: metadataLimit)
+        guard value.schemaVersion == 2 else { throw DeviceStructuralStoreError.invalidRecord }; return value
+    }
+}

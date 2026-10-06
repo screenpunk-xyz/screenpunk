@@ -6,6 +6,30 @@ import ScreenpunkCore
 @testable import Screenpunk
 
 final class CloudHumanSessionLifecycleTests: XCTestCase {
+    @MainActor func testOriginalRevocationObserversRunBeforeBrokerMutationAndCanDetach() throws {
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
+        var order: [String] = []
+        try lifecycle.install(CloudHumanSession(testCallback: { _ in false }, testRevoke: { order.append("broker") }))
+        let id = lifecycle.observeOriginalRevocation { order.append("original") }
+        lifecycle.cancelPresentation()
+        XCTAssertEqual(order, ["original", "broker"])
+        lifecycle.removeOriginalRevocationObserver(id)
+        lifecycle.cancelPresentation()
+        XCTAssertEqual(order, ["original", "broker", "broker"])
+        let terminal = lifecycle.observeOriginalRevocation { order.append("terminal") }
+        lifecycle.retirePresentationContext()
+        XCTAssertEqual(order.suffix(2), ["terminal", "broker"])
+        lifecycle.removeOriginalRevocationObserver(terminal)
+    }
+
+    @MainActor func testDormantAndRetiredEnrollmentSelectionNeverConstructsIdentity() throws {
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
+        XCTAssertThrowsError(try lifecycle.enrollmentSelection(accountID: UUID(), locationID: UUID()))
+        XCTAssertNil(lifecycle.coordinator)
+        lifecycle.retirePresentationContext()
+        XCTAssertThrowsError(try lifecycle.enrollmentSelection(accountID: UUID(), locationID: UUID()))
+    }
+
     @MainActor func testAccountEntrySnapshotObservesOwnershipReleaseWithoutAcquisition() throws {
         let broker = CloudHumanSessionBroker()
         let owner = CloudHumanSessionLifecycle(broker: broker), later = CloudHumanSessionLifecycle(broker: broker)
