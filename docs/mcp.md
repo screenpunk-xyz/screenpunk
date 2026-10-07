@@ -1,5 +1,16 @@
 # Screenpunk MCP
 
+## Preserve user data across updates
+
+Every screen that accepts user-entered data or preferences should persist them
+with native `screenpunk.state.get/set/remove`. Keep dashboardId and versioned keys
+stable, restore before defaults, save user edits, and preserve data on read or
+migration failure. Check persistentState/persistentStateWritable; report unsupported
+or read-only hosts. Verify values survive a screen update and app relaunch.
+Device-local state is not remote agent access or cross-device sync; app deletion,
+device reset and confirmed Disconnect can erase it. See [the authoring default](../docs/screen-authoring-persistence.md).
+
+
 The bundled `screenpunk-mcp` executable speaks stdio MCP (official Swift SDK
 0.10.2). It starts the local controller and hidden preview helper automatically.
 The Mac workbench does not need to be visibly open. The Mac must be awake and
@@ -154,3 +165,7 @@ Then, with the iPhone on **Ready to pair**: `discover_services`,
 `confirm_pairing`, `deploy_dashboard` with `approved: true`. The phone must
 show the deployed package. Unplug the network mid-transfer once and confirm
 the phone keeps its previous dashboard.
+
+## Package-local web assets
+
+The host CSP requires CSS and JavaScript in packaged files. Inline style/script and event handlers are blocked. React builds emit linked screen.css and screen.js; plain HTML uses linked .css and .js files and includes them in the package inventory. Read get_help with topic authoring and [web package authoring](../docs/web-package-authoring.md) before changing a screen. The complete example is examples/local-web-package. Static validation is authoring guidance; visually inspect the exact revision before its review and approval.

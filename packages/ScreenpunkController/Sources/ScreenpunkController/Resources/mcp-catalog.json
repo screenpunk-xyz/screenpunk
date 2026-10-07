@@ -136,7 +136,7 @@
     {
       "name": "preview_dashboard",
       "group": "preview",
-      "description": "Render an exact dashboard revision on the hidden Screenpunk helper and return PNG image content plus metadata. Live preview \u2014 actions control your devices. Preview is live by default. The workbench does not need to be open. Never returns only a local path. Failed captures are errors, not placeholder images.",
+      "description": "Render an exact dashboard revision on the hidden Screenpunk helper and return PNG image content plus metadata. Live preview — actions control your devices. Preview is live by default. The workbench does not need to be open. Never returns only a local path. Failed captures are errors, not placeholder images.",
       "readOnlyHint": false,
       "destructiveHint": false,
       "openWorldHint": false
@@ -194,7 +194,7 @@
     {
       "name": "get_help",
       "group": "diagnostics",
-      "description": "Troubleshooting help. Topic unlink explains the five-second two-finger device menu gesture and confirmed Disconnect.",
+      "description": "Authoring and troubleshooting help. Read persistent-state before adding any user input: durable native state API, capability flags, stable identity/keys, restore/save/migration rules and update/relaunch acceptance. Read authoring for locally linked CSS/JS and the supported workspace workflow. Topic unlink explains confirmed device Disconnect.",
       "readOnlyHint": true,
       "destructiveHint": false,
       "openWorldHint": false

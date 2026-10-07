@@ -169,6 +169,7 @@ final class WorkbenchPreparedPackages {
                 throw WorkbenchDeploymentError.invalidPlan
             }
         }
+        try PackageWebContentValidation.requireCompatible(files)
     }
 }
 #endif

@@ -127,7 +127,7 @@ enum WorkbenchProductionTrust {
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
               info.st_uid == geteuid(), info.st_nlink == 1,
-              info.st_size > 0, info.st_size <= 8 * 1024 * 1024 else {
+              info.st_size > 0, info.st_size <= WorkbenchInstalledReleaseTrust.maximumCatalogEnvelopeBytes else {
             throw DistributionError.unsafeFile
         }
         var output = Data()

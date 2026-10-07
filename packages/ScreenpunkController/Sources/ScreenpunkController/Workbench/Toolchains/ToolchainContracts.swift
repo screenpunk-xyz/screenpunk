@@ -212,8 +212,10 @@ enum ToolchainCanonical {
 
 /// Raw parsing rejects duplicate/escaped duplicate keys and unsupported numbers before Codable.
 enum ToolchainCatalogJSON {
+    // Two immutable offline kit inventories must fit one monotonic envelope.
+    static let maximumEnvelopeBytes = 16 * 1024 * 1024
     static func decode(_ data: Data) throws -> (ToolchainCatalogEnvelope, Any) {
-        guard data.count <= 8 * 1024 * 1024, String(data: data, encoding: .utf8) != nil else {
+        guard data.count <= maximumEnvelopeBytes, String(data: data, encoding: .utf8) != nil else {
             throw ToolchainTrustError.limitExceeded
         }
         var scanner = Scanner(bytes: Array(data))
