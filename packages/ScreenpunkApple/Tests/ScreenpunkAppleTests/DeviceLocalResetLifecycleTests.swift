@@ -3,14 +3,18 @@ import ScreenpunkCore
 @testable import ScreenpunkApple
 
 @MainActor final class DeviceLocalResetLifecycleTests: XCTestCase {
-    func testConfirmedBlockedHostResetUsesOriginalAuthorityAndExactExistingScope() async throws {
-        let f = try LifecycleFixture(); var hosts = 0
+    func testConfirmedBlockedHostResetCompletesExactScopeThenAttemptsReadmission() async throws {
+        let f = try LifecycleFixture(); var hosts = 0, validatedContexts = 0
         let owned = f.scope.authorityScope.deviceRoot.appendingPathComponent("screen-sentinel")
         try FileManager.default.createDirectory(at: owned.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("owned local content".utf8).write(to: owned)
         let original = f.lifecycle.authority
-        let boot = DeviceManagementBootstrap(lifecycle: f.lifecycle, retained: { .empty }, hostFactory: {
-            hosts += 1; if hosts == 1 { throw LifecycleFailure.injected }; return try f.host($0)
+        let boot = DeviceManagementBootstrap(lifecycle: f.lifecycle, retained: { .empty }, hostFactory: { context in
+            hosts += 1
+            try context.validate()
+            XCTAssertTrue(context.belongs(to: f.lifecycle.authority))
+            validatedContexts += 1
+            throw LifecycleFailure.injected
         })
         boot.start()
         let clock = ContinuousClock(), blockedDeadline = clock.now.advanced(by: .seconds(5))
@@ -21,15 +25,26 @@ import ScreenpunkCore
         XCTAssertTrue(FileManager.default.fileExists(atPath: owned.path)); XCTAssertEqual(f.keys.deletes, 0)
         boot.requestBlockedLocalReset()
         let deadline = clock.now.advanced(by: .seconds(5))
-        while clock.now < deadline {
-            if case .localReady = boot.state { break }
+        while (hosts < 2 || boot.startupDiagnostic?.stage != .localHost) && clock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        guard case .localReady = boot.state else { return XCTFail("confirmed reset must complete before readmission") }
         XCTAssertEqual(f.evidence.record?.phase, .completed)
         XCTAssertFalse(FileManager.default.fileExists(atPath: owned.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: f.sentinel.path))
-        XCTAssertEqual(f.keys.deletes, 5); XCTAssertEqual(hosts, 2)
+        XCTAssertEqual(f.keys.deletes, 5); XCTAssertEqual(hosts, 2); XCTAssertEqual(validatedContexts, 2)
+        XCTAssertFalse(f.lifecycle.authority === original)
+        guard case .blocked = boot.state else { return XCTFail("failed replacement host must remain truthfully blocked") }
+        XCTAssertEqual(boot.startupDiagnostic?.stage, .localHost)
+        XCTAssertEqual(boot.statusMessage, "Reset finished, but Local management could not start. Retry startup.")
+        let completedResetID = try XCTUnwrap(f.evidence.record?.resetID)
+        boot.retry()
+        let retryDeadline = clock.now.advanced(by: .seconds(5))
+        while hosts < 3 && clock.now < retryDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(hosts, 3); XCTAssertEqual(validatedContexts, 3)
+        XCTAssertEqual(f.evidence.record?.resetID, completedResetID)
+        XCTAssertEqual(f.evidence.record?.phase, .completed); XCTAssertEqual(f.keys.deletes, 5)
+        guard case .blocked = boot.state else { return XCTFail("retry must not claim a host after injected failure") }
+        XCTAssertEqual(boot.startupDiagnostic?.stage, .localHost)
     }
     func testBlockedHostResetRefusesNewManagedPresenceWithoutDeletingAnything() async throws {
         let f = try LifecycleFixture()
