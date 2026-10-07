@@ -1,4 +1,9 @@
 import XCTest
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -87,6 +92,20 @@ final class NativeEnrollmentPromotionBridgeTests: XCTestCase {
         XCTAssertEqual(NativeJournalCodec.pairedCompletionReservation, 16_629_760)
     }
 
+    func testPhysicalEnrollmentContainerBoundaryRejectsOutsideAndSymlinkWithoutEffects() throws {
+        let home = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: home) }
+        guard let raw = realpath(home.path, nil) else { throw NativeEnrollmentPromotionError.blocked }
+        let root = URL(fileURLWithPath: String(cString: raw), isDirectory: true); free(raw)
+        let inside = root.appendingPathComponent("Library/Application Support", isDirectory: true)
+        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        XCTAssertNoThrow(try NativeEnrollmentPhysicalDirectory.require(inside, traversalRoot: root))
+        XCTAssertThrowsError(try NativeEnrollmentPhysicalDirectory.require(root.deletingLastPathComponent(), traversalRoot: root))
+        let alias = root.appendingPathComponent("alias"); try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: inside)
+        XCTAssertThrowsError(try NativeEnrollmentPhysicalDirectory.require(alias, traversalRoot: root))
+        XCTAssertThrowsError(try NativeEnrollmentPhysicalDirectory.require(root.appendingPathComponent("missing"), traversalRoot: root))
+    }
     func testExistingPhysicalNamespaceRejectsAliasesSymlinksAndMissingWithoutCreation() throws {
         let physical = try XCTUnwrap(realpath(FileManager.default.temporaryDirectory.path, nil))
         let temporary = URL(fileURLWithPath: String(cString: physical), isDirectory: true)

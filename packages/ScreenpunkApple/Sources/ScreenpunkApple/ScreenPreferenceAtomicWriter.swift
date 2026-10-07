@@ -1,4 +1,5 @@
 import Foundation
+@_spi(NativeFilesystem) import ScreenpunkCore
 import Darwin
 
 /// Descriptor-bound preference replacement. Cooperating processes share the fixed flock;
@@ -41,14 +42,23 @@ final class ScreenPreferenceAtomicWriter {
     }
     fileprivate final class Directory {
         let descriptor: Int32, identity: Identity, parent: Directory?, name: String?
-        init(_ descriptor: Int32, parent: Directory? = nil, name: String? = nil) throws {
-            self.descriptor = descriptor; self.parent = parent; self.name = name
+        let traversalRootPath: String?
+        init(_ descriptor: Int32, parent: Directory? = nil, name: String? = nil, traversalRootPath: String? = nil) throws {
+            self.descriptor = descriptor; self.parent = parent; self.name = name; self.traversalRootPath = traversalRootPath
             var value = stat()
             guard fstat(descriptor, &value) == 0 else { let code = errno; close(descriptor); throw Failure.io(operation: "fstat", code: code) }
             identity = .init(value)
         }
         deinit { close(descriptor) }
         func verify() throws {
+            if let traversalRootPath {
+                let current = Darwin.open(traversalRootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                guard current >= 0 else { throw Failure.unsafeBinding }
+                defer { close(current) }
+                var named = stat(), held = stat()
+                guard fstat(current, &named) == 0, fstat(descriptor, &held) == 0,
+                      Identity(named) == identity, Identity(held) == identity else { throw Failure.unsafeBinding }
+            }
             if let parent, let name {
                 try parent.verify()
                 var value = stat()
@@ -56,7 +66,7 @@ final class ScreenPreferenceAtomicWriter {
                       Identity(value) == identity, value.st_mode & S_IFMT == S_IFDIR else { throw Failure.unsafeBinding }
             }
         }
-        var path: String { parent.map { ($0.path == "/" ? "" : $0.path) + "/" + (name ?? "") } ?? "/" }
+        var path: String { parent.map { ($0.path == "/" ? "" : $0.path) + "/" + (name ?? "") } ?? (traversalRootPath ?? "/") }
         func sync() throws {
             try verify()
             guard fsync(descriptor) == 0 else { throw Failure.io(operation: "syncDirectory", code: errno) }
@@ -117,10 +127,12 @@ final class ScreenPreferenceAtomicWriter {
                 }
             }
             try finishOutstanding()
-            let descriptor = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            let traversal: DeviceFilesystemTraversal
+            do { traversal = try .plan(for: root.path) } catch { throw Failure.unsafeBinding }
+            let descriptor = open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
             guard descriptor >= 0 else { throw failure("openRoot") }
-            var directory = try Directory(descriptor)
-            for component in root.path.split(separator: "/").map(String.init) {
+            var directory = try Directory(descriptor, traversalRootPath: traversal.rootPath)
+            for component in traversal.components {
                 try directory.verify()
                 var created = false
                 var child = openat(directory.descriptor, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)

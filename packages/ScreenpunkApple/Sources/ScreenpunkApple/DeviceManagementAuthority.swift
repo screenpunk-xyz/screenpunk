@@ -478,6 +478,11 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
 
     /// Snapshot only: future reset coordinator must serialize presentation/suspension.
     /// Pending/corrupt reset must suppress retained WebViews as well as management.
+    /// Eligibility observation only. Explicit reset still obtains/validates a new
+    /// lease on this same owner and follows the existing scoped reset coordinator.
+    func blockedLocalResetEligible() -> Bool {
+        (try? serialized { verifiedEvidence() != nil }) ?? false
+    }
     public func resetRenderingAllowed() -> Bool {
         (try? serialized { try permittedReset() != nil }) ?? false
     }

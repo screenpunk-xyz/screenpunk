@@ -609,8 +609,11 @@ final class DeviceNativeGrantPreparationStore {
         guard try identity(current, directory: true) == context.rootID else { throw DeviceNativeGrantPreparationError.unsafeBinding }
     }
     private func openRoot() throws -> Int32 {
-        let components = try paths()
-        var current = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        _ = try paths()
+        let traversal: DeviceFilesystemTraversal
+        do { traversal = try .plan(for: root.path) } catch { throw DeviceNativeGrantPreparationError.unsafeBinding }
+        let components = traversal.components
+        var current = open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard current >= 0 else { throw DeviceNativeGrantPreparationError.io(errno) }
         do {
             var ancestors: [ID] = [try identity(current, directory: true)]
@@ -630,11 +633,13 @@ final class DeviceNativeGrantPreparationStore {
     /// No protected directory or ancestor is created, changed or synchronized.
     private func checkPhysicalProtectedRoots(_ rootIdentity: ID, rootAncestors: [ID]) throws {
         for path in protectedPaths {
-            var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            let traversal: DeviceFilesystemTraversal
+            do { traversal = try .plan(for: path) } catch { throw DeviceNativeGrantPreparationError.unsafeBinding }
+            var descriptor = open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
             guard descriptor >= 0 else { throw DeviceNativeGrantPreparationError.io(errno) }
             do {
                 var missing = false
-                for component in path.split(separator: "/", omittingEmptySubsequences: true) {
+                for component in traversal.components {
                     let next = openat(descriptor, String(component), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
                     if next < 0 {
                         if errno == ENOENT { missing = true; break }

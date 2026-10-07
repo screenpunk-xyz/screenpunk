@@ -18,9 +18,10 @@ public struct DeviceNativeManagedRootLocator: Sendable {
     public static let maximumComponents = 64
     fileprivate let path: String
     fileprivate let components: [String]
+    fileprivate let traversalRoot: String
     public var anchorURL: URL { URL(fileURLWithPath: path, isDirectory: true) }
     public var namespaceURL: URL { anchorURL.appendingPathComponent(Self.namespaceName, isDirectory: true) }
-    private init(path: String, components: [String]) { self.path = path; self.components = components }
+    private init(path: String, components: [String], traversalRoot: String = "/") { self.path = path; self.components = components; self.traversalRoot = traversalRoot }
 
     /// Explicit caller paths are never silently standardized or realpath-rewritten.
     public static func existingPhysicalAnchor(_ url: URL) throws -> Self {
@@ -32,6 +33,11 @@ public struct DeviceNativeManagedRootLocator: Sendable {
         let physical = String(cString: resolved)
         guard path.utf8.elementsEqual(physical.utf8) else { throw DeviceNativeManagedRootFailure.invalidLocator }
         return .init(path: path, components: path.split(separator: "/").map(String.init))
+    }
+    fileprivate static func containerAnchor(_ anchor: URL, existingPhysicalHome home: URL) throws -> Self {
+        let root = try existingPhysicalAnchor(home), support = try existingPhysicalAnchor(anchor)
+        guard support.path == root.path + "/Library/Application Support" else { throw DeviceNativeManagedRootFailure.invalidLocator }
+        return .init(path: support.path, components: ["Library", "Application Support"], traversalRoot: root.path)
     }
     fileprivate static func boundedPath(_ url: URL) throws -> String {
         // Bound the URL spelling before URLComponents/path decoding allocations.
@@ -68,6 +74,7 @@ public struct DeviceManagedNamespaceEvidence: Equatable, Sendable {
     public func hasSameCheckedAnchor(as other: Self) -> Bool {
         path == other.path && name == other.name && ancestors == other.ancestors
     }
+    var checkedDirectoryCountForTesting: Int { ancestors.count }
     fileprivate let path: Data
     fileprivate let name: Data
     fileprivate let ancestors: [ManagedDirectoryIdentity]
@@ -96,6 +103,10 @@ public struct DeviceManagedNamespaceInspector: Sendable {
     public static func fixture(existingPhysicalAnchor: URL) throws -> Self {
         .init(.fixture(try .existingPhysicalAnchor(existingPhysicalAnchor)))
     }
+    static func containerFixture(existingPhysicalHome: URL) throws -> Self {
+        let anchor = existingPhysicalHome.appendingPathComponent("Library/Application Support", isDirectory: true)
+        return .init(.fixture(try .containerAnchor(anchor, existingPhysicalHome: existingPhysicalHome)))
+    }
     public func inspect() throws -> DeviceManagedNamespaceEvidence {
         let locator: DeviceNativeManagedRootLocator
         switch location {
@@ -110,14 +121,24 @@ public struct DeviceManagedNamespaceInspector: Sendable {
             guard strnlen(physical, DeviceNativeManagedRootLocator.maximumPathBytes + 1) <= DeviceNativeManagedRootLocator.maximumPathBytes else {
                 throw DeviceNativeManagedRootFailure.invalidLocator
             }
-            locator = try .existingPhysicalAnchor(URL(fileURLWithPath: String(cString: physical), isDirectory: true))
+            let anchor = URL(fileURLWithPath: String(cString: physical), isDirectory: true)
+            #if os(iOS)
+            let home = NSHomeDirectory()
+            guard home.utf8.count <= DeviceNativeManagedRootLocator.maximumPathBytes, !home.utf8.contains(0) else { throw DeviceNativeManagedRootFailure.invalidLocator }
+            guard let root = realpath(home, nil) else { throw DeviceNativeManagedRootFailure.unavailable(errno) }
+            defer { free(root) }
+            guard strnlen(root, DeviceNativeManagedRootLocator.maximumPathBytes + 1) <= DeviceNativeManagedRootLocator.maximumPathBytes else { throw DeviceNativeManagedRootFailure.invalidLocator }
+            locator = try .containerAnchor(anchor, existingPhysicalHome: URL(fileURLWithPath: String(cString: root), isDirectory: true))
+            #else
+            locator = try .existingPhysicalAnchor(anchor)
+            #endif
         }
         return try observe(locator)
     }
     private func observe(_ locator: DeviceNativeManagedRootLocator) throws -> DeviceManagedNamespaceEvidence {
         var descriptors: [Int32] = []
         defer { for fd in descriptors.reversed() { close(fd) } }
-        let root = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        let root = open(locator.traversalRoot, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard root >= 0 else { throw DeviceNativeManagedRootFailure.unavailable(errno) }; descriptors.append(root)
         var identities = [try identity(root)], current = root
         for name in locator.components {
@@ -133,7 +154,7 @@ public struct DeviceManagedNamespaceInspector: Sendable {
         let first = try namespace(current)
         // Check every held FD and every parent/name link after namespace lookup.
         // A detached old anchor cannot return absence simply because its FD lives.
-        let freshRoot = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        let freshRoot = open(locator.traversalRoot, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard freshRoot >= 0 else { throw DeviceNativeManagedRootFailure.unavailable(errno) }
         defer { close(freshRoot) }
         guard try identity(freshRoot) == identities[0] else { throw DeviceNativeManagedRootFailure.changedAnchor }

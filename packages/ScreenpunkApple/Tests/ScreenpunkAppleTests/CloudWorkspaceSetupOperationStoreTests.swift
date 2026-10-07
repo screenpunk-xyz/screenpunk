@@ -28,6 +28,19 @@ final class CloudWorkspaceSetupOperationStoreTests: XCTestCase {
         }
         return result
     }
+    func testPhysicalParentCreatesOperationStoreButSymlinkParentDoesNotTouchTarget() throws {
+        let f = try fixture(), target = f.0.appendingPathComponent("target", isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        let alias = f.0.appendingPathComponent("alias", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+        XCTAssertThrowsError(try {
+            let bad = try CloudWorkspaceSetupOperationStore(directory: alias.appendingPathComponent("operations"), legacyJournal: f.2)
+            try bad.save(pending())
+        }())
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+        let good = try store(f), record = try pending()
+        try good.save(record); XCTAssertEqual(try good.load(), record)
+    }
     func testGuardedRetryRejectsRetainedAndRestartedWrongUserWithoutReplacements() throws {
         for restarted in [false, true] {
             let f = try fixture(), target = try pending()

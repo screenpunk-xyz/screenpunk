@@ -8,17 +8,18 @@ import ScreenpunkCore
 public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
     enum Failure: Error, Equatable { case invalidLocation, changedNode, uncertain, io(Int32) }
     enum Boundary: Equatable { case beforeCreate, afterCreate, beforeChildSync, afterChildSync, beforeParentSync, afterParentSync }
-    private enum Location { case production, fixture(URL) }
+    private enum Location { case production, fixture(URL), containerFixture(URL) }
     private struct Identity: Equatable {
         let device: dev_t, inode: ino_t, mode: mode_t, uid: uid_t, gid: gid_t
         init(_ value: stat) { device = value.st_dev; inode = value.st_ino; mode = value.st_mode; uid = value.st_uid; gid = value.st_gid }
     }
     private final class Binding {
+        let rootPath: String
         let names: [String], descriptors: [Int32], identities: [Identity]
         let child: Int32, childIdentity: Identity
         let created: Bool
-        init(names: [String], descriptors: [Int32], identities: [Identity], child: Int32, childIdentity: Identity, created: Bool) {
-            self.names = names; self.descriptors = descriptors; self.identities = identities
+        init(rootPath: String, names: [String], descriptors: [Int32], identities: [Identity], child: Int32, childIdentity: Identity, created: Bool) {
+            self.rootPath = rootPath; self.names = names; self.descriptors = descriptors; self.identities = identities
             self.child = child; self.childIdentity = childIdentity; self.created = created
         }
         deinit { close(child); for fd in descriptors.reversed() { close(fd) } }
@@ -37,6 +38,13 @@ public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
     static func fixture(existingPhysicalParent: URL, boundary: @escaping (Boundary) throws -> Void) throws -> DeviceProductionSupportAnchorSetup {
         let checked = try DeviceNativeManagedRootLocator.existingPhysicalAnchor(existingPhysicalParent)
         return .init(.fixture(checked.anchorURL), boundary: boundary)
+    }
+    static func containerFixture(existingPhysicalHome: URL, boundary: @escaping (Boundary) throws -> Void = { _ in }) throws -> DeviceProductionSupportAnchorSetup {
+        let checked = try DeviceNativeManagedRootLocator.existingPhysicalAnchor(existingPhysicalHome)
+        return .init(.containerFixture(checked.anchorURL), boundary: boundary)
+    }
+    var checkedTraversalRootForTesting: String? {
+        switch state { case .pending(let b), .ready(let b): return b.rootPath; case .idle, .blocked: return nil }
     }
     var allowsNamespaceInspection: Bool {
         switch state { case .idle, .ready: return true; case .pending, .blocked: return false }
@@ -59,8 +67,12 @@ public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
         case .idle: break
         }
         let parent: URL
+        var traversalRoot = "/"
         switch location {
         case .fixture(let fixed): parent = fixed
+        case .containerFixture(let home):
+            traversalRoot = home.path
+            parent = home.appendingPathComponent("Library", isDirectory: true)
         case .production:
             let supplied = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
             guard supplied.lastPathComponent == "Application Support" else { state = .blocked; throw Failure.invalidLocation }
@@ -69,14 +81,21 @@ public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
             defer { free(raw) }
             guard strnlen(raw, 4097) <= 4096 else { state = .blocked; throw Failure.invalidLocation }
             parent = URL(fileURLWithPath: String(cString: raw), isDirectory: true)
+            #if os(iOS)
+            let home = try physicalSystemHome()
+            guard parent.path == home + "/Library" else { state = .blocked; throw Failure.invalidLocation }
+            traversalRoot = home
+            #endif
         }
         var descriptors: [Int32] = [], identities: [Identity] = []
         var transferred = false
         defer { if !transferred { for fd in descriptors.reversed() { close(fd) } } }
         do {
-            let names = parent.path.split(separator: "/").map(String.init)
+            guard traversalRoot == "/" || parent.path.hasPrefix(traversalRoot + "/") else { throw Failure.invalidLocation }
+            let relative = traversalRoot == "/" ? parent.path : String(parent.path.dropFirst(traversalRoot.count + 1))
+            let names = relative.split(separator: "/").map(String.init)
             guard names.count <= 64, parent.path.utf8.count <= 4096 else { throw Failure.invalidLocation }
-            let root = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            let root = open(traversalRoot, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             guard root >= 0 else { throw Failure.io(errno) }; descriptors.append(root); identities.append(try identity(root))
             for name in names {
                 let fd = try openDirectory(descriptors.last!, name: name)
@@ -93,7 +112,7 @@ public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
                 guard errno == ENOENT else { throw Failure.io(errno) }
                 // EEXIST after observation is a race, never an adoption path.
                 try boundary(.beforeCreate)
-                try validateParents(names: names, descriptors: descriptors, identities: identities)
+                try validateParents(rootPath: traversalRoot, names: names, descriptors: descriptors, identities: identities)
                 guard mkdirat(fd, "Application Support", 0o700) == 0 else { throw Failure.io(errno) }
                 created = true
             }
@@ -104,7 +123,7 @@ public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
             catch { state = .blocked; throw error }
             let childIdentity: Identity
             do { childIdentity = try identity(child) } catch { close(child); state = .blocked; throw error }
-            let binding = Binding(names: names, descriptors: descriptors, identities: identities, child: child, childIdentity: childIdentity, created: created)
+            let binding = Binding(rootPath: traversalRoot, names: names, descriptors: descriptors, identities: identities, child: child, childIdentity: childIdentity, created: created)
             transferred = true
             state = created ? .pending(binding) : .ready(binding)
             try validateOrBlock(binding)
@@ -129,14 +148,14 @@ public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
     }
     private func validateOrBlock(_ binding: Binding) throws {
         do {
-            try validateParents(names: binding.names, descriptors: binding.descriptors, identities: binding.identities)
+            try validateParents(rootPath: binding.rootPath, names: binding.names, descriptors: binding.descriptors, identities: binding.identities)
             var child = stat()
             guard fstatat(binding.descriptors.last!, "Application Support", &child, AT_SYMLINK_NOFOLLOW) == 0,
                   Identity(child) == binding.childIdentity, try identity(binding.child) == binding.childIdentity else { throw Failure.changedNode }
         } catch { state = .blocked; throw error }
     }
-    private func validateParents(names: [String], descriptors: [Int32], identities: [Identity]) throws {
-        let root = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    private func validateParents(rootPath: String, names: [String], descriptors: [Int32], identities: [Identity]) throws {
+        let root = open(rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard root >= 0 else { throw Failure.io(errno) }; defer { close(root) }
         guard try identity(root) == identities[0] else { throw Failure.changedNode }
         for index in descriptors.indices {
@@ -146,6 +165,14 @@ public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
                 guard fstatat(descriptors[index - 1], names[index - 1], &named, AT_SYMLINK_NOFOLLOW) == 0, Identity(named) == identities[index] else { throw Failure.changedNode }
             }
         }
+    }
+    private func physicalSystemHome() throws -> String {
+        let supplied = NSHomeDirectory()
+        guard supplied.utf8.count <= 4096, !supplied.utf8.contains(0) else { throw Failure.invalidLocation }
+        guard let raw = realpath(supplied, nil) else { throw Failure.io(errno) }
+        defer { free(raw) }
+        guard strnlen(raw, 4097) <= 4096 else { throw Failure.invalidLocation }
+        return String(cString: raw)
     }
     private func identity(_ fd: Int32) throws -> Identity {
         var value = stat(); guard fstat(fd, &value) == 0 else { throw Failure.io(errno) }

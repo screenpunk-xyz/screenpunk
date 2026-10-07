@@ -4,6 +4,18 @@ import CryptoKit
 @_spi(NativeInstallation) @testable import ScreenpunkApple
 
 final class DeviceManagementAuthorityTests: XCTestCase {
+    func testBlockedResetEligibilityRequiresGenuineSameOwnerLocalEvidenceAndNamespace() throws {
+        let journal = ManagementTestJournal(), keys = ManagementTestCredentials()
+        let anchor = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: anchor) }
+        let owner = DeviceManagementAuthority(journal: journal, credentials: .init(backend: keys, random: { XCTFail("no key creation"); return Data() }), reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor))
+        XCTAssertTrue(owner.blockedLocalResetEligible())
+        try FileManager.default.createDirectory(at: anchor.appendingPathComponent(DeviceNativeManagedRootLocator.namespaceName), withIntermediateDirectories: false)
+        XCTAssertFalse(owner.blockedLocalResetEligible())
+        XCTAssertNil(try owner.refresh())
+    }
+
     func testManagedAppearanceRevokesLeaseRenderingAndResetAndNeverBecomesLegacyAgain() throws {
         let anchor = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: false)

@@ -14,18 +14,36 @@ import FoundationNetworking
 /// This check is not a capability; original owner/descriptor checks remain mandatory.
 enum NativeEnrollmentPhysicalDirectory {
     static func require(_ url: URL) throws {
-        let path = url.path
-        guard url.isFileURL, path.hasPrefix("/"), path != "/", path.utf8.count <= 4096,
+        #if os(iOS)
+        let home = NSHomeDirectory()
+        guard home.utf8.count <= 4096, !home.utf8.contains(0), let raw = realpath(home, nil) else { throw NativeEnrollmentPromotionError.blocked }
+        defer { free(raw) }
+        guard strnlen(raw, 4097) <= 4096 else { throw NativeEnrollmentPromotionError.blocked }
+        try require(url, traversalRoot: URL(fileURLWithPath: String(cString: raw), isDirectory: true))
+        #else
+        try require(url, traversalRoot: URL(fileURLWithPath: "/", isDirectory: true))
+        #endif
+    }
+    /// Internal synthetic-container seam; production derives its root only from the OS.
+    static func require(_ url: URL, traversalRoot rootURL: URL) throws {
+        let path = url.path, rootPath = rootURL.path
+        guard url.isFileURL, rootURL.isFileURL, path.hasPrefix("/"), path != "/", path.utf8.count <= 4096,
+            rootPath.utf8.count <= 4096, !rootPath.utf8.contains(0),
             !path.utf8.contains(0), !path.hasSuffix("/"), !path.contains("//"),
             path.split(separator: "/").allSatisfy({ $0 != "." && $0 != ".." }),
+            rootPath == "/" || path.hasPrefix(rootPath + "/"),
             let physical = realpath(path, nil) else { throw NativeEnrollmentPromotionError.blocked }
         defer { free(physical) }
-        guard path.utf8.elementsEqual(String(cString: physical).utf8) else { throw NativeEnrollmentPromotionError.blocked }
-        var fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+        guard strnlen(physical, 4097) <= 4096, path.utf8.elementsEqual(String(cString: physical).utf8),
+              let physicalRoot = realpath(rootPath, nil) else { throw NativeEnrollmentPromotionError.blocked }
+        defer { free(physicalRoot) }
+        guard strnlen(physicalRoot, 4097) <= 4096, rootPath.utf8.elementsEqual(String(cString: physicalRoot).utf8) else { throw NativeEnrollmentPromotionError.blocked }
+        var fd = open(rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard fd >= 0 else { throw NativeEnrollmentPromotionError.blocked }
         defer { close(fd) }
-        for component in path.split(separator: "/") {
-            let next = openat(fd, String(component), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+        let relative = rootPath == "/" ? path : String(path.dropFirst(rootPath.count + 1))
+        for component in relative.split(separator: "/") {
+            let next = openat(fd, String(component), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
             guard next >= 0 else { throw NativeEnrollmentPromotionError.blocked }
             close(fd); fd = next
         }

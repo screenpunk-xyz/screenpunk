@@ -115,4 +115,39 @@ final class DeviceProductionSupportAnchorSetupTests: XCTestCase {
         XCTAssertNil(try owner.refresh()); XCTAssertThrowsError(try owner.prepareProductionSupportAnchor())
         XCTAssertFalse(FileManager.default.fileExists(atPath: anchor(root).path))
     }
+    func testContainerRootCreatesOnlyMissingSupportAndRetainsExactUncertainRetry() throws {
+        let home = try parent(), library = home.appendingPathComponent("Library", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: false)
+        var failed = false, creations = 0
+        let setup = try DeviceProductionSupportAnchorSetup.containerFixture(existingPhysicalHome: home, boundary: {
+            if $0 == .afterCreate { creations += 1; if !failed { failed = true; throw Injected.failure } }
+        })
+        XCTAssertThrowsError(try setup.prepare())
+        XCTAssertEqual(setup.checkedTraversalRootForTesting, home.path)
+        XCTAssertFalse(setup.allowsNamespaceInspection)
+        let support = anchor(library); var original = stat(); XCTAssertEqual(lstat(support.path, &original), 0)
+        try setup.prepare(); try setup.validateForInspection()
+        var current = stat(); XCTAssertEqual(lstat(support.path, &current), 0)
+        XCTAssertEqual(original.st_ino, current.st_ino); XCTAssertEqual(creations, 1)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: home.path), ["Library"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: library.path), ["Application Support"])
+    }
+    func testContainerRootReplacementAndLibrarySymlinkNeverAdoptOrCreateSupport() throws {
+        let home = try parent(), library = home.appendingPathComponent("Library", isDirectory: true)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: false)
+        let setup = try DeviceProductionSupportAnchorSetup.containerFixture(existingPhysicalHome: home)
+        try setup.prepare()
+        let moved = home.appendingPathExtension("retired"); try FileManager.default.moveItem(at: home, to: moved)
+        defer { try? FileManager.default.removeItem(at: moved) }
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try setup.prepare())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: anchor(library).path))
+        let other = try parent(), destination = other.appendingPathComponent("target", isDirectory: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: other.appendingPathComponent("Library"), withDestinationURL: destination)
+        let alias = try DeviceProductionSupportAnchorSetup.containerFixture(existingPhysicalHome: other)
+        XCTAssertThrowsError(try alias.prepare()); XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
+    }
+
 }

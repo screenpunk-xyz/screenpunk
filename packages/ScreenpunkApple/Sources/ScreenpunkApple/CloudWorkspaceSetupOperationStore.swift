@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 import CryptoKit
-import ScreenpunkCore
+@_spi(NativeFilesystem) import ScreenpunkCore
 
 public enum CloudWorkspaceSetupOperationStoreError: Error, Equatable, Sendable {
     case invalidConfiguration, unsafeBinding, legacyEvidence, corrupt, conflict, outcomeUncertain, differentUser, noRecoverableTarget
@@ -337,13 +337,22 @@ public final class CloudWorkspaceSetupOperationStore: @unchecked Sendable {
     }
     private final class Directory {
         let descriptor: Int32, identity: Identity, parent: Directory?, name: String?
-        init(_ descriptor: Int32, parent: Directory? = nil, name: String? = nil) throws {
-            self.descriptor = descriptor; self.parent = parent; self.name = name
+        let traversalRootPath: String?
+        init(_ descriptor: Int32, parent: Directory? = nil, name: String? = nil, traversalRootPath: String? = nil) throws {
+            self.descriptor = descriptor; self.parent = parent; self.name = name; self.traversalRootPath = traversalRootPath
             var value = stat(); guard fstat(descriptor, &value) == 0 else { close(descriptor); throw CloudWorkspaceSetupOperationStoreError.io(operation: "statDirectory", code: errno) }
             identity = Identity(value)
         }
         deinit { close(descriptor) }
         func verify() throws {
+            if let traversalRootPath {
+                let current = Darwin.open(traversalRootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                guard current >= 0 else { throw CloudWorkspaceSetupOperationStoreError.unsafeBinding }
+                defer { close(current) }
+                var named = stat(), held = stat()
+                guard fstat(current, &named) == 0, fstat(descriptor, &held) == 0,
+                      Identity(named) == identity, Identity(held) == identity else { throw CloudWorkspaceSetupOperationStoreError.unsafeBinding }
+            }
             if let parent, let name {
                 try parent.verify(); var value = stat()
                 guard fstatat(parent.descriptor, name, &value, AT_SYMLINK_NOFOLLOW) == 0,
@@ -351,7 +360,7 @@ public final class CloudWorkspaceSetupOperationStore: @unchecked Sendable {
             }
         }
         func sync() throws { try verify(); guard fsync(descriptor) == 0 else { throw CloudWorkspaceSetupOperationStoreError.io(operation: "syncDirectory", code: errno) }; try verify() }
-        var path: String { guard let parent, let name else { return "/" }; return (parent.path == "/" ? "" : parent.path) + "/" + name }
+        var path: String { guard let parent, let name else { return traversalRootPath ?? "/" }; return (parent.path == "/" ? "" : parent.path) + "/" + name }
         static func open(_ url: URL, create: Bool, privateRoot: Bool = true, shared: Shared? = nil,
                          boundary: (Boundary) throws -> Void = { _ in }, syncObserved: (String) -> Void = { _ in }) throws -> Directory? {
             func finishCreated() throws {
@@ -362,10 +371,12 @@ public final class CloudWorkspaceSetupOperationStore: @unchecked Sendable {
                 }
             }
             try finishCreated()
-            let descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            let traversal: DeviceFilesystemTraversal
+            do { traversal = try .plan(for: url.path) } catch { throw CloudWorkspaceSetupOperationStoreError.unsafeBinding }
+            let descriptor = Darwin.open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
             guard descriptor >= 0 else { throw CloudWorkspaceSetupOperationStoreError.io(operation: "openRoot", code: errno) }
-            var current = try Directory(descriptor)
-            for name in url.path.split(separator: "/").map(String.init) {
+            var current = try Directory(descriptor, traversalRootPath: traversal.rootPath)
+            for name in traversal.components {
                 try current.verify()
                 var descriptor = openat(current.descriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
                 var created = false

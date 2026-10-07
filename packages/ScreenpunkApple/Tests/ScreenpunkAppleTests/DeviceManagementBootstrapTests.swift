@@ -4,6 +4,22 @@ import ScreenpunkCore
 
 @MainActor
 final class DeviceManagementBootstrapTests: XCTestCase {
+    func testStartupDiagnosticReportsStageAndErrnoWithoutErrorDescriptionOrPaths() {
+        var calls = 0
+        let bootstrap = DeviceManagementBootstrap(preparationFactory: {
+            calls += 1; throw DeviceNativeManagedRootFailure.unavailable(13)
+        }, retained: { XCTFail("no retained read"); return .empty }, hostFactory: { _ in XCTFail("no host"); throw BootstrapError.factory })
+        bootstrap.start()
+        XCTAssertEqual(bootstrap.startupDiagnostic?.stage, .preparation)
+        XCTAssertEqual(bootstrap.startupDiagnostic?.systemError, 13)
+        XCTAssertEqual(bootstrap.startupAttempt, 1)
+        XCTAssertFalse(bootstrap.canResetBlockedLocalData)
+        bootstrap.requestBlockedLocalReset()
+        XCTAssertEqual(calls, 1)
+        bootstrap.retry()
+        XCTAssertEqual(calls, 2); XCTAssertEqual(bootstrap.startupAttempt, 2)
+        XCTAssertEqual(bootstrap.startupDiagnostic?.retryChecksOriginalStateOnly, true)
+    }
     func testPreparedOwnerSetupFailureRetainsOwnerAndRetriesBeforeDeferredConstruction() throws {
         let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
@@ -36,9 +52,14 @@ final class DeviceManagementBootstrapTests: XCTestCase {
         bootstrap.start()
         XCTAssertEqual(preparations, 1); XCTAssertEqual(constructions, 0)
         XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0); XCTAssertNil(try owner.refresh())
+        XCTAssertEqual(bootstrap.startupAttempt, 1)
+        XCTAssertEqual(bootstrap.startupDiagnostic?.stage, .supportAnchor)
+        XCTAssertEqual(bootstrap.startupDiagnostic?.retryChecksOriginalStateOnly, true)
         bootstrap.retry()
         XCTAssertEqual(preparations, 1); XCTAssertEqual(constructions, 1)
         XCTAssertEqual(creations, 1); XCTAssertEqual(parentSyncs, 2)
+        XCTAssertEqual(bootstrap.startupAttempt, 2)
+        XCTAssertEqual(bootstrap.startupDiagnostic?.stage, .resetConfiguration)
         XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0)
         XCTAssertEqual(try inspector.inspect().classification, .confirmedAbsent)
     }
