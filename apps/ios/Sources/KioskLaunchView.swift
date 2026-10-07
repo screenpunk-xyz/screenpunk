@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import ScreenpunkApple
+import ScreenpunkCore
 
 @MainActor
 struct KioskLaunchView: View {
@@ -23,6 +24,24 @@ struct KioskLaunchView: View {
         return lines.joined(separator: "\n")
     }
 
+    private var startupRetryCount: Int {
+        let attempt: UInt = bootstrap.startupAttempt
+        let retries: UInt = attempt > 0 ? attempt - 1 : 0
+        return Int(clamping: retries)
+    }
+
+    private var blockedResetAction: (() -> Void)? {
+        guard bootstrap.canResetBlockedLocalData else { return nil }
+        return { bootstrap.requestBlockedLocalReset() }
+    }
+
+    private func blockedView(_ snapshot: DeviceRetainedContentSnapshot) -> DeviceManagementBlockedView {
+        DeviceManagementBlockedView(snapshot: snapshot, message: bootstrap.statusMessage,
+                                    diagnosticDetails: startupDetails, retryCount: startupRetryCount,
+                                    resetLocalData: blockedResetAction,
+                                    retry: { bootstrap.retry() })
+    }
+
     var body: some View {
         Group {
             switch bootstrap.state {
@@ -30,11 +49,7 @@ struct KioskLaunchView: View {
             case .resetting: ProgressView("Removing saved device data…")
             case .localReady(let host): DeviceRuntimeRootView(host: host, onLocalReset: bootstrap.requestLocalReset, onCloudAccountRequested: onCloudAccountRequested).id(bootstrap.rootGeneration)
             case .blocked(let snapshot):
-                DeviceManagementBlockedView(snapshot: snapshot, message: bootstrap.statusMessage,
-                                            diagnosticDetails: startupDetails,
-                                            retryCount: Int(clamping: bootstrap.startupAttempt > 0 ? bootstrap.startupAttempt - 1 : 0),
-                                            resetLocalData: bootstrap.canResetBlockedLocalData ? bootstrap.requestBlockedLocalReset : nil,
-                                            retry: bootstrap.retry)
+                blockedView(snapshot)
             }
         }
             .task { bootstrap.start() }
