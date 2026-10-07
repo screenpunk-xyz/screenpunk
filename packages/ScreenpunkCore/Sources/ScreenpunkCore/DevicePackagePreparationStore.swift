@@ -899,9 +899,11 @@ final class DevicePackagePreparationStore {
         let parts = path.split(separator: "/")
         guard path.hasPrefix("/"), path.utf8.count <= 4096, parts.count <= 64,
               !parts.contains(where: { $0 == "." || $0 == ".." }), !path.contains("//") else { throw DevicePackagePreparationError.unsafeBinding }
-        var fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        let traversal: DeviceFilesystemTraversal
+        do { traversal = try .plan(for: path) } catch { throw DevicePackagePreparationError.unsafeBinding }
+        var fd = open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard fd >= 0 else { throw failure() }
-        for part in parts {
+        for part in traversal.components {
             let next = openat(fd, String(part), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
             if next < 0 {
                 let error = errno; close(fd)

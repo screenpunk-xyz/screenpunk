@@ -275,7 +275,6 @@ final class WorkbenchBuildCoordinator {
             eventRules: description.eventRules, deviceBehavior: description.deviceBehavior)
         manifest.digest = try DeploymentDigest.digest(for: manifest)
         try PackageValidator.validate(manifest)
-        try PackageWebContentValidation.requireCompatible(files)
         return WorkbenchPortablePackage(manifest: manifest, files: files)
     }
 

@@ -1,16 +1,5 @@
 # Help topics
 
-## Preserve user data across updates
-
-Every screen that accepts user-entered data or preferences should persist them
-with native `screenpunk.state.get/set/remove`. Keep dashboardId and versioned keys
-stable, restore before defaults, save user edits, and preserve data on read or
-migration failure. Check persistentState/persistentStateWritable; report unsupported
-or read-only hosts. Verify values survive a screen update and app relaunch.
-Device-local state is not remote agent access or cross-device sync; app deletion,
-device reset and confirmed Disconnect can erase it. See [the authoring default](../../docs/screen-authoring-persistence.md).
-
-
 Canonical user-help text for the alpha. The bundled `screenpunk-mcp`
 executable returns these files verbatim for `get_help(topic:)` and exposes
 them as MCP onboarding resources; the device's unpaired screen, the Unlink
@@ -19,7 +8,6 @@ here, then update the copy constants that quote it.
 
 | Topic | File | Also shown in |
 | --- | --- | --- |
-| `service` | [service.md](service.md) | CLI setup/service help, MCP onboarding, activation troubleshooting |
 | `unlink` | [unlink.md](unlink.md) | Unlink panel, Forget dialog, unpaired screen, onboarding |
 | `pairing` | [pairing.md](pairing.md) | Unpaired screen, Add Device |
 | `offline` | [offline.md](offline.md) | Offline ring accessibility announcement |

@@ -926,9 +926,7 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
     private func receive(requestId: String, method: String, deadline: TimeInterval? = nil) throws -> WorkbenchRPCResult {
         let data = try WorkbenchSocket.readFrame(fd, environment: environment, deadline: deadline)
         let object = try WorkbenchWireJSON.object(data,
-            allowSourceChunk: method == WorkbenchSourceChunkRequest.method,
-            allowDeviceSettings: [WorkbenchDeviceControlMethod.settingsGet.rawValue,
-                                  WorkbenchDeviceControlMethod.settingsSet.rawValue].contains(method))
+            allowSourceChunk: method == WorkbenchSourceChunkRequest.method)
         guard object["apiVersion"] as? String == "1.0", object["requestId"] as? String == requestId else { throw WorkbenchIPCError(.invalidRequest) }
         let response: WorkbenchWireResponse
         do {

@@ -3,6 +3,21 @@ import XCTest
 @testable import ScreenpunkApple
 
 final class DeviceLocalResetAuthorityTests: XCTestCase {
+    func testScopeCanonicalOutputAndDigestRemainExactWithMissingOwnedDescendants() throws {
+        let home = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let device = home.appendingPathComponent("device"), preferences = home.appendingPathComponent("preferences"), management = home.appendingPathComponent("management"), reset = home.appendingPathComponent("reset")
+        let scope = try DeviceLocalResetScope(deviceRoot: device, preferencesRoot: preferences, managementDirectory: management, resetDirectory: reset, credentialItems: [])
+        XCTAssertEqual(scope.deviceRoot.path, device.path)
+        let object: [String: Any] = ["version": 1, "device": device.path, "preferences": preferences.path, "management": management.path, "reset": reset.path, "items": []]
+        let originalBytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        XCTAssertEqual(scope.digest, PeerPin.hex(PeerPin.sha256(originalBytes)))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: device.path))
+        let target = home.appendingPathComponent("target"); try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: device, withDestinationURL: target)
+        XCTAssertThrowsError(try scope.validateCurrentPaths())
+    }
     private func authority(_ reset: ResetEvidenceFixture) -> DeviceManagementAuthority {
         .init(journal: ResetManagementFixture(), credentials: .init(backend: ResetCredentialFixture(), random: { Data() }), reset: reset)
     }

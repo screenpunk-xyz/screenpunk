@@ -3,36 +3,6 @@ import XCTest
 import ScreenpunkCore
 
 final class HelpCatalogTests: XCTestCase {
-    func testPersistenceHelpMatchesFallbackAndBundledEntryPoint() {
-        let fallback = HelpCatalog.fallbackTopics()["persistent-state"]
-        let bundled = HelpCatalog.topic(id: "persistent-state")
-        XCTAssertEqual(bundled.body, fallback?.body)
-        XCTAssertTrue(bundled.body.contains("screenpunk.state.get/set/remove"))
-        XCTAssertTrue(bundled.body.contains("persistentStateWritable"))
-        XCTAssertTrue(bundled.body.contains("Never set defaults on load/update"))
-        XCTAssertTrue(HelpCatalog.topic(id: "onboarding").body.contains("get_help(topic: persistent-state)"))
-        XCTAssertTrue(HelpCatalog.fallbackTopics()["onboarding"]?.body.contains("get_help(topic: persistent-state)") == true)
-    }
-
-    func testAuthoringHelpTeachesLocalAssetsAndCurrentBrokerWorkflow() {
-        for topic in [HelpCatalog.topic(id: "authoring"), HelpCatalog.fallbackTopics()["authoring"]!] {
-            XCTAssertTrue(topic.body.contains("style-src 'self'"))
-            XCTAssertTrue(topic.body.contains("script-src 'self'"))
-            XCTAssertTrue(topic.body.contains("styles.css"))
-            XCTAssertTrue(topic.body.contains("app.js"))
-            XCTAssertTrue(topic.body.contains("patch_workspace_project"))
-            XCTAssertTrue(topic.body.contains("run_workspace_build"))
-            XCTAssertTrue(topic.body.contains("get_workspace_package_file"))
-            XCTAssertFalse(topic.body.contains("update_screen_project"))
-            XCTAssertTrue(topic.body.contains("Changed bytes need a new plan"))
-        }
-    }
-
-    func testBothOnboardingSourcesPointAgentsToAuthoringPolicy() {
-        XCTAssertTrue(HelpCatalog.topic(id: "onboarding").body.contains("get_help(topic: authoring)"))
-        XCTAssertTrue(HelpCatalog.fallbackTopics()["onboarding"]!.body.contains("get_help(topic: authoring)"))
-    }
-
     func testDisconnectHelpRequiresFiveSecondMenuAndSeparateConfirmation() {
         let topic = HelpCatalog.topic(id: "unlink")
         XCTAssertTrue(topic.body.lowercased().contains("two fingers"))

@@ -220,7 +220,7 @@ private final class WorkbenchServerState: @unchecked Sendable {
                 }
                 let data = try WorkbenchSocket.readFrame(fd, environment: environment, budget: budget,
                     deadline: saidHello ? nil : handshakeDeadline, idleDeadline: reviewIdleDeadline)
-                let object = try WorkbenchWireJSON.object(data, allowImportPayload: true, allowDeviceSettings: true)
+                let object = try WorkbenchWireJSON.object(data, allowImportPayload: true)
                 guard Set(object.keys) == ["apiVersion", "requestId", "method", "params"],
                       let id = object["requestId"] as? String, Self.validID(id),
                       let method = object["method"] as? String, method.utf8.count <= 100,

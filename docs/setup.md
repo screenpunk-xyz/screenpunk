@@ -1,16 +1,5 @@
 # Alpha setup
 
-## Preserve user data across updates
-
-Every screen that accepts user-entered data or preferences should persist them
-with native `screenpunk.state.get/set/remove`. Keep dashboardId and versioned keys
-stable, restore before defaults, save user edits, and preserve data on read or
-migration failure. Check persistentState/persistentStateWritable; report unsupported
-or read-only hosts. Verify values survive a screen update and app relaunch.
-Device-local state is not remote agent access or cross-device sync; app deletion,
-device reset and confirmed Disconnect can erase it. See [the authoring default](../docs/screen-authoring-persistence.md).
-
-
 Operator guide for running the Screenpunk alpha at home. Everything runs on
 your Mac and your iPhone or iPad over your own network. There is no
 Screenpunk account, sign-in, cloud service, or telemetry, and the product is
@@ -37,24 +26,6 @@ and historical milestone evidence, rather than a current release checklist.
 Using Screenpunk needs no Apple Developer account. Building from source and
 installing on your own device needs Xcode and a developer team. Signed
 downloads come from the [release workflow](release-workflow.md).
-
-## Install and start the Mac CLI
-
-Use the official Homebrew cask `screenpunk-xyz/tap/screenpunk-cli`. Existing
-installations use `brew update` followed by `brew upgrade --cask
-screenpunk-xyz/tap/screenpunk-cli`. Let active jobs finish and quit Screenpunk GUI
-consumers first. Use the same installing account without sudo.
-
-The first service start after an install or update may display a macOS
-permission or security prompt. Review and approve the appropriate prompt for
-your verified Screenpunk installation; an agent must surface it early and wait
-for you. After resolving a pending prompt, retry `screenpunk service start
---json` once outside the Codex sandbox through its normal approval flow. If it
-still fails, preserve the full error and collect service logs and launchd status
-before another attempt. The error alone does not identify the prompt type.
-See [service startup and troubleshooting](help/service.md), also available in
-future bundled help as `get_help(topic: service)` and `screenpunk help service`.
-Workspace, pairing, preferences and drafts must remain intact during recovery.
 
 ## Install the Mac app
 

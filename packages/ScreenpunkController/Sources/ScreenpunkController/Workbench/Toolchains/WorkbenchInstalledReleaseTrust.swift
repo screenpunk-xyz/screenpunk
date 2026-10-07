@@ -5,8 +5,6 @@ import Foundation
 /// independently installed, authenticated distribution; no workspace, RPC,
 /// environment variable, or downloaded catalog may set them.
 public final class WorkbenchInstalledReleaseTrust {
-    /// Shared bounded size for the authenticated package reader and catalog parser.
-    public static let maximumCatalogEnvelopeBytes = ToolchainCatalogJSON.maximumEnvelopeBytes
     public struct Signer {
         public let keyId: String
         public let publicKey: Data

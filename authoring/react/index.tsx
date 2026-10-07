@@ -6,7 +6,6 @@ export interface PublicReadResult<T = unknown> {
   data?: T; resourceURL?: string; fetchedAt?: string; lastModified?: string; retryAfterSeconds?: number; code?: string;
 }
 export interface ScreenpunkClient {
-  state?: { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<void>; remove(key: string): Promise<void> };
   runtime: { ready(): void; onStatus(listener: (status: unknown) => void): () => void };
   connections: {
     read(alias: string, operation: string, parameters?: Record<string, string>, options?: { signal?: AbortSignal }): Promise<PublicReadResult>;
@@ -14,7 +13,7 @@ export interface ScreenpunkClient {
     subscribe(alias: string, operation: string, parameters: Record<string, unknown>, listener: (message: unknown) => void): () => void;
   };
 }
-export interface RuntimeStatus { active?: boolean; publicReadHTTP?: number; persistentState?: number; persistentStateWritable?: number; [key: string]: unknown }
+export interface RuntimeStatus { active?: boolean; publicReadHTTP?: number; [key: string]: unknown }
 const Context = createContext<{ client?: ScreenpunkClient; status: RuntimeStatus; active: boolean }>({ status: {}, active: true });
 const readied = new WeakSet<ScreenpunkClient>();
 export function ScreenpunkProvider({ children, client = (globalThis as typeof globalThis & { screenpunk?: ScreenpunkClient }).screenpunk }: { children: ReactNode; client?: ScreenpunkClient }) {
@@ -77,60 +76,4 @@ export function useConnectionSubscription(alias: string, operation: string, para
   useEffect(() => {
     if (client && active && enabled) return client.connections.subscribe(alias, operation, JSON.parse(key), value => callback.current(value));
   }, [client, active, enabled, alias, operation, key]);
-}
-
-export type PreferencePhase = 'loading' | 'ready' | 'unsupported' | 'read-only' | 'error';
-
-/** Explicit saves only: hydration/defaults never write. Keep defaults/decode stable. */
-export function useScreenPreferences<T>(key: string, defaults: T, decode: (saved: unknown) => T) {
-  const { client, status, active } = useRuntimeStatus();
-  const [value, setValue] = useState<T>(defaults);
-  const [phase, setPhase] = useState<PreferencePhase>('loading');
-  const [error, setError] = useState<string>();
-  const [saving, setSaving] = useState(false);
-  const generation = useRef(0);
-  const busy = useRef(false);
-  useEffect(() => {
-    const current = ++generation.current;
-    let cancelled = false;
-    setPhase('loading'); setError(undefined);
-    if (!client?.state || !client.runtime?.onStatus) {
-      setPhase('unsupported');
-    } else if (status.active === undefined) {
-      // Await native runtime status; method presence alone is not durable support.
-    } else if (status.persistentState !== 1) {
-      setPhase('unsupported');
-    } else if (status.persistentStateWritable !== 1) {
-      setPhase('read-only');
-    } else if (active && status.active === true) {
-      void client.state.get(key).then(saved => {
-        if (cancelled || generation.current !== current) return;
-        const restored = saved === null ? defaults : decode(saved);
-        setValue(restored); setPhase('ready');
-      }).catch(failure => {
-        if (cancelled || generation.current !== current) return;
-        setError(failure instanceof Error ? failure.message : 'Preference read failed');
-        setPhase('error');
-      });
-    }
-    return () => { cancelled = true; ++generation.current; };
-  }, [client, key, defaults, decode, active, status.active, status.persistentState, status.persistentStateWritable]);
-  const editable = phase === 'ready' && active && status.active === true &&
-    status.persistentState === 1 && status.persistentStateWritable === 1;
-  async function save(next: T): Promise<void> {
-    if (!editable || !client?.state || busy.current) throw new Error('Durable editing is unavailable or a save is pending');
-    const current = generation.current;
-    busy.current = true; setSaving(true); setError(undefined);
-    try {
-      const validated = decode(next);
-      await client.state.set(key, validated);
-      if (generation.current === current) setValue(validated);
-    } catch (failure) {
-      if (generation.current === current) setError(failure instanceof Error ? failure.message : 'Preference save failed');
-      throw failure;
-    } finally {
-      busy.current = false; setSaving(false);
-    }
-  }
-  return { value, phase, error, saving, editable: editable && !saving, save };
 }

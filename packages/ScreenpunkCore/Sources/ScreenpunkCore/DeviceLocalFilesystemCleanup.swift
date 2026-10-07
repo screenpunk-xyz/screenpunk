@@ -64,11 +64,17 @@ public struct DeviceLocalFilesystemCleanupPlan: Sendable {
 public final class DeviceLocalFilesystemCleanup {
     enum Boundary { case beforeInspect, afterOpen, beforeEnumerate, beforeUnlink, afterUnlink, beforeSync, afterSync }
     private let plan: DeviceLocalFilesystemCleanupPlan
+    private let fixtureTraversalRoot: String?
     private let boundary: (Boundary, String) throws -> Void
     private let observedDevice: (String, dev_t) -> dev_t
-    public init(plan: DeviceLocalFilesystemCleanupPlan) { self.plan = plan; boundary = { _, _ in }; observedDevice = { _, device in device } }
-    init(plan: DeviceLocalFilesystemCleanupPlan, observedDevice: @escaping (String, dev_t) -> dev_t = { _, device in device }, boundary: @escaping (Boundary, String) throws -> Void) {
-        self.plan = plan; self.observedDevice = observedDevice; self.boundary = boundary
+    public init(plan: DeviceLocalFilesystemCleanupPlan) { self.plan = plan; fixtureTraversalRoot = nil; boundary = { _, _ in }; observedDevice = { _, device in device } }
+    init(plan: DeviceLocalFilesystemCleanupPlan, fixtureTraversalRoot: String? = nil, observedDevice: @escaping (String, dev_t) -> dev_t = { _, device in device }, boundary: @escaping (Boundary, String) throws -> Void) {
+        self.plan = plan; self.fixtureTraversalRoot = fixtureTraversalRoot; self.observedDevice = observedDevice; self.boundary = boundary
+    }
+
+    private func traversal(for path: String) throws -> DeviceFilesystemTraversal {
+        if let root = fixtureTraversalRoot { return try .confined(path: path, systemHome: root, physicalHome: root) }
+        return try .plan(for: path)
     }
 
     private final class Directory {
@@ -88,6 +94,15 @@ public final class DeviceLocalFilesystemCleanup {
     private func identityKey(_ value: stat) -> String { "\(value.st_dev):\(value.st_ino)" }
     private func failure(_ operation: String) -> DeviceLocalFilesystemCleanupError { .io(operation: operation, code: errno) }
     private func verify(_ directory: Directory) throws {
+        if directory.parent == nil {
+            let current = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard current >= 0 else { throw failure("openTraversalRoot") }; defer { close(current) }
+            var named = stat(), held = stat()
+            guard fstat(current, &named) == 0, fstat(directory.fd, &held) == 0,
+                  named.st_dev == directory.identity.st_dev, named.st_ino == directory.identity.st_ino,
+                  held.st_dev == directory.identity.st_dev, held.st_ino == directory.identity.st_ino,
+                  named.st_mode & S_IFMT == S_IFDIR else { throw DeviceLocalFilesystemCleanupError.changedDirectory }
+        }
         if let parent = directory.parent, let name = directory.name {
             try verify(parent)
             var value = stat()
@@ -191,15 +206,20 @@ public final class DeviceLocalFilesystemCleanup {
     public func execute() throws { try execute(withDestructiveStep: { try $0() }) }
     /// Enforces exactly one synchronous invocation and propagates operation failure even if the wrapper swallows it.
     public func execute(withDestructiveStep step: (() throws -> Void) throws -> Void) throws {
-        let fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        let traversal: DeviceFilesystemTraversal
+        do { traversal = try self.traversal(for: plan.anchor.path) } catch { throw DeviceLocalFilesystemCleanupError.changedDirectory }
+        let fd = open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard fd >= 0 else { throw failure("open") }
-        let filesystem = try Directory(fd: fd, path: "/")
+        let filesystem = try Directory(fd: fd, path: traversal.rootPath)
         // Protected paths must also have no symlinked ancestor; absence is allowed.
         var protected = Set<String>()
         for path in plan.protectedRoots {
-            if let directory = try descend(filesystem, components: path.path.split(separator: "/").map(String.init)) { protected.insert(identityKey(directory.identity)) }
+            let protectedTraversal: DeviceFilesystemTraversal
+            do { protectedTraversal = try self.traversal(for: path.path) } catch { throw DeviceLocalFilesystemCleanupError.changedDirectory }
+            guard protectedTraversal.rootPath == traversal.rootPath else { throw DeviceLocalFilesystemCleanupError.changedDirectory }
+            if let directory = try descend(filesystem, components: protectedTraversal.components) { protected.insert(identityKey(directory.identity)) }
         }
-        guard let anchor = try descend(filesystem, components: plan.anchor.path.split(separator: "/").map(String.init), protected: protected) else { return }
+        guard let anchor = try descend(filesystem, components: traversal.components, protected: protected) else { return }
         var entries = 0
         for root in plan.roots {
             let relative = String(root.directory.path.dropFirst(plan.anchor.path.count + 1))

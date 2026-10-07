@@ -94,7 +94,7 @@ final class DurableToolchainCatalogStore {
             guard let checkpoint = try anchor.read(), checkpoint.slot == 0 || checkpoint.slot == 1 else {
                 throw ToolchainTrustError.trustUnavailable
             }
-            guard envelope.count <= ToolchainCatalogJSON.maximumEnvelopeBytes else { throw ToolchainTrustError.limitExceeded }
+            guard envelope.count <= 8 * 1024 * 1024 else { throw ToolchainTrustError.limitExceeded }
             let (decoded, _) = try ToolchainCatalogJSON.decode(envelope)
             guard let signer = basePolicy.signers[decoded.signerKeyId] else {
                 throw ToolchainTrustError.invalidCatalog

@@ -1,6 +1,6 @@
 import Foundation
 import Darwin
-import ScreenpunkCore
+@_spi(NativeFilesystem) import ScreenpunkCore
 
 /// Configured bindings only; no paths or service names come from a reset record.
 public struct DeviceLocalResetScope: Sendable {
@@ -73,8 +73,12 @@ public struct DeviceLocalResetScope: Sendable {
         for (alias, target) in [("/var", "/private/var"), ("/tmp", "/private/tmp")] {
             if path == alias || path.hasPrefix(alias + "/") { path = target + path.dropFirst(alias.count) }
         }
-        var current = URL(fileURLWithPath: "/", isDirectory: true)
-        for component in path.split(separator: "/") {
+        let traversal: DeviceFilesystemTraversal
+        do { traversal = try .plan(for: path) } catch { throw Failure.invalidPath }
+        var current = URL(fileURLWithPath: traversal.rootPath, isDirectory: true)
+        var root = stat()
+        guard lstat(current.path, &root) == 0, root.st_mode & S_IFMT == S_IFDIR else { throw Failure.invalidPath }
+        for component in traversal.components {
             current.appendPathComponent(String(component), isDirectory: true)
             var info = stat()
             if lstat(current.path, &info) == 0 {

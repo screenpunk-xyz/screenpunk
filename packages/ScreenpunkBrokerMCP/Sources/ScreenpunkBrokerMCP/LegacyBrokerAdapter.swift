@@ -1,7 +1,6 @@
 import Foundation
 import CoreFoundation
 import ScreenpunkController
-import ScreenpunkCore
 
 /// The legacy executable is a protocol facade, never another controller owner.
 public final class LegacyBrokerAdapter {
@@ -426,18 +425,6 @@ public final class LegacyBrokerAdapter {
               current.selectionGeneration == selected.selectionGeneration else {
             throw WorkbenchIPCError(.workspaceConflict)
         }
-        if name == "validate_dashboard" {
-            let issues = try packageWebIssues(dashboardId: id, revision: revision, selected: selected)
-            if !issues.isEmpty {
-                let data = try JSONSerialization.data(withJSONObject: [
-                    "ok": false, "error": "package_web_content_unsupported",
-                    "dashboardId": id, "revision": revision, "digest": package.digest,
-                    "diagnostics": issues.map(\.message),
-                    "detail": "The native host blocks inline CSS and executable JavaScript. Read get_help(topic: authoring), package local .css/.js files, then build and review a new revision."
-                ], options: [.sortedKeys])
-                return (String(decoding: data, as: UTF8.self), true)
-            }
-        }
         let object: [String: Any] = name == "validate_dashboard"
             ? ["ok": true, "dashboardId": id, "revision": revision, "digest": package.digest,
                "storage": package.storage, "provenance": package.provenance]
@@ -446,54 +433,6 @@ public final class LegacyBrokerAdapter {
                "storage": package.storage, "provenance": package.provenance]
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return (String(decoding: data, as: UTF8.self), false)
-    }
-
-    /// Bounded, read-only inspection over existing authenticated package chunk
-    /// routes. It does not add a second package store or execute page content.
-    private func packageWebIssues(dashboardId: String, revision: String,
-                                  selected: WorkbenchWorkspaceStatus) throws -> [PackageWebContentDiagnostics.Issue] {
-        let deadline = ProcessInfo.processInfo.systemUptime + 15
-        func read(_ path: String, maximum: Int, expectedHash: String? = nil) throws -> Data {
-            var bytes = Data()
-            var total: Int?
-            var hash: String?
-            repeat {
-                guard ProcessInfo.processInfo.systemUptime < deadline else { throw WorkbenchIPCError(.timedOut) }
-                let chunk = try client.workspacePackageFile(dashboardId: dashboardId,
-                    revision: revision, path: path, offset: bytes.count, in: selected)
-                guard chunk.path == path, chunk.offset == bytes.count,
-                      chunk.totalBytes >= bytes.count, chunk.totalBytes <= maximum,
-                      total == nil || total == chunk.totalBytes,
-                      hash == nil || hash == chunk.sha256,
-                      expectedHash == nil || expectedHash == chunk.sha256,
-                      chunk.bytes.count <= chunk.totalBytes - bytes.count,
-                      !chunk.bytes.isEmpty || bytes.count == chunk.totalBytes else {
-                    throw WorkbenchIPCError(.invalidRequest)
-                }
-                total = chunk.totalBytes; hash = chunk.sha256
-                bytes.append(chunk.bytes)
-            } while bytes.count < total!
-            guard DeploymentDigest.sha256Hex(bytes) == hash else { throw WorkbenchIPCError(.invalidRequest) }
-            return bytes
-        }
-        let manifest = try JSONDecoder().decode(DashboardManifest.self,
-            from: read("", maximum: 8 * 1024 * 1024))
-        try PackageValidator.validate(manifest)
-        guard manifest.dashboardId == dashboardId, manifest.revision == revision else {
-            throw WorkbenchIPCError(.invalidRequest)
-        }
-        var files: [String: Data] = [:]
-        for file in manifest.files where file.path.lowercased().hasSuffix(".html") {
-            files[file.path] = try read(file.path, maximum: file.bytes, expectedHash: file.sha256)
-        }
-        let current = try client.workspaceStatus()
-        guard current.workspaceId == selected.workspaceId,
-              current.selectionGeneration == selected.selectionGeneration,
-              ProcessInfo.processInfo.systemUptime < deadline else {
-            throw WorkbenchIPCError(.workspaceConflict)
-        }
-        return PackageWebContentDiagnostics.inspect(files: files,
-            shouldContinue: { ProcessInfo.processInfo.systemUptime < deadline })
     }
 
     static func packageSchema(_ name: String) -> JSONValue {

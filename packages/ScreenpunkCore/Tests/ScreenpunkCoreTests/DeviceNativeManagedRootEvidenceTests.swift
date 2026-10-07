@@ -128,4 +128,29 @@ final class DeviceNativeManagedRootEvidenceTests: XCTestCase {
         XCTAssertThrowsError(try check.inspect())
         XCTAssertEqual(try Data(contentsOf: anchor), Data("replacement".utf8))
     }
+    func testContainerInspectionChecksOnlyHomeAndInContainerLinksWithExactPresence() throws {
+        let home = try ownedParent(), support = home.appendingPathComponent("Library/Application Support", isDirectory: true)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let check = try DeviceManagedNamespaceInspector.containerFixture(existingPhysicalHome: home)
+        let absent = try check.inspect()
+        XCTAssertEqual(absent.classification, .confirmedAbsent)
+        XCTAssertEqual(absent.checkedDirectoryCountForTesting, 3)
+        try FileManager.default.createSymbolicLink(atPath: child(support).path, withDestinationPath: "missing")
+        XCTAssertEqual(try check.inspect().classification, .managedPresent)
+        let moved = home.appendingPathExtension("retired"); try FileManager.default.moveItem(at: home, to: moved)
+        defer { try? FileManager.default.removeItem(at: moved) }
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        XCTAssertNotEqual(absent, try check.inspect())
+    }
+    func testContainerInspectionRejectsLibrarySymlinkAndMissingSupport() throws {
+        let home = try ownedParent(), target = home.appendingPathComponent("target", isDirectory: true)
+        try FileManager.default.createDirectory(at: target.appendingPathComponent("Application Support"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: home.appendingPathComponent("Library"), withDestinationURL: target)
+        XCTAssertThrowsError(try DeviceManagedNamespaceInspector.containerFixture(existingPhysicalHome: home))
+        try FileManager.default.removeItem(at: home.appendingPathComponent("Library"))
+        try FileManager.default.createDirectory(at: home.appendingPathComponent("Library"), withIntermediateDirectories: false)
+        XCTAssertThrowsError(try DeviceManagedNamespaceInspector.containerFixture(existingPhysicalHome: home))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/Application Support").path))
+    }
+
 }

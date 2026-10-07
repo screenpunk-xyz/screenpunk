@@ -1776,9 +1776,11 @@ final class DeviceLocalProvisioningIntentStore {
     }
     private func overlap(_ a:String,_ b:String)->Bool {let x=Data(a.utf8),y=Data(b.utf8);return x == y || x.starts(with:Data((b+"/").utf8)) || y.starts(with:Data((a+"/").utf8))}
     private func directory(_ path:String,allowMissing:Bool=false)throws->Int32 {
-        var fd=open("/",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK);guard fd >= 0 else{throw failure()}
+        let traversal: DeviceFilesystemTraversal
+        do { traversal = try .plan(for: path) } catch { throw Failure.unsafeRoot }
+        var fd=open(traversal.rootPath,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK);guard fd >= 0 else{throw failure()}
         do {
-            for component in path.split(separator:"/") {
+            for component in traversal.components {
                 let next=openat(fd,String(component),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK)
                 if next < 0 && errno == ENOENT && allowMissing {close(fd);return -1}
                 guard next >= 0 else{throw failure()};close(fd);fd=next

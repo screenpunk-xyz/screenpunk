@@ -4,6 +4,16 @@ import ScreenpunkCore
 /// Serialized startup/recovery/reset; Cloud transition writers remain disabled.
 @MainActor public final class DeviceManagementBootstrap: ObservableObject {
     public enum State { case checking, resetting, localReady(DeviceLANHost), blocked(DeviceRetainedContentSnapshot) }
+    public struct StartupDiagnostic: Equatable {
+        public enum Stage: String { case preparation, supportAnchor, namespace, resetConfiguration, resetRecovery, localHost }
+        public let stage: Stage
+        public let systemError: Int32?
+        /// A retry rechecks the retained original owner; it does not clear data or
+        /// promise to recover changed nodes or uncertain persistence.
+        public let retryChecksOriginalStateOnly: Bool
+    }
+    @Published public private(set) var startupDiagnostic: StartupDiagnostic?
+    @Published public private(set) var startupAttempt: UInt = 0
     @Published public private(set) var state: State = .checking
     @Published public private(set) var statusMessage: String?
     @Published public private(set) var rootGeneration = UUID()
@@ -53,12 +63,14 @@ import ScreenpunkCore
     }
     public func start() {
         guard task == nil else { return }
+        startupAttempt &+= 1
+        startupDiagnostic = nil
         if authority == nil, let preparationFactory {
             do {
                 let prepared = try preparationFactory()
                 authority = prepared.authority; lifecycleFactory = { try prepared.constructLifecycle() }
             } catch {
-                state = .blocked(.empty); statusMessage = "Device connection needs attention. Local management is blocked."; return
+                recordDiagnostic(.preparation, error); state = .blocked(.empty); statusMessage = "Device connection needs attention. Local management is blocked."; return
             }
         }
         if preparationFactory != nil {
@@ -66,7 +78,7 @@ import ScreenpunkCore
                 guard let authority else { throw DeviceManagementAuthority.Failure.staleLease }
                 try authority.prepareProductionSupportAnchor()
             } catch {
-                state = .blocked(.empty); statusMessage = "Device connection needs attention. Local management is blocked."; return
+                recordDiagnostic(.supportAnchor, error); state = .blocked(.empty); statusMessage = "Device connection needs attention. Local management is blocked."; return
             }
         }
         guard checkManagedNamespace() else { return }
@@ -78,6 +90,7 @@ import ScreenpunkCore
             }
             catch {
                 state = .blocked(.empty)
+                recordDiagnostic(.resetConfiguration, error)
                 statusMessage = "Saved reset configuration is unavailable. Local management is blocked."
                 return
             }
@@ -102,11 +115,45 @@ import ScreenpunkCore
                 self.admit()
             } catch {
                 self.state = .blocked(.empty)
+                self.recordDiagnostic(.resetRecovery, error)
                 self.statusMessage = "Saved reset recovery could not finish, or its scope does not match. Local management is blocked."
             }
         }
     }
+    private func recordDiagnostic(_ stage: StartupDiagnostic.Stage, _ error: Error) {
+        let code: Int32?
+        if let failure = error as? DeviceProductionSupportAnchorSetup.Failure, case .io(let value) = failure { code = value }
+        else if let failure = error as? DeviceNativeManagedRootFailure, case .unavailable(let value) = failure { code = value }
+        else { code = nil }
+        startupDiagnostic = .init(stage: stage, systemError: code, retryChecksOriginalStateOnly: true)
+    }
     public func retry() { start() }
+    public var canResetBlockedLocalData: Bool {
+        guard task == nil, lifecycle != nil, startupDiagnostic?.stage == .localHost,
+              case .blocked = state, let authority, lifecycle?.authority === authority else { return false }
+        return authority.blockedLocalResetEligible()
+    }
+    /// Call only after the UI's destructive scope confirmation. No new authority
+    /// is constructed for a blocked device; early path/namespace failures refuse.
+    public func requestBlockedLocalReset() {
+        guard canResetBlockedLocalData, let lifecycle, let original = authority else { return }
+        task = Task { [weak self] in
+            guard let self else { return }; defer { self.task = nil }
+            do {
+                guard self.authority === original, lifecycle.authority === original,
+                      original.blockedLocalResetEligible(), let lease = try original.refresh() else { throw DeviceManagementAuthority.Failure.staleLease }
+                let management = DeviceManagementContext(authority: original, lease: lease)
+                try management.validate()
+                try await lifecycle.begin(context: management, resetID: UUID()) { [weak self] in self?.state = .resetting }
+                self.context = nil; self.authority = lifecycle.authority; self.needsHost = true
+                self.admit()
+            } catch {
+                self.context = nil; self.state = .blocked(.empty)
+                self.recordDiagnostic(.resetRecovery, error)
+                self.statusMessage = "Local reset could not finish. Saved data remains blocked until recovery succeeds."
+            }
+        }
+    }
     public func requestLocalReset() {
         guard task == nil, let lifecycle, let context, case .localReady(let oldHost) = state else { return }
         task = Task { [weak self] in
@@ -133,6 +180,7 @@ import ScreenpunkCore
         } catch {
             if case .localReady(let host) = state { host.retireForReset() }
             context = nil; state = .blocked(.empty)
+            recordDiagnostic(.namespace, error)
             statusMessage = "Device connection needs attention. Local management is blocked."
             return false
         }
@@ -159,6 +207,7 @@ import ScreenpunkCore
             needsHost = false
         } catch {
             state = .blocked(needsHost ? .empty : (authority?.resetRenderingAllowed() == true ? retained() : .empty))
+            recordDiagnostic(.localHost, error)
             statusMessage = needsHost ? "Reset finished, but Local management could not start. Retry startup." : "Local management could not start."
         }
     }

@@ -62,7 +62,7 @@ public enum MCPToolSchemas {
             return object(
                 required: [],
                 properties: [
-                    "topic": string("persistent-state, authoring, home-assistant, unlink, preview, pairing, deploy, or onboarding")
+                    "topic": string("home-assistant, unlink, preview, pairing, deploy, or onboarding")
                 ]
             )
         case "discover_services":

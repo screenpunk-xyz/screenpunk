@@ -18,7 +18,7 @@ const pin=JSON.parse(await fs.readFile(path.join(root,'toolchain.json'),'utf8'))
 const bytes=await fs.readFile(archive);
 if(createHash('sha256').update(bytes).digest('hex')!==pin.node.sha256) throw Error('Node archive checksum mismatch');
 await fs.mkdir(destination,{recursive:true});
-for(const name of ['scripts','tsconfig.json','react','ui','templates','licenses','icons','catalog.json','README.md','PERSISTENCE.md','package.json','package-lock.json','toolchain.json']) await fs.cp(path.join(root,name),path.join(destination,name),{recursive:true});
+for(const name of ['scripts','tsconfig.json','react','ui','templates','licenses','icons','catalog.json','README.md','package.json','package-lock.json','toolchain.json']) await fs.cp(path.join(root,name),path.join(destination,name),{recursive:true});
 await fs.cp(path.join(root,'node_modules'),path.join(destination,'node_modules'),{recursive:true,filter:src=>!src.split(path.sep).includes('.bin')});
 await fs.mkdir(path.join(root,'dist'),{recursive:true});
 const extraction=await fs.mkdtemp(path.join(root,'dist/node-'));
@@ -43,7 +43,7 @@ const qualifiedSource=path.join(destination,'templates/earthquakes');
 const qualified=createInputInventory(qualifiedSource,destination);
 let kitMetadataBytes=0;for(const [p,b]of qualified.files)if(!p.startsWith(qualifiedSource+path.sep)){const finalPath=finalDestination+p.slice(destination.length);if(!validPath(finalPath))throw Error('Final kit path exceeds bounds');const recordBytes=Buffer.byteLength(JSON.stringify([finalPath,'101999',limits.sourceBytes+limits.trustedBytes,b.length,'a'.repeat(64)])+'\n');if(recordBytes>lineLimit)throw Error('Kit manifest path exceeds bounds');kitMetadataBytes+=recordBytes;}
 if(kitMetadataBytes>trustedManifestLimit)throw Error('Kit metadata does not fit the qualified64MiB manifest');
-await fs.writeFile(path.join(destination,'kit.json'),JSON.stringify({version:'1.0.1',node:pin.node.version,platform:'darwin-arm64',compiler:'esbuild-wasm0.28.2',compilerPins:pins,kitMetadataBytes,manifestBytes:64*1024*1024,lockSha256:createHash('sha256').update(await fs.readFile(path.join(root,'package-lock.json'))).digest('hex')},null,2));
+await fs.writeFile(path.join(destination,'kit.json'),JSON.stringify({version:'1.0.0',node:pin.node.version,platform:'darwin-arm64',compiler:'esbuild-wasm0.28.2',compilerPins:pins,kitMetadataBytes,manifestBytes:64*1024*1024,lockSha256:createHash('sha256').update(await fs.readFile(path.join(root,'package-lock.json'))).digest('hex')},null,2));
 const backup=finalDestination+'.previous-'+process.pid;
 let replaced=false;
 try {await fs.rename(finalDestination,backup);replaced=true;} catch(e){if(e.code!=='ENOENT')throw e;}

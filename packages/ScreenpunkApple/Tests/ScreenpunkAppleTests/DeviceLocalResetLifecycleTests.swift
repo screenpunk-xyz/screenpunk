@@ -3,6 +3,47 @@ import ScreenpunkCore
 @testable import ScreenpunkApple
 
 @MainActor final class DeviceLocalResetLifecycleTests: XCTestCase {
+    func testConfirmedBlockedHostResetUsesOriginalAuthorityAndExactExistingScope() async throws {
+        let f = try LifecycleFixture(); var hosts = 0
+        let owned = f.scope.authorityScope.deviceRoot.appendingPathComponent("screen-sentinel")
+        try FileManager.default.createDirectory(at: owned.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("owned local content".utf8).write(to: owned)
+        let original = f.lifecycle.authority
+        let boot = DeviceManagementBootstrap(lifecycle: f.lifecycle, retained: { .empty }, hostFactory: {
+            hosts += 1; if hosts == 1 { throw LifecycleFailure.injected }; return try f.host($0)
+        })
+        boot.start()
+        let clock = ContinuousClock(), blockedDeadline = clock.now.advanced(by: .seconds(5))
+        while boot.startupDiagnostic?.stage != .localHost && clock.now < blockedDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(boot.startupDiagnostic?.stage, .localHost)
+        XCTAssertTrue(f.lifecycle.authority === original)
+        XCTAssertTrue(boot.canResetBlockedLocalData)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: owned.path)); XCTAssertEqual(f.keys.deletes, 0)
+        boot.requestBlockedLocalReset()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
+            if case .localReady = boot.state { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard case .localReady = boot.state else { return XCTFail("confirmed reset must complete before readmission") }
+        XCTAssertEqual(f.evidence.record?.phase, .completed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: owned.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.sentinel.path))
+        XCTAssertEqual(f.keys.deletes, 5); XCTAssertEqual(hosts, 2)
+    }
+    func testBlockedHostResetRefusesNewManagedPresenceWithoutDeletingAnything() async throws {
+        let f = try LifecycleFixture()
+        let boot = DeviceManagementBootstrap(lifecycle: f.lifecycle, retained: { .empty }, hostFactory: { _ in throw LifecycleFailure.injected })
+        boot.start()
+        let clock = ContinuousClock(), deadline = clock.now.advanced(by: .seconds(5))
+        while boot.startupDiagnostic?.stage != .localHost && clock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(boot.canResetBlockedLocalData)
+        try FileManager.default.createDirectory(at: f.base.appendingPathComponent(DeviceNativeManagedRootLocator.namespaceName), withIntermediateDirectories: false)
+        XCTAssertFalse(boot.canResetBlockedLocalData)
+        boot.requestBlockedLocalReset()
+        XCTAssertNil(f.evidence.record); XCTAssertEqual(f.keys.deletes, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.sentinel.path))
+    }
     func testBootstrapRejectsMismatchedLifecycleAuthorityWithoutPublishingOrHost() throws {
         let expected = try LifecycleFixture(), replacement = try LifecycleFixture()
         var factories = 0, hosts = 0, retained = 0
