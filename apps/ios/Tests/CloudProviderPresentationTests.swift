@@ -1,6 +1,5 @@
 import XCTest
 import AuthenticationServices
-import GoogleSignIn
 import SwiftUI
 import UIKit
 @testable import Screenpunk
@@ -64,28 +63,26 @@ final class CloudProviderPresentationTests: XCTestCase {
         XCTAssertTrue(result.controller === hosting); XCTAssertTrue(result.window === window)
     }
 
-    func testOfficialProviderControlsRenderDisabledWithoutAuthenticationAndHaveLabels() async throws {
+    func testProviderRenderingDoesNotAuthenticateAndNativeAppleActionIsFenced() async throws {
         let scene = try activeScene(), previous = scene.windows.first(where: \.isKeyWindow)
         var apples = 0, googles = 0
         let hosting = UIHostingController(rootView: CloudNativeProviderButtons(enabled: false, apple: { apples += 1 }, google: { googles += 1 }))
         let window = UIWindow(windowScene: scene); window.rootViewController = hosting; window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
         hosting.view.layoutIfNeeded(); await Task.yield(); hosting.view.layoutIfNeeded()
-        let controls = allSubviews(hosting.view).compactMap { $0 as? UIControl }
-        let apple = try XCTUnwrap(controls.first(where: { $0.accessibilityIdentifier == "cloud.signIn.apple" }) as? ASAuthorizationAppleIDButton)
-        let google = try XCTUnwrap(controls.first(where: { $0.accessibilityIdentifier == "cloud.signIn.google" }) as? GIDSignInButton)
-        XCTAssertFalse(apple.isEnabled); XCTAssertFalse(google.isEnabled)
-        XCTAssertEqual(apple.accessibilityLabel, "Sign in with Apple")
-        XCTAssertFalse(google.accessibilityLabel?.isEmpty ?? true)
-        XCTAssertEqual(google.accessibilityHint, "Google account sign-in")
-        XCTAssertEqual(google.style, .standard)
-        XCTAssertGreaterThanOrEqual(apple.bounds.height, 44); XCTAssertGreaterThanOrEqual(google.bounds.height, 44)
-        apple.sendActions(for: .touchUpInside); google.sendActions(for: .touchUpInside)
+        let apple = try XCTUnwrap(allSubviews(hosting.view).compactMap { $0 as? ASAuthorizationAppleIDButton }.first(where: { $0.accessibilityIdentifier == "cloud.signIn.apple" }))
+        XCTAssertFalse(apple.isEnabled)
+        XCTAssertEqual(apple.accessibilityLabel, "Continue with Apple")
+        XCTAssertGreaterThanOrEqual(apple.bounds.height, 44)
+        XCTAssertEqual(apples, 0); XCTAssertEqual(googles, 0)
+        apple.sendActions(for: .touchUpInside)
         XCTAssertEqual(apples, 0); XCTAssertEqual(googles, 0)
         hosting.rootView = CloudNativeProviderButtons(enabled: true, apple: { apples += 1 }, google: { googles += 1 })
         hosting.view.layoutIfNeeded(); await Task.yield(); hosting.view.layoutIfNeeded()
-        apple.sendActions(for: .touchUpInside); google.sendActions(for: .touchUpInside)
-        XCTAssertEqual(apples, 1); XCTAssertEqual(googles, 1)
+        XCTAssertTrue(apple.isEnabled)
+        XCTAssertEqual(apples, 0); XCTAssertEqual(googles, 0)
+        apple.sendActions(for: .touchUpInside)
+        XCTAssertEqual(apples, 1); XCTAssertEqual(googles, 0)
     }
 
     private func activeScene() throws -> UIWindowScene {

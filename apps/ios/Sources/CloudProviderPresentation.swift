@@ -1,5 +1,6 @@
 import AuthenticationServices
 import Combine
+import CoreText
 import GoogleSignIn
 import SwiftUI
 import UIKit
@@ -65,7 +66,7 @@ private final class WindowCaptureView: UIView {
     }
 }
 
-/// Official native controls; rendering these does not start a provider flow.
+/// Provider presentation only; rendering these does not start a provider flow.
 struct CloudNativeProviderButtons: View {
     @Environment(\.colorScheme) private var colorScheme
     let enabled: Bool
@@ -74,40 +75,67 @@ struct CloudNativeProviderButtons: View {
     var body: some View {
         VStack(spacing: 12) {
             AppleControl(dark: colorScheme == .dark, enabled: enabled, action: apple)
-                .frame(width: 230, height: 48).id(colorScheme)
-            GoogleControl(dark: colorScheme == .dark, enabled: enabled, action: google)
-                .frame(width: 230, height: 48)
+                .frame(height: 52).id(colorScheme)
+            googleButton
+                .frame(height: 52)
         }.frame(maxWidth: .infinity).disabled(!enabled)
     }
     private struct AppleControl: UIViewRepresentable {
         let dark: Bool; let enabled: Bool; let action: () -> Void
         func makeCoordinator() -> ControlAction { ControlAction(action) }
         func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
-            let control = ASAuthorizationAppleIDButton(type: .signIn, style: dark ? .white : .black)
-            control.accessibilityLabel = "Sign in with Apple"; control.accessibilityIdentifier = "cloud.signIn.apple"
+            let control = ASAuthorizationAppleIDButton(type: .continue, style: dark ? .white : .black)
+            control.cornerRadius = 12
+            control.accessibilityLabel = "Continue with Apple"; control.accessibilityIdentifier = "cloud.signIn.apple"
             control.addTarget(context.coordinator, action: #selector(ControlAction.invoke), for: .touchUpInside)
             return control
         }
         func updateUIView(_ control: ASAuthorizationAppleIDButton, context: Context) {
-            control.isEnabled = enabled; control.alpha = enabled ? 1 : 0.5; context.coordinator.action = action; context.coordinator.enabled = enabled
+            control.isEnabled = enabled; control.alpha = enabled ? 1 : 0.72; context.coordinator.action = action; context.coordinator.enabled = enabled
         }
     }
-    private struct GoogleControl: UIViewRepresentable {
-        let dark: Bool; let enabled: Bool; let action: () -> Void
-        func makeCoordinator() -> ControlAction { ControlAction(action) }
-        func makeUIView(context: Context) -> GIDSignInButton {
-            let control = GIDSignInButton(); control.style = .standard
-            control.accessibilityHint = "Google account sign-in"; control.accessibilityIdentifier = "cloud.signIn.google"
-            control.addTarget(context.coordinator, action: #selector(ControlAction.invoke), for: .touchUpInside)
-            return control
+    // Custom presentation uses Google's official mark and documented light/dark colors.
+    // The existing explicit Google action still owns all authentication and scope checks.
+    private var googleButton: some View {
+        Button { if enabled { google() } } label: {
+            HStack(spacing: 12) {
+                Image("GoogleSignInMark")
+                    .resizable().scaledToFit().frame(width: 20, height: 20)
+                Text("Continue with Google")
+                    .font(Self.googleFont)
+                    .foregroundColor(colorScheme == .dark
+                        ? Color(red: 0.89, green: 0.89, blue: 0.89)
+                        : Color(red: 0.12, green: 0.12, blue: 0.12))
+            }
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .foregroundStyle(colorScheme == .dark
+                ? Color(red: 0.89, green: 0.89, blue: 0.89)
+                : Color(red: 0.12, green: 0.12, blue: 0.12))
+            .background(colorScheme == .dark
+                ? Color(red: 0.075, green: 0.075, blue: 0.078) : .white)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(colorScheme == .dark
+                    ? Color(red: 0.56, green: 0.57, blue: 0.56)
+                    : Color(red: 0.45, green: 0.47, blue: 0.46), lineWidth: 1))
+            .opacity(enabled ? 1 : 0.85)
         }
-        func updateUIView(_ control: GIDSignInButton, context: Context) {
-            control.colorScheme = dark ? .dark : .light
-            control.isEnabled = enabled; control.alpha = enabled ? 1 : 0.5; context.coordinator.action = action; context.coordinator.enabled = enabled
-            // The SDK draws its localized text from accessibilityLabel; leave it untouched.
-            control.accessibilityHint = "Google account sign-in"
+        .buttonStyle(GoogleProviderButtonStyle())
+        .disabled(!enabled)
+        .accessibilityIdentifier("cloud.signIn.google")
+        .accessibilityHint(enabled ? "Google account sign-in" : "Sign-in is unavailable until Cloud is configured")
+    }
+    private struct GoogleProviderButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label.opacity(configuration.isPressed ? 0.8 : 1)
         }
     }
+    private static let googleFont: Font = {
+        if let url = Bundle.main.url(forResource: "GoogleSans", withExtension: "ttf") {
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
+        return .custom("GoogleSans-Regular", size: 17, relativeTo: .body).weight(.medium)
+    }()
     @MainActor private final class ControlAction: NSObject {
         var action: () -> Void
         var enabled = false

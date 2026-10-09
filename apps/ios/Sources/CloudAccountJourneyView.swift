@@ -79,8 +79,7 @@ struct CloudAccountJourneyView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Label("Screenpunk Cloud", systemImage: "cloud").font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                    Text("Sign in to view your workspaces.").font(.title3).foregroundStyle(.secondary)
+                    signInHeader
                     switch lifecycle.retiredCleanupState {
                     case .pending:
                         ProgressView("Finishing previous sign-out…").accessibilityIdentifier("cloud.retiredCleanupPending")
@@ -106,8 +105,8 @@ struct CloudAccountJourneyView: View {
                         }
                     }
                     if let actionMessage { Text(actionMessage).foregroundStyle(.secondary).accessibilityIdentifier("cloud.actionError") }
-                    Text("Cloud device connection is unavailable in this version.").font(.callout).foregroundStyle(.secondary)
-                }.frame(maxWidth: 580, alignment: .leading).padding(20).frame(maxWidth: .infinity)
+                }.frame(maxWidth: 420, alignment: .leading).padding(.horizontal, 28)
+                    .padding(.top, 28).padding(.bottom, 32).frame(maxWidth: .infinity)
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -127,10 +126,32 @@ struct CloudAccountJourneyView: View {
         .onAppear { dismissalCancellation.reset() }
         .onChange(of: lifecycle.accountEntryState) { _ in actionMessage = nil }
     }
+    private var signInHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Connect to Screenpunk cloud")
+                .font(.title2.bold()).accessibilityAddTraits(.isHeader)
+            Text("Sign in to view your workspaces.")
+                .font(.body).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
     private var providerEntry: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if case .unavailable(let message) = actions.availability { Text(message).foregroundStyle(.secondary) }
-            CloudNativeProviderButtons(enabled: actions.enabled, apple: { signIn(.apple) }, google: { signIn(.google) })
+        VStack(alignment: .leading, spacing: 20) {
+            CloudNativeProviderButtons(enabled: actions.enabled,
+                apple: { signIn(.apple) }, google: { signIn(.google) })
+            CloudSignInLegalDisclaimer()
+            if case .unavailable(let message) = actions.availability {
+                Label {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Sign-in unavailable").font(.subheadline.weight(.semibold))
+                        Text(message).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "info.circle").foregroundStyle(.secondary)
+                }
+                .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(uiColor: .secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 14))
+            }
         }
     }
     private func signIn(_ provider: CloudNativeSignInProvider) {
@@ -139,6 +160,17 @@ struct CloudAccountJourneyView: View {
         catch {
             actionMessage = CloudJourneyCopy.signInFailure(error)
         }
+    }
+}
+
+private struct CloudSignInLegalDisclaimer: View {
+    var body: some View {
+        Text("By continuing, you agree to Screenpunk’s [Terms of Use](https://screenpunk.xyz/terms) and acknowledge its [Privacy Policy](https://screenpunk.xyz/privacy).")
+            .font(.footnote).foregroundStyle(.secondary)
+            .tint(.accentColor).multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("cloud.signIn.legal")
     }
 }
 
@@ -169,6 +201,7 @@ private struct CloudAccountJourneyContent: View {
                     if case .unavailable(let message) = actions.availability { Text(message).foregroundStyle(.secondary) }
                     CloudNativeProviderButtons(enabled: actions.enabled && !coordinator.isWorking,
                         apple: { signIn(.apple) }, google: { signIn(.google) })
+                    CloudSignInLegalDisclaimer()
                 }
             }
             if coordinator.isWorking { ProgressView("Working…").accessibilityIdentifier("cloud.progress") }
