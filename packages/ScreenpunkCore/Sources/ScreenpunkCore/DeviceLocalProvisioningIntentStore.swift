@@ -428,7 +428,12 @@ final class DeviceLocalProvisioningIntentStore {
         guard command.count == intent.commandBytes,try DeviceNativeDeliveryAttachmentCodec.hash(command) == intent.commandHash,
               attached["delivery.plan"]!.bytes.count == intent.association.planByteLength,
               try DeviceNativeDeliveryAttachmentCodec.hash(attached["delivery.plan"]!.bytes) == intent.association.planDigest else{throw Failure.conflict}
-        let raw=try DeviceNativeDeliveryAttachmentCodec.object(command,limit:16384,keys:["schemaVersion","operationId","planId","planDigest","planByteLength","installationId","accountId","locationId","transitionId","sequence","expectedInstalledSetGenerationId","desiredSetGenerationId","resultingSet","resultingSetDigest","executionExpiresAt"])
+        let preliminary = try JSONSerialization.jsonObject(with: command) as? [String: Any]
+        let additional: Set<String> = preliminary?["removeEntryIds"] != nil ? ["removeEntryIds"] : []
+        let raw=try DeviceNativeDeliveryAttachmentCodec.object(command,limit:16384,keys:Set(["schemaVersion","operationId","planId","planDigest","planByteLength","installationId","accountId","locationId","transitionId","sequence","expectedInstalledSetGenerationId","desiredSetGenerationId","resultingSet","resultingSetDigest","executionExpiresAt"]).union(additional))
+        if !additional.isEmpty {
+            guard let removals = raw["removeEntryIds"] as? [Any], removals.isEmpty else { throw Failure.conflict }
+        }
         let fields:Set<String>=["schemaVersion","operationId","planId","planDigest","planByteLength","installationId","accountId","locationId","transitionId"]
         let header=try JSONSerialization.data(withJSONObject:raw.filter{fields.contains($0.key)},options:[.sortedKeys,.withoutEscapingSlashes]).base64EncodedString().replacingOccurrences(of:"+",with:"-").replacingOccurrences(of:"/",with:"_").replacingOccurrences(of:"=",with:"")
         return try DeviceNativeDeliveryCommandBinding.bind(command:command,associationHeader:header,
@@ -2133,7 +2138,29 @@ final class DeviceLocalProvisioningIntentStore {
         try boundary(.beforeDeliveryScopeExit)
         return receipt
     }
-    private func checkedDeliveryNodes(_ c:Context,_ intent:DeliveryIntent)throws->[String:Node] {
+    func inspectStoredDeliveryBindingExact(nativeOperationID: UUID, resourcePermit: DeviceLocalResourcePermit) throws -> DeviceNativeDeliveryCommandBinding {
+        try disk(resourcePermit: resourcePermit) { context in
+            let intentNode = try require(context.root, "delivery.intent", limit: 32768)
+            let intent = try decodeDeliveryIntent(intentNode.bytes)
+            guard intent.rootID == rootID, intent.nativeOperationID == nativeOperationID else { throw Failure.conflict }
+            let completionNode = try require(context.root, "native-completion.binding", limit: 65536)
+            let completion = try nativeCompletionBinding(completionNode.bytes)
+            guard nativeCompletionScopeActive, completion.rootID == rootID,
+                  completion.operationID == nativeOperationID, completion.selfID == completionNode.identity else { throw Failure.conflict }
+            let nodes = try checkedDeliveryNodes(context, intent, nativePredecessor: completion.baseline)
+            let a = intent.association
+            let association: [String: Any] = ["schemaVersion": 1, "operationId": a.operationID.uuidString.lowercased(),
+                "planId": a.planID.uuidString.lowercased(), "installationId": a.installationID.uuidString.lowercased(),
+                "accountId": a.accountID.uuidString.lowercased(), "locationId": a.locationID.map { $0.uuidString.lowercased() } as Any? ?? NSNull(),
+                "transitionId": a.transitionID.uuidString.lowercased(), "planDigest": a.planDigest, "planByteLength": a.planByteLength]
+            let header = try JSONSerialization.data(withJSONObject: association, options: [.sortedKeys]).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            guard let command = nodes["delivery.command"], let plan = nodes["delivery.plan"] else { throw Failure.conflict }
+            return try DeviceNativeDeliveryCommandBinding.bind(command: command.bytes, associationHeader: header,
+                rawPlan: plan.bytes, nativeOperationID: nativeOperationID, journalRootID: rootID)
+        }
+    }
+    private func checkedDeliveryNodes(_ c:Context,_ intent:DeliveryIntent,nativePredecessor:Node?=nil)throws->[String:Node] {
         let leaves=try deliveryLeaves(c)
         guard Set(leaves) == Self.deliveryNames else{throw Failure.conflict}
         var result:[String:Node]=[:]
@@ -2146,7 +2173,7 @@ final class DeviceLocalProvisioningIntentStore {
               result["delivery.command"]!.bytes.count == intent.commandBytes,result["delivery.plan"]!.bytes.count == intent.association.planByteLength,
               try DeviceNativeDeliveryAttachmentCodec.hash(result["delivery.command"]!.bytes).utf8.elementsEqual(intent.commandHash.utf8),
               try DeviceNativeDeliveryAttachmentCodec.hash(result["delivery.plan"]!.bytes).utf8.elementsEqual(intent.association.planDigest.utf8) else{throw Failure.conflict}
-        let state=try inventory(c,allowDeliveryAttachment:true)
+        let state=try inventory(c,allowDeliveryAttachment:true,nativePredecessor:nativePredecessor)
         guard state.nodes["head"] == intent.head,let b=state.nodes["binding"],let g=state.nodes["genesis"],b.identity == intent.bindingID,g.identity == intent.genesisID,
               try DeviceNativeDeliveryAttachmentCodec.hash(b.bytes).utf8.elementsEqual(intent.bindingHash.utf8),try DeviceNativeDeliveryAttachmentCodec.hash(g.bytes).utf8.elementsEqual(intent.genesisHash.utf8) else{throw Failure.conflict}
         result["rootBinding"]=b;result["genesis"]=g;result["head"]=intent.head;return result

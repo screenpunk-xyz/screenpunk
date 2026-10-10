@@ -13,6 +13,7 @@ enum LANChannel {
     static func tlsParameters(
         identity: TLSIdentityMaterial,
         pinnedPeer: @escaping () -> [UInt8]?,
+        allowPairingCandidates: Bool = false,
         queue: DispatchQueue
     ) throws -> NWParameters {
         let tls = NWProtocolTLS.Options()
@@ -27,7 +28,10 @@ enum LANChannel {
             let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
             let pin = TLSIdentity.pin(from: secTrust)
             if let expected = pinnedPeer() {
-                complete(pin == expected)
+                // Server candidates prove a certificate identity but receive only
+                // bounded pairing service until on-device approval. Controllers
+                // retain strict device pinning (default false).
+                complete(pin == expected || (allowPairingCandidates && pin != nil))
             } else {
                 complete(pin != nil)
             }

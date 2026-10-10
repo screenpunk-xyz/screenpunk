@@ -35,7 +35,7 @@ public final class WorkbenchAuthoringRecoveryDomain {
         guard timeout > 0, timeout <= 300 else { throw WorkbenchIPCError(.invalidConfiguration) }
         let extended = request.method == .migrationPlan || request.method == .migrationApply ||
             request.method == .projectClone || request.method == .packageExport ||
-            request.method == .projectSourceExport || request.method == .projectSourceImport ||
+            request.method == .projectSourceExport || request.method == .projectSourceImport || request.method == .projectSyncSource ||
             request.method == .projectOpenExternal || request.method == .projectAdoptExternal ||
             request.method == .projectRelocateExternal || request.method == .projectUpgradeKit
         let duration = request.method == .snapshotCreate || request.method == .workspaceRelocate ? timeout :
@@ -45,8 +45,11 @@ public final class WorkbenchAuthoringRecoveryDomain {
             if cancelled() { throw WorkbenchIPCError(.disconnected) }
             if ProcessInfo.processInfo.systemUptime >= deadline { throw WorkbenchIPCError(.timedOut) }
         }
+        let creationScope = [.projectCreate, .projectClone, .projectSourceImport].contains(request.method)
+            ? try ControllerCloudCreationScope.capture(workspace: workspace) : nil
         let authoring = WorkbenchContainedAuthoring(workspace: workspace,
             localReadTimeout: min(timeout, 120))
+        authoring.cloudCreationScope = creationScope
         do {
             try check()
             let result: WorkbenchAuthoringRecoveryResult
@@ -66,8 +69,9 @@ public final class WorkbenchAuthoringRecoveryDomain {
                 result = .init(kind: .authoringProject, project: project)
             case .projectClone(let id, let version, let name):
                 try mutationGate(); try check()
-                let project = try WorkbenchPortableSourceArchive(workspace: workspace)
-                    .cloneCurrent(projectId: id, expectedSourceVersion: version,
+                let archive = WorkbenchPortableSourceArchive(workspace: workspace)
+                archive.cloudCreationScope = creationScope
+                let project = try archive.cloneCurrent(projectId: id, expectedSourceVersion: version,
                         destinationName: name)
                 result = .init(kind: .authoringProject, project: project)
             case .projectUnregister(let id, let expectedGeneration):
@@ -113,6 +117,10 @@ public final class WorkbenchAuthoringRecoveryDomain {
                 let project = try authoring.get(id, deadline: deadline, cancelled: cancelled)
                 try check()
                 result = .init(kind: .authoringProject, project: project)
+            case .projectSyncSource(let id, let expectedSourceVersion, let stagedPath):
+                try mutationGate(); try check()
+                let project = try authoring.applyCloudSource(projectId: id, expectedSourceVersion: expectedSourceVersion, stagedPath: stagedPath)
+                result = .init(kind: .authoringProject, project: project)
             case .projectPatch(let id, let expectedSourceVersion, let changes):
                 try mutationGate(); try check()
                 let project = try authoring.patch(id, expectedSourceVersion: expectedSourceVersion,
@@ -135,8 +143,9 @@ public final class WorkbenchAuthoringRecoveryDomain {
                 result = .init(kind: .sourceArchive, sourceArchive: receipt)
             case .projectSourceImport(let path, let name):
                 try mutationGate(); try check()
-                let imported = try WorkbenchPortableSourceArchive(workspace: workspace)
-                    .importSource(from: path, destinationName: name)
+                let archive = WorkbenchPortableSourceArchive(workspace: workspace)
+                archive.cloudCreationScope = creationScope
+                let imported = try archive.importSource(from: path, destinationName: name)
                 result = .init(kind: .authoringProject, project: imported)
             case .projectOpenExternal(let path):
                 try mutationGate(); try check()
@@ -371,7 +380,8 @@ public final class WorkbenchAuthoringRecoveryDomain {
     private func buildRead(_ head: WorkbenchBuildHead, diagnostics: String) -> WorkbenchBuildRead {
         WorkbenchBuildRead(projectId: head.projectID, dashboardId: head.dashboardID,
             sourceVersion: head.sourceVersion, revision: head.revision,
-            digest: head.digest, diagnostics: String(diagnostics.prefix(2_000)))
+            digest: head.digest, diagnostics: String(diagnostics.prefix(2_000)),
+            selectedToolchain: head.selectedToolchain)
     }
 }
 #endif

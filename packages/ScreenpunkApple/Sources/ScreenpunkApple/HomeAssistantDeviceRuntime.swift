@@ -3,7 +3,7 @@ import ScreenpunkCore
 
 /// One atomic Keychain record binds permissions and credentials to their paired owner.
 public final class HomeAssistantDeviceVault: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private let store: any CredentialStore
     public static let storageService = "xyz.screenpunk.device.home-assistant"
     static let storageKeys = ["provisioning-v1", "screen-set-grants-v1", "public-read-grants-v1"]
@@ -142,6 +142,24 @@ public final class HomeAssistantDeviceVault: @unchecked Sendable {
     private func grantSets() throws -> [String: [Record]] {
         guard let data = try store.secret(for: setsAccount) else { return [:] }
         return try JSONDecoder().decode([String: [Record]].self, from: data)
+    }
+    /// Scoped legacy export into a durable migration attempt only. Holding the original vault
+    /// lock prevents an approval update/revocation from racing credential qualification.
+    func withMigrationConfiguration<T>(owner: String, dashboardId: String, revision: String,
+        grantSet: String?, _ consume: (HomeAssistantProvisioning?, PublicReadProvisioning?) throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        let records: [Record]
+        if let grantSet { records = try grantSets()[grantSet] ?? [] }
+        else if let data = try store.secret(for: account) { records = [try JSONDecoder().decode(Record.self, from: data)] }
+        else { records = [] }
+        let matches = records.filter { $0.owner == owner && $0.configuration.dashboardId == dashboardId && $0.configuration.revision == revision }
+        guard matches.count <= 1 else { throw ConnectionFailure.validationFailed }
+        let publicMatches = try grantSet.map { try publicSets()[$0] ?? [] } ?? []
+        let reads = publicMatches.filter { $0.owner == owner && $0.configuration.dashboardId == dashboardId && $0.configuration.revision == revision }
+        guard reads.count <= 1 else { throw ConnectionFailure.validationFailed }
+        if let configuration = matches.first?.configuration { try configuration.validate() }
+        if let configuration = reads.first?.configuration { try configuration.validate() }
+        return try consume(matches.first?.configuration, reads.first?.configuration)
     }
     func record(owner: String, revision: String, grantSet: String? = nil) throws -> Record {
         lock.lock(); defer { lock.unlock() }

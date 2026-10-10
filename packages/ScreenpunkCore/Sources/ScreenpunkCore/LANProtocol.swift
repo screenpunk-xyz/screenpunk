@@ -21,6 +21,12 @@ public enum LANMethod: String, Sendable, Codable, Equatable {
     case settingsUpdate = "settings.update"
     case pairBegin = "pair.begin"
     case pairConfirm = "pair.confirm"
+    case pairRevoke = "pair.revoke"
+    case screenSelect = "screen.select"
+    case screenRemove = "screen.remove"
+    case screenInstall = "screen.install"
+    case cloudRelay = "cloud.relay"
+    case cloudArchiveChunk = "cloud.archiveChunk"
     case deploy
     case deploySet = "deploy.set"
     case queryActive = "query.active"
@@ -156,14 +162,55 @@ public struct DeviceTemporaryActivationStatus: Sendable, Equatable, Codable {
     public init() {}
 }
 
+public struct LANCommonScreenEntry: Sendable, Equatable, Codable {
+    public var entryId: String
+    public var dashboardId: String
+    public var revision: String
+    public var name: String
+    public var origin: String
+    public init(entryId: String, dashboardId: String, revision: String, name: String, origin: String) {
+        self.entryId = entryId; self.dashboardId = dashboardId; self.revision = revision; self.name = name; self.origin = origin
+    }
+}
 public struct LANActiveQuery: Sendable, Equatable, Codable {
+    /// Authenticated approved-controller status only; no Cloud mutation capability.
+    public var activeGenerationId: String?
+    public var activeEntryId: String?
+    public var lastSuccessfulEntryId: String?
+    public var mountState: String?
+    public var mountFailureCode: String?
+    public var commonEntries: [LANCommonScreenEntry]?
+    public var configuredEntryId: String?
+    public var stateGenerationId: String?
+    public var controllerApproved: Bool?
+    public var localControllerPinHex: String?
+    public var approvedControllerCount: Int?
+    public var cloudInstallationId: String?
     public var revision: String?
 
     public var screens: [LANScreenSetEntry]?
     public var selectedDashboardId: String?
     public var temporaryActivation: DeviceTemporaryActivationStatus?
-    public init(revision: String? = nil, screens: [LANScreenSetEntry]? = nil, selectedDashboardId: String? = nil, temporaryActivation: DeviceTemporaryActivationStatus? = nil) {
+    public init(revision: String? = nil, screens: [LANScreenSetEntry]? = nil, selectedDashboardId: String? = nil, temporaryActivation: DeviceTemporaryActivationStatus? = nil, cloudInstallationId: String? = nil, controllerApproved: Bool? = nil, localControllerPinHex: String? = nil, approvedControllerCount: Int? = nil, stateGenerationId: String? = nil, commonEntries: [LANCommonScreenEntry]? = nil, configuredEntryId: String? = nil, activeGenerationId: String? = nil, activeEntryId: String? = nil, lastSuccessfulEntryId: String? = nil, mountState: String? = nil, mountFailureCode: String? = nil) {
+        self.mountFailureCode = mountFailureCode
+        self.activeGenerationId = activeGenerationId; self.activeEntryId = activeEntryId
+        self.lastSuccessfulEntryId = lastSuccessfulEntryId; self.mountState = mountState
+        self.commonEntries = commonEntries; self.configuredEntryId = configuredEntryId
+        self.stateGenerationId = stateGenerationId
+        self.controllerApproved = controllerApproved
+        self.localControllerPinHex = localControllerPinHex
+        self.approvedControllerCount = approvedControllerCount
+        self.cloudInstallationId = cloudInstallationId
         self.revision = revision; self.screens = screens; self.selectedDashboardId = selectedDashboardId; self.temporaryActivation = temporaryActivation
+    }
+}
+
+public struct LANScreenManagementChange: Codable, Equatable, Sendable {
+    public var operationId: String
+    public var expectedGenerationId: String
+    public var dashboardId: String
+    public init(operationId: String, expectedGenerationId: String, dashboardId: String) {
+        self.operationId = operationId; self.expectedGenerationId = expectedGenerationId; self.dashboardId = dashboardId
     }
 }
 
@@ -264,4 +311,57 @@ public enum PinnedPeer: Sendable {
             throw PairingFailure.identityChanged
         }
     }
+}
+
+/// Explicit reviewed inventory mutation; retaining entries is independent from
+/// uploading packages and selection. Old full-set deployments never imply removal.
+public struct LANUnifiedScreenInstall: Codable, Equatable, Sendable {
+    public var operationId: String
+    public var expectedGenerationId: String
+    public var retainedEntryIds: [String]
+    public var selectedEntryId: String?
+    public var incoming: [LANUnifiedScreenInstallEntry]
+    public init(operationId: String, expectedGenerationId: String, retainedEntryIds: [String], selectedEntryId: String?, incoming: [LANUnifiedScreenInstallEntry]) {
+        self.operationId = operationId; self.expectedGenerationId = expectedGenerationId
+        self.retainedEntryIds = retainedEntryIds; self.selectedEntryId = selectedEntryId; self.incoming = incoming
+    }
+}
+public struct LANUnifiedScreenInstallEntry: Codable, Equatable, Sendable {
+    public var entryId: String
+    public var screen: LANScreenSetItem
+    public init(entryId: String, screen: LANScreenSetItem) { self.entryId = entryId; self.screen = screen }
+}
+
+public struct LANCloudRelay: Codable, Equatable, Sendable {
+    public var installationId: String
+    public var operationId: String
+    public init(installationId: String, operationId: String) { self.installationId = installationId; self.operationId = operationId }
+}
+public struct LANCloudRelayReceipt: Codable, Equatable, Sendable {
+    public var accepted: Bool
+    public var installationId: String
+    public var operationId: String
+    public init(accepted: Bool, installationId: String, operationId: String) { self.accepted = accepted; self.installationId = installationId; self.operationId = operationId }
+}
+
+public struct LANCloudArchiveChunk: Codable, Equatable, Sendable {
+    public var transferId: String
+    public var installationId: String
+    public var operationId: String
+    public var packageId: String
+    public var archiveSha256: String
+    public var archiveBytes: Int
+    public var offset: Int
+    public var dataBase64: String
+    public var final: Bool
+    public init(transferId:String,installationId:String,operationId:String,packageId:String,archiveSha256:String,archiveBytes:Int,offset:Int,dataBase64:String,final:Bool){
+        self.transferId=transferId;self.installationId=installationId;self.operationId=operationId;self.packageId=packageId
+        self.archiveSha256=archiveSha256;self.archiveBytes=archiveBytes;self.offset=offset;self.dataBase64=dataBase64;self.final=final
+    }
+}
+public struct LANCloudArchiveChunkReceipt: Codable, Equatable, Sendable {
+    public var transferId: String
+    public var receivedBytes: Int
+    public var complete: Bool
+    public init(transferId:String,receivedBytes:Int,complete:Bool){self.transferId=transferId;self.receivedBytes=receivedBytes;self.complete=complete}
 }

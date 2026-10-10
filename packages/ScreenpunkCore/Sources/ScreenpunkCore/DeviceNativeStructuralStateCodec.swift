@@ -14,7 +14,7 @@ enum DeviceNativeStructuralStateCodec {
         guard try integer(o["schemaVersion"]) == 2 else { throw Failure.invalidSchema }
         let w = try object(required(o["owner"]), keys: ["kind", "installationID", "accountID", "locationID", "transitionID"])
         guard try string(w["kind"]).utf8.elementsEqual("nativeInstallation".utf8) else { throw Failure.invalidSchema }
-        let owner = DeviceNativeInstallationContentOwner(installationID: try id(w["installationID"]), accountID: try id(w["accountID"]), locationID: try id(w["locationID"]), transitionID: try id(w["transitionID"]))
+        let owner = DeviceNativeInstallationContentOwner(installationID: try id(w["installationID"]), accountID: try id(w["accountID"]), locationID: try optionalID(w["locationID"]), transitionID: try id(w["transitionID"]))
         guard case .array(let raw) = o["entries"], raw.count <= 12 else { throw Failure.invalidSchema }
         let entries = try raw.map { value -> DeviceNativeStructuralEntry in
             let e = try object(value, keys: ["entryID", "displayName", "provenance", "package", "preparedPackage"])
@@ -37,9 +37,12 @@ enum DeviceNativeStructuralStateCodec {
                 "preparedPackage": ["rootID": uuid(r.rootID), "contentID": r.contentID, "preparationOperationID": uuid(r.preparationOperationID), "directory": r.directory]]
         }
         let w = state.owner
-        let body: [String: Any] = ["schemaVersion": 2, "generationID": uuid(state.generationID), "owner": ["kind": "nativeInstallation", "installationID": uuid(w.installationID), "accountID": uuid(w.accountID), "locationID": uuid(w.locationID), "transitionID": uuid(w.transitionID)], "entries": entries, "configuredEntryID": state.configuredEntryID.map(uuid) as Any? ?? NSNull()]
+        let body: [String: Any] = ["schemaVersion": 2, "generationID": uuid(state.generationID), "owner": ["kind": "nativeInstallation", "installationID": uuid(w.installationID), "accountID": uuid(w.accountID), "locationID": w.locationID.map(uuid) as Any? ?? NSNull(), "transitionID": uuid(w.transitionID)], "entries": entries, "configuredEntryID": state.configuredEntryID.map(uuid) as Any? ?? NSNull()]
         let data = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys, .withoutEscapingSlashes])
         guard data.count <= maximumBytes else { throw Failure.capacity }; return data
+    }
+    private static func optionalID(_ v: NativeStateJSON?) throws -> UUID? {
+        if case .null = v { return nil }; return try id(v)
     }
     private static func required(_ v: NativeStateJSON?) throws -> NativeStateJSON { guard let v else { throw Failure.invalidSchema }; return v }
     private static func object(_ v: NativeStateJSON, keys: Set<String>) throws -> [String: NativeStateJSON] {

@@ -13,11 +13,13 @@ struct CloudAccountJourneyActions {
     let presentation: CloudProviderPresentation
     let availability: CloudJourneyAvailability
     let makeSession: ((CloudProviderPresentation) throws -> CloudHumanSession)?
-    var enrollDevice: ((UUID, UUID, String, String) -> Void)?
+    var enrollDevice: ((UUID, UUID?, String) -> Void)?
     var enrollmentState: NativeEnrollmentSceneController.State = .idle
     var deliveryMessage: String?
     var retainedDeviceName: String?
-    var retainedDeviceProfile: String?
+    var retainedAccountID: UUID?
+    var retainedLocationID: UUID?
+    var suggestedDeviceName: String?
     var viewScreen: (() throws -> Void)?
     var enabled: Bool { if case .qualified = availability { return true }; return false }
     init(lifecycle: CloudHumanSessionLifecycle, presentation: CloudProviderPresentation,
@@ -64,15 +66,18 @@ struct CloudAccountJourneyView: View {
     init(lifecycle: CloudHumanSessionLifecycle, presentation: CloudProviderPresentation,
          availability: CloudJourneyAvailability = .unavailable("Cloud sign-in is not available in this version."),
          makeSession: ((CloudProviderPresentation) throws -> CloudHumanSession)? = nil,
-         enrollDevice: ((UUID, UUID, String, String) -> Void)? = nil,
+         enrollDevice: ((UUID, UUID?, String) -> Void)? = nil,
          enrollmentState: NativeEnrollmentSceneController.State = .idle,
          deliveryMessage: String? = nil, viewScreen: (() throws -> Void)? = nil,
-         retainedDeviceName: String? = nil, retainedDeviceProfile: String? = nil) {
+         retainedDeviceName: String? = nil, suggestedDeviceName: String? = nil,
+         retainedAccountID: UUID? = nil, retainedLocationID: UUID? = nil) {
         self.lifecycle = lifecycle
         var actions = CloudAccountJourneyActions(lifecycle: lifecycle, presentation: presentation, availability: availability, makeSession: makeSession)
         actions.enrollDevice = enrollDevice; actions.enrollmentState = enrollmentState
         actions.deliveryMessage = deliveryMessage; actions.viewScreen = viewScreen
-        actions.retainedDeviceName = retainedDeviceName; actions.retainedDeviceProfile = retainedDeviceProfile
+        actions.retainedDeviceName = retainedDeviceName
+        actions.suggestedDeviceName = suggestedDeviceName
+        actions.retainedAccountID = retainedAccountID; actions.retainedLocationID = retainedLocationID
         self.actions = actions
     }
     var body: some View {
@@ -110,7 +115,7 @@ struct CloudAccountJourneyView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismissalCancellation.cancel(actions.cancel); dismiss() }.accessibilityIdentifier("cloud.close") }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismissalCancellation.cancel(actions.cancel); dismiss() }.accessibilityIdentifier("cloud.close") }
                 ToolbarItem(placement: .primaryAction) {
                     if let viewScreen = actions.viewScreen {
                         Button("View screen") {
@@ -218,11 +223,13 @@ private struct CloudWorkspaceJourney: View {
     @State private var workspace = ""
     @State private var location = ""
     @State private var deviceName = ""
-    @State private var deviceProfile = ""
+    @State private var selectedLocationID: UUID?
+    @State private var attemptedDefaultWorkspace = false
+    @AppStorage("screenpunk.lastEnrollmentWorkspace") private var lastEnrollmentWorkspace = ""
     init(coordinator: CloudConnectionCoordinator, actions: CloudAccountJourneyActions) {
         self.coordinator = coordinator; self.actions = actions
-        _deviceName = State(initialValue: actions.retainedDeviceName ?? "")
-        _deviceProfile = State(initialValue: actions.retainedDeviceProfile ?? "")
+        _deviceName = State(initialValue: actions.retainedDeviceName ?? actions.suggestedDeviceName ?? "")
+        _selectedLocationID = State(initialValue: actions.retainedLocationID)
     }
     private var enabled: Bool { actions.enabled && !coordinator.isWorking }
     var body: some View {
@@ -252,14 +259,13 @@ private struct CloudWorkspaceJourney: View {
                 ForEach(coordinator.accounts, id: \.id) { account in
                     Button { actions.chooseAccount(account.id) } label: {
                         HStack { Text(account.name).multilineTextAlignment(.leading); Spacer(); if coordinator.selectedAccountID == account.id { Image(systemName: "checkmark") } }
-                    }.buttonStyle(.bordered).disabled(!enabled).accessibilityLabel("View locations in \(account.name)")
+                    }.buttonStyle(.bordered).disabled(!enabled || actions.retainedAccountID != nil).accessibilityLabel("View locations in \(account.name)")
                 }
             }
             if coordinator.selectedAccountID != nil {
                 Text("Locations").font(.headline).accessibilityAddTraits(.isHeader)
                 if actions.enrollDevice != nil {
                     TextField("Device name", text: $deviceName).textFieldStyle(.roundedBorder).disabled(actions.retainedDeviceName != nil)
-                    TextField("Device type", text: $deviceProfile).textFieldStyle(.roundedBorder).disabled(actions.retainedDeviceProfile != nil)
                     switch actions.enrollmentState {
                     case .idle: EmptyView()
                     case .enrolling: ProgressView("Preparing this device and screen…")
@@ -267,17 +273,30 @@ private struct CloudWorkspaceJourney: View {
                     case .currentInstallation: Text(actions.deliveryMessage ?? "Current installation verified.").foregroundStyle(.secondary)
                     }
                 }
+                if actions.enrollDevice != nil {
+                    Text("Confirm this device").font(.headline).accessibilityAddTraits(.isHeader)
+                    Text("Location (optional)").font(.subheadline)
+                    Button {
+                        selectedLocationID = nil
+                    } label: {
+                        HStack { Text("Unassigned"); Spacer(); if selectedLocationID == nil { Image(systemName: "checkmark") } }
+                    }.buttonStyle(.bordered).disabled(!enabled || actions.retainedAccountID != nil)
+                }
                 ForEach(coordinator.locations, id: \.id) { item in
-                    VStack(alignment: .leading) {
-                        Text(item.name)
-                        if let enroll = actions.enrollDevice, let accountID = coordinator.selectedAccountID,
-                            item.capabilities.canEnroll, coordinator.accounts.contains(where: { $0.id == accountID && $0.capabilities.canEnroll }) {
-                            Button(actions.enrollmentState == .currentInstallation ? "Check for screens" : "Enroll this device") { enroll(accountID, item.id, actions.retainedDeviceName ?? deviceName, actions.retainedDeviceProfile ?? deviceProfile) }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(!enabled || (actions.retainedDeviceName ?? deviceName).isEmpty || (actions.retainedDeviceProfile ?? deviceProfile).isEmpty || actions.enrollmentState == .enrolling)
-                                .accessibilityLabel("Enroll this device in \(item.name)")
-                        }
-                    }
+                    Button {
+                        selectedLocationID = item.id
+                    } label: {
+                        HStack { Text(item.name); Spacer(); if selectedLocationID == item.id { Image(systemName: "checkmark") } }
+                    }.buttonStyle(.bordered)
+                        .disabled(!enabled || !item.capabilities.canEnroll || actions.retainedAccountID != nil)
+                }
+                if let enroll = actions.enrollDevice, let accountID = coordinator.selectedAccountID {
+                    Button(actions.enrollmentState == .currentInstallation ? "Check for screens" : "Connect device") {
+                        let locationID = actions.retainedAccountID != nil ? actions.retainedLocationID : selectedLocationID
+                        enroll(accountID, locationID, actions.retainedDeviceName ?? deviceName)
+                    }.buttonStyle(.borderedProminent)
+                        .disabled(!enabled || !canConnect(accountID: accountID))
+                        .accessibilityIdentifier("cloud.connectDevice")
                 }
                 if !coordinator.isWorking && coordinator.locations.isEmpty && coordinator.failure == nil { Text("No locations in this workspace.").foregroundStyle(.secondary) }
                 if coordinator.failure == .discovery, let id = coordinator.selectedAccountID {
@@ -288,6 +307,27 @@ private struct CloudWorkspaceJourney: View {
                 Button("Sign in again") { actions.cancel() }.disabled(!enabled)
             }
         }
+        .onAppear { selectDefaultWorkspace() }
+        .onChange(of: coordinator.isWorking) { _ in selectDefaultWorkspace() }
+        .onChange(of: coordinator.selectedAccountID) { id in
+            selectedLocationID = actions.retainedLocationID
+            if let id, coordinator.accounts.contains(where: { $0.id == id && $0.capabilities.canEnroll }) { lastEnrollmentWorkspace = id.uuidString }
+        }
+    }
+    private func canConnect(accountID: UUID) -> Bool {
+        guard actions.enrollmentState != .enrolling,
+              !(actions.retainedDeviceName ?? deviceName).isEmpty else { return false }
+        let locationID = actions.retainedAccountID != nil ? actions.retainedLocationID : selectedLocationID
+        return coordinator.accounts.contains { $0.id == accountID && $0.capabilities.canEnroll && (locationID != nil || $0.capabilities.canEnrollUnassigned) }
+            && (locationID == nil || coordinator.locations.contains { $0.id == locationID && $0.capabilities.canEnroll })
+    }
+    private func selectDefaultWorkspace() {
+        guard enabled, !attemptedDefaultWorkspace, coordinator.selectedAccountID == nil,
+              let accountID = actions.retainedAccountID
+                ?? coordinator.accounts.first(where: { $0.id == UUID(uuidString: lastEnrollmentWorkspace) && $0.capabilities.canEnroll })?.id
+                ?? coordinator.accounts.first(where: { $0.capabilities.canEnroll })?.id else { return }
+        attemptedDefaultWorkspace = true
+        actions.chooseAccount(accountID)
     }
     private var recoveryButtons: some View {
         VStack(alignment: .leading, spacing: 12) {

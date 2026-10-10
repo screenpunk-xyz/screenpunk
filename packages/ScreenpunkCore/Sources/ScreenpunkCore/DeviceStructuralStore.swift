@@ -489,6 +489,48 @@ final class DeviceStructuralStore {
               state.bytes == i.stateBytes,parsed.entries.isEmpty,parsed.configuredEntryID == nil,try DeviceNativeStructuralStateCodec.encode(parsed) == state.bytes else{throw DeviceStructuralStoreError.conflict}
         var original=nodes;original["root-binding.json"]=i.binding;return(parsed,original)
     }
+    /// Requalifies the exact recorded genesis after process restart. Existing command
+    /// history is retained and checked reciprocally; this does not acknowledge its
+    /// current content or grants and never converts a partial record into completion.
+    func restoreNativeGenesisExplicit() throws -> NativeGenesisCheckpoint {
+        let restored = try disk(allowNative: true) { c -> (NativeGenesisCheckpoint, UUID?) in
+            nativeCommandScopeActive = true
+            defer { nativeCommandScopeActive = false }
+            let original = try checkedNativeGenesis(c)
+            let files = try names(c.operations)
+            var operation: UUID?
+            if !files.isEmpty {
+                let methods = files.filter { $0.hasSuffix(".native-intent.json") || $0.hasSuffix(".native-intent.json.stage") }
+                guard methods.count == 1,
+                      let name = methods.first,
+                      let id = UUID(uuidString: String(name.prefix(36))) else { throw DeviceStructuralStoreError.conflict }
+                let dispatch = try nativeDispatchPreflight(c, operation: id, candidate: nil, assertions: nil)
+                guard dispatch.method != nil else { throw DeviceStructuralStoreError.outcomeUncertain }
+                operation = id
+            } else {
+                guard try readFile(c.root, "native-current.json", limit: 131072) == nil,
+                      try readFile(c.root, "native-current.json.stage", limit: 131072) == nil else { throw DeviceStructuralStoreError.conflict }
+            }
+            let now = epoch(invalidate: true)
+            nativeGenesisQualified = nil; nativeCommandPending = nil; nativeCommandQualified = nil
+            for (name, node) in original.1 {
+                try syncExisting(c.root, name, expected: .init(identity: node.identity, bytes: node.bytes))
+            }
+            try sync(c.lock); try sync(c.operations); try sync(c.root); try check(c)
+            let final = try checkedNativeGenesis(c)
+            guard final.0 == original.0, final.1 == original.1, epoch() == now else { throw DeviceStructuralStoreError.conflict }
+            if let operation { _ = try nativeDispatchPreflight(c, operation: operation, candidate: nil, assertions: nil) }
+            return (NativeGenesisCheckpoint(ObjectIdentifier(self), rootID, now, final.0,
+                try DeviceNativeStructuralStateCodec.encode(final.0), final.1), operation)
+        }
+        try DeviceLocalResourceRegistry.beginOrdinary()
+        defer { DeviceLocalResourceRegistry.endOrdinary() }
+        mutex.lock(); defer { mutex.unlock() }
+        guard restored.0.epoch == epoch() else { throw DeviceStructuralStoreError.conflict }
+        nativeGenesisDispatchOperation = restored.1; nativeGenesisQualified = restored.0
+        return restored.0
+    }
+
     /// Exact explicitly supplied empty baseline only; does not install a committed delivery envelope.
     func initializeNativeGenesisExplicit(_ state:DeviceNativeStructuralState)throws->NativeGenesisCheckpoint {
         guard root.isFileURL,state.entries.isEmpty,state.configuredEntryID == nil else{throw DeviceStructuralStoreError.conflict}
@@ -561,6 +603,16 @@ final class DeviceStructuralStore {
         }
     }
 
+
+    /// A common Local-first inventory can retain genuine enrollment genesis only
+    /// when no native content command has ever occupied the structural store.
+    func verifyNativeEmptyGenesisSourceExact(_ original: NativeGenesisCheckpoint, resourcePermit: DeviceLocalResourcePermit) throws {
+        try verifyNativeGenesisExact(original, resourcePermit: resourcePermit)
+        try disk(allowNative: true, resourcePermit: resourcePermit) { c in
+            guard try names(c.operations).isEmpty,
+                !(try names(c.root)).contains(where: { $0.hasPrefix("native-current.json") }) else { throw DeviceStructuralStoreError.conflict }
+        }
+    }
 
     // First native operation only. No Local envelope conversion or second-operation admission.
     private var nativeGenesisDispatchOperation: UUID?
@@ -748,6 +800,20 @@ final class DeviceStructuralStore {
         guard final.original == state.original,final.nodes["current"] == current,final.nodes["terminal"] == proof,epoch() == attemptEpoch else {throw DeviceStructuralStoreError.conflict}
         let capture=NativeCommandCapture(ObjectIdentifier(self),rootID,attemptEpoch,envelope.operationID,candidate,state.original,final.nodes)
         nativeCommandPending=capture;return capture
+    }
+    /// Durable bytes discovery only. Recovery still verifies original method,
+    /// resources, grants and terminal reciprocal proofs before publishing content.
+    func inspectStoredNativeCandidateExact(operationID: UUID, resourcePermit: DeviceLocalResourcePermit) throws -> DeviceNativeStructuralState {
+        try disk(allowNative: true, resourcePermit: resourcePermit) { context in
+            let state = try nativeDispatchPreflight(context, operation: operationID, candidate: nil, assertions: nil)
+            guard let method = state.method, state.binding != nil,
+                  let current = state.nodes["current"],
+                  current.bytes == method.candidate,
+                  state.nodes["terminal"] != nil else { throw DeviceStructuralStoreError.conflict }
+            let envelope = try DeviceNativeStructuralEnvelopeCodec.decode(method.candidate)
+            guard envelope.operationID == operationID else { throw DeviceStructuralStoreError.conflict }
+            return try DeviceNativeStructuralStateCodec.decode(envelope.snapshotBytes)
+        }
     }
     func verifyNativeCommandCapture(_ original:NativeCommandCapture,resourcePermit:DeviceLocalResourcePermit) throws {
         try disk(allowNative:true,resourcePermit:resourcePermit){c in

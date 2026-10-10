@@ -25,6 +25,27 @@ struct NativeDeliveryExecutionStoreBinding {
     case bounds, association, unsupportedCapabilities, phase, unavailableDispatchCapability
 }
 
+/// Explicit host mounting observation for one original qualified content object.
+/// Construction never follows configured selection automatically. The host calls
+/// confirmation only after its WebView has mounted this exact asset snapshot.
+@_spi(NativeInstallation) public final class NativeMountedContentObservation: @unchecked Sendable {
+    public let generationID: UUID, entryID: UUID, packageDigest: String
+    private let installation: NativeOperationalInstallation
+    private let content: DeviceManagedStaticContent
+    fileprivate init(installation: NativeOperationalInstallation, content: DeviceManagedStaticContent, packageDigest: String) {
+        self.installation = installation; self.content = content; self.packageDigest = packageDigest
+        generationID = content.generationID; entryID = content.entryID
+    }
+    func validatedBody(installation: NativeOperationalInstallation, current: NativeCurrentInstallationDispatch) throws -> Data {
+        guard installation === self.installation else { throw NativeDeliveryExecutionError.association }
+        try current.validateInstallationExact(installation: installation)
+        try content.verifyResources()
+        try current.validateInstallationExact(installation: installation)
+        return try JSONSerialization.data(withJSONObject: ["generationId": generationID.uuidString.lowercased(),
+            "entryId": entryID.uuidString.lowercased(), "packageDigest": packageDigest], options: [.sortedKeys])
+    }
+}
+
 /// Exact nonsecret outgoing bytes. Constructed only after the corresponding fixed durable
 /// command. These bytes are not HTTP success, current installation admission or a live lease.
 @_spi(NativeInstallation) public final class NativeDeliveryDurableBody {
@@ -34,7 +55,7 @@ struct NativeDeliveryExecutionStoreBinding {
     fileprivate let installation: NativeOperationalInstallation
     fileprivate let requestID: UUID?
     fileprivate let requestStart: ContinuousClock.Instant?
-    fileprivate enum Kind { case state, activation, outcome }
+    fileprivate enum Kind { case state, activation, outcome, unifiedOutcome }
     fileprivate init(_ bytes: Data, session: ObjectIdentifier, kind: Kind, installation: NativeOperationalInstallation,
                      requestID: UUID? = nil, requestStart: ContinuousClock.Instant? = nil) {
         self.bytes = bytes; self.session = session; self.kind = kind
@@ -57,7 +78,7 @@ struct NativeDeliveryExecutionStoreBinding {
     }
     func requireOutcomeOriginal(installation expected: NativeOperationalInstallation) throws {
         try Task.checkCancellation()
-        guard installation === expected, kind == .outcome, requestID != nil, requestStart != nil else {
+        guard installation === expected, (kind == .unifiedOutcome || (kind == .outcome && requestID != nil && requestStart != nil)) else {
             throw NativeDeliveryExecutionError.association
         }
         // Original outcome reporting survives the dispatch lease; current owner is checked by the fixed collector.
@@ -138,6 +159,129 @@ struct NativeDeliveryExecutionStoreBinding {
     }
 }
 
+@_spi(NativeInstallation) public final class NativeInstallationUnifiedStructuralDispatchResult {
+    fileprivate let command: ObjectIdentifier
+    let capture: DeviceMixedInventoryStore.Capture
+    let receipt: DeviceMixedInventoryStore.Receipt
+    fileprivate init(_ command: NativeInstallationUnifiedStructuralDispatchCommand,
+        result: (DeviceMixedInventoryStore.Capture, DeviceMixedInventoryStore.Receipt)) {
+        self.command = ObjectIdentifier(command); capture = result.0; receipt = result.1
+    }
+}
+
+/// Nominal command; only a genuine fixed HTTPS authorization and exact prepared
+/// resource graph can construct it. The fixed owner holds intent/root admission.
+@_spi(NativeInstallation) public final class NativeInstallationUnifiedStructuralDispatchCommand {
+    public var resultingGenerationID: UUID { incoming.command.candidate.generationID }
+    public let commonRootID: UUID, installationID: UUID
+    public let requiresConcurrentQualification: Bool
+    private let resolver: DeviceMixedResourceResolver
+    private let original: DeviceMixedResolvedResources
+    private let store: DeviceMixedInventoryStore
+    private let incoming: DeviceMixedIncomingResources
+    private let installation: NativeOperationalInstallation
+    private let current: NativeCurrentInstallationDispatch
+    private let body: NativeDeliveryDurableBody
+    private let observation: NativeDeliveryActivationHTTPObservation
+    private let mutex = NSLock()
+    private var invoking = false, consumed = false
+    fileprivate init(resolver: DeviceMixedResourceResolver, original: DeviceMixedResolvedResources,
+        store: DeviceMixedInventoryStore, incoming: DeviceMixedIncomingResources,
+        installation: NativeOperationalInstallation, current: NativeCurrentInstallationDispatch,
+        body: NativeDeliveryDurableBody, observation: NativeDeliveryActivationHTTPObservation) {
+        self.resolver = resolver; self.original = original; self.store = store; self.incoming = incoming
+        self.installation = installation; self.current = current; self.body = body; self.observation = observation
+        commonRootID = store.rootID; installationID = incoming.command.candidate.installationOwner.installationID
+        requiresConcurrentQualification = (incoming.command.capture.snapshot.entries + incoming.command.candidate.entries).contains { if case .retainedLocal = $0 { return true }; return false }
+    }
+    func beginFixedInvocation(current: NativeCurrentInstallationDispatch) throws {
+        mutex.lock(); defer { mutex.unlock() }
+        guard self.current === current, !invoking, !consumed else { throw NativeDeliveryExecutionError.phase }
+        invoking = true
+    }
+    func endFixedInvocation() { mutex.lock(); invoking = false; mutex.unlock() }
+    public func performDuringFixedOwner() throws -> NativeInstallationUnifiedStructuralDispatchResult {
+        mutex.lock()
+        guard invoking, !consumed else { mutex.unlock(); throw NativeDeliveryExecutionError.phase }
+        consumed = true; mutex.unlock()
+        let requestID = try body.requireActivationOriginal(installation: installation)
+        let response = try observation.validatedResponse(for: body, installation: installation)
+        let authorization = try DeviceNativeDeliveryHTTPCodec.observe(response, kind: .activationResponse,
+            binding: incoming.command.delivery, requestID: requestID)
+        guard authorization.authorizationDigest != nil else { throw NativeDeliveryExecutionError.association }
+        try current.validateFixedUnifiedCommandEvidence(installation: installation, association: incoming.command.delivery.association)
+        let result = try resolver.commitIncomingCloudResourcesExact(original, store: store, incoming: incoming, admissionEnabled: true)
+        try current.validateFixedUnifiedCommandEvidence(installation: installation, association: incoming.command.delivery.association)
+        return .init(self, result: result)
+    }
+    func unwrap(_ result: NativeInstallationUnifiedStructuralDispatchResult) throws -> (DeviceMixedInventoryStore.Capture, DeviceMixedInventoryStore.Receipt) {
+        guard result.command == ObjectIdentifier(self) else { throw NativeDeliveryExecutionError.association }
+        return (result.capture, result.receipt)
+    }
+}
+
+@_spi(NativeInstallation) public protocol NativeUnifiedLocalInventoryOwner: AnyObject {
+    var commonRootID: UUID { get }
+    var peerPinHex: String { get }
+    func performFixedUnifiedLocalDispatch(command: NativeInstallationUnifiedLocalDispatchCommand) throws -> NativeInstallationUnifiedLocalDispatchResult
+}
+@_spi(NativeInstallation) public final class NativeInstallationUnifiedLocalDispatchResult {
+    fileprivate let command: ObjectIdentifier
+    let capture: DeviceMixedInventoryStore.Capture
+    fileprivate init(_ command: NativeInstallationUnifiedLocalDispatchCommand, capture: DeviceMixedInventoryStore.Capture) {
+        self.command = ObjectIdentifier(command); self.capture = capture
+    }
+}
+/// Fixed approved-peer owner holds registry/latest-intent admission throughout
+/// this resource transaction. No public constructor or raw permission boolean.
+@_spi(NativeInstallation) public final class NativeInstallationUnifiedLocalDispatchCommand {
+    public var resultingGenerationID: UUID { generationID }
+    public let commonRootID: UUID, installationID: UUID
+    public let peerPinHex: String
+    private let resolver: DeviceMixedResourceResolver
+    private let original: DeviceMixedResolvedResources
+    private let store: DeviceMixedInventoryStore
+    private let previous: DeviceMixedInventoryStore.Capture
+    private let operationID: UUID, generationID: UUID
+    private let retained: [UUID], selected: UUID?
+    private let owner: any NativeUnifiedLocalInventoryOwner
+    private let incoming: DeviceMixedIncomingLocalResources?
+    private let mutex = NSLock()
+    private var invoking = false, consumed = false
+    init(resolver: DeviceMixedResourceResolver, original: DeviceMixedResolvedResources,
+        store: DeviceMixedInventoryStore, previous: DeviceMixedInventoryStore.Capture,
+        operationID: UUID, generationID: UUID, retained: [UUID], selected: UUID?, owner: any NativeUnifiedLocalInventoryOwner, incoming: DeviceMixedIncomingLocalResources? = nil) throws {
+        guard owner.commonRootID == store.rootID, owner.peerPinHex.utf8.count == 64,
+              owner.peerPinHex.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { throw NativeDeliveryExecutionError.association }
+        self.resolver = resolver; self.original = original; self.store = store; self.previous = previous
+        self.operationID = operationID; self.generationID = generationID; self.retained = retained; self.selected = selected; self.owner = owner; self.incoming = incoming
+        commonRootID = store.rootID; installationID = previous.snapshot.installationOwner.installationID; peerPinHex = owner.peerPinHex
+    }
+    func dispatch() throws -> NativeInstallationUnifiedLocalDispatchResult {
+        mutex.lock(); guard !invoking, !consumed else { mutex.unlock(); throw NativeDeliveryExecutionError.phase }
+        invoking = true; mutex.unlock()
+        defer { mutex.lock(); invoking = false; mutex.unlock() }
+        return try owner.performFixedUnifiedLocalDispatch(command: self)
+    }
+    public func performDuringFixedOwner() throws -> NativeInstallationUnifiedLocalDispatchResult {
+        mutex.lock(); guard invoking, !consumed else { mutex.unlock(); throw NativeDeliveryExecutionError.phase }
+        consumed = true; mutex.unlock()
+        if let incoming {
+            let capture = try resolver.commitIncomingLocalExact(original, store: store, previous: previous,
+                source: incoming, operationID: operationID, generationID: generationID, retainedEntryIDs: retained,
+                selected: selected, peerPinHex: peerPinHex)
+            return .init(self, capture: capture)
+        }
+        let result = try resolver.commitSelectionOrRemovalExact(original, store: store, previous: previous,
+            operationID: operationID, generationID: generationID, retainedEntryIDs: retained,
+            configuredEntryID: selected, admissionEnabled: true)
+        return .init(self, capture: result.0)
+    }
+    func unwrap(_ result: NativeInstallationUnifiedLocalDispatchResult) throws -> DeviceMixedInventoryStore.Capture {
+        guard result.command == ObjectIdentifier(self) else { throw NativeDeliveryExecutionError.association }; return result.capture
+    }
+}
+
 /// Fixed first delivery with short state reservations. Installation, authority, store and backend
 /// calls are ALWAYS outside the session mutex. Concurrent/reentrant methods fail promptly;
 /// late cleanup can release only its exact reservation and cannot overwrite a newer state.
@@ -150,6 +294,7 @@ struct NativeDeliveryExecutionStoreBinding {
         var activationBody: NativeDeliveryDurableBody?
         var authorization: DeviceNativeRetainedAuthorization?
         var authorizationObservation: NativeDeliveryActivationHTTPObservation?
+        var staticContent: DeviceManagedStaticContent?
         var structuralAcknowledgment: DeviceNativeStructuralCommitAcknowledgment?
         var completion: DeviceNativeProvisioningCompletionAcknowledgment?
         var outgoing: DeviceNativeOutgoingActivatedReceipt?
@@ -296,13 +441,153 @@ struct NativeDeliveryExecutionStoreBinding {
     }
     /// Original completed resources only. Current installation permission is checked separately;
     /// the returned immutable snapshot is not an ongoing presentation authorization.
+    func confirmUnifiedMountedContentExact(_ content: DeviceManagedStaticContent,
+        inventory: DeviceMixedInventoryStore.Capture, current: NativeCurrentInstallationDispatch) throws -> NativeMountedContentObservation {
+        try current.validateInstallationExact(installation: installation)
+        guard inventory.snapshot.installationOwner.installationID == activation.installationId,
+              inventory.snapshot.installationOwner.accountID == activation.accountId,
+              inventory.snapshot.installationOwner.transitionID == activation.transitionId,
+              content.generationID == inventory.snapshot.generationID,
+              content.entryID == inventory.snapshot.configuredEntryID,
+              let entry = inventory.snapshot.entries.first(where: { $0.entryID == content.entryID }) else { throw NativeDeliveryExecutionError.association }
+        let digest: String
+        switch entry {
+        case .retainedLocal(let local): digest = local.entry.revision.digest
+        case .cloud(let cloud, _): digest = cloud.package.manifestDigest.text
+        }
+        try content.verifyResources()
+        try current.validateInstallationExact(installation: installation)
+        return NativeMountedContentObservation(installation: installation, content: content, packageDigest: digest)
+    }
+    func makeUnifiedActivationBodyExact(bytes: Data, requestID: UUID, current: NativeCurrentInstallationDispatch,
+        session: ObjectIdentifier) throws -> NativeDeliveryDurableBody {
+        try current.validateInstallationExact(installation: installation)
+        return NativeDeliveryDurableBody(bytes, session: session, kind: .activation, installation: installation,
+            requestID: requestID, requestStart: ContinuousClock().now)
+    }
+    func makeUnifiedAcceptanceExact(current: NativeCurrentInstallationDispatch, binding: DeviceNativeDeliveryCommandBinding,
+        commonRootID: UUID, containsLocal: Bool, persist: @escaping () throws -> Void) throws -> NativeInstallationUnifiedCloudAcceptanceCommand {
+        try current.validateInstallationExact(installation: installation)
+        try current.validateFixedUnifiedCommandEvidence(installation: installation, association: binding.association)
+        return try .init(current: current, binding: binding, commonRootID: commonRootID, containsLocal: containsLocal,
+            validate: { [installation] in
+                try current.validateFixedUnifiedCommandEvidence(installation: installation, association: binding.association)
+            }, persist: persist)
+    }
+    func validateUnifiedAuthorizationExact(body: NativeDeliveryDurableBody,
+        observation: NativeDeliveryActivationHTTPObservation, binding: DeviceNativeDeliveryCommandBinding) throws -> Data {
+        let requestID = try body.requireActivationOriginal(installation: installation)
+        let bytes = try observation.validatedResponse(for: body, installation: installation)
+        _ = try DeviceNativeDeliveryHTTPCodec.observe(bytes, kind: .activationResponse, binding: binding, requestID: requestID)
+        return bytes
+    }
+    func validateUnifiedReceiptExact(body: NativeDeliveryDurableBody, observation: NativeDeliveryReceiptHTTPObservation,
+        binding: DeviceNativeDeliveryCommandBinding, expectedOutcome: String = "activated") throws -> (Data, UUID) {
+        let response = try observation.validatedResponse(for: body, installation: installation)
+        let parsed = try DeviceNativeDeliveryHTTPCodec.observe(response, kind: .terminalResponse, binding: binding,
+            requestID: nil, expectedOutcome: expectedOutcome)
+        guard let receiptID = parsed.receiptID else { throw NativeDeliveryExecutionError.association }
+        return (response, receiptID)
+    }
+    func makeUnifiedOutcomeBodyExact(bytes: Data, requestID: UUID?, current: NativeCurrentInstallationDispatch,
+        session: ObjectIdentifier) throws -> NativeDeliveryDurableBody {
+        try current.validateInstallationExact(installation: installation)
+        return NativeDeliveryDurableBody(bytes, session: session, kind: .unifiedOutcome, installation: installation,
+            requestID: requestID, requestStart: nil)
+    }
+    func makeUnifiedStructuralCommandExact(resolver: DeviceMixedResourceResolver, original: DeviceMixedResolvedResources,
+        store: DeviceMixedInventoryStore, incoming: DeviceMixedIncomingResources,
+        body: NativeDeliveryDurableBody, observation: NativeDeliveryActivationHTTPObservation,
+        current: NativeCurrentInstallationDispatch) throws -> NativeInstallationUnifiedStructuralDispatchCommand {
+        try current.validateInstallationExact(installation: installation)
+        let requestID = try body.requireActivationOriginal(installation: installation)
+        _ = try DeviceNativeDeliveryHTTPCodec.observe(observation.validatedResponse(for: body, installation: installation),
+            kind: .activationResponse, binding: incoming.command.delivery, requestID: requestID)
+        return .init(resolver: resolver, original: original, store: store, incoming: incoming,
+            installation: installation, current: current, body: body, observation: observation)
+    }
+    public func validateUnifiedInventoryAssociation(current: NativeCurrentInstallationDispatch) throws {
+        _ = try mixedInventorySourceExact(current: current)
+    }
+    public func restoreCompletedStaticDelivery(nativeOperationID: UUID, grantOperationID: UUID, grantRevisionID: UUID) throws {
+        let reservation = try begin(); var work = reservation.original
+        defer { finish(reservation, work) }
+        guard work.request == nil, work.completion == nil else { throw NativeDeliveryExecutionError.phase }
+        let restored = try coordinator.restoreCompletedStaticSourceExact(operationID: nativeOperationID,
+            grantOperationID: grantOperationID, grantRevisionID: grantRevisionID, baseline: work.baseline)
+        try installation.requireDurableActivationAssociation(activation)
+        work.request = restored.0; work.completion = restored.1
+    }
+    /// Genuine enrollment genesis or genuinely completed delivery; never a synthetic empty completion.
+    func mixedInventorySourceExact(current: NativeCurrentInstallationDispatch? = nil) throws -> (DeviceNativeGrantPrivateCoordinator, DeviceMixedNativeSource) {
+        let reservation = try begin(); let work = reservation.original
+        defer { finish(reservation, work) }
+        if let current { try current.validateInstallationExact(installation: installation) }
+        let source: DeviceMixedNativeSource
+        if let request = work.request, let completion = work.completion {
+            try coordinator.verifyUnifiedInventorySourceExact(request, completed: completion)
+            source = .completed(request, completion)
+        } else {
+            guard work.request == nil, work.completion == nil else { throw NativeDeliveryExecutionError.phase }
+            try coordinator.verifyUnifiedGenesisSourceExact(work.baseline)
+            source = .genesis(work.baseline, .init(journalID: stores.journal.rootID, structuralID: stores.structural.rootID,
+                packageID: stores.packages.rootID, grantID: stores.grants.rootID))
+        }
+        try installation.requireDurableActivationAssociation(activation)
+        if let current { try current.validateInstallationExact(installation: installation) }
+        return (coordinator, source)
+    }
+    func mixedResourceSourceExact() throws -> (DeviceNativeGrantPrivateCoordinator, DeviceNativeProvisioningRequest, DeviceNativeProvisioningCompletionAcknowledgment) {
+        let reservation = try begin(); let work = reservation.original
+        defer { finish(reservation, work) }
+        guard let request = work.request, let completion = work.completion else { throw NativeDeliveryExecutionError.phase }
+        try coordinator.verifyUnifiedInventorySourceExact(request, completed: completion)
+        try installation.requireDurableActivationAssociation(activation)
+        return (coordinator, request, completion)
+    }
+    public func qualifiedResetResourcesExact() throws -> DeviceOwnedInstallationResetResources {
+        let source = try mixedInventorySourceExact()
+        let result = try DeviceMixedResourceResolver(native: source.0).qualifiedNativeResetResourcesExact(source.1)
+        try installation.requireDurableActivationAssociation(activation)
+        return result
+    }
+    public func validateUnifiedInventoryResourceAssociation() throws {
+        _ = try mixedInventorySourceExact()
+    }
+    /// Original completed resource graph only. This accessor does not admit a command
+    /// or manufacture a current installation dispatch capability.
+    func mixedResourceSourceExact(current: NativeCurrentInstallationDispatch) throws ->
+        (DeviceNativeGrantPrivateCoordinator, DeviceNativeProvisioningRequest, DeviceNativeProvisioningCompletionAcknowledgment) {
+        let reservation = try begin(); let work = reservation.original
+        defer { finish(reservation, work) }
+        guard let request = work.request, let completion = work.completion else { throw NativeDeliveryExecutionError.phase }
+        try current.validateFixedCommandEvidence(installation: installation, association: request.delivery.association)
+        return (coordinator, request, completion)
+    }
     public func completedStaticContent(current:NativeCurrentInstallationDispatch)throws->DeviceManagedStaticContent {
         let reservation=try begin();var work=reservation.original;defer{finish(reservation,work)}
         guard let request=work.request,let completed=work.completion else {throw NativeDeliveryExecutionError.phase}
         try current.validateInstallationExact(installation:installation)
-        let content=try coordinator.projectNativeCompletedStaticExact(request,completed:completed)
+        let content: DeviceManagedStaticContent
+        if let original = work.staticContent { content = original }
+        else { content = try coordinator.projectNativeCompletedStaticExact(request,completed:completed); work.staticContent = content }
         try current.validateInstallationExact(installation:installation)
         try content.verifyResources();return content
+    }
+    public func confirmMountedStaticContent(_ content: DeviceManagedStaticContent, current: NativeCurrentInstallationDispatch) throws -> NativeMountedContentObservation {
+        try mountObservation(content: content, current: current)
+    }
+    public func mountObservation(content: DeviceManagedStaticContent,
+        current: NativeCurrentInstallationDispatch) throws -> NativeMountedContentObservation {
+        let reservation = try begin(); let work = reservation.original
+        defer { finish(reservation, work) }
+        guard work.staticContent === content, let request = work.request,
+              content.generationID == request.candidate.generationID,
+              let entry = request.candidate.entries.first(where: { $0.entryID == content.entryID }) else { throw NativeDeliveryExecutionError.association }
+        try current.validateInstallationExact(installation: installation)
+        try content.verifyResources()
+        try current.validateInstallationExact(installation: installation)
+        return .init(installation: installation, content: content, packageDigest: entry.package.manifestDigest.text)
     }
     public func retainOutcomeAcknowledgment(body: NativeDeliveryDurableBody,
         observation: NativeDeliveryReceiptHTTPObservation) throws -> UUID {
@@ -333,7 +618,7 @@ struct NativeDeliveryExecutionStoreBinding {
             rawPlan: rawPlan, nativeOperationID: nativeOperationID, journalRootID: stores.journal.rootID)
         let owner = stores.genesis.state.owner
         guard binding.association.installationID == owner.installationID,
-              binding.association.accountID == owner.accountID, binding.association.locationID == owner.locationID,
+              binding.association.accountID == owner.accountID,
               binding.association.transitionID == owner.transitionID,
               binding.expectedGenerationID == stores.genesis.state.generationID,
               archives.count == binding.resultingSet.entries.count else { throw NativeDeliveryExecutionError.association }
@@ -348,12 +633,12 @@ struct NativeDeliveryExecutionStoreBinding {
                 name: supplied.revisionName, digest: descriptor.manifestDigest.text, orientation: supplied.target.orientation,
                 width: supplied.target.width, height: supplied.target.height),
                 target: supplied.target, profileID: supplied.profileID)
-            let qualified = try DeviceNativeArchiveQualifier.qualify(supplied.archiveBytes, descriptor: descriptor, expected: expected).package
+            let qualified = try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(supplied.archiveBytes, descriptor: descriptor, expected: expected).package
             guard qualified.manifest.connections.isEmpty else { throw NativeDeliveryExecutionError.unsupportedCapabilities }
             let reference = try PackagePreparationCodec.expectedReference(.init(operationID: supplied.preparationOperationID,
                 package: qualified), rootID: stores.packages.rootID)
             packages.append(.supplied(entryID: cloud.entryID, operationID: supplied.preparationOperationID, package: qualified))
-            entries.append(try .validating(entryID: cloud.entryID, displayName: supplied.revisionName, package: descriptor, preparedPackage: reference))
+            entries.append(try .validating(entryID: cloud.entryID, displayName: qualified.manifest.name, package: descriptor, preparedPackage: reference))
             grantEntries.append(.init(entryID: cloud.entryID, revision: qualified.revision, generic: nil,
                 homeAssistant: nil, publicReads: nil, credentialReferences: []))
             expectations.append(.init(entryID: cloud.entryID, package: qualified))

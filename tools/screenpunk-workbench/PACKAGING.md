@@ -1,0 +1,7 @@
+# Standalone slice packaging boundary
+
+SwiftPM builds three products: `screenpunk`, `screenpunk-mcp`, and `screenpunk-service`. The CLI resolves the service from either its sibling path in a development build or `../libexec/screenpunk-service` relative to the resolved versioned `bin/screenpunk` payload. Agent fragments use the invoked absolute `screenpunk` path, so an installer should provide a stable user-local entrypoint that points to the verified versioned payload.
+
+The intended installed layout remains the implementation spec's `screenpunk-workbench/<version>/bin/{screenpunk,screenpunk-mcp}` and `libexec/screenpunk-service`. This package does not create an installer, stable entrypoint, signed release manifest, launchd registration, trust catalog, kit payload or update mechanism. `service start` is a direct background spawn and uses a per-home kernel lock plus the broker runtime lock; it is not an on-demand launchd service. Installed service lifetime and clean-user macOS 14/current qualification remain release work.
+
+The service uses the existing ControllerService and WorkbenchBrokerDomain. The CLI and stdio MCP adapter are broker clients. The MCP adapter exposes only the six accepted read tools and never routes workspace selection, configuration, pairing or deployment. Workspace setup/open/init use closed service-owned broker methods. No legacy GUI or historical MCP process is automatically switched to this owner; concurrent legacy mutations require an explicit forwarding/exclusion implementation before release.

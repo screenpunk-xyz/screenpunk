@@ -12,7 +12,7 @@ device reset and confirmed Disconnect can erase it. See [the authoring default](
 
 
 The bundled `screenpunk-mcp` executable speaks stdio MCP (official Swift SDK
-0.10.2). It starts the local controller and hidden preview helper automatically.
+0.12.1). It starts the local controller and hidden preview helper automatically.
 The Mac workbench does not need to be visibly open. The Mac must be awake and
 logged in.
 

@@ -1,0 +1,25 @@
+{
+  "id": "8cd71e3b-3eab-47c4-95fe-3126c4920ced",
+  "digest": "9b71bb84e51155f166371ca0794d19067f889c100ba3d21ce92cf1c5b1c7cbde",
+  "manifest": {
+    "toolchain": {
+      "name": "Screenpunk CLI",
+      "version": "1"
+    },
+    "editableSource": true,
+    "representation": "local-native-import"
+  },
+  "accountId": "05f93b4e-7b95-40fa-bb3d-e1b2f59a6356",
+  "createdAt": "2026-10-10T19:15:24.667Z",
+  "projectId": "fb1890dd-093e-4c1a-9b25-e8376e1992c9",
+  "nativeBuildId": null,
+  "nativeManifest": null,
+  "archiveObjectId": "eeffb9ae-3ab6-4ffd-ad00-9ff4114ac886",
+  "sourceVersionId": "55074fbf-5060-443c-a72f-6f5cc59eed1b",
+  "validatorVersion": "screenpunk-local-native-import-v1",
+  "nativeBuildAttemptId": null,
+  "nativeManifestSha256": null,
+  "nativeMetadataSha256": null,
+  "nativeStorageReceipt": null,
+  "nativeStorageNamespace": null
+}

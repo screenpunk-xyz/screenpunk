@@ -5,6 +5,28 @@ import ScreenpunkCore
 final class PairingDeployTests: XCTestCase {
     private let controllerIdentity = PairingIdentityFactory.make(role: .controller)
 
+    func testExactDeploymentObservationRequiresFreshPinnedScreenSet() throws {
+        let device = FakeLANDevice(deviceId: "exact-observation", name: "Fixture iPad")
+        let harness = try makeHarness(device: device)
+        let pending = try harness.service.devices.requestPairing(deviceId: nil,
+            host: device.host, port: Int(device.port))
+        device.confirmLocally()
+        _ = try harness.service.devices.confirmPairing(deviceId: pending.deviceId)
+        let peer = WorkbenchNativeDeploymentPeer(devices: harness.service.devices)
+        let fresh = try peer.observe(deviceId: pending.deviceId)
+        XCTAssertEqual(fresh.deviceId, pending.deviceId)
+        XCTAssertTrue(fresh.screens.isEmpty)
+        XCTAssertNil(fresh.selectedDashboardId)
+        device.runtime.activeRevision = "legacy-active-without-full-set"
+        XCTAssertThrowsError(try peer.observe(deviceId: pending.deviceId))
+        device.runtime.activeRevision = nil
+        device.supportsScreenSets = false
+        XCTAssertThrowsError(try peer.observe(deviceId: pending.deviceId))
+        device.supportsScreenSets = true
+        device.online = false
+        XCTAssertThrowsError(try peer.observe(deviceId: pending.deviceId))
+    }
+
     func testTwoDevicesRemainDistinctAcrossPairingDiscoveryAndRestart() throws {
         let phone = FakeLANDevice(deviceId: "device-iphone-mini", name: "iPhone mini")
         let tablet = FakeLANDevice(deviceId: "device-ipad-air", name: "iPad Air")

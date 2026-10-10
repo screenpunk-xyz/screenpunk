@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "id": "05f76a3e-5a44-4cf0-8a5b-0d527f866591",
+      "name": "Controller screen",
+      "revision": "3b47a03a-0dd6-43fe-a72a-578a7dbb58da",
+      "packageId": "8cd71e3b-3eab-47c4-95fe-3126c4920ced",
+      "projectId": "fb1890dd-093e-4c1a-9b25-e8376e1992c9",
+      "locationId": null,
+      "dashboardId": "819469eb-a285-4519-9dc8-8f07216229f9",
+      "archiveSha256": "f363d4aaa5f1a9d2d11ee2866cd923807923fe1974eb4b06b8ab8ca4eae904df",
+      "expandedBytes": 655,
+      "publicationId": "05f76a3e-5a44-4cf0-8a5b-0d527f866591",
+      "archiveEntries": 2,
+      "manifestDigest": "9b71bb84e51155f166371ca0794d19067f889c100ba3d21ce92cf1c5b1c7cbde",
+      "manifestSha256": "9f0f3f39af9bcac1161b0d07643b3d640094deb03be945460fa0abec530bc74a",
+      "packageProfile": "screenpunk-native-manifest-v1",
+      "compressedBytes": 649
+    }
+  ],
+  "nextCursor": null
+}

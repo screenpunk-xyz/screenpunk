@@ -136,7 +136,7 @@ final class NativeEnrollmentPromotionBridgeTests: XCTestCase {
         func read(service: String, account: String, maximumBytes: Int) throws -> DeviceGrantCredentialValue? { nil }
         func add(service: String, account: String, bytes: Data) throws -> DeviceGrantCredentialItem { throw DeviceGrantPreparationError.conflict }
     }
-    private func genuineStatusFixture(firstNative: Bool = false) async throws -> (NativeOperationalInstallation, NativeActivationReceipt, Backend) {
+    private func genuineStatusFixture(firstNative: Bool = false, restart: Bool = false, restartPhase: Int? = nil, orphanFinal: Bool = false) async throws -> (NativeOperationalInstallation, NativeActivationReceipt, Backend) {
         let physical = try XCTUnwrap(realpath(FileManager.default.temporaryDirectory.path, nil))
         let temporary = URL(fileURLWithPath: String(cString: physical), isDirectory: true)
         free(physical)
@@ -148,8 +148,9 @@ final class NativeEnrollmentPromotionBridgeTests: XCTestCase {
         try FileManager.default.createDirectory(at: local, withIntermediateDirectories: false)
         let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: "native-final", format: .nativeInstallationV1)
         let input = try NativeClaimInput(requestId: UUID(), transitionId: binding.transitionID, accountId: UUID(), locationId: UUID(), name: "Fixture", profile: "Fixture")
-        let journal = NativeEnrollmentJournalStore(root: root, cloudRootID: UUID(), excludedLocalResetRoot: local), backend = Backend()
-        let bridge = NativeEnrollmentPromotionBridge(journal: journal, backend: backend)
+        let cloudRootID = UUID()
+        let journal = NativeEnrollmentJournalStore(root: root, cloudRootID: cloudRootID, excludedLocalResetRoot: local), backend = Backend()
+        var bridge = NativeEnrollmentPromotionBridge(journal: journal, backend: backend)
         let preparationID: UUID, targetHistory: DeviceManagementFormatHistory, targetEnrollment: NativeEnrollmentEvidence
         if firstNative {
             let prep = try NativeFirstEnrollmentPreparation(preparationId: UUID(), enrollmentId: UUID(), stageReference: "native-stage", binding: binding, claimInput: input)
@@ -170,12 +171,30 @@ final class NativeEnrollmentPromotionBridgeTests: XCTestCase {
         }
         let pair = NativeEnrollmentPairedEvidenceStore(journal: journal)
         _ = try pair.continueExact(pair.beginOriginal(preparationID: preparationID))
-        let original = try bridge.beginOriginal(preparationID: preparationID, promotionAttemptID: UUID(), ownershipAttemptID: UUID(), currentHistory: targetHistory, currentEnrollment: targetEnrollment)
+        var original = try bridge.beginOriginal(preparationID: preparationID, promotionAttemptID: UUID(), ownershipAttemptID: UUID(), currentHistory: targetHistory, currentEnrollment: targetEnrollment)
         let http = PromotionHTTPFixture(input: input)
         addTeardownBlock { http.close() }
         try await http.prepare(bridge, original)
+        if restartPhase == 4 {
+            if orphanFinal { _ = try backend.addFinalOnce(account: Data(binding.credentialReference.utf8), raw48: Data(repeating: 42, count: 48)) }
+            bridge = NativeEnrollmentPromotionBridge(journal: NativeEnrollmentJournalStore(root: root, cloudRootID: cloudRootID, excludedLocalResetRoot: local), backend: backend)
+            original = try bridge.recoverPending(preparationID: preparationID, ownershipAttemptID: UUID(), associationAttemptID: http.associationAttemptID)
+            try await http.prepare(bridge, original)
+        }
         _ = try bridge.continueExact(original)
-        let handle = try await http.activate(bridge, original)
+        if restartPhase == 5 {
+            bridge = NativeEnrollmentPromotionBridge(journal: NativeEnrollmentJournalStore(root: root, cloudRootID: cloudRootID, excludedLocalResetRoot: local), backend: backend)
+            original = try bridge.recoverPending(preparationID: preparationID, ownershipAttemptID: UUID(), associationAttemptID: http.associationAttemptID)
+            try await http.prepare(bridge, original)
+            _ = try bridge.continueExact(original)
+        }
+        var handle = try await http.activate(bridge, original)
+        if restart {
+            let restarted = NativeEnrollmentJournalStore(root: root, cloudRootID: cloudRootID, excludedLocalResetRoot: local)
+            handle = try NativeEnrollmentPromotionBridge(journal: restarted, backend: backend).recoverCompleted(preparationID: preparationID)
+            XCTAssertEqual(backend.adds, 1)
+            XCTAssertEqual(http.claims, 1); XCTAssertEqual(http.activations, 1)
+        }
         let namespace = parent.appendingPathComponent(DeviceNativeManagedRootLocator.namespaceName)
         try FileManager.default.createDirectory(at: namespace, withIntermediateDirectories: false)
         let roots = DeviceNativeManagedRootLocator.futureChildNames.map { namespace.appendingPathComponent($0) }
@@ -188,6 +207,24 @@ final class NativeEnrollmentPromotionBridgeTests: XCTestCase {
         let installation = try handle.bindManagedRoots(namespace: namespace, packages: packages, grants: grants, structural: structural, provisioning: provisioning)
         let activation = try http.activation()
         return (installation, activation, backend)
+    }
+    func testRestartNeverAdoptsUnrecordedFinalCredentialAdd() async throws {
+        do {
+            _ = try await genuineStatusFixture(firstNative: true, restartPhase: 4, orphanFinal: true)
+            XCTFail("Unrecorded Add must remain uncertain")
+        } catch NativeEnrollmentPromotionError.outcomeUncertain { }
+    }
+    func testDurableClaimAndCredentialOwnersResumeAcrossProcessRestart() async throws {
+        for phase in [4, 5] {
+            let (installation, activation, backend) = try await genuineStatusFixture(firstNative: true, restartPhase: phase)
+            XCTAssertNoThrow(try installation.requireDurableActivationAssociation(activation))
+            XCTAssertEqual(backend.adds, 1)
+        }
+    }
+    func testRecordedActivationRestoresAfterJournalRestartWithoutNewEnrollmentOrCredentialAdd() async throws {
+        let (installation, activation, backend) = try await genuineStatusFixture(firstNative: true, restart: true)
+        XCTAssertNoThrow(try installation.requireDurableActivationAssociation(activation))
+        XCTAssertEqual(backend.adds, 1)
     }
     func testGenuineFirstNativePromotionCannotIssueStatusWithoutOriginalOwner() async throws {
         let (installation, activation, backend) = try await genuineStatusFixture(firstNative: true)

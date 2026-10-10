@@ -92,7 +92,8 @@ final class BundledAudioTests: XCTestCase {
             if result == "ended" { break }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        XCTAssertEqual(result, "ended", "Native WAV playback failed: \(result)")
+        let mediaDiagnostics = try await web.evaluateJavaScript("JSON.stringify({result:window.playResult,readyState:tone.readyState,networkState:tone.networkState,error:tone.error?.code,paused:tone.paused,duration:Number.isFinite(tone.duration)?tone.duration:null,visibility:document.visibilityState,focused:document.hasFocus(),events:window.audioEvents})") as? String ?? "unavailable"
+        XCTAssertEqual(result, "ended", "Native WAV playback failed: \(mediaDiagnostics)")
         let currentTime = try await web.evaluateJavaScript("tone.currentTime") as? Double ?? 0
         XCTAssertGreaterThan(currentTime, 0.1)
         _ = try await web.evaluateJavaScript("""

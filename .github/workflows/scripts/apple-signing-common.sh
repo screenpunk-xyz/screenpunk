@@ -40,6 +40,26 @@ require_env() {
   fi
 }
 
+require_apple_team_id() {
+  local config="${ROOT}/config/apple-team.xcconfig"
+  local declared
+  if [[ ! -f "$config" ]]; then
+    echo "missing public Apple team configuration"
+    exit 1
+  fi
+  declared="$(sed -nE 's/^SCREENPUNK_APPLE_TEAM_ID[[:space:]]*=[[:space:]]*([A-Z0-9]{10})[[:space:]]*$/\1/p' "$config")"
+  if [[ ! "$declared" =~ ^[A-Z0-9]{10}$ ]]; then
+    echo "public Apple team configuration has no exact ten-character team ID"
+    exit 1
+  fi
+  if [[ -n "${APPLE_TEAM_ID:-}" && "$APPLE_TEAM_ID" != "$declared" ]]; then
+    echo "APPLE_TEAM_ID conflicts with the repository's public team configuration"
+    exit 1
+  fi
+  APPLE_TEAM_ID="$declared"
+  export APPLE_TEAM_ID
+}
+
 filter_auth_log() {
   local path="$1"
   if [[ ! -f "$path" ]]; then
@@ -74,17 +94,6 @@ decode_base64_to_file() {
   chmod 600 "$dest"
 }
 
-enable_generated_signing() {
-  local pbx="$1/project.pbxproj"
-  if [[ ! -f "$pbx" ]]; then
-    echo "missing generated project: ${pbx}"
-    exit 1
-  fi
-  # Ephemeral generated project only. Source project.yml stays unsigned for PR CI.
-  sed -i.bak 's/CODE_SIGNING_ALLOWED = NO/CODE_SIGNING_ALLOWED = YES/g' "$pbx"
-  rm -f "${pbx}.bak"
-}
-
 write_asc_private_key() {
   require_env ASC_KEY_ID
   require_env ASC_PRIVATE_KEY
@@ -116,6 +125,8 @@ cleanup_apple_signing() {
 import_p12() {
   local p12_b64_var="$1"
   local password_var="$2"
+  local certificate_type="$3"
+  require_apple_team_id
   require_env "$p12_b64_var"
   require_env "$password_var"
 
@@ -137,14 +148,23 @@ import_p12() {
     exit 1
   fi
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+  SIGNING_IDENTITY_SHA1="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+    | python3 "$ROOT/scripts/ci/select-apple-signing-identity.py" \
+        "$APPLE_TEAM_ID" "$certificate_type")"
   security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
-  echo "imported signing certificate into a temporary keychain"
+  echo "imported and verified one ${certificate_type} signing identity for the configured team"
 }
 
 install_ios_profile() {
   require_env IOS_PROVISIONING_PROFILE_BASE64
+  if [[ -z "${SIGNING_IDENTITY_SHA1:-}" ]]; then
+    echo "import and verify the iOS signing identity before installing its profile"
+    exit 1
+  fi
   printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | decode_base64_to_file "$PROFILE_PATH"
   security cms -D -i "$PROFILE_PATH" >"$PROFILE_PLIST" 2>/dev/null
+  python3 "$ROOT/scripts/ci/validate-ios-distribution-profile.py" \
+    "$PROFILE_PLIST" "$APPLE_TEAM_ID" xyz.screenpunk.ios "$SIGNING_IDENTITY_SHA1"
   PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")"
   PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print Name' "$PROFILE_PLIST")"
   if [[ -z "${PROFILE_UUID:-}" || -z "${PROFILE_NAME:-}" ]]; then

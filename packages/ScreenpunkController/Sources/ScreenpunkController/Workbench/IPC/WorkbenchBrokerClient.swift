@@ -102,7 +102,7 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
         do {
             let deadline = method == .snapshotCreate || method == .workspaceRelocate
                 ? environment.clock.now() + 305 :
-                ([.projectClone, .packageExport, .projectUpgradeKit].contains(method)
+                ([.projectClone, .packageExport, .projectUpgradeKit, .projectSyncSource].contains(method)
                     ? environment.clock.now() + 125 : nil)
             guard case .authoringAction(let value) = try call(method.rawValue,
                 params: params, deadline: deadline, requestId: operationId) else {
@@ -632,6 +632,14 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
         guard let value = try requestRead(.deviceGet, params: ["schemaVersion": 1, "deviceId": deviceId]).device else { throw WorkbenchIPCError(.invalidRequest) }
         return value
     }
+    /// Private first-party transport hint. Device independently checks its Cloud approval.
+    public func relayCloudArchive(deviceId: String, installationId: String, operationId: String, packageId: String, archiveSha256: String, stagedPath: String) throws {
+        _ = try requestDevice(.cloudRelayArchive, fields: ["deviceId": deviceId, "installationId": installationId,
+            "operationId": operationId, "packageId": packageId, "archiveSha256": archiveSha256, "stagedPath": stagedPath])
+    }
+    public func relayCloudCommand(deviceId: String, installationId: String, operationId: String) throws {
+        _ = try requestDevice(.cloudRelay, fields: ["deviceId": deviceId, "installationId": installationId, "operationId": operationId])
+    }
     public func freshDeviceScreenSet(deviceId: String) throws -> WorkbenchDeviceScreenSetRead {
         guard let value = try requestDevice(.screenSet, fields: ["deviceId": deviceId]).screenSet else {
             throw WorkbenchIPCError(.invalidRequest)
@@ -883,7 +891,7 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         do {
             var params = fields; params["schemaVersion"] = 1
-            guard case .deviceAction(let value) = try call(method.rawValue, params: params) else { throw WorkbenchIPCError(.invalidRequest) }
+            guard case .deviceAction(let value) = try call(method.rawValue, params: params, deadline: method == .cloudRelayArchive ? environment.clock.now() + 125 : nil) else { throw WorkbenchIPCError(.invalidRequest) }
             try value.validate(for: method)
             return value
         } catch { closeLocked(); throw error }
@@ -950,9 +958,9 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
                       snapshot.supportedMethods == WorkbenchMethodRegistry.supportedMethods ||
                       snapshot.supportedMethods == WorkbenchMethodRegistry.supportedMethods + WorkbenchDomainMethodRegistry.availableReadMethods
                         + WorkbenchDomainMethodRegistry.availableWorkspaceMethods
-                        + WorkbenchDeviceControlMethod.allCases.map(\.rawValue)
+                        + WorkbenchDeviceControlMethod.advertisedCases.map(\.rawValue)
                         + WorkbenchConnectionControlMethod.allCases.map(\.rawValue)
-                        + WorkbenchAuthoringRecoveryMethod.allCases.map(\.rawValue)
+                        + WorkbenchAuthoringRecoveryMethod.advertisedCases.map(\.rawValue)
                         + [WorkbenchSourceTextRequest.method, WorkbenchSourceChunkRequest.method]
                         + WorkbenchPackageImportMethod.allCases.map(\.rawValue)
                         + WorkbenchLocalReviewMethod.allCases.map(\.rawValue)

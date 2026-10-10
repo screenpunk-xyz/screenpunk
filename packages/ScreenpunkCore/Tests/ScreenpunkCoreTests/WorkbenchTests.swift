@@ -66,30 +66,34 @@ final class WorkbenchTests: XCTestCase {
         XCTAssertEqual(WorkbenchCopy.livePreview, "Live preview — actions control your devices")
     }
 
-    func testPairingOneOwnerAndSecondMacRejected() throws {
+    func testTwoExplicitlyApprovedControllersAndIndependentRevocation() throws {
         let hub = LoopbackDiscovery()
         hub.reset()
         var phone = makePhone(hub: hub)
         var workbench = makeWorkbench()
         try pair(&workbench, phone: &phone, hub: hub)
-        XCTAssertTrue(phone.isPaired)
-        XCTAssertEqual(workbench.devices.count, 1)
-
-        var attacker = WorkbenchSession(
+        let primary = phone.pairing.owner
+        var second = WorkbenchSession(
             controllerIdentity: PairingIdentityFactory.make(role: .controller, bytes: attackerKey)
         )
-        attacker.refreshDiscovery(hub)
-        XCTAssertThrowsError(
-            try attacker.beginPairing(
-                advertised: workbench.advertisements[0],
-                phone: &phone,
-                expectedCode: "287900",
-                clock: FixedClock(start),
-                nonce: nonce
-            )
-        ) { error in
-            XCTAssertEqual(error as? PairingFailure, .secondOwner)
-        }
+        try second.beginPairing(advertised: workbench.advertisements[0], phone: &phone,
+                               expectedCode: "287900", clock: FixedClock(start), nonce: nonce)
+        XCTAssertFalse(phone.pairing.isApproved(second.controllerIdentity))
+        XCTAssertThrowsError(try second.deploy(deploymentId: "pending", revision: .offlineFixture,
+                                               deviceId: "phone-1", phone: &phone))
+        try second.confirmPairing(deviceId: "phone-1", code: "287900", phone: &phone,
+                                  clock: FixedClock(start))
+        XCTAssertEqual(phone.pairing.owner, primary)
+        XCTAssertTrue(phone.pairing.isApproved(workbench.controllerIdentity))
+        XCTAssertTrue(phone.pairing.isApproved(second.controllerIdentity))
+        XCTAssertEqual(try second.deploy(deploymentId: "second", revision: .offlineFixture,
+                                         deviceId: "phone-1", phone: &phone).phase, .active)
+        phone.pairing.revoke(workbench.controllerIdentity)
+        XCTAssertThrowsError(try workbench.deploy(deploymentId: "revoked", revision: .offlineFixture,
+                                                  deviceId: "phone-1", phone: &phone))
+        XCTAssertEqual(try second.deploy(deploymentId: "remaining", revision: .offlineFixture,
+                                         deviceId: "phone-1", phone: &phone).phase, .active)
+        XCTAssertEqual(phone.pairing.owner, primary)
     }
 
     func testDeployPreviewRollbackAndFailedTransferKeepsCurrent() throws {

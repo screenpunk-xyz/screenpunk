@@ -40,7 +40,7 @@ public enum WorkbenchCommand {
                 presentation.success(["text": try helpText(topic: topic)], human: try helpText(topic: topic))
                 return 0
             }
-            let known = ["status", "setup", "workspace", "operation", "project", "screen", "build", "migration", "device", "connection", "approval", "deploy", "service", "doctor", "diagnostics", "agent", "mcp", "toolchain", "config", "install", "update", "uninstall", "package"]
+            let known = ["cloud", "status", "setup", "workspace", "operation", "project", "screen", "build", "migration", "device", "connection", "approval", "deploy", "service", "doctor", "diagnostics", "agent", "mcp", "toolchain", "config", "install", "update", "uninstall", "package"]
             if !known.contains(words.first ?? "") { throw Options.usage("Unknown command. Use screenpunk help.") }
             if words.first == "status" {
                 guard words == ["status"], options.workspace == nil, options.profile == nil else {
@@ -186,6 +186,12 @@ public enum WorkbenchCommand {
             }
             try requireHome(client: client, options: options)
             if cancellation.signalNumber != nil { throw cancelled() }
+            if words.first == "cloud" {
+                try WorkbenchCloudCLI.run(words: words, options: options, client: client,
+                    machineRoot: runtime.appendingPathComponent("machine"),
+                    environment: environment, presentation: presentation)
+                return 0
+            }
             if words.first == "config" {
                 try machineConfig(words, client: client, workspace: workspace,
                     presentation: presentation)
@@ -462,6 +468,14 @@ public enum WorkbenchCommand {
                         nextActions: ["Inspect project source, catalog and pinned requirements before another attempt."],
                         details: ["projectId": params["projectId"] as? String ?? "",
                                   "destination": params["relativeDestination"] as? String ?? ""])
+                }
+                if WorkbenchCloudCLI.automaticallyLinksNewProject(route.method), let project = result.project {
+                    do {
+                        try WorkbenchCloudCLI.linkCreatedIfConnected(project, client: client,
+                            machineRoot: runtime.appendingPathComponent("machine"), environment: environment)
+                    } catch {
+                        presentation.diagnostic("Local project created. Cloud backup needs attention: \(error). Inspect cloud status; source is retained.")
+                    }
                 }
                 if longWorkspaceMutation {
                     do {
@@ -1213,13 +1227,23 @@ public enum WorkbenchCommand {
             return "screenpunk service start --json\nscreenpunk setup [--workspace PATH]\n\nmacOS may display a permission or security prompt during the first service start after an install or update. Review it and approve the appropriate prompt for your verified Screenpunk installation. An agent must surface a pending prompt early and wait for you; it cannot dismiss or approve an OS prompt on your behalf.\n\nAfter resolving a pending prompt, retry once with screenpunk service start --json, outside the Codex sandbox through its normal approval flow, using the same installing account without sudo. If it still fails, preserve the complete command, JSON error, stdout/stderr and exit status. Collect screenpunk service logs --json and launchctl print gui/<your UID>/com.screenpunk.workbench before another start or recovery attempt. The UID must be the installing account's effective UID. These diagnostics do not start the broker.\n\nKeep activationError and cleanupError separate. One Studio 1.0.8 start reported activationError=unavailable and cleanupError=insecureRuntime, then worked after the user allowed a pending macOS prompt. The prompt text and precise cause were not established; these errors do not identify a particular macOS permission.\n\nPreserve the workspace, pairing, saved screen preferences and local drafts. Do not reset them, change runtime permissions, delete sockets, bypass ownership guards or delete Keychain entries to get past startup. Review the diagnostic evidence before choosing a supported recovery."
         }
         if topic == "status" { return "screenpunk status [--json]\nRead-only release, owned service, workspace, paired device and MCP summary. No service startup or device probe." }
-        if let topic, !["service", "doctor", "version", "help", "workspace", "setup", "operation",
+        if let topic, !["cloud", "service", "doctor", "version", "help", "workspace", "setup", "operation",
                          "project", "screen", "build", "migration", "device", "connection",
                          "approval", "deploy", "agent", "mcp", "config", "diagnostics", "toolchain",
                          "install", "update", "uninstall"].contains(topic) { throw unavailable() }
         return """
         screenpunk — Mac workbench CLI (\(version))
         Commands:
+          cloud login|logout|status          Connect the controller account using your browser
+          cloud workspace select ID|projects
+          cloud link LOCAL_ID CLOUD_ID|sync LOCAL_ID|unlink LOCAL_ID
+          cloud resolve LOCAL_ID local|remote
+          cloud restore CLOUD_ID NAME|create NAME html|react
+                                             Sync source only; screen activation is separate
+          cloud publish LOCAL_PROJECT_ID    Upload the verified local build and create publication
+          cloud deploy review PUBLICATION_ID INSTALLATION_ID --json
+          cloud deploy apply --file ABS_REVIEW_JSON --approved
+          cloud device status INSTALLATION_ID
           setup [--workspace PATH]           Select existing or create proposed workspace
           workspace init [PATH]              Create and select a new workspace
           workspace open PATH                Validate and select existing workspace

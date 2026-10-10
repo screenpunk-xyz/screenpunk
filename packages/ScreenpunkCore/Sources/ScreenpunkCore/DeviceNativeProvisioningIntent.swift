@@ -70,6 +70,9 @@ enum DeviceNativePrivateAttemptV3 {
 enum DeviceNativeProvisioningPlanner {
     static func qualify(_ request:DeviceNativeProvisioningRequest)throws->DeviceValidatedNativeProvisioningPlan {
         let delivery=request.delivery,candidate=request.candidate
+        // Candidate/grant owner records the original durable installation root.
+        // Its historical location is not current Cloud permission. Exact live
+        // command location is checked by the fixed authenticated dispatch owner.
         guard request.packages.count <= 12,candidate.entries.count <= 12,
               request.roots.journalID == delivery.journalRootID,
               request.baseline.rootID == request.roots.structuralID,
@@ -78,7 +81,6 @@ enum DeviceNativeProvisioningPlanner {
               request.baseline.state.owner == candidate.owner,candidate.owner == request.grantInput.owner,
               candidate.owner.installationID == delivery.association.installationID,
               candidate.owner.accountID == delivery.association.accountID,
-              candidate.owner.locationID == delivery.association.locationID,
               candidate.owner.transitionID == delivery.association.transitionID,
               request.baseline.state.generationID == delivery.expectedGenerationID,
               candidate.generationID == delivery.desiredGenerationID,

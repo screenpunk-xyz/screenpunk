@@ -116,7 +116,34 @@ final class NativeEnrollmentJournalStore {
     init(root: URL, cloudRootID: UUID, excludedLocalResetRoot: URL,
          boundary: @escaping (Boundary) throws -> Void = { _ in }) {
         self.root = root.standardizedFileURL; self.cloudRootID = cloudRootID
-        self.excludedLocalResetRoot = excludedLocalResetRoot.standardizedFileURL; self.boundary = boundary
+        self.excludedLocalResetRoot = excludedLocalResetRoot; self.boundary = boundary
+    }
+    // The excluded reset directory may not exist yet. Foundation can rewrite a
+    // physical /private path while resolving that missing leaf; inspect each
+    // existing component with no-follow descriptors instead of resolving aliases.
+    static func isPhysicalExcludedPath(_ path: String) throws -> Bool {
+        let traversal: DeviceFilesystemTraversal
+        do { traversal = try .plan(for: path) } catch { return false }
+        var current = open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard current >= 0 else { return false }
+        defer { close(current) }
+        for component in traversal.components {
+            var named = stat()
+            if fstatat(current, component, &named, AT_SYMLINK_NOFOLLOW) != 0 {
+                return errno == ENOENT
+            }
+            guard named.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR) else { return false }
+            let next = openat(current, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard next >= 0 else { return false }
+            var held = stat(), after = stat()
+            guard fstat(next, &held) == 0,
+                fstatat(current, component, &after, AT_SYMLINK_NOFOLLOW) == 0,
+                after.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+                held.st_dev == named.st_dev, held.st_ino == named.st_ino,
+                after.st_dev == held.st_dev, after.st_ino == held.st_ino else { close(next); return false }
+            close(current); current = next
+        }
+        return true
     }
     private func epoch(invalidate: Bool = false) -> UInt64 {
         Self.epochLock.lock(); defer { Self.epochLock.unlock() }
@@ -309,6 +336,10 @@ final class NativeEnrollmentJournalStore {
             return try recommit(d, state: state, ref: ref)
         }
     }
+    func recommitRecordedLatestTip() throws -> LocalDurabilityReceipt {
+        let expected = try disk { d in try scan(d).refs.last?.attemptID }
+        return try recommitExactLatestTip(expectedAttemptID: expected)
+    }
     func recommitExactLatestTip(expectedAttemptID: UUID?) throws -> LocalDurabilityReceipt {
         try disk { d in
             let state = try scan(d)
@@ -327,6 +358,9 @@ final class NativeEnrollmentJournalStore {
         fileprivate let issuer: ObjectIdentifier, journalBinding: NativeJournalNode
         fileprivate let originalNodes: [StageNodeDeclaration], originalTip: NativeJournalNode, originalProof: NativeJournalNode
         fileprivate let stageOwnership: NativeJournalStageOwnership, initialAttemptID: UUID, pairCompletionID: UUID
+        var recordedOwnershipID: UUID { ownershipID }
+        var recordedActivationProposal: NativeJournalActivationProposal? { activationProposal }
+        var recordedAssociationID: UUID? { associationID }
         fileprivate let promotionID: UUID, ownershipID: UUID, pairRoot: NativeJournalPairRoot, pairFiles: NativeJournalPairFiles
         fileprivate let payload: NativePairFiles.Payload
         fileprivate let priorBindings: [DeviceManagementFormatHistory.Binding]
@@ -376,7 +410,7 @@ final class NativeEnrollmentJournalStore {
             let binding = try NativeEnrollmentStageBinding(cloudRootID: cloudRootID, proposal: step.proposal)
             let used = Set(state.refs.flatMap { [$0.attemptID, $0.preparationID] }).union(state.paired.retainedOperationIDs)
                 .union([cloudRootID, binding.enrollmentID, binding.binding.transitionID, binding.binding.credentialGenerationID,
-                    binding.input.requestId, binding.input.accountId, binding.input.locationId])
+                    binding.input.requestId, binding.input.accountId, binding.input.locationId].compactMap { $0 })
             guard promotionAttemptID != ownershipAttemptID, !used.contains(promotionAttemptID), !used.contains(ownershipAttemptID), owned.matches(binding) else { throw NativeEnrollmentJournalError.conflict }
             let payload = try pairPayload(d, projection: latest.projection)
             guard payload.history == (try nativeEnrollmentBytes(currentHistory)),
@@ -387,6 +421,64 @@ final class NativeEnrollmentJournalStore {
             return .init(store: self, binding: binding, qualified: q, nodes: try stageNodes(d, refs: state.refs), tip: tip,
                 proof: try loadAttempt(d, last).node, owned: owned, initialID: frame.intentAttemptID, pairID: last.attemptID,
                 promotionID: promotionAttemptID, ownershipID: ownershipAttemptID, pairRoot: pairRoot, pairFiles: latest.files, payload: payload, priorBindings: step.proposal.source.credentials, preparation: step.proposal)
+        }
+    }
+    /// Restart admission of a fully recorded activation. Recommit the exact disk
+    /// tip first; reconstructed metadata alone never supplies durability or secrets.
+    func recoverCompletedPromotion(preparationID: UUID) throws -> (PromotionCheckpoint, Data) {
+        let (checkpoint, reference) = try recoverRecordedPromotion(preparationID: preparationID,
+            ownershipAttemptID: UUID(), associationAttemptID: UUID(), requireComplete: true)
+        guard let reference else { throw NativeEnrollmentJournalError.conflict }
+        return (checkpoint, reference)
+    }
+    func recoverRecordedPromotion(preparationID: UUID, ownershipAttemptID: UUID,
+        associationAttemptID: UUID, requireComplete: Bool = false) throws -> (PromotionCheckpoint, Data?) {
+        _ = try recommitRecordedLatestTip()
+        return try disk { d in
+            let state = try scan(d); try requireQualification(d, state)
+            guard let last = state.refs.last, last.preparationID == preparationID, (4...6).contains(last.phase), (!requireComplete || last.phase == 6),
+                let q = qualification,
+                let pairIndex = state.refs.lastIndex(where: { $0.preparationID == preparationID && $0.phase == 3 }) else {
+                throw NativeEnrollmentJournalError.conflict
+            }
+            let prefixRefs = Array(state.refs.prefix(pairIndex + 1))
+            let prefix = try scanPublished(d, attemptNames: prefixRefs.map { $0.name }, frameNames: Set(prefixRefs.map { $0.name }))
+            guard let initial = prefix.unfinishedIntent, let tip = prefix.tip,
+                let pairRoot = prefix.paired.initialization?.root, let latest = prefix.paired.latest,
+                let owned = prefix.stageOwnerships.first(where: { $0.preparationID == preparationID }) else {
+                throw NativeEnrollmentJournalError.conflict
+            }
+            let step = try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(
+                NativeJournalCodec.effectiveIntent(initial, phase: 3), context: prefix.context)
+            let binding = try NativeEnrollmentStageBinding(cloudRootID: cloudRootID, proposal: step.proposal)
+            let suffix = Array(state.refs.dropFirst(pairIndex + 1))
+            guard suffix.map({ $0.phase }) == Array(4...last.phase) else { throw NativeEnrollmentJournalError.conflict }
+            let promotionFrame = try NativeJournalCodec.frame(loadAttempt(d, suffix[0]).value.targetPayload)
+            let final = suffix.count >= 2 ? try NativeJournalCodec.frame(loadAttempt(d, suffix[1]).value.targetPayload).finalOwnership : nil
+            let association = suffix.count >= 3 ? try NativeJournalCodec.frame(loadAttempt(d, suffix[2]).value.targetPayload).activationAssociation : nil
+            guard let proposal = promotionFrame.activationProposal, owned.matches(binding),
+                (suffix.count < 2 || final != nil), (suffix.count < 3 || association != nil) else { throw NativeEnrollmentJournalError.conflict }
+            let recordedOwnershipID = suffix.count >= 2 ? suffix[1].attemptID : ownershipAttemptID
+            let recordedAssociationID = suffix.count >= 3 ? suffix[2].attemptID : associationAttemptID
+            let used = Set(state.refs.flatMap { [$0.attemptID, $0.preparationID] }).union(stateIDsForProposal(binding))
+            guard (suffix.count >= 2 || !used.contains(recordedOwnershipID)),
+                (suffix.count >= 3 || !used.contains(recordedAssociationID)),
+                recordedOwnershipID != recordedAssociationID else { throw NativeEnrollmentJournalError.conflict }
+            let payload = try pairPayload(d, projection: latest.projection)
+            let c = PromotionCheckpoint(store: self, binding: binding, qualified: q,
+                nodes: try stageNodes(d, refs: prefixRefs), tip: tip,
+                proof: try loadAttempt(d, prefixRefs.last!).node, owned: owned,
+                initialID: promotionFrame.intentAttemptID, pairID: prefixRefs.last!.attemptID,
+                promotionID: suffix[0].attemptID, ownershipID: recordedOwnershipID,
+                pairRoot: pairRoot, pairFiles: latest.files, payload: payload,
+                priorBindings: step.proposal.source.credentials, preparation: step.proposal)
+            c.activationProposal = proposal; c.activationAssociation = association; c.associationID = recordedAssociationID
+            // Register only exact fully replayed, recommitted method nodes. No
+            // unrecorded Keychain item, pending Add, or historical prefix is adopted.
+            for ref in suffix { livePromotionCommits[ref.attemptID] = try loadAttempt(d, ref).node }
+            try promotionOriginal(c, d: d, state: state)
+            if let final { guard final == c.ownership(final.finalPersistentReference) else { throw NativeEnrollmentJournalError.conflict } }
+            return (c, final?.finalPersistentReference)
         }
     }
     /// Reuse accepted pure enrollment replay for role/relationship validation; no paired files are reassigned.
@@ -406,8 +498,8 @@ final class NativeEnrollmentJournalStore {
         _ = try NativeEnrollmentEvidenceCodec.encode(value, history: history)
     }
     private func stateIDsForProposal(_ binding: NativeEnrollmentStageBinding) -> Set<UUID> {
-        [cloudRootID, binding.enrollmentID, binding.binding.transitionID, binding.binding.credentialGenerationID,
-            binding.input.requestId, binding.input.accountId, binding.input.locationId]
+        Set([cloudRootID, binding.enrollmentID, binding.binding.transitionID, binding.binding.credentialGenerationID,
+            binding.input.requestId, binding.input.accountId, binding.input.locationId].compactMap { $0 })
     }
     private func promotionOriginal(_ c: PromotionCheckpoint, d: Disk, state: Scan) throws {
         guard c.issuer == ObjectIdentifier(self), c.generation == epoch(), c.journalBinding == d.binding,
@@ -533,7 +625,7 @@ final class NativeEnrollmentJournalStore {
             } else {
                 let used = Set(state.refs.flatMap { [$0.attemptID, $0.preparationID] }).union(state.paired.retainedOperationIDs)
                     .union([cloudRootID, c.binding.enrollmentID, c.binding.binding.transitionID, c.binding.binding.credentialGenerationID,
-                        c.binding.input.requestId, c.binding.input.accountId, c.binding.input.locationId, c.promotionID, c.ownershipID])
+                        c.binding.input.requestId, c.binding.input.accountId, c.binding.input.locationId, c.promotionID, c.ownershipID].compactMap { $0 })
                 let remote = observation.proposal.activationInput.requestId, association = observation.associationAttemptID
                 guard !used.contains(remote), !used.contains(association), remote != association,
                     ![observation.proposal.pendingClaim.installationId, observation.proposal.pendingClaim.challengeId].contains(remote),
@@ -1141,7 +1233,7 @@ final class NativeEnrollmentJournalStore {
         let path = root.path, excluded = excludedLocalResetRoot.path
         guard path.utf8.count <= 4096, excluded.utf8.count <= 4096,
             path.utf8.elementsEqual(root.resolvingSymlinksInPath().path.utf8),
-            excluded.utf8.elementsEqual(excludedLocalResetRoot.resolvingSymlinksInPath().path.utf8),
+            try Self.isPhysicalExcludedPath(excluded),
             path != excluded, !path.hasPrefix(excluded + "/"), !excluded.hasPrefix(path + "/") else { throw NativeEnrollmentJournalError.unsafeRoot }
         let rootFD = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
         guard rootFD >= 0 else { throw failure() }; defer { close(rootFD) }
@@ -1449,6 +1541,13 @@ extension NativeEnrollmentJournalStore {
             return result
         }
     }
+    func hasRecordedPairInitialization(preparationID: UUID) throws -> Bool {
+        try disk { d in
+            let state = try scan(d); try requireQualification(d, state)
+            guard state.refs.last?.preparationID == preparationID else { throw NativeEnrollmentJournalError.conflict }
+            return state.paired.initialization != nil
+        }
+    }
     func capturePairRecovery(preparationID: UUID) throws -> PairAttempt {
         try NativeJournalCodec.pairedLayoutReservationProof()
         return try disk { d in
@@ -1468,7 +1567,7 @@ extension NativeEnrollmentJournalStore {
         let p = original.original.step.proposal
         var used = Set(state.refs.flatMap { [$0.attemptID, $0.preparationID] })
         used.formUnion(state.paired.retainedOperationIDs)
-        used.formUnion([cloudRootID, p.preparationId, p.enrollmentId, p.binding.transitionID, p.binding.credentialGenerationID, p.claimInput.requestId, p.claimInput.accountId, p.claimInput.locationId])
+        used.formUnion([cloudRootID, p.preparationId, p.enrollmentId, p.binding.transitionID, p.binding.credentialGenerationID, p.claimInput.requestId, p.claimInput.accountId, p.claimInput.locationId].compactMap { $0 })
         used.formUnion(p.source.transitions.map(\.transitionID) + p.source.credentials.map(\.credentialGenerationID))
         for record in p.sourceEnrollment.enrollments {
             used.formUnion([record.localEnrollmentId, record.claimInput.requestId])

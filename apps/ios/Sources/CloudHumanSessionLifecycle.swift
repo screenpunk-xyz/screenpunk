@@ -56,14 +56,14 @@ final class CloudHumanSession {
         coordinator = testCoordinator; callback = testCallback
         revoke = { testCoordinator.cancel() }
     }
-    func enrollmentSelection(accountID: UUID, locationID: UUID) throws -> CloudEnrollmentSelection {
+    func enrollmentSelection(accountID: UUID, locationID: UUID?) throws -> CloudEnrollmentSelection {
         guard let lease, let coordinator, let identity = coordinator.humanIdentity, let enrollmentTokens else { throw CloudNativeIdentityError.providerFailed }
         func validate() throws {
             try lease.checkHumanAction()
             guard coordinator.humanIdentity == identity, !coordinator.isWorking, coordinator.signOutState == .idle,
                 coordinator.selectedAccountID == accountID,
-                coordinator.accounts.contains(where: { $0.id == accountID && $0.capabilities.canEnroll }),
-                coordinator.locations.contains(where: { $0.id == locationID && $0.capabilities.canEnroll }) else { throw CancellationError() }
+                coordinator.accounts.contains(where: { $0.id == accountID && $0.capabilities.canEnroll && (locationID != nil || $0.capabilities.canEnrollUnassigned) }),
+                (locationID == nil || coordinator.locations.contains(where: { $0.id == locationID && $0.capabilities.canEnroll })) else { throw CancellationError() }
         }
         try validate()
         return CloudEnrollmentSelection(accountID: accountID, locationID: locationID,
@@ -128,7 +128,7 @@ final class CloudHumanSessionLifecycle: ObservableObject {
                 applePresentation: { try presentation.resolve().window }, transport: CloudNativeURLSessionTransport())
         }
     }
-    func enrollmentSelection(accountID: UUID, locationID: UUID) throws -> CloudEnrollmentSelection {
+    func enrollmentSelection(accountID: UUID, locationID: UUID?) throws -> CloudEnrollmentSelection {
         guard !retired, let lease, let session = broker.session(for: lease) else { throw Failure.retired }
         return try session.enrollmentSelection(accountID: accountID, locationID: locationID)
     }
@@ -177,7 +177,8 @@ private final class CloudSceneRetirement: Sendable {
 
 /// Genuine selected response IDs, never caller-created identity or admission evidence.
 @MainActor struct CloudEnrollmentSelection {
-    let accountID: UUID, locationID: UUID
+    let accountID: UUID
+    let locationID: UUID?
     let tokens: CloudEnrollmentTokenScope
     func validate() throws { try tokens.validateCurrent() }
 }
