@@ -1365,14 +1365,17 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     /// Recovery evidence only, never Local admission or a cleanup capability.
     func resetRecoverySnapshot() throws -> ResetRecoverySnapshot {
         try serialized {
-            try validateFactoryResetRecord(try reset.load())
             guard !resetQuarantined else { throw Failure.resetConflict }
             let digest = try reset.scopeDigest
             if let attempt = resetAttempt {
                 guard attempt.record.scopeDigest == digest else { throw Failure.resetConflict }
+                // An uncertain journal deliberately fences reads until this literal
+                // original write is acknowledged. Validate retained ownership first.
+                try validateFactoryResetRecord(attempt.record)
                 return .uncertain(attempt.record)
             }
             let record = try reset.load()
+            try validateFactoryResetRecord(record)
             if let observedReset, observedReset != record {
                 // A reconstructed physical owner may finish through the retained original
                 // driver. Admit only its literal original pending -> completed transition.
@@ -1428,8 +1431,8 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         }
     }
     private func writeResetAttempt() throws {
-        try validateFactoryResetRecord(try reset.load())
         guard let attempt = resetAttempt else { throw Failure.noResetAttempt }
+        try validateFactoryResetRecord(attempt.record)
         if attempt.beginsNew { try reset.beginNewReset(attempt.record) } else { try reset.save(attempt.record) }
         guard try reset.load() == attempt.record else { throw Failure.resetConflict }
         observedReset = attempt.record

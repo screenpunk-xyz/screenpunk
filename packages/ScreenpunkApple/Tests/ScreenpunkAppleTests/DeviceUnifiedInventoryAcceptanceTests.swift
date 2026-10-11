@@ -17,9 +17,9 @@ final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
         XCTAssertNil(try fixture.common.mountedAssociation(), "A failed preload cannot become active")
         XCTAssertEqual(try fixture.common.mountStateAssociation().state, "failed")
         XCTAssertEqual(try fixture.common.mountStateAssociation().failureCode, "navigation_failed")
-        let reopened = try fixture.authority.makeUnifiedInventorySession(context: fixture.context, current: fixture.current,
+        let reopened = try fixture.authority.restoreUnifiedInventorySession(context: fixture.context,
             commonRootID: fixture.commonID, native: fixture.execution)
-        XCTAssertTrue(try reopened.restoreCompleted(current: fixture.current))
+        XCTAssertEqual(try reopened.validatedAssociation().generationID, fixture.generation)
         XCTAssertEqual(try reopened.mountStateAssociation().state, "failed")
         let recovered = try reopened.selectedContent(operationID: UUID())
         try reopened.confirmMountedLocalContent(recovered)
@@ -28,9 +28,9 @@ final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
         XCTAssertEqual(mounted.entryID, recovered.entryID)
         XCTAssertTrue(mounted.currentlyConfigured)
         XCTAssertEqual(try reopened.mountStateAssociation().state, "ready")
-        let secondReopen = try fixture.authority.makeUnifiedInventorySession(context: fixture.context, current: fixture.current,
+        let secondReopen = try fixture.authority.restoreUnifiedInventorySession(context: fixture.context,
             commonRootID: fixture.commonID, native: fixture.execution)
-        XCTAssertTrue(try secondReopen.restoreCompleted(current: fixture.current))
+        XCTAssertEqual(try secondReopen.validatedAssociation().generationID, fixture.generation)
         XCTAssertEqual(try secondReopen.mountedAssociation()?.generationID, mounted.generationID)
         XCTAssertEqual(try secondReopen.mountStateAssociation().state, "ready")
         let hiddenRestartCandidate = try secondReopen.selectedContent(operationID: UUID())
@@ -47,17 +47,21 @@ final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
         XCTAssertEqual(active.generationID, fixture.generation)
         XCTAssertTrue(active.assets.contains { $0.path == "index.html" })
         // Reopen through the same genuine owner. No new genesis or migration intent.
-        let reopened = try fixture.authority.makeUnifiedInventorySession(context: fixture.context, current: fixture.current, commonRootID: fixture.commonID, native: fixture.execution)
-        XCTAssertTrue(try reopened.restoreCompleted(current: fixture.current))
+        let reopened = try fixture.authority.restoreUnifiedInventorySession(context: fixture.context, commonRootID: fixture.commonID, native: fixture.execution)
+        XCTAssertEqual(try reopened.validatedAssociation().generationID, fixture.generation)
         let restored = try reopened.selectedContent(operationID: UUID())
         XCTAssertEqual(restored.generationID, active.generationID)
         XCTAssertEqual(restored.entryID, active.entryID)
         try fixture.authority.leaveCloudForeground()
         XCTAssertThrowsError(try fixture.authority.prepareCurrentInstallationDispatch(fixture.context))
+        XCTAssertThrowsError(try fixture.current.requirePresentationCurrent(), "The retained command handle cannot authorize activation after cloud foreground ends")
         // Loss of cloud command admission leaves qualified common resources readable.
         let retained = try reopened.selectedContent(operationID: UUID())
         XCTAssertEqual(retained.entryID, active.entryID)
         XCTAssertEqual(retained.generationID, active.generationID)
+        try reopened.confirmMountedLocalContent(retained)
+        XCTAssertEqual(try reopened.mountedAssociation()?.generationID, active.generationID)
+        XCTAssertEqual(try reopened.mountedAssociation()?.entryID, active.entryID)
         XCTAssertEqual(fixture.storage.adds, 2, "Neither reopen nor cloud disconnect duplicates credentials")
     }
 }
