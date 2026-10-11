@@ -23,6 +23,7 @@ else
 fi
 
 ./scripts/generate-xcode.sh
+python3 scripts/ci/test-ios-candidate.py
 
 if ! command -v swift >/dev/null 2>&1; then
   echo "swift is required for apple-build-and-unit"

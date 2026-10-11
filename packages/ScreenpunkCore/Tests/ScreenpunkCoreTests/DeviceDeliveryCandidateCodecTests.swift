@@ -97,11 +97,7 @@ final class DeviceDeliveryCandidateCodecTests: XCTestCase {
         for fixture in doc.cases {
             let input = try DeviceResultingSetCandidate.validating(entries: entries(fixture.value), configuredEntryID: selected(fixture.value))
             XCTAssertEqual(hex(try DeviceDeliveryCandidateCodec.resultingSetBytes(input)), fixture.hex, fixture.name)
-            #if canImport(CryptoKit)
             XCTAssertEqual(try DeviceDeliveryCandidateCodec.resultingSetDigest(input), fixture.resultingSetDigest, fixture.name)
-            #else
-            XCTAssertThrowsError(try DeviceDeliveryCandidateCodec.resultingSetDigest(input)) { XCTAssertEqual($0 as? DeviceDeliveryCandidateFailure, .digestUnavailable) }
-            #endif
         }
     }
     func testStrictBoundedASCIIHashes() throws {

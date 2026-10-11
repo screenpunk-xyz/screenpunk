@@ -116,18 +116,6 @@ struct CloudSceneRoot: View {
     }
 }
 
-/// Compile-time release qualification owned by the app build. Human sign-in and
-/// remote account settings cannot enable a device protocol that has not qualified.
-private enum ScreenpunkDeviceReleaseQualification {
-    static var concurrentControl: Bool {
-        #if SCREENPUNK_CONCURRENT_CONTROL_QUALIFIED
-        true
-        #else
-        false
-        #endif
-    }
-}
-
 /// The common host remains observable while a cloud screen is displayed.
 private struct ConcurrentControllerApprovalOverlay: View {
     @ObservedObject var host: DeviceLANHost

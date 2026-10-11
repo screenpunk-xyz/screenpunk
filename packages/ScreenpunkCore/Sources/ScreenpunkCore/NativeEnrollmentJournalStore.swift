@@ -1231,10 +1231,15 @@ final class NativeEnrollmentJournalStore {
             pairCommandScope = false; pairPrivateAttempt = nil; pairPrivateRoot = nil; pairPrivateFiles = nil
         }
         let path = root.path, excluded = excludedLocalResetRoot.path
+        // Foundation standardization can rewrite /private/var to /var on Darwin.
+        // Compare both roots in that same spelling while retaining the supplied
+        // physical excluded path for the no-follow directory traversal.
+        let comparisonExcluded = excludedLocalResetRoot.standardizedFileURL.path
         guard path.utf8.count <= 4096, excluded.utf8.count <= 4096,
             path.utf8.elementsEqual(root.resolvingSymlinksInPath().path.utf8),
             try Self.isPhysicalExcludedPath(excluded),
-            path != excluded, !path.hasPrefix(excluded + "/"), !excluded.hasPrefix(path + "/") else { throw NativeEnrollmentJournalError.unsafeRoot }
+            path != comparisonExcluded, !path.hasPrefix(comparisonExcluded + "/"),
+            !comparisonExcluded.hasPrefix(path + "/") else { throw NativeEnrollmentJournalError.unsafeRoot }
         let rootFD = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
         guard rootFD >= 0 else { throw failure() }; defer { close(rootFD) }
         let directory = try identity(rootFD, directory: true)

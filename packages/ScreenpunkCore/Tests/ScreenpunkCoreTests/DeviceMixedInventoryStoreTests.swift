@@ -3,6 +3,29 @@ import XCTest
 @testable import ScreenpunkCore
 
 final class DeviceMixedInventoryStoreTests: XCTestCase {
+    func testExactAttachmentDigestMatchesSHA256VectorsAndStreamingBytes() throws {
+        let vectors: [(Data, String)] = [
+            (Data(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+            (Data("abc".utf8), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            (Data("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".utf8), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+        ]
+        for (bytes, expected) in vectors {
+            XCTAssertEqual(try DeviceNativeDeliveryAttachmentCodec.hash(bytes), expected)
+            var portable = NativeJournalSHA256()
+            for byte in bytes { try portable.update([byte]) }
+            XCTAssertEqual(portable.finalized().map { String(format: "%02x", $0) }.joined(), expected)
+        }
+        let emptySet = try DeviceResultingSetCandidate.validating(entries: [], configuredEntryID: nil)
+        XCTAssertEqual(try DeviceDeliveryCandidateCodec.resultingSetDigest(emptySet),
+            "7efdd4c8adef942abf0785ef0134406d55cb6a340db7b19ddea6c20a82412dbd")
+        let bytes = Data((0..<32768).map { UInt8(truncatingIfNeeded: $0) })
+        var portable = NativeJournalSHA256(); try portable.update(bytes)
+        XCTAssertEqual(try DeviceNativeDeliveryAttachmentCodec.hash(bytes),
+            portable.finalized().map { String(format: "%02x", $0) }.joined())
+        XCTAssertNotEqual(try DeviceNativeDeliveryAttachmentCodec.hash(bytes),
+            try DeviceNativeDeliveryAttachmentCodec.hash(bytes + Data([0])))
+    }
+
     private func scope<T>(_ store: DeviceMixedInventoryStore, _ body: (DeviceLocalResourcePermit) throws -> T) throws -> T {
         try DeviceMixedInventoryQualificationHarness.scope(store, body: body)
     }

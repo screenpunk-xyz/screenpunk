@@ -11,6 +11,10 @@ on:
         description: Unused numeric build number verified in App Store Connect.
         type: string
         required: true
+      internal_concurrent_candidate:
+        description: Enable concurrent control only in this internal staging TestFlight qualification candidate. Does not assert physical qualification.
+        type: boolean
+        default: false
       upload_to_testflight:
         description: Upload the signed IPA to App Store Connect for TestFlight processing. Never submits an App Store release.
         type: boolean
@@ -30,6 +34,10 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate internal candidate archive policy
+        run: |
+          python3 scripts/ci/test-ios-release-metadata.py
+          python3 scripts/ci/test-ios-candidate.py
       - name: Unsigned Apple tests and compile
         run: ./scripts/ci/apple.sh
 
@@ -53,6 +61,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      IOS_INTERNAL_CONCURRENT_CANDIDATE: ${{ inputs.internal_concurrent_candidate }}
       UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
