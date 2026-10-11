@@ -8,13 +8,12 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/apple-signing-common.sh"
 # Icon Composer resources require Xcode 26 or newer.
 source "$ROOT/scripts/select-icon-xcode.sh"
 
-require_env APPLE_TEAM_ID
+require_apple_team_id
 require_macos_26_sdk
-import_p12 MAC_SIGNING_CERT_P12_BASE64 MAC_SIGNING_CERT_PASSWORD
+import_p12 MAC_SIGNING_CERT_P12_BASE64 MAC_SIGNING_CERT_PASSWORD "Developer ID Application"
 
 ./scripts/generate-xcode.sh
 mac_proj="${ROOT}/apps/macos/ScreenpunkMac.xcodeproj"
-enable_generated_signing "$mac_proj"
 
 archive_path="${RELEASE_DIR}/ScreenpunkMac.xcarchive"
 export_dir="${RELEASE_DIR}/macos-export"
@@ -33,7 +32,7 @@ cat >"$export_plist" <<EOF
   <key>signingStyle</key>
   <string>manual</string>
   <key>signingCertificate</key>
-  <string>Developer ID Application</string>
+  <string>${SIGNING_IDENTITY_SHA1}</string>
   <key>teamID</key>
   <string>${APPLE_TEAM_ID}</string>
 </dict>
@@ -49,11 +48,12 @@ xcodebuild archive \
   -derivedDataPath "${RELEASE_DIR}/macos-derived" \
   ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=YES \
+  SCREENPUNK_CLOUD_API_ORIGIN="${SCREENPUNK_CLOUD_API_ORIGIN:-https://staging.screenpunk.xyz}" \
   CODE_SIGNING_ALLOWED=YES \
   CODE_SIGNING_REQUIRED=YES \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
-  CODE_SIGN_IDENTITY="Developer ID Application" \
+  CODE_SIGN_IDENTITY="${SIGNING_IDENTITY_SHA1}" \
   ENABLE_HARDENED_RUNTIME=YES \
   OTHER_CODE_SIGN_FLAGS="--options=runtime --timestamp"
 
@@ -91,7 +91,7 @@ while IFS= read -r bin; do
   if [[ "$bin" == "$app/Contents/MacOS/Screenpunk" ]]; then
     continue
   fi
-  codesign --force --options runtime --timestamp --sign "Developer ID Application" "$bin"
+  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY_SHA1" "$bin"
 done < <(
   find "$app/Contents" -type f -print0 2>/dev/null \
     | xargs -0 file \
@@ -112,8 +112,8 @@ else
   echo "STATE: nested-helpers-absent (controller / preview-host not embedded yet)"
 fi
 
-codesign --force --options runtime --timestamp --sign "Developer ID Application" "$app/Contents/Helpers/ScreenpunkPreviewHost.app"
-codesign --force --options runtime --timestamp --sign "Developer ID Application" "$app"
+codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY_SHA1" "$app/Contents/Helpers/ScreenpunkPreviewHost.app"
+codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY_SHA1" "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 echo "=== entitlements on exported app (no extra hardened-runtime exceptions applied here) ==="
 codesign -d --entitlements :- "$app" 2>/dev/null || echo "no entitlements plist on app"
@@ -127,7 +127,7 @@ ln -s /Applications "$stage/Applications"
 dmg="${RELEASE_DIR}/Screenpunk.dmg"
 rm -f "$dmg"
 hdiutil create -volname Screenpunk -srcfolder "$stage" -ov -format UDZO "$dmg"
-codesign --force --timestamp --sign "Developer ID Application" "$dmg"
+codesign --force --timestamp --sign "$SIGNING_IDENTITY_SHA1" "$dmg"
 
 require_env ASC_KEY_ID
 require_env ASC_ISSUER_ID

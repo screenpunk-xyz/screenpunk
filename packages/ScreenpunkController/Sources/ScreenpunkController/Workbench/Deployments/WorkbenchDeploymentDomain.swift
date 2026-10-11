@@ -21,16 +21,26 @@ struct WorkbenchDeploymentObservation {
     let screens: [LANScreenSetEntry]
     let selectedDashboardId: String?
     let observedAt: Date
+    var stateGenerationId: String? = nil
+    var commonEntries: [LANCommonScreenEntry]? = nil
+    var configuredEntryId: String? = nil
+    var activeGenerationId: String? = nil
+    var activeEntryId: String? = nil
 }
 
 /// The eventual native adapter must use the current paired owner channel and
 /// must not replay deployScreenSet after an ambiguous cached-link error.
 protocol WorkbenchDeploymentPeer {
     func observe(deviceId: String) throws -> WorkbenchDeploymentObservation
+    func sendUnified(_ body: LANUnifiedScreenInstall, deviceId: String, preSend: () throws -> Void) throws -> LANActiveQuery
     func send(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt
     func send(_ body: LANScreenSetDeployBody, preSend: () throws -> Void) throws -> LANScreenSetReceipt
 }
 extension WorkbenchDeploymentPeer {
+    func sendUnified(_ body: LANUnifiedScreenInstall, deviceId: String, preSend: () throws -> Void) throws -> LANActiveQuery {
+        throw WorkbenchDeploymentError.unsupportedIntegration
+    }
+
     func send(_ body: LANScreenSetDeployBody, preSend: () throws -> Void) throws -> LANScreenSetReceipt {
         try preSend()
         return try send(body)
@@ -174,8 +184,19 @@ final class WorkbenchDeploymentDomain {
             }
             let oldIDs = Set(observation.screens.map(\.dashboardId))
             let newIDs = Set(material.screens.map { $0.item.deployment.revision.dashboardId })
-            let removals = oldIDs.subtracting(newIDs).sorted(by: ToolchainCanonical.utf8Less)
-            guard removals == removedDashboardIds else { throw WorkbenchDeploymentError.invalidPlan }
+            let removals: [String]
+            if observation.stateGenerationId != nil {
+                guard let common = observation.commonEntries,
+                      !common.contains(where: { $0.origin == "cloud" && newIDs.contains($0.dashboardId) }),
+                      removedDashboardIds == removedDashboardIds.sorted(by: ToolchainCanonical.utf8Less),
+                      Set(removedDashboardIds).count == removedDashboardIds.count,
+                      Set(removedDashboardIds).isSubset(of: oldIDs),
+                      Set(removedDashboardIds).isDisjoint(with: newIDs) else { throw WorkbenchDeploymentError.invalidPlan }
+                removals = removedDashboardIds
+            } else {
+                removals = oldIDs.subtracting(newIDs).sorted(by: ToolchainCanonical.utf8Less)
+                guard removals == removedDashboardIds else { throw WorkbenchDeploymentError.invalidPlan }
+            }
             let context = try currentContext(deviceId, material.bindingIds)
             guard WorkspaceValidation.sha256(context) else { throw WorkbenchDeploymentError.staleContext }
             let sample = clock()
@@ -207,12 +228,21 @@ final class WorkbenchDeploymentDomain {
                 requiredDeclarationsHash: try declarationsHash(requirements),
                 approvalPolicy: "exact-package-installation-v1",
                 expiresAt: formatter.string(from: Date(timeIntervalSince1970: TimeInterval(expiry))))
-            let planHash = try WorkbenchDeploymentHash.plan(body)
-            let resulting = material.screens.map { screen in
+            var qualifiedBody = body
+            qualifiedBody.expectedStateGenerationId = observation.stateGenerationId
+            qualifiedBody.expectedCommonEntries = observation.commonEntries
+            qualifiedBody.previouslyConfiguredEntryId = observation.configuredEntryId
+            let planHash = try WorkbenchDeploymentHash.plan(qualifiedBody)
+            var resulting = material.screens.map { screen in
                 LANScreenSetEntry(dashboardId: screen.item.deployment.revision.dashboardId,
                     revision: screen.item.deployment.revision.revision, name: screen.item.name)
             }
-            var review = WorkbenchDeploymentReview(plan: body, planHash: planHash,
+            if observation.stateGenerationId != nil {
+                let replaced = Set(resulting.map(\.dashboardId))
+                resulting = observation.screens.filter { !replaced.contains($0.dashboardId) && !removals.contains($0.dashboardId) } + resulting
+                guard resulting.count <= 12 else { throw WorkbenchDeploymentError.invalidPlan }
+            }
+            var review = WorkbenchDeploymentReview(plan: qualifiedBody, planHash: planHash,
                 authorizationContextHash: grants.ready ? context : nil,
                 deviceName: WorkbenchDeploymentPresentation.escape(observation.name, limit: 128),
                 observedAt: observation.observedAt,
@@ -303,6 +333,37 @@ final class WorkbenchDeploymentDomain {
                 try self.validateCurrent(review: review)
             }
             guard sending.state == .sending else { return sending }
+            if let baseline = review.plan.expectedStateGenerationId,
+               let entries = review.plan.expectedCommonEntries {
+                let retained = entries.filter { !review.plan.removedDashboardIds.contains($0.dashboardId) }
+                let incoming = try items.map { item -> LANUnifiedScreenInstallEntry in
+                    let dashboard = item.deployment.revision.dashboardId
+                    if let existing = entries.first(where: { $0.dashboardId == dashboard }) {
+                        guard existing.origin == "retainedLocal" else { throw WorkbenchDeploymentError.invalidPlan }
+                        return .init(entryId: existing.entryId, screen: item)
+                    }
+                    // The stable entry identity is derived from the approved plan, rather than regenerated on retry.
+                    let identity = try WorkbenchDeploymentHash.entryId(planId: review.plan.planId, dashboardId: dashboard)
+                    return .init(entryId: identity, screen: item)
+                }
+                guard let selected = incoming.first(where: { $0.screen.deployment.revision.dashboardId == material.selectedDashboardId })?.entryId else { throw WorkbenchDeploymentError.invalidPlan }
+                let command = LANUnifiedScreenInstall(operationId: operationId, expectedGenerationId: baseline,
+                    retainedEntryIds: retained.map(\.entryId), selectedEntryId: selected, incoming: incoming)
+                do {
+                    let receipt = try peer.sendUnified(command, deviceId: review.plan.deviceId, preSend: {
+                        guard try self.ledger.validateFirstSend(operationId: operationId, clockProvider: self.clock,
+                            validateCurrent: { try self.validateCurrent(review: review) }) else { throw WorkbenchDeploymentPreSendFailure() }
+                    })
+                    guard receipt.stateGenerationId.flatMap(UUID.init(uuidString:)) == UUID(uuidString: operationId),
+                          receipt.configuredEntryId == selected,
+                          let actual = receipt.commonEntries,
+                          Set(actual.map(\.entryId)) == Set(retained.map(\.entryId) + incoming.map(\.entryId)),
+                          incoming.allSatisfy({ entry in actual.contains { $0.entryId == entry.entryId && $0.dashboardId == entry.screen.deployment.revision.dashboardId && $0.revision == entry.screen.deployment.revision.revision && $0.origin == "retainedLocal" } }) else { throw WorkbenchDeploymentError.unknownRemoteOutcome }
+                    // A configured inventory receipt does not prove that the runtime mounted the screen.
+                    return try ledger.updateOutcome(operationId: operationId, state: .received, receiptJSON: encoder.encode(receipt))
+                } catch is WorkbenchDeploymentPreSendFailure { return try ledger.status(operationId) }
+                catch { _ = try ledger.updateOutcome(operationId: operationId, state: .unknown); throw WorkbenchDeploymentError.unknownRemoteOutcome }
+            }
             let receipt: LANScreenSetReceipt
             do {
                 receipt = try peer.send(body, preSend: {
@@ -393,6 +454,22 @@ final class WorkbenchDeploymentDomain {
             throw WorkbenchDeploymentError.conflict
         }
         let material = try material(for: review)
+        if review.plan.expectedStateGenerationId != nil {
+            guard operation.state == .received, let bytes = operation.receiptJSON else { return operation }
+            guard let receipt = try? decoder.decode(LANActiveQuery.self, from: bytes),
+                  receipt.controllerApproved == true,
+                  receipt.stateGenerationId.flatMap(UUID.init(uuidString:)) == UUID(uuidString: operation.operationId),
+                  let selected = receipt.configuredEntryId, let entries = receipt.commonEntries,
+                  entries.contains(where: { $0.entryId == selected && $0.dashboardId == material.selectedDashboardId }) else {
+                throw WorkbenchDeploymentError.conflict
+            }
+            let mounted = try peer.observe(deviceId: review.plan.deviceId)
+            guard mounted.deviceId == review.plan.deviceId,
+                  mounted.stateGenerationId == receipt.stateGenerationId,
+                  mounted.commonEntries == entries, mounted.configuredEntryId == selected,
+                  mounted.activeGenerationId == receipt.stateGenerationId, mounted.activeEntryId == selected else { return operation }
+            return try ledger.updateOutcome(operationId: operation.operationId, state: .active)
+        }
         let expected = material.screens.map { screen in
             LANScreenSetEntry(dashboardId: screen.item.deployment.revision.dashboardId,
                               revision: screen.item.deployment.revision.revision,
@@ -442,6 +519,9 @@ final class WorkbenchDeploymentDomain {
                   selected: observation.selectedDashboardId) == review.plan.expectedInstalledSetHash else {
             throw WorkbenchDeploymentError.staleContext
         }
+        guard observation.stateGenerationId == review.plan.expectedStateGenerationId,
+              observation.commonEntries == review.plan.expectedCommonEntries,
+              observation.configuredEntryId == review.plan.previouslyConfiguredEntryId else { throw WorkbenchDeploymentError.staleContext }
         _ = try verify(material: material, deviceId: review.plan.deviceId)
     }
     private func material(for review: WorkbenchDeploymentReview) throws -> WorkbenchDeploymentMaterial {

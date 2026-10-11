@@ -31,6 +31,15 @@ rm "$stage/payload/release-auth.json" "$stage/payload/release-manifest.json"
 cp "$cli_build/screenpunk" "$stage/payload/bin/screenpunk"
 cp "$cli_build/screenpunk-mcp" "$stage/payload/bin/screenpunk-mcp"
 cp "$cli_build/screenpunk-service" "$stage/payload/libexec/screenpunk-service"
+mkdir -p "$stage/payload/Resources/Cloud"
+python3 - "$stage/payload/Resources/Cloud/controller.json" "${SCREENPUNK_CLOUD_API_ORIGIN:-https://staging.screenpunk.xyz}" <<'PY'
+import json,sys,urllib.parse
+path,origin=sys.argv[1:]
+url=urllib.parse.urlsplit(origin)
+if url.scheme!='https' or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ('','/'):
+    raise SystemExit('Invalid Screenpunk cloud API origin')
+with open(path,'w') as stream: json.dump({'schemaVersion':1,'apiOrigin':origin},stream,separators=(',',':'))
+PY
 identity=98E00BBDF01DE542C912F86A40CB9AE616CBDCCC
 for record in 'screenpunk xyz.screenpunk.cli bin' 'screenpunk-mcp xyz.screenpunk.mcp bin' 'screenpunk-service xyz.screenpunk.service libexec'; do
   read -r name identifier folder <<< "$record"

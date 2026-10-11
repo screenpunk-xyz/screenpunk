@@ -25,6 +25,7 @@ public struct WorkbenchPortableSourceArchiveReceipt: Codable, Sendable, Equatabl
 
 public final class WorkbenchPortableSourceArchive {
     private let workspace: WorkspaceStore
+    var cloudCreationScope: ControllerCloudCreationScope?
     public init(workspace: WorkspaceStore) { self.workspace = workspace }
 
     /// Clone the exact current included source version into a new contained
@@ -50,7 +51,9 @@ public final class WorkbenchPortableSourceArchive {
             }
             relative = "Screens/" + destinationName
         } else { relative = nil }
-        return try WorkbenchContainedAuthoring(workspace: workspace).importVerifiedSource(
+        let authoring = WorkbenchContainedAuthoring(workspace: workspace)
+        authoring.cloudCreationScope = cloudCreationScope
+        return try authoring.importVerifiedSource(
             descriptor: captured.0, files: captured.1, relativeDestination: relative)
     }
 
@@ -210,7 +213,9 @@ public final class WorkbenchPortableSourceArchive {
             }
             relative = "Screens/" + destinationName
         } else { relative = nil }
-        return try WorkbenchContainedAuthoring(workspace: workspace).importVerifiedSource(
+        let authoring = WorkbenchContainedAuthoring(workspace: workspace)
+        authoring.cloudCreationScope = cloudCreationScope
+        return try authoring.importVerifiedSource(
             descriptor: manifest.project, files: files, relativeDestination: relative)
     }
 

@@ -6,9 +6,21 @@ import Foundation
 /// and unknown-field qualifier before a decoder may be exposed.
 public enum NativeEnrollmentFailure: Error, Equatable { case invalidInput, mismatchedEvidence, illegalSuccessor, capacityExceeded }
 public struct NativeClaimInput: Encodable, Equatable, Sendable {
-    public let requestId: UUID, transitionId: UUID, accountId: UUID, locationId: UUID
+    public let requestId: UUID, transitionId: UUID, accountId: UUID
+    public let locationId: UUID?
     public let name: String, profile: String
-    public init(requestId: UUID, transitionId: UUID, accountId: UUID, locationId: UUID, name: String, profile: String) throws {
+    private enum CodingKeys: String, CodingKey { case requestId, transitionId, accountId, locationId, name, profile }
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(requestId, forKey: .requestId)
+        try values.encode(transitionId, forKey: .transitionId)
+        try values.encode(accountId, forKey: .accountId)
+        try values.encode(locationId, forKey: .locationId)
+        try values.encode(name, forKey: .name)
+        try values.encode(profile, forKey: .profile)
+    }
+
+    public init(requestId: UUID, transitionId: UUID, accountId: UUID, locationId: UUID?, name: String, profile: String) throws {
         for value in [name, profile] {
             let scalars = value.unicodeScalars
             guard (1...128).contains(scalars.count), scalars.contains(where: { !Self.trimmedScalar($0.value) }),
@@ -40,19 +52,48 @@ public struct NativeGenerationReceipt: Encodable, Sendable {
 }
 public struct NativeClaimReceipt: Encodable, Sendable {
     public enum Outcome: String, Encodable, Sendable { case pending, expired, cancelled }
-    public let installationId: UUID, requestId: UUID, transitionId: UUID, challengeId: UUID, accountId: UUID, locationId: UUID
+    public let installationId: UUID, requestId: UUID, transitionId: UUID, challengeId: UUID, accountId: UUID
+    public let locationId: UUID?
     public let createdAt: String, expiresAt: String
     public let outcome: Outcome
-    public init(installationId: UUID, requestId: UUID, transitionId: UUID, challengeId: UUID, accountId: UUID, locationId: UUID, createdAt: String, expiresAt: String, outcome: Outcome) throws {
+    private enum CodingKeys: String, CodingKey { case installationId, requestId, transitionId, challengeId, accountId, locationId, createdAt, expiresAt, outcome }
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(installationId, forKey: .installationId)
+        try values.encode(requestId, forKey: .requestId)
+        try values.encode(transitionId, forKey: .transitionId)
+        try values.encode(challengeId, forKey: .challengeId)
+        try values.encode(accountId, forKey: .accountId)
+        try values.encode(locationId, forKey: .locationId)
+        try values.encode(createdAt, forKey: .createdAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+        try values.encode(outcome, forKey: .outcome)
+    }
+
+    public init(installationId: UUID, requestId: UUID, transitionId: UUID, challengeId: UUID, accountId: UUID, locationId: UUID?, createdAt: String, expiresAt: String, outcome: Outcome) throws {
         guard try nativeEnrollmentInterval(expiresAt, createdAt, seconds: 600) else { throw NativeEnrollmentFailure.mismatchedEvidence }
         self.installationId = installationId; self.requestId = requestId; self.transitionId = transitionId; self.challengeId = challengeId; self.accountId = accountId; self.locationId = locationId; self.createdAt = createdAt; self.expiresAt = expiresAt; self.outcome = outcome
     }
 }
 public struct NativeActivationReceipt: Encodable, Sendable {
-    public let installationId: UUID, deviceId: UUID, requestId: UUID, accountId: UUID, locationId: UUID, transitionId: UUID
+    public let installationId: UUID, deviceId: UUID, requestId: UUID, accountId: UUID, transitionId: UUID
+    public let locationId: UUID?
     public let activatedAt: String
     public let initialGeneration: NativeGenerationReceipt
-    public init(installationId: UUID, deviceId: UUID, requestId: UUID, accountId: UUID, locationId: UUID, transitionId: UUID, activatedAt: String, initialGeneration: NativeGenerationReceipt) throws {
+    private enum CodingKeys: String, CodingKey { case installationId, deviceId, requestId, accountId, locationId, transitionId, activatedAt, initialGeneration }
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(installationId, forKey: .installationId)
+        try values.encode(deviceId, forKey: .deviceId)
+        try values.encode(requestId, forKey: .requestId)
+        try values.encode(accountId, forKey: .accountId)
+        try values.encode(locationId, forKey: .locationId)
+        try values.encode(transitionId, forKey: .transitionId)
+        try values.encode(activatedAt, forKey: .activatedAt)
+        try values.encode(initialGeneration, forKey: .initialGeneration)
+    }
+
+    public init(installationId: UUID, deviceId: UUID, requestId: UUID, accountId: UUID, locationId: UUID?, transitionId: UUID, activatedAt: String, initialGeneration: NativeGenerationReceipt) throws {
         guard installationId == deviceId, try nativeEnrollmentTime(activatedAt) == nativeEnrollmentTime(initialGeneration.createdAt) else { throw NativeEnrollmentFailure.mismatchedEvidence }
         self.installationId = installationId; self.deviceId = deviceId; self.requestId = requestId; self.accountId = accountId; self.locationId = locationId; self.transitionId = transitionId; self.activatedAt = activatedAt; self.initialGeneration = initialGeneration
     }

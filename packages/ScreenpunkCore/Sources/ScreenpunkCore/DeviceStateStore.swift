@@ -11,6 +11,8 @@ import Glibc
 /// TLS identity stays in the keychain and the owner is a public-key pin.
 public struct DevicePersistedState: Sendable, Equatable, Codable {
     public var owner: PairingIdentity?
+    /// Nil is legacy single-controller state; [] persists explicit full revocation.
+    public var approvedControllers: [PairingIdentity]?
     public var activeRevision: String?
     public var activeStoredRevision: StoredRevision?
     public var lastDeployment: DeploymentRecord?
@@ -28,6 +30,7 @@ public struct DevicePersistedState: Sendable, Equatable, Codable {
         savedAt: Date = Date()
     ) {
         self.owner = owner
+        self.approvedControllers = owner.map { [$0] } ?? []
         self.activeRevision = activeRevision
         self.activeStoredRevision = activeStoredRevision
         self.lastDeployment = lastDeployment
@@ -42,6 +45,7 @@ public struct DevicePersistedState: Sendable, Equatable, Codable {
             lastDeployment: runtime.lastDeployment,
             savedAt: savedAt
         )
+        approvedControllers = runtime.pairing.approvedControllers
     }
 }
 
@@ -214,7 +218,7 @@ extension DeviceRuntime {
     /// Rebuilds owner, active revision, and last deployment from disk. Any
     /// in-flight pairing session or staged revision is dropped; those never persist.
     public mutating func restore(_ state: DevicePersistedState) {
-        pairing = DevicePairingState(owner: state.owner)
+        pairing = DevicePairingState(owner: state.owner, approvedControllers: state.approvedControllers)
         activeRevision = state.activeRevision
         stagedRevision = nil
         lastDeployment = state.lastDeployment

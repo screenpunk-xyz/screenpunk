@@ -27,6 +27,7 @@ import ScreenpunkCore
     private var context: DeviceManagementContext?
     private var task: Task<Void, Never>?
     private var needsHost = false
+    private var ownedRecoveryAuthority: ObjectIdentifier?
     struct PreparedOwner {
         let authority: DeviceManagementAuthority
         let constructLifecycle: @MainActor () throws -> DeviceLocalResetLifecycle
@@ -52,14 +53,44 @@ import ScreenpunkCore
                  retained: @escaping () -> DeviceRetainedContentSnapshot, hostFactory: @escaping (DeviceManagementContext) throws -> DeviceLANHost) {
         self.preparationFactory = preparationFactory; self.retained = retained; self.hostFactory = hostFactory
     }
-    public convenience init() {
+    public convenience init(concurrentControlQualified: Bool = false) {
         let store = DeviceStateStore(root: DeviceStateStore.defaultRoot())
         self.init(preparationFactory: {
-            let prepared = try DeviceLocalResetLifecycle.prepareProduction()
+            let prepared = try DeviceLocalResetLifecycle.prepareProduction(concurrentControlQualified: concurrentControlQualified)
             return PreparedOwner(authority: prepared.authority, constructLifecycle: { try prepared.construct() })
         },
                   retained: { DeviceRetainedContentSnapshot.load(store: store) },
                   hostFactory: { try DeviceLANHost(runtime: DeviceRuntimeRootView.unpairedRuntime(), management: $0, store: store) })
+    }
+    /// Installs the separately qualified common-control host. The caller attaches its sealed
+    /// unified command receiver before starting the listener; legacy structural admission is
+    /// unavailable through this context.
+    @_spi(NativeInstallation) public func installConcurrentHost(context: DeviceManagementContext) throws -> DeviceLANHost {
+        try context.validate()
+        let host = try hostFactory(context)
+        try context.validate()
+        if case .localReady(let old) = state { old.retireForReset() }
+        self.context = context; state = .localReady(host); statusMessage = nil
+        rootGeneration = UUID()
+        return host
+    }
+    /// Only a receipt issued after the original owned cleanup can reopen startup.
+    @_spi(NativeInstallation) public func completeOwnedFactoryReset(_ receipt: DeviceOwnedFactoryResetReceipt) async throws {
+        guard preparationFactory != nil else { throw DeviceLocalResetLifecycle.Failure.binding }
+        guard let originalAuthority = authority, receipt.belongs(to: originalAuthority) else { throw DeviceLocalResetLifecycle.Failure.binding }
+        try receipt.validateCompletion()
+        let pending = task
+        pending?.cancel()
+        if let pending { await pending.value }
+        guard authority === originalAuthority, receipt.belongs(to: originalAuthority) else { throw DeviceLocalResetLifecycle.Failure.binding }
+        try DeviceLocalResetLifecycle.releaseCompletedOwnedProduction(receipt)
+        task = nil
+        if case .localReady(let host) = state { host.retireForReset() }
+        context = nil; lifecycle = nil; lifecycleFactory = nil; authority = nil
+        ownedRecoveryAuthority = nil
+        needsHost = false; startupDiagnostic = nil; state = .checking; statusMessage = nil
+        rootGeneration = UUID()
+        start()
     }
     public func start() {
         guard task == nil else { return }
@@ -80,6 +111,37 @@ import ScreenpunkCore
             } catch {
                 recordDiagnostic(.supportAnchor, error); state = .blocked(.empty); statusMessage = "Device connection needs attention. Local management is blocked."; return
             }
+        }
+        // Recover the original saved reset before partially removed installation
+        // journals or inventories are asked to qualify ordinary startup.
+        if preparationFactory != nil, let authority, ownedRecoveryAuthority != ObjectIdentifier(authority) {
+            task = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    if let preparation = try authority.recoverFactoryReset() {
+                        if case .localReady(let host) = self.state { host.retireForReset() }
+                        self.state = .resetting
+                        let receipt = try await preparation.execute()
+                        guard self.authority === authority, receipt.belongs(to: authority) else { throw DeviceLocalResetLifecycle.Failure.binding }
+                        try receipt.validateCompletion()
+                        try DeviceLocalResetLifecycle.releaseCompletedOwnedProduction(receipt)
+                        self.context = nil; self.lifecycle = nil; self.lifecycleFactory = nil
+                        self.authority = nil; self.ownedRecoveryAuthority = nil
+                        self.needsHost = false; self.state = .checking
+                        self.rootGeneration = UUID()
+                    } else {
+                        self.ownedRecoveryAuthority = ObjectIdentifier(authority)
+                    }
+                    self.task = nil
+                    self.start()
+                } catch {
+                    self.task = nil
+                    self.recordDiagnostic(.resetRecovery, error)
+                    self.state = .blocked(.empty)
+                    self.statusMessage = "The original device reset needs recovery. Local management is blocked."
+                }
+            }
+            return
         }
         guard checkManagedNamespace() else { return }
         if lifecycle == nil, let lifecycleFactory {
@@ -186,6 +248,37 @@ import ScreenpunkCore
         }
     }
     private func admit() {
+        // Recover the original saved reset before partially removed installation
+        // journals or inventories are asked to qualify ordinary startup.
+        if preparationFactory != nil, let authority, ownedRecoveryAuthority != ObjectIdentifier(authority) {
+            task = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    if let preparation = try authority.recoverFactoryReset() {
+                        if case .localReady(let host) = self.state { host.retireForReset() }
+                        self.state = .resetting
+                        let receipt = try await preparation.execute()
+                        guard self.authority === authority, receipt.belongs(to: authority) else { throw DeviceLocalResetLifecycle.Failure.binding }
+                        try receipt.validateCompletion()
+                        try DeviceLocalResetLifecycle.releaseCompletedOwnedProduction(receipt)
+                        self.context = nil; self.lifecycle = nil; self.lifecycleFactory = nil
+                        self.authority = nil; self.ownedRecoveryAuthority = nil
+                        self.needsHost = false; self.state = .checking
+                        self.rootGeneration = UUID()
+                    } else {
+                        self.ownedRecoveryAuthority = ObjectIdentifier(authority)
+                    }
+                    self.task = nil
+                    self.start()
+                } catch {
+                    self.task = nil
+                    self.recordDiagnostic(.resetRecovery, error)
+                    self.state = .blocked(.empty)
+                    self.statusMessage = "The original device reset needs recovery. Local management is blocked."
+                }
+            }
+            return
+        }
         guard checkManagedNamespace() else { return }
         state = .checking
         do {

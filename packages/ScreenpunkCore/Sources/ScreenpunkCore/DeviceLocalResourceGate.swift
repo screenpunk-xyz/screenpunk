@@ -437,6 +437,19 @@ final class DeviceLocalResourceGate {
     func verifyBoundRestoredRuntimeBinding(_ binding:DeviceBoundRestoredRuntimeBinding)throws {
         try withScope(journal:binding.journal){scope,permit in _ = try self.verifyBoundRestoredBinding(binding,scope:scope,permit:permit)}
     }
+    func makeUnifiedRuntimeSeedExact(binding: DeviceBoundRestoredRuntimeBinding, entryID: UUID) throws -> DeviceUnifiedPrivateRuntimeSeed {
+        let body = try ProvisioningIntentCodec.decode(binding.plan.canonicalBytes)
+        let candidate = try StructuralStoreCodec.envelope(body.candidate)
+        guard candidate.snapshot.entries.contains(where: { $0.entryID == entryID }),
+            let owner = candidate.snapshot.contentOwner, owner.isWellFormed, owner.role == .controller else { throw ConnectionFailure.permissionRequired }
+        return try withScope(journal: binding.journal) { scope, permit in
+            let fresh = try self.verifyBoundRestoredBinding(binding, scope: scope, permit: permit)
+            let seed = try self.grants.makeBoundRuntimeSeed(binding.grants, plan: binding.plan, packages: fresh,
+                owner: owner, entryID: entryID, resourcePermit: permit)
+            _ = try self.verifyBoundRestoredBinding(binding, scope: scope, permit: permit)
+            return seed
+        }
+    }
     func makeGenericRuntimeExact(binding:DeviceBoundRestoredRuntimeBinding,entryID:UUID,
         admission:any DeviceImmutableGenericAdmissionDriver,http:any HTTPTransport,webSocket:any WebSocketTransport,
         resolver:any DestinationResolver,clock:any PairingClock)async throws->any DeviceImmutableGenericOperations {
@@ -2505,3 +2518,805 @@ final class DeviceNativeGrantPrivateCoordinator {
         try acquire(0)
     }
 }
+
+/// Schema-3 migration observation obtained while BOTH original resource graphs
+/// are locked. This is resource qualification, never controller/Cloud admission.
+enum DeviceMixedNativeSource {
+    case genesis(DeviceStructuralStore.NativeGenesisCheckpoint, DeviceProvisioningRoots)
+    case completed(DeviceNativeProvisioningRequest, DeviceNativeProvisioningCompletionAcknowledgment)
+    var state: DeviceNativeStructuralState {
+        switch self { case .genesis(let checkpoint, _): return checkpoint.state; case .completed(let request, _): return request.candidate }
+    }
+    var journalRootID: UUID {
+        switch self { case .genesis(_, let roots): return roots.journalID; case .completed(let request, _): return request.roots.journalID }
+    }
+}
+final class DeviceMixedResolvedResources: GrantSecretRedacted {
+    let snapshot: DeviceMixedStructuralState
+    fileprivate let local: DeviceBoundRestoredRuntimeBinding?
+    let nativeSource: DeviceMixedNativeSource
+    fileprivate init(snapshot: DeviceMixedStructuralState, local: DeviceBoundRestoredRuntimeBinding?, source: DeviceMixedNativeSource) {
+        self.snapshot = snapshot; self.local = local; nativeSource = source
+    }
+}
+
+extension DeviceLocalResourceGate {
+    fileprivate func qualifiedResetCredentialsExact(_ permit: DeviceLocalResourcePermit) throws -> [DeviceOwnedInstallationResetResources.Credential] {
+        try grants.qualifiedResetCredentialsExact(permit)
+    }
+    fileprivate func mixedDescriptors(_ binding: DeviceBoundRestoredRuntimeBinding) throws -> [DeviceLocalResourceDescriptor] {
+        try [packages.resourceGateDescriptor, grants.resourceGateDescriptor, structural.resourceGateDescriptor, binding.journal.resourceGateDescriptor]
+    }
+    fileprivate func acquireMixed(_ descriptor: DeviceLocalResourceDescriptor, binding: DeviceBoundRestoredRuntimeBinding,
+        permit: DeviceLocalResourcePermit, body: () throws -> Void) throws -> Bool {
+        if descriptor.instance == ObjectIdentifier(packages) { try packages.withResourceGateScope(permit, body); return true }
+        if descriptor.instance == ObjectIdentifier(grants) { try grants.withResourceGateScope(permit, body); return true }
+        if descriptor.instance == ObjectIdentifier(structural) { try structural.withResourceGateScope(permit, body); return true }
+        if descriptor.instance == ObjectIdentifier(binding.journal) { try binding.journal.withResourceGateScope(permit, body); return true }
+        return false
+    }
+    fileprivate func mixedLocalPackage(_ binding: DeviceBoundRestoredRuntimeBinding, entryID: UUID,
+        permit: DeviceLocalResourcePermit) throws -> QualifiedDevicePackage {
+        let scope = DeviceLocalResourceReadScope(permit, packages, grants, structural)
+        let fresh = try verifyBoundRestoredBinding(binding, scope: scope, permit: permit)
+        guard let value = fresh.first(where: { if case .retained(let id, _, _) = $0 { return id == entryID }; return false }),
+              case .retained(_, _, let verified) = value else { throw DeviceManagedRenderFailure.invalidContent }
+        return verified.package
+    }
+    fileprivate func qualifiedMixedLocalEntries(_ binding: DeviceBoundRestoredRuntimeBinding,
+        permit: DeviceLocalResourcePermit) throws -> [DeviceMixedStructuralState.Entry] {
+        let scope = DeviceLocalResourceReadScope(permit, packages, grants, structural)
+        _ = try verifyBoundRestoredBinding(binding, scope: scope, permit: permit)
+        let body = try ProvisioningIntentCodec.decode(binding.plan.canonicalBytes)
+        let snapshot = try StructuralStoreCodec.envelope(binding.envelopeBytes).snapshot
+        guard let owner = snapshot.contentOwner, snapshot.entries.count == binding.packages.count else { throw DeviceStructuralStoreError.conflict }
+        let entries = try snapshot.entries.map { entry -> DeviceMixedStructuralState.Entry in
+            guard let package = binding.packages.first(where: { $0.entryID == entry.entryID }) else { throw DeviceStructuralStoreError.conflict }
+            return .retainedLocal(.init(entry: entry, package: package.receipt.reference,
+                grant: .init(identity: body.grantIdentity, preparationOperationID: body.grantOperationID), owner: owner))
+        }
+        _ = try verifyBoundRestoredBinding(binding, scope: scope, permit: permit)
+        return entries
+    }
+}
+
+extension DeviceNativeGrantPrivateCoordinator {
+    func restoreCompletedStaticSourceExact(operationID: UUID, grantOperationID: UUID,
+        grantRevisionID: UUID, baseline: DeviceStructuralStore.NativeGenesisCheckpoint) throws ->
+        (DeviceNativeProvisioningRequest, DeviceNativeProvisioningCompletionAcknowledgment) {
+        var request: DeviceNativeProvisioningRequest?
+        try nativeCompletionScope { permit in
+            try structural.verifyNativeGenesisExact(baseline, resourcePermit: permit)
+            let delivery = try journal.inspectStoredDeliveryBindingExact(nativeOperationID: operationID, resourcePermit: permit)
+            let candidate = try structural.inspectStoredNativeCandidateExact(operationID: operationID, resourcePermit: permit)
+            let references = candidate.entries.map(\.preparedPackage)
+            let actual = try packages.inspectRetainedTerminalExact(references, resourcePermit: permit)
+            let inputs = try candidate.entries.map { entry -> DeviceProvisioningPackageInput in
+                guard let verified = actual.first(where: { $0.reference == entry.preparedPackage }),
+                      verified.package.manifest.connections.isEmpty else { throw NativeDeliveryExecutionError.unsupportedCapabilities }
+                return .retained(entryID: entry.entryID, reference: entry.preparedPackage, verified: verified)
+            }
+            let grantEntries = try candidate.entries.map { entry -> DeviceGrantEntryInput in
+                guard let verified = actual.first(where: { $0.reference == entry.preparedPackage }) else { throw NativeDeliveryExecutionError.association }
+                return .init(entryID: entry.entryID, revision: verified.package.revision,
+                    generic: nil, homeAssistant: nil, publicReads: nil, credentialReferences: [])
+            }
+            let expectations = try candidate.entries.map { entry -> DeviceGrantEntryExpectation in
+                guard let verified = actual.first(where: { $0.reference == entry.preparedPackage }) else { throw NativeDeliveryExecutionError.association }
+                return .init(entryID: entry.entryID, package: verified.package)
+            }
+            let input = DeviceNativeGrantRevisionInput(schemaVersion: 2, identity: .init(rootID: grants.rootID, revisionID: grantRevisionID),
+                owner: candidate.owner, entries: grantEntries, credentials: [], retainedRevisions: [])
+            let qualified = try DeviceNativeGrantRevisionQualifier.qualify(input, expectedEntries: expectations)
+            request = .init(roots: .init(journalID: journal.rootID, structuralID: structural.rootID, packageID: packages.rootID, grantID: grants.rootID),
+                delivery: delivery, grantOperationID: grantOperationID, baseline: baseline, candidate: candidate,
+                packages: inputs, grantInput: input, qualifiedGrant: qualified)
+        }
+        guard let request else { throw DeviceLocalResourceGateFailure.invalidScope }
+        let resources = DeviceNativeGrantRecoveryResources(roots: request.roots, delivery: request.delivery,
+            baseline: request.baseline, candidate: request.candidate, packages: request.packages)
+        let recovery = try captureNativeCompletedRecoveryExact(operationID: grantOperationID, resources: resources)
+        let completion = try completeNativeProvisioningRecoveredExact(recovery)
+        try verifyUnifiedInventorySourceExact(request, completed: completion)
+        return (request, completion)
+    }
+    func verifyUnifiedInventorySourceExact(_ request: DeviceNativeProvisioningRequest,
+        completed: DeviceNativeProvisioningCompletionAcknowledgment) throws {
+        try nativeCompletionScope { permit in _ = try verifyNativeCompletedForHTTP(request, completed: completed, permit: permit) }
+    }
+    func verifyUnifiedGenesisSourceExact(_ checkpoint: DeviceStructuralStore.NativeGenesisCheckpoint) throws {
+        try nativeCompletionScope { permit in _ = try qualifiedMixedNativeEntries(.genesis(checkpoint,
+            .init(journalID: journal.rootID, structuralID: structural.rootID, packageID: packages.rootID, grantID: grants.rootID)), permit: permit) }
+    }
+    fileprivate func qualifiedMixedNativeEntries(_ source: DeviceMixedNativeSource,
+        permit: DeviceLocalResourcePermit) throws -> [DeviceMixedStructuralState.Entry] {
+        switch source {
+        case .completed(let request, let completion): return try qualifiedMixedCloudEntries(request, completion: completion, permit: permit)
+        case .genesis(let checkpoint, let roots):
+            guard roots.journalID == journal.rootID, roots.structuralID == structural.rootID,
+                roots.packageID == packages.rootID, roots.grantID == grants.rootID,
+                checkpoint.state.entries.isEmpty, checkpoint.state.configuredEntryID == nil else { throw DeviceStructuralStoreError.conflict }
+            try structural.verifyNativeEmptyGenesisSourceExact(checkpoint, resourcePermit: permit)
+            return []
+        }
+    }
+    fileprivate func qualifiedResetCredentialsExact(_ permit: DeviceLocalResourcePermit) throws -> [DeviceOwnedInstallationResetResources.Credential] {
+        try grants.qualifiedResetCredentialsExact(permit)
+    }
+    fileprivate var mixedDescriptors: [DeviceLocalResourceDescriptor] { get throws {
+        try [packages.resourceGateDescriptor, grants.resourceGateDescriptor, structural.resourceGateDescriptor, journal.resourceGateDescriptor]
+    } }
+    fileprivate func acquireMixed(_ descriptor: DeviceLocalResourceDescriptor, permit: DeviceLocalResourcePermit,
+        body: () throws -> Void) throws -> Bool {
+        if descriptor.instance == ObjectIdentifier(packages) { try packages.withResourceGateScope(permit, body); return true }
+        if descriptor.instance == ObjectIdentifier(grants) { try grants.withNativeTerminalResourceGateScope(permit, body); return true }
+        if descriptor.instance == ObjectIdentifier(structural) { try structural.withNativeStructuralResourceGateScope(permit, body); return true }
+        if descriptor.instance == ObjectIdentifier(journal) { try journal.withNativeHTTPResourceGateScope(permit, body); return true }
+        return false
+    }
+    fileprivate func mixedCloudPackage(_ request: DeviceNativeProvisioningRequest,
+        completion: DeviceNativeProvisioningCompletionAcknowledgment, entryID: UUID,
+        permit: DeviceLocalResourcePermit) throws -> QualifiedDevicePackage {
+        _ = try verifyNativeCompletedForHTTP(request, completed: completion, permit: permit)
+        let resolution: DevicePackageTerminalResolution
+        if let live = completion.structural { resolution = live.terminal.resolution }
+        else if let recovered = completion.recovered { resolution = recovered.packages }
+        else { throw DeviceLocalResourceGateFailure.invalidScope }
+        guard let entry = request.candidate.entries.first(where: { $0.entryID == entryID }),
+              let receipt = resolution.receipts.first(where: { $0.reference == entry.preparedPackage }) else {
+            throw DeviceManagedRenderFailure.invalidContent
+        }
+        return try packages.verify(receipt, resourcePermit: permit).package
+    }
+    fileprivate func makeIndependentMixedPackageStore(root: URL, rootID: UUID) -> DevicePackagePreparationStore {
+        packages.makeIndependentStore(root: root, rootID: rootID)
+    }
+    fileprivate func qualifiedMixedCloudEntries(_ request: DeviceNativeProvisioningRequest,
+        completion: DeviceNativeProvisioningCompletionAcknowledgment, permit: DeviceLocalResourcePermit) throws -> [DeviceMixedStructuralState.Entry] {
+        _ = try verifyNativeCompletedForHTTP(request, completed: completion, permit: permit)
+        let grant = DeviceMixedStructuralState.Grant(identity: request.grantInput.identity, preparationOperationID: request.grantOperationID)
+        return request.candidate.entries.map { .cloud($0, grant) }
+    }
+}
+
+/// Fixed provenance-preserving migration resolver. All source stores participate
+/// in one physical lock order. No locks cross network/UI work; source receipts and
+/// generations remain original and are never refreshed to make stale input pass.
+final class DeviceMixedIncomingResources {
+    let command: DeviceMixedPreparedCloudCommand
+    let packages: DevicePackagePreparationStore
+    let resolution: DevicePackageTerminalResolution
+    let grant: DeviceMixedInventoryStore.StaticGrantReceipt
+    fileprivate init(command: DeviceMixedPreparedCloudCommand, packages: DevicePackagePreparationStore,
+        resolution: DevicePackageTerminalResolution, grant: DeviceMixedInventoryStore.StaticGrantReceipt) {
+        self.command = command; self.packages = packages; self.resolution = resolution; self.grant = grant
+    }
+}
+
+final class DeviceMixedResourceResolver {
+    private let resourceMutex = NSLock()
+    private var incomingResources: [DeviceMixedIncomingResources] = []
+    private var incomingLocalResources: [DeviceMixedIncomingLocalResources] = []
+    private func localIncomingSnapshot() -> [DeviceMixedIncomingLocalResources] {
+        resourceMutex.lock(); defer { resourceMutex.unlock() }; return incomingLocalResources
+    }
+    private func incomingSnapshot() -> [DeviceMixedIncomingResources] {
+        resourceMutex.lock(); defer { resourceMutex.unlock() }; return incomingResources
+    }
+    private let local: DeviceLocalResourceGate?
+    private let native: DeviceNativeGrantPrivateCoordinator
+    init(local: DeviceLocalResourceGate? = nil, native: DeviceNativeGrantPrivateCoordinator) { self.local = local; self.native = native }
+    private func qualifiedLocalEntries(_ binding: DeviceBoundRestoredRuntimeBinding?, permit: DeviceLocalResourcePermit) throws -> [DeviceMixedStructuralState.Entry] {
+        var entries: [DeviceMixedStructuralState.Entry] = []
+        if let local, let binding { entries = try local.qualifiedMixedLocalEntries(binding, permit: permit) }
+        else { guard local == nil, binding == nil else { throw DeviceLocalResourceGateFailure.invalidRoots } }
+        for source in localIncomingSnapshot() { entries += try source.gate.qualifiedMixedLocalEntries(source.binding, permit: permit) }
+        return entries
+    }
+    func resolveInitialMigrationExact(local binding: DeviceBoundRestoredRuntimeBinding?,
+        native request: DeviceNativeProvisioningRequest, completed: DeviceNativeProvisioningCompletionAcknowledgment,
+        generationID: UUID) throws -> DeviceMixedResolvedResources {
+        try resolveInitialMigrationExact(local: binding, native: .completed(request, completed), generationID: generationID)
+    }
+    func resolveInitialMigrationExact(local binding: DeviceBoundRestoredRuntimeBinding?,
+        native source: DeviceMixedNativeSource,
+        generationID: UUID) throws -> DeviceMixedResolvedResources {
+        var result: DeviceMixedResolvedResources?
+        try withScope(binding: binding) { permit in
+            let retained = try qualifiedLocalEntries(binding, permit: permit)
+            let cloud = try native.qualifiedMixedNativeEntries(source, permit: permit)
+            let old = try binding.map { try StructuralStoreCodec.envelope($0.envelopeBytes).snapshot }
+            guard generationID != old?.generationID, generationID != source.state.generationID else { throw DeviceStructuralStoreError.conflict }
+            // Native source is a genuinely completed explicit delivery, later than
+            // the imported legacy inventory. Migration itself is not a Local intent.
+            let selection = source.state.configuredEntryID ?? old?.configuredEntryID
+            let snapshot = try DeviceMixedStructuralState.validating(generationID: generationID,
+                installationOwner: source.state.owner, entries: retained + cloud, configuredEntryID: selection)
+            _ = try DeviceMixedStructuralStateCodec.encode(snapshot)
+            _ = try qualifiedLocalEntries(binding, permit: permit)
+            _ = try native.qualifiedMixedNativeEntries(source, permit: permit)
+            result = .init(snapshot: snapshot, local: binding, source: source)
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+    func verifyCurrentInventoryResourcesExact(_ original: DeviceMixedResolvedResources,
+        store: DeviceMixedInventoryStore, current: DeviceMixedInventoryStore.Capture) throws {
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            try store.verifyExact(current, permit: permit)
+            guard current.snapshot.installationOwner == original.snapshot.installationOwner,
+                  current.snapshot.entries.allSatisfy({ qualified.contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+        }
+    }
+    func commitInitialMigrationExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        operationID: UUID, admissionEnabled: Bool) throws -> (DeviceMixedInventoryStore.Capture, DeviceMixedInventoryStore.Receipt) {
+        // Representation migration preserves already qualified accepted content;
+        // rollout disables subsequent commands, never decoding/migration itself.
+        var result: (DeviceMixedInventoryStore.Capture, DeviceMixedInventoryStore.Receipt)?
+        try withScope(binding: original.local, inventory: store) { permit in
+            let retained = try qualifiedLocalEntries(original.local, permit: permit)
+            let cloud = try native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+            guard original.snapshot.entries == retained + cloud else { throw DeviceStructuralStoreError.conflict }
+            result = try store.commitExact(operationID: operationID, previous: nil, candidate: original.snapshot,
+                admissionEnabled: true, permit: permit)
+            _ = try qualifiedLocalEntries(original.local, permit: permit)
+            _ = try native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+    /// Select/removal commands preserve original resource identities. A new candidate
+    /// may only retain the qualified originals, never insert an unverified package.
+    func commitAutomaticSelectionExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        permit automatic: DeviceUnifiedAutomaticSelectionPermit, operationID: UUID, generationID: UUID) throws -> DeviceMixedInventoryStore.Capture {
+        var result: DeviceMixedInventoryStore.Capture?
+        try withScope(binding: original.local, inventory: store) { permit in
+            let previous = automatic.baseCapture
+            try store.verifyExact(previous, permit: permit)
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            guard previous.snapshot.entries.allSatisfy({ qualified.contains($0) }),
+                previous.snapshot.entries.contains(where: { $0.entryID == automatic.targetEntryID }),
+                generationID != previous.snapshot.generationID else { throw DeviceStructuralStoreError.conflict }
+            let restoring: Bool
+            let selected: UUID?
+            switch automatic.phase {
+            case .activate:
+                restoring = false; selected = automatic.targetEntryID
+                guard automatic.previousEntryID == previous.snapshot.configuredEntryID, automatic.deadline > Date() else { throw DeviceStructuralStoreError.conflict }
+            case .restore:
+                restoring = true; selected = automatic.previousEntryID
+                guard previous.snapshot.configuredEntryID == automatic.targetEntryID else { throw DeviceStructuralStoreError.conflict }
+            }
+            let candidate = try DeviceMixedStructuralState.validating(generationID: generationID,
+                installationOwner: previous.snapshot.installationOwner, entries: previous.snapshot.entries, configuredEntryID: selected)
+            let frame = DeviceMixedInventoryStore.AutomationFrame(operationID: operationID,
+                explicitBaseGenerationID: automatic.explicitBaseGenerationID, ownedGenerationID: generationID,
+                targetEntryID: automatic.targetEntryID, previousEntryID: automatic.previousEntryID, deadline: automatic.deadline,
+                alertID: automatic.alertID, navigation: automatic.navigation, origin: "screenAutomation")
+            try store.retainAutomationExact(frame, previous: previous, restoring: restoring, permit: permit)
+            result = try store.commitExact(operationID: operationID, previous: previous, candidate: candidate,
+                admissionEnabled: true, permit: permit).0
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+    func commitSelectionOrRemovalExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        previous: DeviceMixedInventoryStore.Capture, operationID: UUID, generationID: UUID,
+        retainedEntryIDs: [UUID], configuredEntryID: UUID?, admissionEnabled: Bool) throws -> (DeviceMixedInventoryStore.Capture, DeviceMixedInventoryStore.Receipt) {
+        var result: (DeviceMixedInventoryStore.Capture, DeviceMixedInventoryStore.Receipt)?
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            try store.verifyExact(previous, permit: permit)
+            guard generationID != previous.snapshot.generationID, Set(retainedEntryIDs).count == retainedEntryIDs.count,
+                previous.snapshot.entries.allSatisfy({ qualified.contains($0) }),
+                retainedEntryIDs.allSatisfy({ id in previous.snapshot.entries.contains(where: { $0.entryID == id }) }) else { throw DeviceStructuralStoreError.conflict }
+            let entries = try retainedEntryIDs.map { id -> DeviceMixedStructuralState.Entry in
+                guard let entry = previous.snapshot.entries.first(where: { $0.entryID == id }) else { throw DeviceStructuralStoreError.conflict }; return entry
+            }
+            let candidate = try DeviceMixedStructuralState.validating(generationID: generationID,
+                installationOwner: previous.snapshot.installationOwner, entries: entries, configuredEntryID: configuredEntryID)
+            result = try store.commitExact(operationID: operationID, previous: previous, candidate: candidate,
+                admissionEnabled: admissionEnabled, permit: permit)
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+    func commitIncomingLocalExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        previous: DeviceMixedInventoryStore.Capture, source: DeviceMixedIncomingLocalResources,
+        operationID: UUID, generationID: UUID, retainedEntryIDs: [UUID], selected: UUID?, peerPinHex: String) throws -> DeviceMixedInventoryStore.Capture {
+        var result: DeviceMixedInventoryStore.Capture?
+        let prior = localIncomingSnapshot()
+        try withScope(binding: original.local, inventory: store, incomingLocal: prior + [source]) { permit in
+            let existing = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            let incoming = try source.gate.qualifiedMixedLocalEntries(source.binding, permit: permit)
+            guard source.operationID == operationID, !incoming.isEmpty,
+                incoming.allSatisfy({ entry in
+                    guard case .retainedLocal(let value) = entry else { return false }
+                    return value.owner.publicKey.map { String(format: "%02x", $0) }.joined() == peerPinHex
+                }), Set(retainedEntryIDs).count == retainedEntryIDs.count,
+                previous.snapshot.entries.allSatisfy({ existing.contains($0) }),
+                retainedEntryIDs.allSatisfy({ id in previous.snapshot.entries.contains(where: { $0.entryID == id }) }),
+                incoming.allSatisfy({ incomingEntry in
+                    guard let existing = previous.snapshot.entries.first(where: { $0.entryID == incomingEntry.entryID }) else { return true }
+                    guard case .retainedLocal = existing else { return false }
+                    return existing.dashboardID == incomingEntry.dashboardID && retainedEntryIDs.contains(existing.entryID)
+                }) else { throw DeviceStructuralStoreError.conflict }
+            try store.verifyExact(previous, permit: permit)
+            let retained = retainedEntryIDs.compactMap { id in
+                incoming.first(where: { $0.entryID == id }) ?? previous.snapshot.entries.first(where: { $0.entryID == id })
+            }
+            let appended = incoming.filter { !retainedEntryIDs.contains($0.entryID) }
+            let candidate = try DeviceMixedStructuralState.validating(generationID: generationID,
+                installationOwner: previous.snapshot.installationOwner, entries: retained + appended, configuredEntryID: selected)
+            try store.retainLocalSourceExact(operationID: operationID, candidate: candidate,
+                descriptors: source.gate.mixedDescriptors(source.binding), permit: permit)
+            result = try store.commitExact(operationID: operationID, previous: previous, candidate: candidate, admissionEnabled: true, permit: permit).0
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }
+        resourceMutex.lock()
+        if !incomingLocalResources.contains(where: { $0.operationID == source.operationID }) { incomingLocalResources.append(source) }
+        resourceMutex.unlock(); return result
+    }
+    private func qualifiedIncomingEntries(_ resources: [DeviceMixedIncomingResources], store: DeviceMixedInventoryStore,
+        permit: DeviceLocalResourcePermit) throws -> [DeviceMixedStructuralState.Entry] {
+        var entries: [DeviceMixedStructuralState.Entry] = []
+        for original in resources {
+            try store.verifyIncomingStaticGrantExact(original.grant, permit: permit)
+            try original.packages.verifyResolutionCheckpoint(original.resolution.checkpoint, resourcePermit: permit)
+            for receipt in original.resolution.receipts {
+                let verified = try original.packages.verify(receipt, resourcePermit: permit)
+                guard let entry = original.command.candidate.entries.first(where: { value in
+                    if case .cloud(let cloud, let grant) = value { return cloud.preparedPackage == receipt.reference
+                        && grant.identity == original.command.grantInput.identity
+                        && verified.package.revision.digest == cloud.package.manifestDigest.text }; return false
+                }) else { throw DeviceManagedRenderFailure.invalidContent }
+                entries.append(entry)
+            }
+        }
+        return entries
+    }
+    /// Resource preparation only. Exact operation intent/public static grant is
+    /// durable before incoming package effects; no installed generation changes.
+    func restoreIncomingLocalResourcesExact(store: DeviceMixedInventoryStore, sources: [DeviceMixedIncomingLocalResources]) throws {
+        let frames = try store.retainedLocalSourcesExact()
+        guard Set(sources.map(\.operationID)).count == sources.count, sources.count == frames.count else { throw DeviceStructuralStoreError.conflict }
+        for frame in frames {
+            guard let source = sources.first(where: { $0.operationID == frame.operationID }),
+                try source.gate.mixedDescriptors(source.binding).map({ DeviceMixedInventoryStore.LocalSourceRoot(rootID: $0.rootID, path: $0.path) }).sorted(by: { $0.path < $1.path }) == frame.roots else { throw DeviceStructuralStoreError.conflict }
+        }
+        resourceMutex.lock(); incomingLocalResources = sources; resourceMutex.unlock()
+    }
+    func restoreIncomingCloudResourcesExact(store: DeviceMixedInventoryStore) throws {
+        let retained = try store.retainedIncomingFramesExact()
+        var restored: [DeviceMixedIncomingResources] = []
+        for record in retained {
+            let frame = record.frame
+            let expectedPath = try store.incomingPackageRootExact(operationID: frame.operationID).path
+            guard frame.incomingPackagePath == expectedPath, frame.grantIdentity.rootID == store.rootID else { throw DeviceStructuralStoreError.conflict }
+            let packages = makeIncomingPackageStore(root: URL(fileURLWithPath: frame.incomingPackagePath), rootID: frame.incomingPackageRootID)
+            let candidate = try DeviceMixedStructuralStateCodec.decode(frame.candidate)
+            let references = candidate.entries.compactMap { entry -> DevicePreparedPackageReference? in
+                guard case .cloud(let cloud, let grant) = entry, grant.identity == frame.grantIdentity,
+                    grant.preparationOperationID == frame.grantOperationID else { return nil }; return cloud.preparedPackage
+            }
+            let resolution = try packages.resolveRetainedTerminalExact(references)
+            let verified = try resolution.receipts.map { try packages.verify($0) }
+            let a = frame.deliveryAssociation
+            let object: [String: Any] = ["schemaVersion": 1, "operationId": a.operationID.uuidString.lowercased(),
+                "planId": a.planID.uuidString.lowercased(), "installationId": a.installationID.uuidString.lowercased(),
+                "accountId": a.accountID.uuidString.lowercased(), "locationId": a.locationID.map { $0.uuidString.lowercased() } as Any? ?? NSNull(),
+                "transitionId": a.transitionID.uuidString.lowercased(), "planDigest": a.planDigest, "planByteLength": a.planByteLength]
+            let header = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            let delivery = try DeviceNativeDeliveryCommandBinding.bindMixed(command: frame.deliveryCommand, associationHeader: header,
+                rawPlan: frame.deliveryPlan, nativeOperationID: frame.operationID, journalRootID: frame.journalRootID, capture: record.original)
+            let command = try DeviceMixedPreparedCloudCommand.restore(capture: record.original, delivery: delivery,
+                candidate: candidate, grantIdentity: frame.grantIdentity, grantOperationID: frame.grantOperationID, packages: verified)
+            guard command.qualifiedGrant.publicMetadataBytes == frame.publicMetadata else { throw DeviceStructuralStoreError.conflict }
+            restored.append(.init(command: command, packages: packages, resolution: resolution, grant: record.grant))
+        }
+        resourceMutex.lock(); defer { resourceMutex.unlock() }
+        guard incomingResources.isEmpty else { throw DeviceStructuralStoreError.conflict }
+        incomingResources = restored
+    }
+    func retainMountedEmptyExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        current: DeviceMixedInventoryStore.Capture) throws {
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            try store.verifyExact(current, permit: permit)
+            guard current.snapshot.entries.allSatisfy({ qualified.contains($0) }), current.snapshot.configuredEntryID == nil else { throw DeviceStructuralStoreError.conflict }
+            try store.retainMountedEmptyExact(current, permit: permit)
+        }
+    }
+    func retainMountedContentExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        current: DeviceMixedInventoryStore.Capture, content: DeviceManagedStaticContent, failureCode: String? = nil) throws {
+        try content.verifyResources()
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            try store.verifyExact(current, permit: permit)
+            guard current.snapshot.entries.allSatisfy({ qualified.contains($0) }), content.generationID == current.snapshot.generationID,
+                current.snapshot.configuredEntryID == content.entryID, let entry = current.snapshot.entries.first(where: { $0.entryID == content.entryID }) else { throw DeviceStructuralStoreError.conflict }
+            let digest: String
+            switch entry { case .retainedLocal(let local): digest = local.entry.revision.digest
+            case .cloud(let cloud, _): digest = cloud.package.manifestDigest.text }
+            if let failureCode { try store.retainMountFailureExact(current, entryID: content.entryID, code: failureCode, permit: permit) }
+            else { try store.retainMountedExact(current, entryID: content.entryID, digest: digest, permit: permit) }
+        }
+    }
+    func retainCloudRejectionExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        binding: DeviceNativeDeliveryCommandBinding, bytes: Data, acknowledgment: Bool = false) throws -> Bool {
+        var retained = false
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            guard let current = try store.captureCurrentExact(permit: permit), current.snapshot.entries.allSatisfy({ qualified.contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+            retained = try store.retainCloudRejectionExact(binding: binding, bytes: bytes, acknowledgment: acknowledgment, permit: permit)
+        }
+        return retained
+    }
+    func retainCloudAcceptedExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        previous: DeviceMixedInventoryStore.Capture, binding: DeviceNativeDeliveryCommandBinding) throws {
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            guard previous.snapshot.entries.allSatisfy({ qualified.contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+            try store.retainCloudAcceptedExact(binding: binding, previous: previous, permit: permit)
+        }
+    }
+    func verifyPreparedIncomingCloudExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        incoming: DeviceMixedIncomingResources) throws {
+        try withScope(binding: original.local, inventory: store, incoming: incomingSnapshot() + [incoming]) { permit in
+            _ = try qualifiedLocalEntries(original.local, permit: permit)
+            _ = try native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+            _ = try qualifiedIncomingEntries([incoming], store: store, permit: permit)
+        }
+    }
+    func restoredIncomingCloudExact(operationID: UUID) throws -> DeviceMixedIncomingResources {
+        guard let incoming = incomingSnapshot().first(where: { $0.command.delivery.nativeOperationID == operationID }) else { throw DeviceStructuralStoreError.conflict }
+        return incoming
+    }
+    func makeIncomingPackageStore(root: URL, rootID: UUID) -> DevicePackagePreparationStore {
+        native.makeIndependentMixedPackageStore(root: root, rootID: rootID)
+    }
+    func prepareIncomingCloudResourcesExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        command: DeviceMixedPreparedCloudCommand, packages: DevicePackagePreparationStore) throws -> DeviceMixedIncomingResources {
+        var result: DeviceMixedIncomingResources?
+        let prior = incomingSnapshot()
+        try withScope(binding: original.local, inventory: store, incoming: prior, preparing: packages) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(prior, store: store, permit: permit)
+            try store.verifyExact(command.capture, permit: permit)
+            guard command.capture.snapshot.entries.allSatisfy({ qualified.contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+            let grant = try store.retainIncomingStaticGrantExact(command, incomingPackageRoot: packages.resourceGateDescriptor, permit: permit)
+            let resolution = try packages.performMixedIncomingPackagesExact(command, commandPermit: .init(permit))
+            try store.verifyIncomingStaticGrantExact(grant, permit: permit)
+            try store.verifyExact(command.capture, permit: permit)
+            result = .init(command: command, packages: packages, resolution: resolution, grant: grant)
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+    func retainIncomingHTTPExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        incoming: DeviceMixedIncomingResources, kind: DeviceMixedInventoryStore.HTTPRecordKind, bytes: Data) throws {
+        let prior = incomingSnapshot()
+        try withScope(binding: original.local, inventory: store, incoming: prior + [incoming]) { permit in
+            _ = try qualifiedLocalEntries(original.local, permit: permit)
+            _ = try native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+            _ = try qualifiedIncomingEntries(prior + [incoming], store: store, permit: permit)
+            if kind == .outcome {
+                try store.verifyCompletedCandidateExact(operationID: incoming.command.delivery.nativeOperationID,
+                    candidate: incoming.command.candidate, permit: permit)
+            } else if kind != .acknowledgment { try store.verifyExact(incoming.command.capture, permit: permit) }
+            try store.retainIncomingHTTPExact(incoming, kind: kind, bytes: bytes, permit: permit)
+        }
+    }
+    /// Fixed owner calls only after exact Cloud activation/current-intent admission.
+    func commitIncomingCloudResourcesExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        incoming: DeviceMixedIncomingResources, admissionEnabled: Bool) throws -> (DeviceMixedInventoryStore.Capture, DeviceMixedInventoryStore.Receipt) {
+        var result: (DeviceMixedInventoryStore.Capture, DeviceMixedInventoryStore.Receipt)?
+        let prior = incomingSnapshot()
+        try withScope(binding: original.local, inventory: store, incoming: prior + [incoming]) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(prior + [incoming], store: store, permit: permit)
+            guard incoming.command.candidate.entries.allSatisfy({ qualified.contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+            result = try store.commitExact(operationID: incoming.command.delivery.nativeOperationID,
+                previous: incoming.command.capture, candidate: incoming.command.candidate,
+                admissionEnabled: admissionEnabled, permit: permit)
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }
+        resourceMutex.lock()
+        if !incomingResources.contains(where: { $0.command.delivery.nativeOperationID == incoming.command.delivery.nativeOperationID }) { incomingResources.append(incoming) }
+        resourceMutex.unlock()
+        return result
+    }
+    private func cloudStateBytes(_ snapshot: DeviceMixedStructuralState) throws -> Data {
+        let entries: [[String: Any]] = snapshot.entries.map { entry in
+            let provenance: [String: Any]
+            switch entry {
+            case .retainedLocal(let localEntry):
+                provenance = ["kind": "retainedLocal", "retainedEntryId": entry.entryID.uuidString.lowercased(),
+                "manifestDigest": localEntry.entry.revision.digest]
+            case .cloud(let cloudEntry, _):
+                let p = cloudEntry.package
+                provenance = ["kind": "cloud", "package": ["packageProfile": DeviceDeliveryPackageCandidate.profile,
+                "publicationId": p.publicationID.uuidString.lowercased(), "projectId": p.projectID.uuidString.lowercased(),
+                "packageId": p.packageID.uuidString.lowercased(), "dashboardId": p.dashboardID.uuidString.lowercased(),
+                "revision": p.revision.uuidString.lowercased(), "manifestDigest": p.manifestDigest.text,
+                "manifestSha256": p.manifestSHA256.text, "archiveSha256": p.archiveSHA256.text,
+                "compressedBytes": p.compressedBytes, "expandedBytes": p.expandedBytes, "archiveEntries": p.archiveEntries]]
+            }
+            return ["entryId": entry.entryID.uuidString.lowercased(), "provenance": provenance]
+        }
+        let owner = snapshot.installationOwner
+        let state: [String: Any] = ["schemaVersion": 1, "installationId": owner.installationID.uuidString.lowercased(),
+            "transitionId": owner.transitionID.uuidString.lowercased(), "generationId": snapshot.generationID.uuidString.lowercased(),
+            "entries": entries, "configuredEntryId": snapshot.configuredEntryID.map { $0.uuidString.lowercased() } as Any? ?? NSNull()]
+        return try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+    }
+    func verifyCloudObservationResourcesExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        observation: DeviceMixedInventoryStore.CloudObservation) throws {
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            let historical = try store.verifyPendingCloudObservationHistoryExact(observation, permit: permit)
+            guard historical.entries.allSatisfy({ qualified.contains($0) }),
+                  let object = try JSONSerialization.jsonObject(with: observation.exactBody) as? [String: Any],
+                  let state = object["state"], try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) == cloudStateBytes(historical) else { throw DeviceStructuralStoreError.conflict }
+        }
+    }
+    func retainCloudObservationExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        current: DeviceMixedInventoryStore.Capture, authenticatedCloudGenerationID: UUID) throws -> DeviceMixedInventoryStore.CloudObservation {
+        var observation: DeviceMixedInventoryStore.CloudObservation?
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            try store.verifyExact(current, permit: permit)
+            guard current.snapshot.entries.allSatisfy({ qualified.contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+            try store.initializeCloudObservationCheckpointExact(authenticatedCloudGenerationID, permit: permit)
+            observation = try store.enqueueCloudObservationExact(current,
+                stateBytes: cloudStateBytes(current.snapshot), permit: permit)
+        }
+        guard let observation else { throw DeviceLocalResourceGateFailure.invalidScope }; return observation
+    }
+    func verifyCurrentOrMountedResourcesExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        presentation: DeviceMixedInventoryStore.Capture) throws {
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            guard let current = try store.captureCurrentExact(permit: permit),
+                current.snapshot.entries.allSatisfy({ qualified.contains($0) }),
+                let id = presentation.snapshot.configuredEntryID,
+                let entry = presentation.snapshot.entries.first(where: { $0.entryID == id }), qualified.contains(entry) else { throw DeviceStructuralStoreError.conflict }
+            if current.bytes != presentation.bytes {
+                guard let mounted = try store.mountedReferenceExact(permit: permit),
+                    mounted.generationID == presentation.snapshot.generationID, mounted.entryID == id else { throw DeviceStructuralStoreError.conflict }
+                let digest: String
+                switch entry { case .retainedLocal(let local): digest = local.entry.revision.digest
+                case .cloud(let cloud, _): digest = cloud.package.manifestDigest.text }
+                guard mounted.manifestDigest == digest else { throw DeviceStructuralStoreError.conflict }
+            }
+        }
+    }
+    func selectedLocalRuntimeSourceExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        current: DeviceMixedInventoryStore.Capture) throws -> (gate: DeviceLocalResourceGate, binding: DeviceBoundRestoredRuntimeBinding,
+            entryID: UUID, package: QualifiedDevicePackage) {
+        guard let id = current.snapshot.configuredEntryID else { throw DeviceManagedRenderFailure.emptySelection }
+        return try installedLocalRuntimeSourceExact(original, store: store, current: current, entryID: id)
+    }
+    func installedLocalRuntimeSourceExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        current: DeviceMixedInventoryStore.Capture, entryID: UUID, historicalMounted: Bool = false) throws -> (gate: DeviceLocalResourceGate, binding: DeviceBoundRestoredRuntimeBinding,
+            entryID: UUID, package: QualifiedDevicePackage) {
+        var result: (DeviceLocalResourceGate, DeviceBoundRestoredRuntimeBinding, UUID, QualifiedDevicePackage)?
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            if historicalMounted {
+                guard let mounted = try store.mountedReferenceExact(permit: permit),
+                    mounted.generationID == current.snapshot.generationID,
+                    mounted.entryID == current.snapshot.configuredEntryID,
+                    let live = try store.captureCurrentExact(permit: permit), live.snapshot.entries.allSatisfy({ qualified.contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+            } else { try store.verifyExact(current, permit: permit) }
+            guard current.snapshot.entries.allSatisfy({ qualified.contains($0) }), let entry = current.snapshot.entries.first(where: { $0.entryID == entryID }), case .retainedLocal = entry else { throw DeviceManagedRenderFailure.invalidContent }
+            if let local, let binding = original.local, original.snapshot.entries.contains(entry) {
+                result = (local, binding, entryID, try local.mixedLocalPackage(binding, entryID: entryID, permit: permit))
+            } else {
+                guard let source = try localIncomingSnapshot().first(where: { try $0.gate.qualifiedMixedLocalEntries($0.binding, permit: permit).contains(entry) }) else { throw DeviceManagedRenderFailure.invalidContent }
+                result = (source.gate, source.binding, entryID, try source.gate.mixedLocalPackage(source.binding, entryID: entryID, permit: permit))
+            }
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+    func selectedStaticContentExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        current: DeviceMixedInventoryStore.Capture, operationID: UUID, historicalMounted: Bool = false) throws -> DeviceManagedStaticContent {
+        var selectedPackage: QualifiedDevicePackage?, selectedName: String?, selectedID: UUID?
+        try withScope(binding: original.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+                + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+            if historicalMounted {
+                guard let mounted = try store.mountedReferenceExact(permit: permit),
+                    mounted.generationID == current.snapshot.generationID,
+                    mounted.entryID == current.snapshot.configuredEntryID,
+                    let live = try store.captureCurrentExact(permit: permit), live.snapshot.entries.allSatisfy({ qualified.contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+            } else { try store.verifyExact(current, permit: permit) }
+            guard current.snapshot.entries.allSatisfy({ qualified.contains($0) }),
+                  let id = current.snapshot.configuredEntryID,
+                  let entry = current.snapshot.entries.first(where: { $0.entryID == id }) else { throw DeviceManagedRenderFailure.emptySelection }
+            selectedID = id
+            switch entry {
+            case .retainedLocal(let localEntry):
+                selectedName = localEntry.entry.displayName
+                if let local, let binding = original.local,
+                    original.snapshot.entries.contains(entry) {
+                    selectedPackage = try local.mixedLocalPackage(binding, entryID: id, permit: permit)
+                } else {
+                    guard let source = try localIncomingSnapshot().first(where: { try $0.gate.qualifiedMixedLocalEntries($0.binding, permit: permit).contains(entry) }) else { throw DeviceManagedRenderFailure.invalidContent }
+                    selectedPackage = try source.gate.mixedLocalPackage(source.binding, entryID: id, permit: permit)
+                }
+            case .cloud(let cloudEntry, _):
+                selectedName = cloudEntry.displayName
+                if case .completed(let request, let completion) = original.nativeSource, request.candidate.entries.contains(where: { $0.entryID == id && $0.preparedPackage == cloudEntry.preparedPackage }) {
+                    selectedPackage = try native.mixedCloudPackage(request, completion: completion, entryID: id, permit: permit)
+                } else {
+                    guard let resource = incomingSnapshot().first(where: { $0.resolution.receipts.contains(where: { $0.reference == cloudEntry.preparedPackage }) }),
+                          let receipt = resource.resolution.receipts.first(where: { $0.reference == cloudEntry.preparedPackage }) else { throw DeviceManagedRenderFailure.invalidContent }
+                    selectedPackage = try resource.packages.verify(receipt, resourcePermit: permit).package
+                }
+            }
+        }
+        guard let package = selectedPackage, let name = selectedName, let id = selectedID else { throw DeviceManagedRenderFailure.invalidContent }
+        let content = try DeviceManagedRenderProjection.make(package: package, operationID: operationID,
+            generationID: current.snapshot.generationID, entryID: id, displayName: name, validate: { [self] in
+                try verifyCurrentOrMountedResourcesExact(original, store: store, presentation: current)
+            })
+        try content.verifyResources(); return content
+    }
+    func verifyExact(_ original: DeviceMixedResolvedResources) throws {
+        try withScope(binding: original.local) { permit in
+            let retained = try qualifiedLocalEntries(original.local, permit: permit)
+            let cloud = try native.qualifiedMixedNativeEntries(original.nativeSource, permit: permit)
+            guard original.snapshot.entries == retained + cloud else { throw DeviceStructuralStoreError.conflict }
+        }
+    }
+    func qualifiedResetResourcesExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
+        current: DeviceMixedInventoryStore.Capture) throws -> DeviceOwnedInstallationResetResources {
+        var result: DeviceOwnedInstallationResetResources?
+        try withResetResourcesScope(original: original, source: original.nativeSource, store: store, current: current) { snapshot in
+            result = try .init(installationID: snapshot.installationID, roots: snapshot.roots, credentials: snapshot.credentials,
+                resourceOperation: { [self] operation in
+                    try withResetResourcesScope(original: original, source: original.nativeSource, store: store, current: current) { fresh in
+                        guard fresh.installationID == snapshot.installationID, fresh.roots == snapshot.roots,
+                            fresh.credentials == snapshot.credentials else { throw DeviceLocalResourceGateFailure.invalidRoots }
+                        try operation()
+                    }
+                })
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+    func qualifiedNativeResetResourcesExact(_ source: DeviceMixedNativeSource) throws -> DeviceOwnedInstallationResetResources {
+        var result: DeviceOwnedInstallationResetResources?
+        try withResetResourcesScope(original: nil, source: source, store: nil, current: nil) { snapshot in
+            result = try .init(installationID: snapshot.installationID, roots: snapshot.roots, credentials: snapshot.credentials,
+                resourceOperation: { [self] operation in
+                    try withResetResourcesScope(original: nil, source: source, store: nil, current: nil) { fresh in
+                        guard fresh.installationID == snapshot.installationID, fresh.roots == snapshot.roots,
+                            fresh.credentials == snapshot.credentials else { throw DeviceLocalResourceGateFailure.invalidRoots }
+                        try operation()
+                    }
+                })
+        }
+        guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
+    }
+    /// Resource-only retained proof: outer Authority owns admission/reset serialization.
+    /// Exact current generation and credential membership are rechecked under all store locks.
+    private func withResetResourcesScope(original: DeviceMixedResolvedResources?, source: DeviceMixedNativeSource,
+        store: DeviceMixedInventoryStore?, current: DeviceMixedInventoryStore.Capture?,
+        body: (DeviceOwnedInstallationResetResources) throws -> Void) throws {
+        try withScope(binding: original?.local, inventory: store) { permit in
+            let qualified = try qualifiedLocalEntries(original?.local, permit: permit)
+                + native.qualifiedMixedNativeEntries(source, permit: permit)
+            if let store, let current {
+                let incoming = try qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
+                try store.verifyExact(current, permit: permit)
+                guard current.snapshot.entries.allSatisfy({ (qualified + incoming).contains($0) }) else { throw DeviceStructuralStoreError.conflict }
+            } else { guard store == nil, current == nil, original == nil else { throw DeviceLocalResourceGateFailure.invalidScope } }
+            var credentials = try native.qualifiedResetCredentialsExact(permit)
+            if let local { credentials += try local.qualifiedResetCredentialsExact(permit) }
+            for retained in localIncomingSnapshot() { credentials += try retained.gate.qualifiedResetCredentialsExact(permit) }
+            let snapshot = try resetEvidence(permit, installationID: source.state.owner.installationID, credentials: credentials)
+            try body(snapshot)
+            // A caller cannot hide a changed inventory behind successful pending persistence.
+            if let store, let current { try store.verifyExact(current, permit: permit) }
+        }
+    }
+    private func resetEvidence(_ permit: DeviceLocalResourcePermit, installationID: UUID,
+        credentials: [DeviceOwnedInstallationResetResources.Credential]) throws -> DeviceOwnedInstallationResetResources {
+        try permit.requireReadable()
+        let roots = try permit.participants.map { descriptor -> DeviceOwnedInstallationResetResources.Root in
+            let fd = open(descriptor.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard fd >= 0 else { throw DeviceLocalResourceGateFailure.invalidRoots }; defer { close(fd) }
+            var held = stat(), named = stat()
+            guard fstat(fd, &held) == 0, lstat(descriptor.path, &named) == 0,
+                named.st_mode & S_IFMT == S_IFDIR, held.st_dev == named.st_dev, held.st_ino == named.st_ino else {
+                throw DeviceLocalResourceGateFailure.invalidRoots
+            }
+            return .init(rootID: descriptor.rootID, path: descriptor.path,
+                device: UInt64(truncatingIfNeeded: held.st_dev), inode: UInt64(truncatingIfNeeded: held.st_ino))
+        }
+        return try .init(installationID: installationID, roots: roots, credentials: credentials)
+    }
+    private func withScope(binding: DeviceBoundRestoredRuntimeBinding?, inventory: DeviceMixedInventoryStore? = nil, incoming: [DeviceMixedIncomingResources]? = nil, preparing: DevicePackagePreparationStore? = nil, incomingLocal: [DeviceMixedIncomingLocalResources]? = nil, body: (DeviceLocalResourcePermit) throws -> Void) throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        let retainedIncoming = incoming ?? incomingSnapshot()
+        let retainedLocal = incomingLocal ?? localIncomingSnapshot()
+        let extraPackages = retainedIncoming.map(\.packages) + (preparing.map { [$0] } ?? [])
+        let localDescriptors: [DeviceLocalResourceDescriptor]
+        if let local, let binding { localDescriptors = try local.mixedDescriptors(binding) }
+        else { guard local == nil, binding == nil else { throw DeviceLocalResourceGateFailure.invalidRoots }; localDescriptors = [] }
+        let supplied = try localDescriptors + retainedLocal.flatMap { try $0.gate.mixedDescriptors($0.binding) } + native.mixedDescriptors
+            + (inventory.map { try $0.resourceGateDescriptor }.map { [$0] } ?? [])
+            + extraPackages.map { try $0.resourceGateDescriptor }
+        var descriptors: [DeviceLocalResourceDescriptor] = []
+        for descriptor in supplied {
+            if let same = descriptors.first(where: { $0.instance == descriptor.instance }) {
+                guard same.path == descriptor.path, same.rootID == descriptor.rootID else { throw DeviceLocalResourceGateFailure.invalidRoots }
+            } else { descriptors.append(descriptor) }
+        }
+        descriptors.sort { $0.path.utf8.lexicographicallyPrecedes($1.path.utf8) }
+        for i in descriptors.indices { for j in descriptors.indices where j > i {
+            guard descriptors[i].rootID != descriptors[j].rootID,
+                  !DeviceLocalResourceDescriptor.pathsOverlap(descriptors[i].path, descriptors[j].path) else { throw DeviceLocalResourceGateFailure.invalidRoots }
+        } }
+        let permit = DeviceLocalResourcePermit(descriptors)
+        try DeviceLocalResourceRegistry.begin(permit); defer { permit.invalidate(); DeviceLocalResourceRegistry.finish(permit) }
+        func acquire(_ index: Int) throws {
+            if index == descriptors.count { try DeviceLocalResourceRegistry.execute(permit); try body(permit); return }
+            let next = { try acquire(index + 1) }
+            if let local, let binding, try local.acquireMixed(descriptors[index], binding: binding, permit: permit, body: next) { return }
+            for source in retainedLocal {
+                if try source.gate.acquireMixed(descriptors[index], binding: source.binding, permit: permit, body: next) { return }
+            }
+            if let packageStore = extraPackages.first(where: { descriptors[index].instance == ObjectIdentifier($0) }) {
+                try packageStore.withResourceGateScope(permit, next); return
+            }
+            if let inventory, descriptors[index].instance == ObjectIdentifier(inventory) {
+                try inventory.withResourceGateScope(permit, next); return
+            }
+            guard try native.acquireMixed(descriptors[index], permit: permit, body: next) else { throw DeviceLocalResourceGateFailure.invalidRoots }
+        }
+        try acquire(0)
+    }
+}
+
+#if DEBUG || SCREENPUNK_CORE_TESTING
+/// Test-only single-root harness; release CI opts in explicitly.
+/// Production commits use the complete resolver.
+enum DeviceMixedInventoryQualificationHarness {
+    static func scope<T>(_ store: DeviceMixedInventoryStore, body: (DeviceLocalResourcePermit) throws -> T) throws -> T {
+        let permit = DeviceLocalResourcePermit([try store.resourceGateDescriptor])
+        try DeviceLocalResourceRegistry.begin(permit)
+        defer { permit.invalidate(); DeviceLocalResourceRegistry.finish(permit) }
+        var output: T?
+        try store.withResourceGateScope(permit) {
+            try DeviceLocalResourceRegistry.execute(permit); output = try body(permit)
+        }
+        guard let output else { throw DeviceLocalResourceGateFailure.invalidScope }; return output
+    }
+}
+#endif

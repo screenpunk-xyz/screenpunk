@@ -79,7 +79,7 @@ public enum NativeEnrollmentEvidenceCodec {
         guard try string(b["format"]) == CloudInstallationCredentialFormat.nativeInstallationV1.rawValue else { throw Failure.invalidSchema }
         let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: id(b["credentialGenerationID"]), transitionID: id(b["transitionID"]), credentialReference: string(b["credentialReference"]), format: .nativeInstallationV1)
         let c = try object(required(o, "claimInput"), keys: ["requestId", "transitionId", "accountId", "locationId", "name", "profile"])
-        let input = try NativeClaimInput(requestId: id(c["requestId"]), transitionId: id(c["transitionId"]), accountId: id(c["accountId"]), locationId: id(c["locationId"]), name: string(c["name"]), profile: string(c["profile"]))
+        let input = try NativeClaimInput(requestId: id(c["requestId"]), transitionId: id(c["transitionId"]), accountId: id(c["accountId"]), locationId: optionalLocation(c["locationId"]), name: string(c["name"]), profile: string(c["profile"]))
         let events = try array(o["events"]).map(parseEvent)
         guard (1...4).contains(events.count) else { throw Failure.capacityExceeded }
         return Record(id: try id(o["enrollmentId"]), binding: binding, input: input, events: events)
@@ -99,14 +99,14 @@ public enum NativeEnrollmentEvidenceCodec {
             let o = try object(value, keys: ["kind", "receipt"]), a = try object(required(o, "receipt"), keys: ["installationId", "deviceId", "requestId", "accountId", "locationId", "transitionId", "activatedAt", "initialGeneration"])
             let g = try object(required(a, "initialGeneration"), keys: ["generationId", "createdAt", "renewAfter", "expiresAt"])
             let generation = try NativeGenerationReceipt(generationId: id(g["generationId"]), createdAt: string(g["createdAt"]), renewAfter: string(g["renewAfter"]), expiresAt: string(g["expiresAt"]))
-            return .historicalActivationObserved(try .init(installationId: id(a["installationId"]), deviceId: id(a["deviceId"]), requestId: id(a["requestId"]), accountId: id(a["accountId"]), locationId: id(a["locationId"]), transitionId: id(a["transitionId"]), activatedAt: string(a["activatedAt"]), initialGeneration: generation))
+            return .historicalActivationObserved(try .init(installationId: id(a["installationId"]), deviceId: id(a["deviceId"]), requestId: id(a["requestId"]), accountId: id(a["accountId"]), locationId: optionalLocation(a["locationId"]), transitionId: id(a["transitionId"]), activatedAt: string(a["activatedAt"]), initialGeneration: generation))
         default: throw Failure.invalidSchema
         }
     }
     private static func claim(_ value: EnrollmentJSON) throws -> NativeClaimReceipt {
         let c = try object(value, keys: ["installationId", "requestId", "transitionId", "challengeId", "accountId", "locationId", "createdAt", "expiresAt", "outcome"])
         guard let outcome = NativeClaimReceipt.Outcome(rawValue: try string(c["outcome"])) else { throw Failure.invalidSchema }
-        return try .init(installationId: id(c["installationId"]), requestId: id(c["requestId"]), transitionId: id(c["transitionId"]), challengeId: id(c["challengeId"]), accountId: id(c["accountId"]), locationId: id(c["locationId"]), createdAt: string(c["createdAt"]), expiresAt: string(c["expiresAt"]), outcome: outcome)
+        return try .init(installationId: id(c["installationId"]), requestId: id(c["requestId"]), transitionId: id(c["transitionId"]), challengeId: id(c["challengeId"]), accountId: id(c["accountId"]), locationId: optionalLocation(c["locationId"]), createdAt: string(c["createdAt"]), expiresAt: string(c["expiresAt"]), outcome: outcome)
     }
     private static func validateRoles(_ records: [Record], history: DeviceManagementFormatHistory) throws {
         var ids = Set(history.transitions.map(\.transitionID) + history.credentials.map(\.credentialGenerationID))
@@ -133,6 +133,10 @@ public enum NativeEnrollmentEvidenceCodec {
     private static func object(_ v: EnrollmentJSON, keys: Set<String>) throws -> [String: EnrollmentJSON] { guard case .object(let o) = v, Set(o.keys) == keys else { throw Failure.invalidSchema }; return o }
     private static func array(_ v: EnrollmentJSON?) throws -> [EnrollmentJSON] { guard case .array(let a) = v else { throw Failure.invalidSchema }; return a }
     private static func string(_ v: EnrollmentJSON?) throws -> String { guard case .string(let s) = v else { throw Failure.invalidSchema }; return s }
+    private static func optionalLocation(_ value: EnrollmentJSON?) throws -> UUID? {
+        if case .null? = value { return nil }
+        return try id(value)
+    }
     private static func id(_ v: EnrollmentJSON?) throws -> UUID {
         let s = try string(v), b = Array(s.utf8.prefix(37))
         guard b.count == 36 else { throw Failure.invalidSchema }
@@ -144,7 +148,7 @@ public enum NativeEnrollmentEvidenceCodec {
     }
 }
 
-private indirect enum EnrollmentJSON { case object([String: EnrollmentJSON]), array([EnrollmentJSON]), string(String), integer(Int), other }
+private indirect enum EnrollmentJSON { case object([String: EnrollmentJSON]), array([EnrollmentJSON]), string(String), integer(Int), null, other }
 private struct EnrollmentJSONParser {
     typealias Failure = NativeEnrollmentEvidenceCodec.Failure
     private let bytes: [UInt8]
@@ -187,7 +191,7 @@ private struct EnrollmentJSONParser {
         case 34: return .string(try text(end: end))
         case 116, 102, 110:
             let word: [UInt8] = bytes[cursor] == 116 ? Array("true".utf8) : (bytes[cursor] == 102 ? Array("false".utf8) : Array("null".utf8))
-            guard cursor + word.count <= end, Array(bytes[cursor..<(cursor + word.count)]) == word else { throw Failure.invalidJSON }; cursor += word.count; return .other
+            guard cursor + word.count <= end, Array(bytes[cursor..<(cursor + word.count)]) == word else { throw Failure.invalidJSON }; cursor += word.count; return word == Array("null".utf8) ? .null : .other
         case 45, 48...57:
             let start = cursor
             if bytes[cursor] == 45 { cursor += 1 }

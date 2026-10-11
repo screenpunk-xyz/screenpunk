@@ -1,0 +1,7 @@
+// Public Apple Developer Program team metadata, shared by native Xcode targets
+// and validated by release scripts. Signing keys and profiles never go here.
+SCREENPUNK_APPLE_TEAM_ID = 77KASWDGM6
+DEVELOPMENT_TEAM = $(SCREENPUNK_APPLE_TEAM_ID)
+CODE_SIGN_STYLE = Automatic
+CODE_SIGNING_ALLOWED = YES
+CODE_SIGN_IDENTITY = Apple Development

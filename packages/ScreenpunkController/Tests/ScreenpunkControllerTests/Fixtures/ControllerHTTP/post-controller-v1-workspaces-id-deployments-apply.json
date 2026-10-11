@@ -1,0 +1,50 @@
+{
+  "planId": "03d63f8d-f14d-43d3-a8b6-dfd8ee4b270c",
+  "sequence": "1",
+  "accountId": "05f93b4e-7b95-40fa-bb3d-e1b2f59a6356",
+  "locationId": null,
+  "planDigest": "bf11d4c356592ec46b83f3da552d655acbb79932dd7b9b22eb69afa0045eb563",
+  "operationId": "0426a57e-68f7-402e-9222-b916d698b255",
+  "resultingSet": {
+    "entries": [
+      {
+        "entryId": "f271d0e0-3933-4f72-b8f1-265100f1173e",
+        "provenance": {
+          "kind": "retainedLocal",
+          "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "retainedEntryId": "f271d0e0-3933-4f72-b8f1-265100f1173e"
+        }
+      },
+      {
+        "entryId": "0426a57e-68f7-402e-9222-b916d698b255",
+        "provenance": {
+          "kind": "cloud",
+          "package": {
+            "revision": "3b47a03a-0dd6-43fe-a72a-578a7dbb58da",
+            "packageId": "8cd71e3b-3eab-47c4-95fe-3126c4920ced",
+            "projectId": "fb1890dd-093e-4c1a-9b25-e8376e1992c9",
+            "dashboardId": "819469eb-a285-4519-9dc8-8f07216229f9",
+            "archiveSha256": "f363d4aaa5f1a9d2d11ee2866cd923807923fe1974eb4b06b8ab8ca4eae904df",
+            "expandedBytes": 655,
+            "publicationId": "05f76a3e-5a44-4cf0-8a5b-0d527f866591",
+            "archiveEntries": 2,
+            "manifestDigest": "9b71bb84e51155f166371ca0794d19067f889c100ba3d21ce92cf1c5b1c7cbde",
+            "manifestSha256": "9f0f3f39af9bcac1161b0d07643b3d640094deb03be945460fa0abec530bc74a",
+            "packageProfile": "screenpunk-native-manifest-v1",
+            "compressedBytes": 649
+          }
+        }
+      }
+    ],
+    "schemaVersion": 1,
+    "configuredEntryId": "0426a57e-68f7-402e-9222-b916d698b255"
+  },
+  "transitionId": "a9b006b9-3cf0-4446-a6cd-5f2d3cbf80e4",
+  "schemaVersion": 1,
+  "installationId": "cdbdf510-4785-44f9-860c-9bf9be25a318",
+  "planByteLength": 1115,
+  "executionExpiresAt": "2026-10-11T19:15:24.739326Z",
+  "resultingSetDigest": "9ba262c7a333ceeff9a94374571d110c11162929a5815a756589a6fd50391536",
+  "desiredSetGenerationId": "26acbf68-6685-4854-a1cf-43c3638d3767",
+  "expectedInstalledSetGenerationId": "c826bb37-7445-4cf9-97df-c059daba21f1"
+}

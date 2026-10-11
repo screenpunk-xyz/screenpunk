@@ -19,18 +19,26 @@ struct DeviceNativeGrantRevisionInput: Codable, Sendable, GrantSecretRedacted {
     }
     private enum CodingKeys:String,CodingKey {case schemaVersion,identity,owner,entries,credentials,retainedRevisions}
     private struct OwnerWire:Codable {
-        let kind:String,installationID:String,accountID:String,locationID:String,transitionID:String
+        let kind:String,installationID:String,accountID:String,transitionID:String
+        let locationID:String?
         init(_ owner:DeviceNativeInstallationContentOwner) {
             kind="nativeInstallation";installationID=owner.installationID.uuidString.lowercased()
-            accountID=owner.accountID.uuidString.lowercased();locationID=owner.locationID.uuidString.lowercased()
+            accountID=owner.accountID.uuidString.lowercased();locationID=owner.locationID?.uuidString.lowercased()
             transitionID=owner.transitionID.uuidString.lowercased()
+        }
+        private enum CodingKeys: String, CodingKey { case kind, installationID, accountID, locationID, transitionID }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(kind, forKey: .kind); try c.encode(installationID, forKey: .installationID)
+            try c.encode(accountID, forKey: .accountID); try c.encode(transitionID, forKey: .transitionID)
+            if let locationID { try c.encode(locationID, forKey: .locationID) } else { try c.encodeNil(forKey: .locationID) }
         }
         func value()throws->DeviceNativeInstallationContentOwner {
             guard kind.utf8.elementsEqual("nativeInstallation".utf8) else{throw DeviceNativeGrantRevisionQualificationError.invalidInput}
             func id(_ text:String)throws->UUID {
                 guard text.utf8.count == 36,let id=UUID(uuidString:text),text.utf8.elementsEqual(id.uuidString.lowercased().utf8) else{throw DeviceNativeGrantRevisionQualificationError.invalidInput};return id
             }
-            return try .init(installationID:id(installationID),accountID:id(accountID),locationID:id(locationID),transitionID:id(transitionID))
+            return try .init(installationID:id(installationID),accountID:id(accountID),locationID:locationID.map { try id($0) },transitionID:id(transitionID))
         }
     }
     init(from decoder:Decoder)throws {

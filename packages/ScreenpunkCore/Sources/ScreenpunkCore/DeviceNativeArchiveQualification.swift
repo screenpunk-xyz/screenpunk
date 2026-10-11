@@ -27,6 +27,16 @@ enum DeviceNativeArchiveQualifier {
     private struct Entry {let path:String,method:UInt16,crc:UInt32,start:Int,compressed:Int,expanded:Int}
     static func qualify(_ archive:Data,descriptor:DeviceDeliveryPackageCandidate,
                         expected:DevicePackageExpectation)throws->QualifiedDeviceNativeArchive {
+        try qualify(archive, descriptor: descriptor, expected: expected, approvedManifestName: false)
+    }
+    /// Cloud approval binds exact archive and manifest hashes; its screen name comes from
+    /// those authenticated bytes. Device names never supply package identity.
+    static func qualifyApprovedManifestName(_ archive: Data, descriptor: DeviceDeliveryPackageCandidate,
+        expected: DevicePackageExpectation) throws -> QualifiedDeviceNativeArchive {
+        try qualify(archive, descriptor: descriptor, expected: expected, approvedManifestName: true)
+    }
+    private static func qualify(_ archive: Data, descriptor: DeviceDeliveryPackageCandidate,
+        expected: DevicePackageExpectation, approvedManifestName: Bool) throws -> QualifiedDeviceNativeArchive {
         guard archive.count >= 22,archive.count <= compressedLimit,
               descriptor.compressedBytes == UInt64(archive.count),
               (2...2000).contains(descriptor.archiveEntries),
@@ -60,7 +70,15 @@ enum DeviceNativeArchiveQualifier {
         }
         guard expanded == Int(descriptor.expandedBytes),let manifest,
               hash(manifest).utf8.elementsEqual(descriptor.manifestSHA256.text.utf8) else{throw DeviceNativeArchiveQualificationError.manifestMismatch}
-        let package=try DevicePackageQualifier.qualify(.init(manifest:manifest,files:files),expected:expected)
+        let qualifiedExpectation: DevicePackageExpectation
+        if approvedManifestName {
+            let approved = try DevicePackageManifestPreflight.decode(manifest)
+            qualifiedExpectation = .init(revision: .init(revision: expected.revision.revision,
+                dashboardId: expected.revision.dashboardId, name: approved.name, digest: expected.revision.digest,
+                orientation: expected.revision.orientation, width: expected.revision.width, height: expected.revision.height),
+                target: expected.target, profileID: expected.profileID)
+        } else { qualifiedExpectation = expected }
+        let package=try DevicePackageQualifier.qualify(.init(manifest:manifest,files:files),expected:qualifiedExpectation)
         guard package.manifestSHA256.utf8.elementsEqual(descriptor.manifestSHA256.text.utf8),
               package.deploymentDigest.utf8.elementsEqual(descriptor.manifestDigest.text.utf8) else{throw DeviceNativeArchiveQualificationError.manifestMismatch}
         return .init(package,descriptor,archive.count,expanded,entries.count)

@@ -785,6 +785,21 @@ final class DeviceGrantPreparationStore {
     }
     /// Strict v2 only, one Generic entry working set. No v1 receipt/qualification conversion,
     /// secret getter, backend mutation or production admission. Original transition stays mandatory.
+    func makeBoundRuntimeSeed(_ transition: DeviceBoundGrantTerminalTransition, plan: DeviceValidatedProvisioningPlan,
+        packages: [DeviceProvisioningPackageInput], owner: PairingIdentity, entryID: UUID,
+        resourcePermit: DeviceLocalResourcePermit) throws -> DeviceUnifiedPrivateRuntimeSeed {
+        try verifyBoundTerminal(transition, plan: plan, packages: packages, resourcePermit: resourcePermit)
+        let seed = try disk(resourcePermit: resourcePermit) { _ -> DeviceUnifiedPrivateRuntimeSeed in
+            guard transition.epoch == epoch(), boundTerminalQualification === transition else { throw DeviceGrantPreparationError.conflict }
+            let frame = try GrantPreparationCodec.decodeStoredAttempt(transition.original.privateBytes)
+            guard frame.version == 2, frame.completeSetIntent == plan.canonicalBytes, owner.isWellFormed,
+                owner.role == .controller, frame.input.owner == owner,
+                let entry = frame.input.entries.first(where: { $0.entryID == entryID }) else { throw ConnectionFailure.permissionRequired }
+            return .init(hasGeneric: entry.generic != nil, homeAssistant: entry.homeAssistant, publicReads: entry.publicReads)
+        }
+        try verifyBoundTerminal(transition, plan: plan, packages: packages, resourcePermit: resourcePermit)
+        return seed
+    }
     func makeBoundGenericSeed(_ transition:DeviceBoundGrantTerminalTransition,plan:DeviceValidatedProvisioningPlan,
         packages:[DeviceProvisioningPackageInput],owner:PairingIdentity,entryID:UUID,resourcePermit:DeviceLocalResourcePermit)throws->DeviceImmutableGenericSeed {
         try Task.checkCancellation()
@@ -1147,6 +1162,18 @@ final class DeviceGrantPreparationStore {
         }
         guard expected.allSatisfy({items[$0.key] == $0.value}) else { throw DeviceGrantPreparationError.conflict }
         return .init(entries:entries,items:items,hasStages:hasStages,head:head)
+    }
+    func qualifiedResetCredentialsExact(_ permit: DeviceLocalResourcePermit) throws -> [DeviceOwnedInstallationResetResources.Credential] {
+        try disk(resourcePermit: permit) { context in
+            let observed = try inventory(context)
+            guard !observed.hasStages else { throw DeviceGrantPreparationError.repairRequired }
+            return try observed.items.values.map { item in
+                guard let original = try backend.read(service: service, account: item.account, maximumBytes: item.byteCount),
+                    original.item == item, original.bytes.count == item.byteCount else { throw DeviceGrantPreparationError.conflict }
+                return .init(service: service, account: item.account, persistentReference: item.persistentReference,
+                    byteCount: item.byteCount, valueSHA256: try DeviceNativeDeliveryAttachmentCodec.hash(original.bytes))
+            }
+        }
     }
     private func directoryIdentity(_ parent: Int32, _ name: String) throws -> GrantDiskIdentity? {
         let fd = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)

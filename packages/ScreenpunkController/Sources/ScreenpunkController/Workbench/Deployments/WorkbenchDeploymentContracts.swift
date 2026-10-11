@@ -31,6 +31,9 @@ public struct WorkbenchDeploymentPlanBody: Codable, Equatable {
     public let requiredDeclarationsHash: String
     public let approvalPolicy: String
     public let expiresAt: String
+    public var expectedStateGenerationId: String? = nil
+    public var expectedCommonEntries: [LANCommonScreenEntry]? = nil
+    public var previouslyConfiguredEntryId: String? = nil
 }
 
 public struct WorkbenchDeploymentReview: Codable, Equatable {
@@ -128,9 +131,23 @@ enum WorkbenchDeploymentHash {
                   Set($0.declaredCapabilities).count == $0.declaredCapabilities.count }) else {
             throw WorkbenchDeploymentError.invalidPlan
         }
+        if let generation = value.expectedStateGenerationId {
+            guard UUID(uuidString: generation) != nil, let entries = value.expectedCommonEntries,
+                  entries.count <= 12, Set(entries.map(\.entryId)).count == entries.count,
+                  Set(entries.map(\.dashboardId)).count == entries.count,
+                  entries.allSatisfy({ UUID(uuidString: $0.entryId) != nil && ["cloud", "retainedLocal"].contains($0.origin) }),
+                  value.previouslyConfiguredEntryId == nil || entries.contains(where: { $0.entryId == value.previouslyConfiguredEntryId }) else { throw WorkbenchDeploymentError.invalidPlan }
+        } else if value.expectedCommonEntries != nil || value.previouslyConfiguredEntryId != nil { throw WorkbenchDeploymentError.invalidPlan }
         let encoded = try JSONEncoder().encode(value)
         let object = try JSONSerialization.jsonObject(with: encoded)
         return try ToolchainCanonical.hash(domain: "plan", value: object)
+    }
+    static func entryId(planId: String, dashboardId: String) throws -> String {
+        let hash = try ToolchainCanonical.hash(domain: "common-screen-entry-v1", value: ["planId": planId, "dashboardId": dashboardId])
+        let raw = String(hash.prefix(32))
+        let parts = [String(raw.prefix(8)), String(raw.dropFirst(8).prefix(4)), String(raw.dropFirst(12).prefix(4)), String(raw.dropFirst(16).prefix(4)), String(raw.dropFirst(20).prefix(12))]
+        guard let id = UUID(uuidString: parts.joined(separator: "-")) else { throw WorkbenchDeploymentError.invalidPlan }
+        return id.uuidString.lowercased()
     }
     static func operationBody(planHash: String, contextHash: String) throws -> String {
         guard WorkspaceValidation.sha256(planHash), WorkspaceValidation.sha256(contextHash) else {

@@ -101,7 +101,7 @@ final class DeviceNativeBoundStructuralCommitTests:XCTestCase {
         let selected=entries.first?.entryID,candidate=try DeviceNativeStructuralState.validating(generationID:desired,owner:.nativeInstallation(who),entries:entries,configuredEntryID:selected)
         let set=try DeviceResultingSetCandidate.validating(entries:entries.map{.validating(entryID:$0.entryID,provenance:.cloud($0.package))},configuredEntryID:selected)
         let rawPlan=Data("exact raw native plan fixture".utf8)
-        let association:[String:Any]=["schemaVersion":1,"operationId":UUID().uuidString.lowercased(),"planId":UUID().uuidString.lowercased(),"installationId":who.installationID.uuidString.lowercased(),"accountId":who.accountID.uuidString.lowercased(),"locationId":who.locationID.uuidString.lowercased(),"transitionId":who.transitionID.uuidString.lowercased(),"planDigest":try DeviceNativeDeliveryAttachmentCodec.hash(rawPlan),"planByteLength":rawPlan.count]
+        let association:[String:Any]=["schemaVersion":1,"operationId":UUID().uuidString.lowercased(),"planId":UUID().uuidString.lowercased(),"installationId":who.installationID.uuidString.lowercased(),"accountId":who.accountID.uuidString.lowercased(),"locationId":who.locationID.map { $0.uuidString.lowercased() } as Any? ?? NSNull(),"transitionId":who.transitionID.uuidString.lowercased(),"planDigest":try DeviceNativeDeliveryAttachmentCodec.hash(rawPlan),"planByteLength":rawPlan.count]
         var command=association;command["sequence"]="1";command["expectedInstalledSetGenerationId"]=initial.generationID.uuidString.lowercased();command["desiredSetGenerationId"]=desired.uuidString.lowercased();command["executionExpiresAt"]="2026-10-04T12:00:00Z";command["resultingSetDigest"]=try DeviceDeliveryCandidateCodec.resultingSetDigest(set)
         let wire=entries.map{e->[String:Any] in let p=e.package;return ["entryId":e.entryID.uuidString.lowercased(),"provenance":["kind":"cloud","package":["packageProfile":DeviceDeliveryPackageCandidate.profile,"publicationId":p.publicationID.uuidString.lowercased(),"projectId":p.projectID.uuidString.lowercased(),"packageId":p.packageID.uuidString.lowercased(),"dashboardId":p.dashboardID.uuidString.lowercased(),"revision":p.revision.uuidString.lowercased(),"manifestDigest":p.manifestDigest.text,"manifestSha256":p.manifestSHA256.text,"archiveSha256":p.archiveSHA256.text,"compressedBytes":p.compressedBytes,"expandedBytes":p.expandedBytes,"archiveEntries":p.archiveEntries]]]}
         let selectedWire:Any; if let selected {selectedWire=selected.uuidString.lowercased()} else {selectedWire=NSNull()}
@@ -113,6 +113,25 @@ final class DeviceNativeBoundStructuralCommitTests:XCTestCase {
         let request=DeviceNativeProvisioningRequest(roots:roots,delivery:delivery,grantOperationID:grantOperation,baseline:baseline,candidate:candidate,packages:inputs,grantInput:input,qualifiedGrant:qualified)
         let plan=try DeviceNativeProvisioningPlanner.qualify(request),attachment=try journal.publishDeliveryAttachmentExact(delivery)
         return .init(journalRoot:j,structuralRoot:s,roots:roots,journal:journal,structural:structural,probe:probe,request:request,plan:plan,attachment:attachment)
+    }
+    func testRestoreRecordedGenesisPreservesOriginalGenerationAndOwner() throws {
+        let directory = try root(), id = UUID()
+        let original = DeviceStructuralStore(root: directory, rootID: id)
+        try original.initializeExplicit()
+        let state = try empty(owner)
+        _ = try original.initializeNativeGenesisExplicit(state)
+        let restarted = DeviceStructuralStore(root: directory, rootID: id)
+        let restored = try restarted.restoreNativeGenesisExplicit()
+        XCTAssertEqual(restored.state, state)
+        XCTAssertEqual(restored.stateBytes, try DeviceNativeStructuralStateCodec.encode(state))
+    }
+    func testRestoreGenesisRejectsChangedOriginalBytes() throws {
+        let directory = try root(), id = UUID()
+        let original = DeviceStructuralStore(root: directory, rootID: id)
+        try original.initializeExplicit()
+        _ = try original.initializeNativeGenesisExplicit(empty(owner))
+        try Data("changed".utf8).write(to: directory.appendingPathComponent("native-genesis.json"))
+        XCTAssertThrowsError(try DeviceStructuralStore(root: directory, rootID: id).restoreNativeGenesisExplicit())
     }
     private final class Backend: DeviceGrantCredentialBackend, @unchecked Sendable {
         var values: [String: DeviceGrantCredentialValue] = [:]

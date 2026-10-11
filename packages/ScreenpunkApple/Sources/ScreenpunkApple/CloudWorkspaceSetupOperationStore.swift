@@ -490,8 +490,9 @@ public final class CloudWorkspaceSetupOperationStore: @unchecked Sendable {
             } catch { close(file); throw error }
         }
         func pathOfRoot() -> String {
-            func path(_ value: Directory) -> String { guard let parent = value.parent, let name = value.name else { return "/" }; return (path(parent) == "/" ? "" : path(parent)) + "/" + name }
-            return path(directory)
+            // iOS traversal starts at the sandbox container, not necessarily /.
+            // Preserve that verified root for path-based protection attributes.
+            directory.path
         }
         func write(_ file: Int32, bytes: Data) throws {
             try bytes.withUnsafeBytes { buffer in

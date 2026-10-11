@@ -70,8 +70,22 @@ struct NativeJournalFinalOwnership: Codable, Equatable {
 /// Closed nonsecret persistence projection. Values alone never prove HTTP provenance.
 struct NativeJournalActivationProposal: Codable, Equatable {
     struct Claim: Codable, Equatable {
-        let installationId: UUID, requestId: UUID, transitionId: UUID, challengeId: UUID, accountId: UUID, locationId: UUID
+        let installationId: UUID, requestId: UUID, transitionId: UUID, challengeId: UUID, accountId: UUID
+        let locationId: UUID?
         let createdAt: String, expiresAt: String, outcome: String
+        private enum CodingKeys: String, CodingKey { case installationId, requestId, transitionId, challengeId, accountId, locationId, createdAt, expiresAt, outcome }
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(installationId, forKey: .installationId)
+            try values.encode(requestId, forKey: .requestId)
+            try values.encode(transitionId, forKey: .transitionId)
+            try values.encode(challengeId, forKey: .challengeId)
+            try values.encode(accountId, forKey: .accountId)
+            try values.encode(locationId, forKey: .locationId)
+            try values.encode(createdAt, forKey: .createdAt)
+            try values.encode(expiresAt, forKey: .expiresAt)
+            try values.encode(outcome, forKey: .outcome)
+        }
         init(_ c: NativeClaimReceipt) {
             installationId = c.installationId; requestId = c.requestId; transitionId = c.transitionId; challengeId = c.challengeId
             accountId = c.accountId; locationId = c.locationId; createdAt = c.createdAt; expiresAt = c.expiresAt; outcome = c.outcome.rawValue
@@ -107,9 +121,22 @@ struct NativeJournalActivationAssociation: Codable, Equatable {
             let generationId: UUID
             let createdAt: String, renewAfter: String, expiresAt: String
         }
-        let installationId: UUID, deviceId: UUID, requestId: UUID, accountId: UUID, locationId: UUID, transitionId: UUID
+        let installationId: UUID, deviceId: UUID, requestId: UUID, accountId: UUID, transitionId: UUID
+        let locationId: UUID?
         let activatedAt: String
         let initialGeneration: Generation
+        private enum CodingKeys: String, CodingKey { case installationId, deviceId, requestId, accountId, locationId, transitionId, activatedAt, initialGeneration }
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(installationId, forKey: .installationId)
+            try values.encode(deviceId, forKey: .deviceId)
+            try values.encode(requestId, forKey: .requestId)
+            try values.encode(accountId, forKey: .accountId)
+            try values.encode(locationId, forKey: .locationId)
+            try values.encode(transitionId, forKey: .transitionId)
+            try values.encode(activatedAt, forKey: .activatedAt)
+            try values.encode(initialGeneration, forKey: .initialGeneration)
+        }
         init(_ a: NativeActivationReceipt) {
             installationId = a.installationId; deviceId = a.deviceId; requestId = a.requestId; accountId = a.accountId; locationId = a.locationId; transitionId = a.transitionId; activatedAt = a.activatedAt
             initialGeneration = .init(generationId: a.initialGeneration.generationId, createdAt: a.initialGeneration.createdAt,
@@ -425,7 +452,10 @@ enum NativeJournalCodec {
         func closed(_ value: Any?, _ keys: Set<String>, ids: Set<String> = []) throws -> [String: Any] {
             guard let value = value as? [String: Any] else { throw NativeEnrollmentJournalError.invalidRecord }
             try StructuralStoreCodec.keys(value, required: keys)
-            for key in ids { try uuid(value[key]) }
+            for key in ids {
+                if key == "locationId", value[key] is NSNull { continue }
+                try uuid(value[key])
+            }
             return value
         }
         let inputKeys: Set<String> = ["installationId", "requestId", "challengeId", "transitionId"]

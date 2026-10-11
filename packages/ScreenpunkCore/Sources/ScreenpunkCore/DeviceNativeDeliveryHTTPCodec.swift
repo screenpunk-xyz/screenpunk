@@ -13,6 +13,16 @@ enum DeviceNativeDeliveryHTTPCodec {
         let receiptID: UUID?
     }
     private static let common: Set<String> = ["schemaVersion","operationId","planId","installationId","accountId","locationId","transitionId","expectedInstalledSetGenerationId","desiredSetGenerationId","planDigest","planByteLength","sequence","resultingSetDigest"]
+    static func notActivatedRequest(binding: DeviceNativeDeliveryCommandBinding) throws -> Data {
+        var object = association(binding)
+        object["activationRequestId"] = NSNull(); object["authorizationDigest"] = NSNull()
+        object["outcome"] = "not_activated"; object["renderState"] = "not-observed"
+        object["previousGenerationId"] = binding.expectedGenerationID.uuidString.lowercased()
+        object["resultingGenerationId"] = binding.expectedGenerationID.uuidString.lowercased()
+        let bytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        _ = try observe(bytes, kind: .terminalRequest, binding: binding, requestID: nil, expectedOutcome: "not_activated")
+        return bytes
+    }
     static func activationRequest(binding: DeviceNativeDeliveryCommandBinding, requestID: UUID) throws -> Data {
         var object = association(binding)
         object["activationRequestId"] = requestID.uuidString.lowercased()
@@ -37,6 +47,7 @@ enum DeviceNativeDeliveryHTTPCodec {
         let expected = association(binding)
         for name in common {
             if name == "schemaVersion" { guard try C.integer(object[name], maximum: 1) == 1 else { throw C.Failure.invalidSchema } }
+            else if name == "locationId", expected[name] is NSNull { guard object[name] is NSNull else { throw C.Failure.invalidSchema } }
             else if name == "planByteLength" { guard try C.integer(object[name], maximum: 65536) == UInt64(binding.association.planByteLength) else { throw C.Failure.invalidSchema } }
             else {
                 guard let actual = object[name] as? String, let wanted = expected[name] as? String,
@@ -141,7 +152,7 @@ enum DeviceNativeDeliveryHTTPCodec {
     }
     private static func association(_ binding: DeviceNativeDeliveryCommandBinding) -> [String: Any] {
         let a = binding.association
-        return ["schemaVersion":1,"operationId":a.operationID.uuidString.lowercased(),"planId":a.planID.uuidString.lowercased(),"installationId":a.installationID.uuidString.lowercased(),"accountId":a.accountID.uuidString.lowercased(),"locationId":a.locationID.uuidString.lowercased(),"transitionId":a.transitionID.uuidString.lowercased(),"expectedInstalledSetGenerationId":binding.expectedGenerationID.uuidString.lowercased(),"desiredSetGenerationId":binding.desiredGenerationID.uuidString.lowercased(),"planDigest":a.planDigest,"planByteLength":a.planByteLength,"sequence":String(binding.sequence),"resultingSetDigest":binding.resultingSetDigest]
+        return ["schemaVersion":1,"operationId":a.operationID.uuidString.lowercased(),"planId":a.planID.uuidString.lowercased(),"installationId":a.installationID.uuidString.lowercased(),"accountId":a.accountID.uuidString.lowercased(),"locationId":a.locationID.map { $0.uuidString.lowercased() } as Any? ?? NSNull(),"transitionId":a.transitionID.uuidString.lowercased(),"expectedInstalledSetGenerationId":binding.expectedGenerationID.uuidString.lowercased(),"desiredSetGenerationId":binding.desiredGenerationID.uuidString.lowercased(),"planDigest":a.planDigest,"planByteLength":a.planByteLength,"sequence":String(binding.sequence),"resultingSetDigest":binding.resultingSetDigest]
     }
     private static func timestamp(_ value: Any?) throws -> String {
         guard let text = value as? String, text.utf8.prefix(257).count <= 256 else { throw C.Failure.invalidSchema }

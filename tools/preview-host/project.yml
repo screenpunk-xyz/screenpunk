@@ -1,4 +1,7 @@
 name: ScreenpunkPreviewHost
+configFiles:
+  Debug: ../../config/apple-team.xcconfig
+  Release: ../../config/apple-team.xcconfig
 options:
   bundleIdPrefix: xyz.screenpunk
   deploymentTarget:
@@ -10,7 +13,6 @@ settings:
     PRODUCT_BUNDLE_IDENTIFIER: xyz.screenpunk.preview-host
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"
-    CODE_SIGNING_ALLOWED: "NO"
     INFOPLIST_GENERATION_MODE: GeneratedFile
     GENERATE_INFOPLIST_FILE: YES
     ARCHS: arm64

@@ -1,5 +1,5 @@
 import Foundation
-import ScreenpunkCore
+@_spi(ManagedRender) import ScreenpunkCore
 
 /// Foreground-only device execution. The Mac is never an event proxy. Source
 /// tasks and return timers outlive page reloads, but never dashboard replacement.
@@ -8,6 +8,7 @@ final class DashboardEventRuntime {
     let manifest: DashboardManifest
     private let homeAssistant: HomeAssistantDeviceRuntime?
     private let connections: ConnectionRuntime?
+    private let managedRuntime: DeviceUnifiedManagedRuntime?
     private let revision: String
     private var engine: EventNavigationEngine
     private var settings: DeviceSettings
@@ -22,9 +23,9 @@ final class DashboardEventRuntime {
     var onHealth: ((Bool) -> Void)?
 
     init(manifest: DashboardManifest, revision: String, settings: DeviceSettings,
-         homeAssistant: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime?) throws {
+         homeAssistant: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime?, managedRuntime: DeviceUnifiedManagedRuntime? = nil) throws {
         self.manifest = manifest; self.revision = revision
-        self.homeAssistant = homeAssistant; self.connections = connections
+        self.homeAssistant = homeAssistant; self.connections = connections; self.managedRuntime = managedRuntime
         let reconciled = Self.reconciled(settings, manifest: manifest)
         self.settings = reconciled
         settingsApplied = Self.navigationPreferencesEqual(settings, reconciled, dashboardId: manifest.dashboardId)
@@ -145,7 +146,23 @@ final class DashboardEventRuntime {
         var retrySeconds: UInt64 = 1
         while isCurrent(epoch) {
             do {
-                if source.alias == "home", let homeAssistant {
+                if let managedRuntime {
+                    let connectedAt = Date()
+                    var needsBaseline = source.alias != "home" && source.refreshOperation == nil
+                    let stream = try await managedRuntime.subscribe(alias: source.alias, operation: source.operation, parameters: try parameters(source))
+                    if source.alias != "home", let operation = source.refreshOperation {
+                        let result = try await read(source, operation: operation, alias: source.refreshAlias ?? source.alias)
+                        guard !result.stale, isCurrent(epoch) else { throw ConnectionFailure.deviceOffline }
+                        consume(result.body, rules: rules, baseline: true)
+                    }
+                    for try await update in stream {
+                        guard isCurrent(epoch) else { return }
+                        retrySeconds = 1; reportHealth(source, healthy: true)
+                        consume(update.data, rules: rules, baseline: update.isSnapshot || needsBaseline,
+                            homeStates: update.isSnapshot, notBefore: source.alias == "home" ? nil : connectedAt)
+                        needsBaseline = false
+                    }
+                } else if source.alias == "home", let homeAssistant {
                     let stream = try await homeAssistant.subscribeStates(revision: revision, alias: source.alias,
                         operation: source.operation, parameters: try parameters(source))
                     for try await update in stream {
@@ -191,6 +208,7 @@ final class DashboardEventRuntime {
 
     private func read(_ source: EventSource, operation: String, alias: String? = nil) async throws -> ConnectionHTTPResult {
         let alias = alias ?? source.alias
+        if let managedRuntime { return try await managedRuntime.request(alias: alias, operation: operation, parameters: try parameters(source), readOnly: true) }
         if alias == "home", let homeAssistant {
             guard operation == "getStates" else { throw ConnectionFailure.permissionRequired }
             return try await homeAssistant.request(revision: revision, alias: alias, operation: operation, parameters: try parameters(source))

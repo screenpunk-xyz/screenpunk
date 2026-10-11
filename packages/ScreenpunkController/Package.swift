@@ -23,7 +23,8 @@ let package = Package(
         ),
         .testTarget(
             name: "ScreenpunkControllerTests",
-            dependencies: ["ScreenpunkController"]
+            dependencies: ["ScreenpunkController"],
+            resources: [.copy("Fixtures/ControllerHTTP")]
         )
     ]
 )

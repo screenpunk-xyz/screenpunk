@@ -12,6 +12,9 @@ public enum WorkbenchAuthoringRecoveryMethod: String, CaseIterable, Sendable {
     case projectUpgradeKit = "project.upgradeKit"
     case projectInspect = "project.inspect"
     case projectPatch = "project.patch"
+    case projectSyncSource = "project.syncSource"
+    /// Private additive cloud transfer RPC; existing API1.0 clients pin the public method catalogue.
+    public static var advertisedCases: [Self] { allCases.filter { $0 != .projectSyncSource } }
     case projectOpenContained = "project.openContained"
     case projectSourceExport = "project.exportSource"
     case projectSourceImport = "project.importSource"
@@ -46,6 +49,7 @@ public enum WorkbenchAuthoringRecoveryRequest {
                            requirement: WorkspaceToolchainRequirements.Requirement)
     case projectInspect(id: String)
     case projectPatch(id: String, expectedSourceVersion: String, changes: [WorkbenchSourceChange])
+    case projectSyncSource(id: String, expectedSourceVersion: String, stagedPath: String)
     case projectOpenContained(path: String)
     case projectSourceExport(id: String, sourceVersion: String, path: String)
     case projectSourceImport(path: String, name: String?)
@@ -76,6 +80,7 @@ public enum WorkbenchAuthoringRecoveryRequest {
         case .projectUpgradeKit: return .projectUpgradeKit
         case .projectInspect: return .projectInspect
         case .projectPatch: return .projectPatch
+        case .projectSyncSource: return .projectSyncSource
         case .projectOpenContained: return .projectOpenContained
         case .projectSourceExport: return .projectSourceExport
         case .projectSourceImport: return .projectSourceImport
@@ -220,6 +225,10 @@ public enum WorkbenchAuthoringRecoveryRequest {
             try keys(["schemaVersion", "projectId"])
             let value = try id("projectId")
             return method == .projectInspect ? .projectInspect(id: value) : .buildHead(id: value)
+        case .projectSyncSource:
+            try keys(["schemaVersion", "projectId", "expectedSourceVersion", "path"])
+            guard let version = params["expectedSourceVersion"] as? String, WorkspaceValidation.sha256(version) else { throw WorkbenchIPCError(.invalidRequest) }
+            return .projectSyncSource(id: try id("projectId"), expectedSourceVersion: version, stagedPath: try path())
         case .projectPatch:
             try keys(["schemaVersion", "projectId", "expectedSourceVersion", "changes"])
             let projectId = try id("projectId")
@@ -406,6 +415,7 @@ public struct WorkbenchBuildRead: Codable, Sendable, Equatable {
     public let revision: String
     public let digest: String
     public let diagnostics: String
+    public var selectedToolchain: WorkspaceToolchainRequirements.Requirement? = nil
 }
 
 public struct WorkbenchPackageHistoryRead: Codable, Sendable, Equatable {
@@ -527,7 +537,7 @@ public struct WorkbenchAuthoringRecoveryResult: Codable, Sendable {
         let expected: Kind
         switch method {
         case .projectCreate, .projectClone, .projectRelocateContained, .projectUpgradeKit,
-             .projectInspect, .projectPatch, .projectOpenContained,
+             .projectInspect, .projectPatch, .projectSyncSource, .projectOpenContained,
              .projectSourceImport: expected = .authoringProject
         case .projectUnregister: expected = .projectUnregistered
         case .projectSourceExport: expected = .sourceArchive

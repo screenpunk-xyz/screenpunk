@@ -122,6 +122,52 @@ public final class ControllerLANClient: @unchecked Sendable {
         return try LANCodec.decodePayload(LANScreenSetReceipt.self, json: reply.payloadJSON)
     }
 
+    /// The reviewed generation and operation identity are sent unchanged.
+    public func relayCloudArchiveChunk(_ body: LANCloudArchiveChunk) throws -> LANCloudArchiveChunkReceipt {
+        guard lastHello?.capabilities?.contains("cloud-archive-relay-v1") == true,
+              let chunk = Data(base64Encoded: body.dataBase64), chunk.count <= 256 * 1024 else { throw TransferFailure.validationFailed }
+        let reply = try request(method: .cloudArchiveChunk, payload: body, timeout: LANProtocolLimits.transferTimeoutSeconds)
+        let receipt = try LANCodec.decodePayload(LANCloudArchiveChunkReceipt.self, json: reply.payloadJSON)
+        guard UUID(uuidString: receipt.transferId) == UUID(uuidString: body.transferId),
+              receipt.receivedBytes == body.offset + chunk.count, receipt.complete == body.final else { throw TransferFailure.validationFailed }
+        return receipt
+    }
+    public func relayCloudCommand(_ body: LANCloudRelay) throws -> LANCloudRelayReceipt {
+        guard lastHello?.capabilities?.contains("cloud-command-relay-v1") == true,
+              UUID(uuidString: body.installationId) != nil, UUID(uuidString: body.operationId) != nil else { throw TransferFailure.validationFailed }
+        let reply = try request(method: .cloudRelay, payload: body, timeout: LANProtocolLimits.transferTimeoutSeconds)
+        let receipt = try LANCodec.decodePayload(LANCloudRelayReceipt.self, json: reply.payloadJSON)
+        guard receipt.accepted,
+              UUID(uuidString: receipt.installationId) == UUID(uuidString: body.installationId),
+              UUID(uuidString: receipt.operationId) == UUID(uuidString: body.operationId) else { throw TransferFailure.validationFailed }
+        return receipt
+    }
+    public func selectUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery {
+        try unifiedChange(body, method: .screenSelect)
+    }
+    public func removeUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery {
+        try unifiedChange(body, method: .screenRemove)
+    }
+    public func installUnifiedScreens(_ body: LANUnifiedScreenInstall) throws -> LANActiveQuery {
+        guard lastHello?.capabilities?.contains("unified-local-screen-install-v1") == true,
+              UUID(uuidString: body.operationId) != nil, UUID(uuidString: body.expectedGenerationId) != nil else { throw TransferFailure.validationFailed }
+        let reply = try request(method: .screenInstall, payload: body, timeout: LANProtocolLimits.transferTimeoutSeconds)
+        let status = try LANCodec.decodePayload(LANActiveQuery.self, json: reply.payloadJSON)
+        guard status.stateGenerationId.flatMap(UUID.init(uuidString:)) == UUID(uuidString: body.operationId),
+              status.controllerApproved == true else { throw TransferFailure.validationFailed }
+        return status
+    }
+    private func unifiedChange(_ body: LANScreenManagementChange, method: LANMethod) throws -> LANActiveQuery {
+        guard lastHello?.capabilities?.contains("unified-local-screen-control-v1") == true,
+              UUID(uuidString: body.operationId) != nil, UUID(uuidString: body.expectedGenerationId) != nil,
+              !body.dashboardId.isEmpty else { throw TransferFailure.validationFailed }
+        let reply = try request(method: method, payload: body, timeout: LANProtocolLimits.transferTimeoutSeconds)
+        let status = try LANCodec.decodePayload(LANActiveQuery.self, json: reply.payloadJSON)
+        guard status.stateGenerationId.flatMap(UUID.init(uuidString:)) == UUID(uuidString: body.operationId),
+              status.controllerApproved == true else { throw TransferFailure.validationFailed }
+        return status
+    }
+
     public func connectionInventory() throws -> DeviceConnectionInventory {
         guard lastHello?.capabilities?.contains("connection-inventory-v1") == true else { throw ConnectionFailure.validationFailed }
         let reply = try request(method: .connectionsInventory, payload: [String: String]())
@@ -144,6 +190,13 @@ public final class ControllerLANClient: @unchecked Sendable {
         guard lastHello?.capabilities?.contains("device-settings-v1") == true else { throw TransferFailure.validationFailed }
         let reply = try request(method: .settingsUpdate, payload: update)
         return try LANCodec.decodePayload(DeviceSettingsSnapshot.self, json: reply.payloadJSON)
+    }
+
+    /// Explicitly remove only this authenticated controller's local approval.
+    public func unpairThisController() throws -> LANActiveQuery {
+        guard lastHello?.capabilities?.contains("multiple-local-controllers-v1") == true else { throw TransferFailure.validationFailed }
+        let reply = try request(method: .pairRevoke, payload: [String: String]())
+        return try LANCodec.decodePayload(LANActiveQuery.self, json: reply.payloadJSON)
     }
 
     public func queryActiveState() throws -> LANActiveQuery {

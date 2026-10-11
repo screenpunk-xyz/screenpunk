@@ -8,9 +8,19 @@ struct WorkbenchNativeDeploymentPeer: WorkbenchDeploymentPeer {
     let devices: DeviceCoordinator
 
     func observe(deviceId: String) throws -> WorkbenchDeploymentObservation {
-        let (profile, screens, selected, observedAt, name) = try devices.observeScreenSet(deviceId)
-        return .init(deviceId: deviceId, name: name, profile: profile,
+        let (profile, screens, selected, observedAt, name, active) = try devices.observeScreenSetWithGeneration(deviceId)
+        var observation = WorkbenchDeploymentObservation(deviceId: deviceId, name: name, profile: profile,
                      screens: screens, selectedDashboardId: selected, observedAt: observedAt)
+        observation.stateGenerationId = active.stateGenerationId
+        observation.commonEntries = active.commonEntries
+        observation.configuredEntryId = active.configuredEntryId
+        observation.activeGenerationId = active.activeGenerationId
+        observation.activeEntryId = active.activeEntryId
+        return observation
+    }
+
+    func sendUnified(_ body: LANUnifiedScreenInstall, deviceId: String, preSend: () throws -> Void) throws -> LANActiveQuery {
+        try devices.installUnifiedScreens(deviceId: deviceId, body: body, preSend: preSend)
     }
 
     func send(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {

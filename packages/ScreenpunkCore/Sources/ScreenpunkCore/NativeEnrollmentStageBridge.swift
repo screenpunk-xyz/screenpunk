@@ -132,6 +132,25 @@ final class NativeEnrollmentStageBridge {
             return .init(preparationID: preparationID, persistentReference: owner.persistentReference, journalAttemptID: c.stageAttemptID)
         } catch { journal.invalidateStageQualification(); throw error }
     }
+    func recoverBoundFirstNativeStage(preparationID: UUID) throws -> Result {
+        try reserveDriver(); defer { releaseDriver() }
+        do {
+            let c = try journal.captureBoundStage(preparationID: preparationID), p = c.step.proposal
+            guard p.source.isFirstNative, p.sourceEnrollment.enrollments.isEmpty else { throw NativeEnrollmentStageError.conflict }
+            let binding = try NativeEnrollmentStageBinding(cloudRootID: journal.cloudRootID, proposal: p)
+            let owners = c.retainedOwnerships.filter { $0.matches(binding) }
+            guard owners.count == 1, let owner = owners.first else { throw NativeEnrollmentStageError.outcomeUncertain }
+            let before = try rawInventory(c, current: nil)
+            guard let item = try backend.readPersistentReference(owner.persistentReference), before.contains(item),
+                item.service == Data(NativeEnrollmentStageEnvelope.service.utf8), item.account == binding.stage,
+                item.persistentReference == owner.persistentReference, item.accessible else { throw NativeEnrollmentStageError.outcomeUncertain }
+            _ = try NativeEnrollmentStageEnvelope.qualify(item.keychainPayload(), expected: binding)
+            try journal.verifyStageCheckpoint(c)
+            guard sameRawItems(before, try rawInventory(c, current: nil)) else { throw NativeEnrollmentStageError.inventoryBlocked }
+            try journal.verifyStageCheckpoint(c)
+            return .init(preparationID: preparationID, persistentReference: owner.persistentReference, journalAttemptID: c.stageAttemptID)
+        } catch { journal.invalidateStageQualification(); throw error }
+    }
     private func finishOriginal(_ attempt: Attempt) throws -> Result {
         guard let reference = attempt.persistentReference else { throw NativeEnrollmentStageError.outcomeUncertain }
         // No new checkpoint is acquired. The original predecessor is retained,

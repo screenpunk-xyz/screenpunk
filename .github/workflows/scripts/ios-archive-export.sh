@@ -122,13 +122,12 @@ PY_STAGING
 }
 validate_staging_info prepare
 
-require_env APPLE_TEAM_ID
-import_p12 IOS_SIGNING_CERT_P12_BASE64 IOS_SIGNING_CERT_PASSWORD
+require_apple_team_id
+import_p12 IOS_SIGNING_CERT_P12_BASE64 IOS_SIGNING_CERT_PASSWORD "Apple Distribution"
 install_ios_profile
 
 ./scripts/generate-xcode.sh
 ios_proj="${ROOT}/apps/ios/ScreenpunkiOS.xcodeproj"
-enable_generated_signing "$ios_proj"
 
 archive_path="${RELEASE_DIR}/ScreenpunkiOS.xcarchive"
 export_dir="${RELEASE_DIR}/ios-export"
@@ -178,7 +177,7 @@ xcodebuild archive \
   CODE_SIGNING_REQUIRED=YES \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
-  CODE_SIGN_IDENTITY="Apple Distribution" \
+  CODE_SIGN_IDENTITY="${SIGNING_IDENTITY_SHA1}" \
   PROVISIONING_PROFILE="${PROFILE_UUID}" \
   PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}"
 

@@ -1,5 +1,5 @@
 import Foundation
-import ScreenpunkCore
+@_spi(NativeInstallation) import ScreenpunkCore
 #if canImport(Network)
 import Network
 #endif
@@ -134,12 +134,27 @@ public final class DeviceLANServer: @unchecked Sendable {
     }
     private var contentOwner: PairingIdentity?
     private var managementGeneration = UUID()
+    private var unifiedLocalSession: DeviceUnifiedInventorySession?
+    private var unifiedMountStateAssociation: DeviceUnifiedMountStateAssociation?
+    private var unifiedMountedAssociation: DeviceUnifiedMountedContentAssociation?
+    private var unifiedLocalAssociation: DeviceUnifiedInventoryAssociation?
+    @_spi(NativeInstallation) public var onCloudArchiveAdmission: ((UUID, UUID, UUID, String, Int) throws -> Void)?
+    @_spi(NativeInstallation) public var onCloudArchiveReceived: ((UUID, UUID, UUID, Data) throws -> Void)?
+    private struct CloudArchiveTransfer {
+        let peer: [UInt8], installation: UUID, operation: UUID, package: UUID, sha: String, size: Int
+        var bytes = Data()
+        var updated = Date()
+        var complete = false
+    }
+    private var cloudArchiveTransfers: [UUID: CloudArchiveTransfer] = [:]
+    @_spi(NativeInstallation) public var onCloudRelayHint: ((UUID, UUID) -> Void)?
+    @_spi(NativeInstallation) public var onCommonContentChanged: (() -> Void)?
+    @_spi(NativeInstallation) public var prepareIncomingLocalScreens: ((UUID, PairingIdentity, [DeviceLegacyMigrationScreen], UUID?, @escaping () throws -> Void) throws -> DeviceIncomingLocalPreparation)?
     private var authorityGeneration: UUID?
     /// Content capabilities belong to their installer, independently of management.
     private var executionOwner: PairingIdentity? {
         let owner = contentOwner
         guard !runtimeRetired else { return nil }
-        guard runtime.pairing.owner == nil || runtime.pairing.owner == owner else { return nil }
         return owner
     }
     public private(set) var completedPairingSessionNonceHex: String?
@@ -285,7 +300,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         }
         guard needed else { return }
         let parameters = try LANChannel.tlsParameters(identity: identity,
-            pinnedPeer: { [weak self] in self?.ownerPin() }, queue: queue)
+            pinnedPeer: { [weak self] in self?.ownerPin() }, allowPairingCandidates: true, queue: queue)
         let candidate = try NWListener(using: parameters, on: .any)
         var installed = false
         defer {
@@ -421,9 +436,59 @@ public final class DeviceLANServer: @unchecked Sendable {
         try updateLocalContent(disconnect: false, removing: nil)
     }
 
+    /// Explicit migration of the exact retained legacy set. Entry/preparation identities are
+    /// persisted by the caller before this operation; folder names and display names never
+    /// become common inventory identity. The legacy state and vaults remain untouched.
+    @_spi(NativeInstallation) public func migrateLegacyInventory(into session: DeviceLegacyMigrationSession,
+        entryIDs: [String: UUID], packageOperationIDs: [String: UUID], profile: DeviceProfile, profileID: String,
+        operationID: UUID, grantOperationID: UUID, generationID: UUID, grantRevisionID: UUID) throws {
+        try managementTransaction {
+            guard let store, let baseline = store.load(), let owner = contentOwner,
+                owner.isWellFormed, owner.role == .controller else { throw DeviceManagementAuthority.Failure.staleLease }
+            let screens: [DeviceInstalledScreen]
+            if let set = baseline.screenSet { screens = set.screens }
+            else if let revision = baseline.activeStoredRevision, let deployment = baseline.lastDeployment {
+                screens = [.init(name: revision.name, revision: revision, deployment: deployment, packageDirectory: "package")]
+            } else { screens = [] }
+            guard screens.count <= 12, Set(screens.map { $0.revision.dashboardId }).count == screens.count,
+                Set(entryIDs.keys) == Set(screens.map { $0.revision.dashboardId }),
+                Set(packageOperationIDs.keys) == Set(entryIDs.keys) else { throw ConnectionFailure.validationFailed }
+            var inputs: [DeviceLegacyMigrationScreen] = []
+            let pin = PeerPin.hex(owner.publicKey)
+            // Locks are retained recursively until all approvals have entered the durable
+            // protected migration transaction. This follows LAN server -> HA -> Generic order.
+            func consume(_ index: Int) throws {
+                if index == screens.count {
+                    let selectedDashboard = baseline.screenSet?.selectedDashboardId ?? baseline.activeStoredRevision?.dashboardId
+                    try session.prepareAndCommit(screens: inputs, selected: selectedDashboard.flatMap { entryIDs[$0] }, owner: owner,
+                        profile: profile, profileID: profileID, operationID: operationID, grantOperationID: grantOperationID,
+                        generationID: generationID, grantRevisionID: grantRevisionID, legacyGrantSet: baseline.screenSet?.grantSet,
+                        validateOriginal: { guard store.load() == baseline else { throw ConnectionFailure.validationFailed } })
+                    return
+                }
+                let screen = screens[index], id = screen.revision.dashboardId
+                let files = try store.loadPackageFiles(directory: screen.packageDirectory)
+                guard let manifest = files.first(where: { $0.path == "manifest.json" }),
+                    Set(files.map(\.path)).count == files.count else { throw ConnectionFailure.validationFailed }
+                try homeAssistantVault.withMigrationConfiguration(owner: pin, dashboardId: id, revision: screen.revision.revision,
+                    grantSet: baseline.screenSet?.grantSet) { home, reads in
+                    try genericConnectionVault.withMigrationConfiguration(owner: pin, dashboardId: id, revision: screen.revision.revision) { generic in
+                        inputs.append(.init(entryID: entryIDs[id]!, packageOperationID: packageOperationIDs[id]!,
+                            displayName: screen.name, revision: screen.revision, manifest: manifest.data,
+                            files: Dictionary(uniqueKeysWithValues: files.filter { $0.path != "manifest.json" }.map { ($0.path, $0.data) }),
+                            homeAssistant: home, generic: generic, publicReads: reads))
+                        try consume(index + 1)
+                    }
+                }
+            }
+            try consume(0)
+        }
+    }
+
     /// The state-file replacement is the commit point; an IO failure leaves authority and content intact.
     private func updateLocalContent(disconnect: Bool, removing ids: Set<String>?) throws {
         try managementTransaction {
+            try management.acceptCommandIntentUnderAuthority()
             var nextRuntime = runtime
             var nextSet = screenSet
             var nextStored = activeStoredRevision
@@ -720,8 +785,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 try managementTransaction {
                     guard listenerAttempt == attempt else { throw TransferFailure.interrupted }
                 }
-                let owner = ownerPin()
-                let trusted = owner != nil && peerPin == owner
+                let trusted = isApprovedPeer(peerPin)
                 if trusted {
                     if countedUntrusted { releaseUntrustedSlot(); countedUntrusted = false }
                 } else if !countedUntrusted {
@@ -754,6 +818,38 @@ public final class DeviceLANServer: @unchecked Sendable {
     }
 
     private func handle(_ request: LANEnvelope, peerPin: [UInt8]?, managementGeneration requestGeneration: inout UUID, listenerAttempt attempt: UUID) -> LANEnvelope {
+        if request.method == LANMethod.cloudArchiveChunk.rawValue {
+            do { return try handleCloudArchiveChunk(request, peerPin: peerPin, listenerAttempt: attempt) }
+            catch { return failureReply(request, error: error) }
+        }
+        if request.method == LANMethod.cloudRelay.rawValue {
+            do {
+                let body = try LANCodec.decodePayload(LANCloudRelay.self, json: request.payloadJSON)
+                guard let installation = UUID(uuidString: body.installationId), let operation = UUID(uuidString: body.operationId), let peerPin else { throw TransferFailure.validationFailed }
+                let callback = try managementTransaction { () throws -> (UUID, UUID) -> Void in
+                    try requireOwner(peerPin)
+                    guard listenerAttempt == attempt, let association = unifiedLocalAssociation,
+                          association.installationID == installation, let callback = onCloudRelayHint else { throw TransferFailure.validationFailed }
+                    return callback
+                }
+                callback(installation, operation)
+                return ok(request, payload: LANCloudRelayReceipt(accepted: true, installationId: installation.uuidString.lowercased(), operationId: operation.uuidString.lowercased()))
+            } catch { return failureReply(request, error: error) }
+        }
+        if request.method == LANMethod.queryActive.rawValue {
+            do {
+                let common = try managementTransaction { management.isConcurrent && unifiedLocalSession != nil }
+                if common { return try handleUnifiedStatus(request, peerPin: peerPin, listenerAttempt: attempt) }
+            } catch { return failureReply(request, error: error) }
+        }
+        if request.method == LANMethod.screenInstall.rawValue {
+            do { return try handleUnifiedLocalInstall(request, peerPin: peerPin, listenerAttempt: attempt) }
+            catch { return failureReply(request, error: error) }
+        }
+        if request.method == LANMethod.screenSelect.rawValue || request.method == LANMethod.screenRemove.rawValue {
+            do { return try handleUnifiedLocalChange(request, peerPin: peerPin, listenerAttempt: attempt) }
+            catch { return failureReply(request, error: error) }
+        }
         if request.method == LANMethod.pairConfirm.rawValue {
             observeManagementBoundary(.pairingWaitStarted)
             _ = waitUntilDeviceConfirmed(timeout: 60)
@@ -769,6 +865,7 @@ public final class DeviceLANServer: @unchecked Sendable {
         LANEnvelope(requestId: request.requestId, method: request.method, ok: false,
             error: (error as? DeviceSettingsFailure)?.rawValue ?? (error as? PairingFailure)?.rawValue
                 ?? (error as? TransferFailure)?.rawValue ?? (error as? ConnectionFailure)?.rawValue
+                ?? (error is DeviceCommandIntentCoordinator.Failure ? "needsReview" : nil)
                 ?? (error is DeviceManagementAuthority.Failure ? TransferFailure.notPaired.rawValue : "failed"))
     }
 
@@ -782,6 +879,10 @@ public final class DeviceLANServer: @unchecked Sendable {
             if method != .hello && method != .pairBegin && method != .pairConfirm {
                 guard requestGeneration == managementGeneration else { throw TransferFailure.notPaired }
             }
+            if management.isConcurrent {
+                let allowed: [LANMethod] = [.hello, .pairBegin, .pairConfirm, .pairRevoke, .queryActive, .settingsGet, .settingsUpdate]
+                guard let method, allowed.contains(method) else { throw TransferFailure.validationFailed }
+            }
             switch method {
             case .hello:
                 let hello = LANHello(
@@ -789,7 +890,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     deviceId: runtime.profile.deviceId,
                     pinHex: PeerPin.hex(identity.pin),
                     name: runtime.profile.name,
-                    capabilities: ["apple-maps-v1", "apple-maps-interactive-v1", "home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1", "connection-inventory-v1", "home-assistant-temporary-activation-v1"],
+                    capabilities: ["apple-maps-v1", "apple-maps-interactive-v1", "home-assistant-http-v1", "home-assistant-services-v1", "camera-playback-v1", "screen-set-v1", "public-read-http-v1", "public-read-dynamic-path-v1", "device-settings-v1", "generic-connections-v1", "connection-inventory-v1", "home-assistant-temporary-activation-v1", "multiple-local-controllers-v1"] + (unifiedLocalSession == nil ? [] : ["unified-local-screen-control-v1"]) + (unifiedLocalSession != nil && prepareIncomingLocalScreens != nil ? ["unified-local-screen-install-v1"] : []) + (unifiedLocalSession != nil && onCloudRelayHint != nil ? ["cloud-command-relay-v1"] : []) + (unifiedLocalSession != nil && onCloudArchiveAdmission != nil && onCloudArchiveReceived != nil ? ["cloud-archive-relay-v1"] : []),
                     maxTransferBytes: LANProtocolLimits.maxMessageBytes,
                     profile: runtime.profile
                 )
@@ -853,17 +954,20 @@ public final class DeviceLANServer: @unchecked Sendable {
                 try store?.save(confirmedState)
                 completedPairingSessionNonceHex = runtime.pairing.session.map { PeerPin.hex($0.transcript.sessionNonce) }
                 runtime = confirmedRuntime
-                authorityGeneration = UUID()
-                managementGeneration = UUID()
-                requestGeneration = managementGeneration
-                clearPublicSession()
+                // Approving another peer does not retire existing approved
+                // connections or content capabilities. Every request rechecks trust.
                 pinnedController = runtime.pairing.owner?.publicKey
                 // The session has done its job. Keeping it would leave
                 // `runtime.pairingCode` set and the code view on screen.
                 clearPendingPairingLocked()
                 persist()
                 notifyLocked()
-                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, temporaryActivation: temporaryActivationStatus))
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, temporaryActivation: temporaryActivationStatus, controllerApproved: true, localControllerPinHex: peerPin.map(PeerPin.hex), approvedControllerCount: runtime.pairing.approvedControllers.count))
+            case .pairRevoke:
+                try requireOwner(peerPin)
+                guard let peerPin else { throw TransferFailure.notPaired }
+                try revokeControllerLocked(PairingIdentity(role: .controller, publicKey: peerPin))
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, controllerApproved: false, localControllerPinHex: PeerPin.hex(peerPin), approvedControllerCount: runtime.pairing.approvedControllers.count))
             case .deploySet:
                 try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(LANScreenSetDeployBody.self, json: request.payloadJSON)
@@ -881,6 +985,9 @@ public final class DeviceLANServer: @unchecked Sendable {
                     }
                     return ok(request, payload: last)
                 }
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+                let digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(body)))
+                try management.acceptDeploymentUnderAuthority(key: PeerPin.hex(peerPin!) + ":" + body.deployment.deploymentId, digest: digest)
                 let staged = try stageFiles(body.files)
                 guard staged["index.html"] != nil else { throw TransferFailure.validationFailed }
                 let stagedDirectory = try store?.stagePackage(
@@ -915,7 +1022,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                     screenPackages = [:]
                     activePackage = PackageAssetStore(assets: staged)
                     activeStoredRevision = body.revision
-                    contentOwner = runtime.pairing.owner
+                    contentOwner = contentOwner ?? runtime.pairing.owner
                     authorityGeneration = UUID()
                     genericConnectionGeneration = UUID()
                     persist()
@@ -931,11 +1038,11 @@ public final class DeviceLANServer: @unchecked Sendable {
                 return ok(request, payload: outcome)
             case .connectionsInventory:
                 try requireOwner(peerPin)
-                return ok(request, payload: try connectionInventory(owner: PeerPin.hex(peerPin!)))
+                return ok(request, payload: try connectionInventory(owner: localContentOwnerPin()))
             case .connectionsUpdateHome:
                 try requireOwner(peerPin)
                 let body = try LANCodec.decodePayload(DeviceHomeAssistantUpdate.self, json: request.payloadJSON)
-                let owner = PeerPin.hex(peerPin!)
+                let owner = try localContentOwnerPin()
                 let inventory = try connectionInventory(owner: owner)
                 guard body.entries.allSatisfy({ inventory.entries.contains($0) && $0.kind == "Service integration" }) else { throw ConnectionFailure.permissionRequired }
                 try homeAssistantVault.update(body, owner: owner, grantSet: screenSet?.grantSet)
@@ -948,7 +1055,7 @@ public final class DeviceLANServer: @unchecked Sendable {
                 let body = try LANCodec.decodePayload(ConnectionProvisioning.self, json: request.payloadJSON)
                 guard body.revision == runtime.activeRevision,
                       body.dashboardId == activeStoredRevision?.dashboardId else { throw TransferFailure.validationFailed }
-                try genericConnectionVault.provision(body, owner: PeerPin.hex(peerPin!))
+                try genericConnectionVault.provision(body, owner: localContentOwnerPin())
                 genericConnectionGeneration = UUID()
                 notifyLocked()
                 return ok(request, payload: ConnectionProvisioningReceipt(deviceId: runtime.profile.deviceId,
@@ -965,9 +1072,9 @@ public final class DeviceLANServer: @unchecked Sendable {
                 guard body.revision == runtime.activeRevision,
                       body.dashboardId == activeStoredRevision?.dashboardId else { throw TransferFailure.validationFailed }
                 if let generation = screenSet?.grantSet {
-                    try homeAssistantVault.provisionInGeneration(body, owner: PeerPin.hex(peerPin!), generation: generation)
+                    try homeAssistantVault.provisionInGeneration(body, owner: try localContentOwnerPin(), generation: generation)
                 } else {
-                    try homeAssistantVault.provision(body, owner: PeerPin.hex(peerPin!))
+                    try homeAssistantVault.provision(body, owner: localContentOwnerPin())
                 }
                 notifyLocked()
                 return ok(request, payload: HomeAssistantProvisioningReceipt(
@@ -980,30 +1087,48 @@ public final class DeviceLANServer: @unchecked Sendable {
                 afterCommitLocked { Task { await service.cancelPending() } }
                 notifyLocked()
                 return ok(request, payload: ["revoked": true])
+            case .screenSelect, .screenRemove, .screenInstall, .cloudRelay, .cloudArchiveChunk:
+                throw TransferFailure.validationFailed
             case .queryActive:
                 try requireOwner(peerPin)
-                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, temporaryActivation: temporaryActivationStatus))
+                if management.isConcurrent, let association = unifiedLocalAssociation, let peerPin { return ok(request, payload: unifiedControllerStatus(association, peerPin: peerPin)) }
+                let cloudID = try management.qualifiedCloudInstallationIDUnderAuthority()?.uuidString.lowercased()
+                return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision, screens: screenSet?.screens.map(\.entry), selectedDashboardId: screenSet?.selectedDashboardId, temporaryActivation: temporaryActivationStatus, cloudInstallationId: cloudID, controllerApproved: true, localControllerPinHex: peerPin.map(PeerPin.hex), approvedControllerCount: runtime.pairing.approvedControllers.count))
             case .none:
                 throw TransferFailure.validationFailed
             }
         } catch {
+            let errorCode: String
+            if let failure = error as? DeviceSettingsFailure {
+                errorCode = failure.rawValue
+            } else if let failure = error as? PairingFailure {
+                errorCode = failure.rawValue
+            } else if let failure = error as? TransferFailure {
+                errorCode = failure.rawValue
+            } else if let failure = error as? ConnectionFailure {
+                errorCode = failure.rawValue
+            } else if error is DeviceStateStoreError {
+                errorCode = TransferFailure.interrupted.rawValue
+            } else if error is DeviceCommandIntentCoordinator.Failure {
+                errorCode = "needsReview"
+            } else {
+                errorCode = "failed"
+            }
             return LANEnvelope(
                 requestId: request.requestId,
                 method: request.method,
                 ok: false,
-                error: (error as? DeviceSettingsFailure)?.rawValue
-                    ?? (error as? PairingFailure)?.rawValue
-                    ?? (error as? TransferFailure)?.rawValue
-                    ?? (error as? ConnectionFailure)?.rawValue
-                    ?? (error is DeviceStateStoreError ? TransferFailure.interrupted.rawValue : nil)
-                    ?? "failed"
+                error: errorCode
             )
         }
     }
 
     /// Selection changes only after persistence succeeds; swiping never changes installed membership.
     public func selectScreen(_ dashboardId: String) throws {
-        try managementTransaction { try selectScreenLocked(dashboardId) }
+        try managementTransaction {
+            try management.acceptCommandIntentUnderAuthority()
+            try selectScreenLocked(dashboardId)
+        }
     }
 
     /// Checkpoint writes and selection share the same captured admission and declaration scope.
@@ -1073,6 +1198,7 @@ public final class DeviceLANServer: @unchecked Sendable {
             return .init(deploymentId: current.deploymentId, deviceId: body.deviceId,
                          screens: current.screens.map(\.entry), selectedDashboardId: current.deployedSelectedDashboardId)
         }
+        try management.acceptDeploymentUnderAuthority(key: owner + ":" + body.deploymentId, digest: digest)
         let generation = UUID().uuidString
         var directories: [URL] = []
         var screens: [DeviceInstalledScreen] = []
@@ -1113,8 +1239,9 @@ public final class DeviceLANServer: @unchecked Sendable {
                                  packageDirectory: directory?.lastPathComponent ?? "package"))
             packages[item.deployment.revision.dashboardId] = PackageAssetStore(assets: assets)
         }
-        try homeAssistantVault.stage(body.screens.compactMap(\.homeAssistant), owner: owner, generation: generation)
-        try homeAssistantVault.stagePublic(body.screens.compactMap(\.publicReads), owner: owner, generation: generation)
+        let grantOwner = try localContentOwnerPin()
+        try homeAssistantVault.stage(body.screens.compactMap(\.homeAssistant), owner: grantOwner, generation: generation)
+        try homeAssistantVault.stagePublic(body.screens.compactMap(\.publicReads), owner: grantOwner, generation: generation)
         let installed = DeviceInstalledScreenSet(deploymentId: body.deploymentId, contentDigest: digest,
             grantSet: generation, screens: screens, selectedDashboardId: body.selectedDashboardId)
         guard let selected = screens.first(where: { $0.revision.dashboardId == body.selectedDashboardId }) else {
@@ -1122,11 +1249,12 @@ public final class DeviceLANServer: @unchecked Sendable {
         }
         var state = DevicePersistedState(owner: runtime.pairing.owner, activeRevision: selected.revision.revision,
             activeStoredRevision: selected.revision, lastDeployment: selected.deployment)
+        state.approvedControllers = runtime.pairing.approvedControllers
         state.screenSet = installed
         state.settings = settings
-        state.contentOwner = runtime.pairing.owner
+        state.contentOwner = contentOwner ?? runtime.pairing.owner
         try store?.save(state)
-        contentOwner = runtime.pairing.owner
+        contentOwner = contentOwner ?? runtime.pairing.owner
         authorityGeneration = UUID()
         genericConnectionGeneration = UUID()
         committed = true
@@ -1159,10 +1287,283 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     /// Deploy and active-revision queries are owner-only, checked against the
     /// handshake pin even though TLS already rejects other peers.
+    /// Control approval never retargets immutable content/grant-root ownership.
+    private func localContentOwnerPin() throws -> String {
+        guard let owner = contentOwner ?? runtime.pairing.owner, owner.isWellFormed, owner.role == .controller else { throw TransferFailure.notPaired }
+        return PeerPin.hex(owner.publicKey)
+    }
+
     private func requireOwner(_ peerPin: [UInt8]?) throws {
-        guard let owner = runtime.pairing.owner?.publicKey, let peerPin, peerPin == owner else {
+        guard let peerPin, runtime.pairing.isApproved(PairingIdentity(role: .controller, publicKey: peerPin)) else {
             throw TransferFailure.notPaired
         }
+    }
+
+    @_spi(NativeInstallation) public func attachUnifiedLocalSession(_ session: DeviceUnifiedInventorySession) throws {
+        let association = try session.validatedAssociation()
+        try managementTransaction {
+            guard management.isConcurrent, management.commonRootID == association.commonRootID,
+                  try management.qualifiedCloudInstallationIDUnderAuthority() == association.installationID else { throw DeviceManagementAuthority.Failure.staleLease }
+            unifiedLocalSession = session; unifiedLocalAssociation = association
+        }
+    }
+
+    private func handleUnifiedStatus(_ request: LANEnvelope, peerPin: [UInt8]?, listenerAttempt attempt: UUID) throws -> LANEnvelope {
+        guard let peerPin else { throw TransferFailure.notPaired }
+        let session = try managementTransaction { () throws -> DeviceUnifiedInventorySession in
+            guard listenerAttempt == attempt, let session = unifiedLocalSession else { throw DeviceManagementAuthority.Failure.staleLease }
+            try requireOwner(peerPin); return session
+        }
+        let association = try session.validatedAssociation()
+        let mounted = try session.mountedAssociation()
+        let mountState = try session.mountStateAssociation()
+        return try managementTransaction {
+            guard listenerAttempt == attempt, unifiedLocalSession === session else { throw DeviceManagementAuthority.Failure.staleLease }
+            try requireOwner(peerPin); unifiedLocalAssociation = association; unifiedMountedAssociation = mounted; unifiedMountStateAssociation = mountState
+            return ok(request, payload: unifiedControllerStatus(association, peerPin: peerPin))
+        }
+    }
+
+    private func unifiedControllerStatus(_ association: DeviceUnifiedInventoryAssociation, peerPin: [UInt8]) -> LANActiveQuery {
+        let selected = association.entries.first { $0.entryID == association.configuredEntryID }
+        let mountedCurrent = unifiedMountedAssociation?.currentlyConfigured == true
+            && unifiedMountedAssociation?.generationID == association.generationID
+            && unifiedMountedAssociation?.entryID == association.configuredEntryID
+        let pendingState = unifiedMountStateAssociation?.generationID == association.generationID ? unifiedMountStateAssociation : nil
+        return LANActiveQuery(revision: selected?.revision, screens: association.entries.map { .init(dashboardId: $0.dashboardID, revision: $0.revision, name: $0.displayName) }, selectedDashboardId: selected?.dashboardID, cloudInstallationId: association.installationID.uuidString.lowercased(), controllerApproved: true, localControllerPinHex: PeerPin.hex(peerPin), approvedControllerCount: runtime.pairing.approvedControllers.count, stateGenerationId: association.generationID.uuidString.lowercased(), commonEntries: association.entries.map { .init(entryId: $0.entryID.uuidString.lowercased(), dashboardId: $0.dashboardID, revision: $0.revision, name: $0.displayName, origin: $0.provenance) }, configuredEntryId: association.configuredEntryID?.uuidString.lowercased(), activeGenerationId: mountedCurrent ? unifiedMountedAssociation?.generationID.uuidString.lowercased() : nil, activeEntryId: mountedCurrent ? unifiedMountedAssociation?.entryID?.uuidString.lowercased() : nil, lastSuccessfulEntryId: unifiedMountedAssociation?.entryID?.uuidString.lowercased(), mountState: mountedCurrent ? "applied" : (pendingState?.state == "failed" ? "failed" : (pendingState?.state == "preparing" ? "preparing" : (association.configuredEntryID == nil ? "none" : "requested"))), mountFailureCode: pendingState?.failureCode)
+    }
+
+    private func handleUnifiedLocalChange(_ request: LANEnvelope, peerPin: [UInt8]?, listenerAttempt attempt: UUID) throws -> LANEnvelope {
+        guard let peerPin else { throw TransferFailure.notPaired }
+        let session = try managementTransaction { () throws -> DeviceUnifiedInventorySession in
+            guard listenerAttempt == attempt, management.isConcurrent, let session = unifiedLocalSession else { throw DeviceManagementAuthority.Failure.staleLease }
+            try requireOwner(peerPin); return session
+        }
+        let before = try session.validatedAssociation()
+        let body = try LANCodec.decodePayload(LANScreenManagementChange.self, json: request.payloadJSON)
+        guard let operationID = UUID(uuidString: body.operationId), let expected = UUID(uuidString: body.expectedGenerationId) else { throw TransferFailure.validationFailed }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let digest = PeerPin.hex(PeerPin.sha256(Data((request.method + ":" + PeerPin.hex(peerPin) + ":").utf8) + (try encoder.encode(body))))
+        let key = "unified-local:" + operationID.uuidString.lowercased()
+        let known = try managementTransaction { () throws -> Bool in
+            try requireOwner(peerPin)
+            return try management.validateKnownLocalDeploymentUnderAuthority(key: key, digest: digest)
+        }
+        if known {
+            // Accepted intent alone is not success. Only the exact completed
+            // common generation is an activation/structural receipt.
+            guard before.generationID == operationID else { throw DeviceCommandIntentCoordinator.Failure.needsReview }
+            return try managementTransaction { try requireOwner(peerPin); return ok(request, payload: unifiedControllerStatus(before, peerPin: peerPin)) }
+        }
+        guard before.generationID == expected else { throw DeviceCommandIntentCoordinator.Failure.needsReview }
+        guard let target = before.entries.first(where: { $0.dashboardID == body.dashboardId }) else { throw TransferFailure.validationFailed }
+        let remove = request.method == LANMethod.screenRemove.rawValue
+        let retained = before.entries.filter { !remove || $0.entryID != target.entryID }.map(\.entryID)
+        let selected = remove ? (before.configuredEntryID == target.entryID ? retained.first : before.configuredEntryID) : target.entryID
+        try managementTransaction { try requireOwner(peerPin); try management.acceptDeploymentUnderAuthority(key: key, digest: digest) }
+        let owner = try prepareUnifiedLocalControllerOwner(commonRootID: before.commonRootID, authenticatedPeerPin: peerPin)
+        try session.selectOrRemove(operationID: operationID, generationID: operationID, retainedEntryIDs: retained, selected: selected, owner: owner)
+        let changed = try session.validatedAssociation()
+        let (reply,callback) = try managementTransaction { () throws -> (LANEnvelope, (() -> Void)?) in
+            guard listenerAttempt == attempt, unifiedLocalSession === session else { throw DeviceManagementAuthority.Failure.staleLease }
+            try requireOwner(peerPin); unifiedLocalAssociation = changed
+            return (ok(request, payload: unifiedControllerStatus(changed, peerPin: peerPin)), onCommonContentChanged)
+        }
+        callback?(); return reply
+    }
+
+    private func handleCloudArchiveChunk(_ request: LANEnvelope, peerPin: [UInt8]?, listenerAttempt attempt: UUID) throws -> LANEnvelope {
+        guard let peerPin else { throw TransferFailure.notPaired }
+        let body = try LANCodec.decodePayload(LANCloudArchiveChunk.self, json: request.payloadJSON)
+        guard let transfer = UUID(uuidString: body.transferId), let installation = UUID(uuidString: body.installationId),
+              let operation = UUID(uuidString: body.operationId), let package = UUID(uuidString: body.packageId),
+              body.archiveSha256.count == 64, body.archiveSha256.allSatisfy({ "0123456789abcdef".contains($0) }),
+              (1...25*1024*1024).contains(body.archiveBytes), body.offset >= 0,
+              body.dataBase64.utf8.count <= 349528, let chunk = Data(base64Encoded: body.dataBase64),
+              chunk.base64EncodedString() == body.dataBase64, !chunk.isEmpty, chunk.count <= 256*1024,
+              body.offset <= body.archiveBytes - chunk.count else { throw TransferFailure.validationFailed }
+        let (admit,receive) = try managementTransaction { () throws -> ((UUID,UUID,UUID,String,Int)throws->Void,(UUID,UUID,UUID,Data)throws->Void) in
+            try requireOwner(peerPin)
+            guard listenerAttempt == attempt, unifiedLocalAssociation?.installationID == installation,
+                  let admit = onCloudArchiveAdmission, let receive = onCloudArchiveReceived else { throw TransferFailure.notPaired }
+            return (admit,receive)
+        }
+        // Only an original fixed Cloud plan can authorize receipt of these bytes.
+        // The callback runs outside the authority lock and must revalidate every chunk.
+        try admit(installation,operation,package,body.archiveSha256,body.archiveBytes)
+        let completed = try managementTransaction { () throws -> Data? in
+            try requireOwner(peerPin)
+            guard listenerAttempt == attempt, unifiedLocalAssociation?.installationID == installation else { throw TransferFailure.notPaired }
+            cloudArchiveTransfers = cloudArchiveTransfers.filter { Date().timeIntervalSince($0.value.updated) < 120 }
+            if cloudArchiveTransfers[transfer] == nil {
+                // Completed buffers never block a later deployment. Retain at
+                // most the latest completion alongside the bounded active upload.
+                while cloudArchiveTransfers.count >= 2,
+                      let completed = cloudArchiveTransfers.filter({ $0.value.complete }).min(by: { $0.value.updated < $1.value.updated }) {
+                    cloudArchiveTransfers.removeValue(forKey: completed.key)
+                }
+                guard body.offset == 0, cloudArchiveTransfers.count < 2 else { throw TransferFailure.validationFailed }
+                cloudArchiveTransfers[transfer] = .init(peer: peerPin, installation: installation, operation: operation, package: package, sha: body.archiveSha256, size: body.archiveBytes)
+            }
+            guard var value = cloudArchiveTransfers[transfer], value.peer == peerPin, value.installation == installation,
+                  value.operation == operation, value.package == package, value.sha == body.archiveSha256, value.size == body.archiveBytes else { throw TransferFailure.validationFailed }
+            if body.offset < value.bytes.count {
+                guard body.offset + chunk.count <= value.bytes.count, value.bytes.subdata(in: body.offset..<body.offset+chunk.count) == chunk else { throw TransferFailure.validationFailed }
+            } else {
+                guard body.offset == value.bytes.count, !value.complete else { throw TransferFailure.validationFailed }
+                value.bytes.append(chunk)
+            }
+            guard body.final == (body.offset + chunk.count == body.archiveBytes) else { throw TransferFailure.validationFailed }
+            value.updated = Date(); cloudArchiveTransfers[transfer] = value
+            if body.final {
+                guard value.bytes.count == value.size, PeerPin.hex(PeerPin.sha256(value.bytes)) == value.sha else { cloudArchiveTransfers.removeValue(forKey: transfer); throw TransferFailure.validationFailed }
+                return value.complete ? nil : value.bytes
+            }
+            return nil
+        }
+        if let completed {
+            try receive(installation,operation,package,completed)
+            try managementTransaction {
+                try requireOwner(peerPin)
+                guard listenerAttempt == attempt, var value = cloudArchiveTransfers[transfer] else { throw TransferFailure.interrupted }
+                value.complete = true; cloudArchiveTransfers[transfer] = value
+            }
+        }
+        return ok(request, payload: LANCloudArchiveChunkReceipt(transferId: transfer.uuidString.lowercased(), receivedBytes: body.offset + chunk.count, complete: body.final))
+    }
+
+    private func handleUnifiedLocalInstall(_ request: LANEnvelope, peerPin: [UInt8]?, listenerAttempt attempt: UUID) throws -> LANEnvelope {
+        guard let peerPin else { throw TransferFailure.notPaired }
+        let (session,prepare) = try managementTransaction { () throws -> (DeviceUnifiedInventorySession, (UUID, PairingIdentity, [DeviceLegacyMigrationScreen], UUID?, @escaping () throws -> Void) throws -> DeviceIncomingLocalPreparation) in
+            guard listenerAttempt == attempt, management.isConcurrent, let session = unifiedLocalSession,
+                  let prepare = prepareIncomingLocalScreens else { throw DeviceManagementAuthority.Failure.staleLease }
+            try requireOwner(peerPin); return (session, prepare)
+        }
+        let before = try session.validatedAssociation()
+        let body = try LANCodec.decodePayload(LANUnifiedScreenInstall.self, json: request.payloadJSON)
+        guard let operation = UUID(uuidString: body.operationId), let expected = UUID(uuidString: body.expectedGenerationId),
+              (1...12).contains(body.incoming.count) else { throw TransferFailure.validationFailed }
+        let retained = body.retainedEntryIds.compactMap(UUID.init(uuidString:))
+        let incomingIDs = body.incoming.compactMap { UUID(uuidString: $0.entryId) }
+        let selected = body.selectedEntryId.flatMap(UUID.init(uuidString:))
+        guard retained.count == body.retainedEntryIds.count, Set(retained).count == retained.count,
+              Set(retained).isSubset(of: Set(before.entries.map(\.entryID))),
+              incomingIDs.count == body.incoming.count, Set(incomingIDs).count == incomingIDs.count,
+              Set(retained + incomingIDs).count <= 12,
+              body.selectedEntryId == nil || selected != nil,
+              selected == nil || Set(retained + incomingIDs).contains(selected!),
+              Set(body.incoming.map { $0.screen.deployment.revision.dashboardId }).count == body.incoming.count else { throw TransferFailure.validationFailed }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let digest = PeerPin.hex(PeerPin.sha256(Data((request.method + ":" + PeerPin.hex(peerPin) + ":").utf8) + (try encoder.encode(body))))
+        let key = "unified-local:" + operation.uuidString.lowercased()
+        let known = try managementTransaction { try requireOwner(peerPin); return try management.validateKnownLocalDeploymentUnderAuthority(key: key, digest: digest) }
+        if known {
+            guard before.generationID == operation else { throw DeviceCommandIntentCoordinator.Failure.needsReview }
+            return try managementTransaction { try requireOwner(peerPin); return ok(request, payload: unifiedControllerStatus(before, peerPin: peerPin)) }
+        }
+        guard before.generationID == expected else { throw DeviceCommandIntentCoordinator.Failure.needsReview }
+        for (entryID,item) in zip(incomingIDs,body.incoming) {
+            if let old = before.entries.first(where: { $0.entryID == entryID }) {
+                guard old.provenance == "retainedLocal", retained.contains(entryID), old.dashboardID == item.screen.deployment.revision.dashboardId else { throw TransferFailure.validationFailed }
+            }
+            let deployment = item.screen.deployment
+            guard deployment.deployment.deviceId == runtime.profile.deviceId,
+                  deployment.deployment.dashboardId == deployment.revision.dashboardId,
+                  deployment.deployment.revision == deployment.revision.revision else { throw TransferFailure.targetMismatch }
+        }
+        try managementTransaction { try requireOwner(peerPin); try management.acceptDeploymentUnderAuthority(key: key, digest: digest) }
+        let owner = try prepareUnifiedLocalControllerOwner(commonRootID: before.commonRootID, authenticatedPeerPin: peerPin)
+        let inputs = try zip(incomingIDs,body.incoming).map { entryID,item -> DeviceLegacyMigrationScreen in
+            let assets = try stageFiles(item.screen.deployment.files)
+            guard let manifest = assets["manifest.json"]?.data, assets["index.html"] != nil else { throw TransferFailure.validationFailed }
+            let decoded = try JSONDecoder().decode(DashboardManifest.self, from: manifest)
+            try PackageValidator.validate(decoded)
+            guard decoded.dashboardId == item.screen.deployment.revision.dashboardId,
+                  decoded.revision == item.screen.deployment.revision.revision else { throw TransferFailure.validationFailed }
+            if let reads = item.screen.publicReads { try reads.validate() }
+            if let ha = item.screen.homeAssistant { try ha.validate() }
+            return .init(entryID: entryID, packageOperationID: UUID(), displayName: item.screen.name,
+                revision: item.screen.deployment.revision, manifest: manifest, files: assets.filter { $0.key != "manifest.json" }.mapValues(\.data),
+                homeAssistant: item.screen.homeAssistant, generic: nil, publicReads: item.screen.publicReads)
+        }
+        let preparation = try prepare(operation, PairingIdentity(role: .controller, publicKey: peerPin), inputs, selected) { [weak self] in
+            guard let self else { throw DeviceManagementAuthority.Failure.staleLease }
+            try self.managementTransaction {
+                guard self.listenerAttempt == attempt, self.unifiedLocalSession === session else { throw DeviceManagementAuthority.Failure.staleLease }
+                try self.requireOwner(peerPin)
+            }
+        }
+        try session.installLocal(preparation, operationID: operation, generationID: operation,
+                                 retainedEntryIDs: retained, selected: selected, owner: owner)
+        let changed = try session.validatedAssociation()
+        let (reply,callback) = try managementTransaction { () throws -> (LANEnvelope, (() -> Void)?) in
+            guard listenerAttempt == attempt, unifiedLocalSession === session else { throw DeviceManagementAuthority.Failure.staleLease }
+            try requireOwner(peerPin); unifiedLocalAssociation = changed
+            return (ok(request, payload: unifiedControllerStatus(changed, peerPin: peerPin)), onCommonContentChanged)
+        }
+        callback?(); return reply
+    }
+
+    /// Nominal fixed dispatch owner exists only inside the authenticated LAN server.
+    /// It captures approval and latest intent before preparation, then rechecks
+    /// the current registry while its lock spans the exact resource CAS.
+    private final class UnifiedLocalControllerOwner: NativeUnifiedLocalInventoryOwner {
+        let commonRootID: UUID
+        let peerPinHex: String
+        private weak var server: DeviceLANServer?
+        private let peerPin: [UInt8]
+        private let checkpoint: DeviceCommandIntentCoordinator.Checkpoint?
+        init(server: DeviceLANServer, commonRootID: UUID, peerPin: [UInt8], checkpoint: DeviceCommandIntentCoordinator.Checkpoint?) {
+            self.server = server; self.commonRootID = commonRootID; self.peerPin = peerPin
+            self.peerPinHex = PeerPin.hex(peerPin); self.checkpoint = checkpoint
+        }
+        func performFixedUnifiedLocalDispatch(command: NativeInstallationUnifiedLocalDispatchCommand) throws -> NativeInstallationUnifiedLocalDispatchResult {
+            guard let server else { throw DeviceManagementAuthority.Failure.staleLease }
+            return try server.management.performFixedUnifiedLocalDispatch(command: command, peerPinHex: peerPinHex, checkpoint: checkpoint) {
+                server.lock.lock(); defer { server.lock.unlock() }
+                guard !server.managementSuspended, !server.runtimeRetired else { throw DeviceManagementAuthority.Failure.staleLease }
+                try server.requireOwner(self.peerPin)
+                return try command.performDuringFixedOwner()
+            }
+        }
+    }
+
+    private func prepareUnifiedLocalControllerOwner(commonRootID: UUID, authenticatedPeerPin: [UInt8]) throws -> any NativeUnifiedLocalInventoryOwner {
+        let checkpoint = try management.acceptUnifiedLocalIntent(peerPinHex: PeerPin.hex(authenticatedPeerPin)) {
+            lock.lock(); defer { lock.unlock() }
+            guard !managementSuspended, !runtimeRetired else { throw DeviceManagementAuthority.Failure.staleLease }
+            try requireOwner(authenticatedPeerPin)
+        }
+        return UnifiedLocalControllerOwner(server: self, commonRootID: commonRootID, peerPin: authenticatedPeerPin, checkpoint: checkpoint)
+    }
+
+    private func isApprovedPeer(_ peerPin: [UInt8]?) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let peerPin else { return false }
+        return runtime.pairing.isApproved(PairingIdentity(role: .controller, publicKey: peerPin))
+    }
+
+    public var approvedLocalControllers: [PairingIdentity] {
+        lock.lock(); defer { lock.unlock() }
+        return runtime.pairing.approvedControllers
+    }
+
+    /// On-device explicit removal of one approved pin. A live session is denied
+    /// on its next request; other peers, enrollment and installed screens remain.
+    public func revokeLocalController(_ controller: PairingIdentity) throws {
+        try managementTransaction { try revokeControllerLocked(controller) }
+    }
+
+    private func revokeControllerLocked(_ controller: PairingIdentity) throws {
+        guard runtime.pairing.isApproved(controller) else { throw TransferFailure.notPaired }
+        var next = runtime
+        next.pairing.revoke(controller)
+        var state = DevicePersistedState(runtime: next, activeStoredRevision: activeStoredRevision)
+        state.screenSet = screenSet; state.settings = settings; state.contentOwner = contentOwner
+        try store?.save(state)
+        runtime = next
+        if runtime.pairing.session == nil { clearPendingPairingLocked() }
+        notifyLocked()
     }
 
     private func waitUntilDeviceConfirmed(timeout: TimeInterval) -> Bool {
