@@ -1098,17 +1098,27 @@ public final class DeviceLANServer: @unchecked Sendable {
                 throw TransferFailure.validationFailed
             }
         } catch {
+            let errorCode: String
+            if let failure = error as? DeviceSettingsFailure {
+                errorCode = failure.rawValue
+            } else if let failure = error as? PairingFailure {
+                errorCode = failure.rawValue
+            } else if let failure = error as? TransferFailure {
+                errorCode = failure.rawValue
+            } else if let failure = error as? ConnectionFailure {
+                errorCode = failure.rawValue
+            } else if error is DeviceStateStoreError {
+                errorCode = TransferFailure.interrupted.rawValue
+            } else if error is DeviceCommandIntentCoordinator.Failure {
+                errorCode = "needsReview"
+            } else {
+                errorCode = "failed"
+            }
             return LANEnvelope(
                 requestId: request.requestId,
                 method: request.method,
                 ok: false,
-                error: (error as? DeviceSettingsFailure)?.rawValue
-                    ?? (error as? PairingFailure)?.rawValue
-                    ?? (error as? TransferFailure)?.rawValue
-                    ?? (error as? ConnectionFailure)?.rawValue
-                    ?? (error is DeviceStateStoreError ? TransferFailure.interrupted.rawValue : nil)
-                    ?? (error is DeviceCommandIntentCoordinator.Failure ? "needsReview" : nil)
-                    ?? "failed"
+                error: errorCode
             )
         }
     }

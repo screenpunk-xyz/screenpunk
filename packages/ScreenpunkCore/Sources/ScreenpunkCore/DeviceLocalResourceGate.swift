@@ -3304,8 +3304,9 @@ final class DeviceMixedResourceResolver {
     }
 }
 
-#if DEBUG
-/// Test-only single-root harness; production commits use the complete resolver.
+#if DEBUG || SCREENPUNK_CORE_TESTING
+/// Test-only single-root harness; release CI opts in explicitly.
+/// Production commits use the complete resolver.
 enum DeviceMixedInventoryQualificationHarness {
     static func scope<T>(_ store: DeviceMixedInventoryStore, body: (DeviceLocalResourcePermit) throws -> T) throws -> T {
         let permit = DeviceLocalResourcePermit([try store.resourceGateDescriptor])
