@@ -388,9 +388,21 @@ final class DeviceNativeBoundStructuralCommitTests:XCTestCase {
         print("NATIVE_STRUCTURAL_MAXIMUM_METHOD_ENCODER_BYTES",bytes.count)
         XCTAssertLessThanOrEqual(bytes.count,384*1024)
     }
-    #else
-    func testCryptoKitUnavailableFailsClosedWithoutNativeCommandEffects() throws {
-        XCTAssertThrowsError(try DeviceNativeDeliveryAttachmentCodec.hash(Data()))
-    }
     #endif
+    func testPortableDigestDoesNotAuthorizeUnrecordedNativeCommand() throws {
+        XCTAssertEqual(try DeviceNativeDeliveryAttachmentCodec.hash(Data("abc".utf8)),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        let r=try root(),probe=Probe()
+        let store=DeviceStructuralStore(root:r,rootID:UUID(),boundary:{try probe.hit($0)})
+        try store.initializeExplicit()
+        let state=try empty(owner)
+        _=try store.initializeNativeGenesisExplicit(state)
+        let before=try snapshot(r),events=probe.events
+        XCTAssertThrowsError(try store.recommitNativeGenesisForDispatchExact(state,operationID:UUID())) {
+            XCTAssertEqual($0 as? DeviceStructuralStoreError,.conflict)
+        }
+        XCTAssertEqual(try snapshot(r),before);XCTAssertEqual(probe.events,events)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:r.appendingPathComponent("operations").path).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath:r.appendingPathComponent("native-current.json").path))
+    }
 }

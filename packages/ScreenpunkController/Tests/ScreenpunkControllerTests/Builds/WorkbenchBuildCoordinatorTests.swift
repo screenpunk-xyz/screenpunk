@@ -52,7 +52,7 @@ final class WorkbenchBuildCoordinatorTests: XCTestCase {
             expectedSourceVersion: project.sourceVersion, baseRevision: nil)
         let read = try XCTUnwrap(coordinator.readHead(projectID: project.project.projectId))
         XCTAssertEqual(read.0, first.head)
-        XCTAssertEqual(read.1.files["index.html"], Data("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>New screen</title><main><h1>New screen</h1></main></html>\n".utf8))
+        XCTAssertEqual(read.1.files["index.html"], Data("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"stylesheet\" href=\"styles.css\"><title>New screen</title></head><body><main><h1>New screen</h1></main><script src=\"app.js\"></script></body></html>\n".utf8))
         let edited = try fixture.authoring.patch(project.project.projectId,
             expectedSourceVersion: project.sourceVersion,
             changes: [.init(path: "web/index.html", bytes: Data("<html>second</html>".utf8))])

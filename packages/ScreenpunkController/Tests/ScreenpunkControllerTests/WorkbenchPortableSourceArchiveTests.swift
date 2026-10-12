@@ -114,7 +114,7 @@ final class WorkbenchPortableSourceArchiveTests: XCTestCase {
         let registered = try transfer.openExternalVersioned(at: external.path, explicitExternal: true)
         let cloned = try transfer.cloneCurrent(projectId: registered.0.projectId,
             expectedSourceVersion: registered.1, destinationName: "nested-copy")
-        XCTAssertEqual(cloned.fileCount, 1_002)
+        XCTAssertEqual(cloned.fileCount, seed.fileCount + 999)
         XCTAssertEqual(cloned.project.location.path, "Screens/nested-copy")
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: cloned.path)
             .appendingPathComponent("assets/asset-0998.txt")), Data([UInt8(998 % 251)]))
@@ -193,8 +193,19 @@ final class WorkbenchPortableSourceArchiveTests: XCTestCase {
         let originalBytes = try Data(contentsOf: descriptorURL)
         let files = ["screenpunk.project.json": originalBytes,
                      "screen.json": try Data(contentsOf: external.appendingPathComponent("screen.json")),
-                     "web/index.html": try Data(contentsOf: external.appendingPathComponent("web/index.html"))]
+                     "web/index.html": try Data(contentsOf: external.appendingPathComponent("web/index.html")),
+                     "web/styles.css": try Data(contentsOf: external.appendingPathComponent("web/styles.css")),
+                     "web/app.js": try Data(contentsOf: external.appendingPathComponent("web/app.js"))]
         let version = try WorkbenchSourceHasher.hash(files)
+        let incompleteVersion = try WorkbenchSourceHasher.hash(files.filter {
+            $0.key != "web/styles.css" && $0.key != "web/app.js"
+        })
+        XCTAssertThrowsError(try transfer.adoptExternal(projectId: registered.projectId,
+            expectedSourceVersion: incompleteVersion, name: "Adopted")) {
+            XCTAssertEqual($0 as? WorkspaceError, .conflict)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath:
+            root.appendingPathComponent("visible/Screens/Adopted").path))
         XCTAssertThrowsError(try transfer.adoptExternal(projectId: registered.projectId,
             expectedSourceVersion: String(repeating: "0", count: 64), name: "Adopted"))
         let adopted = try transfer.adoptExternal(projectId: registered.projectId,
@@ -203,6 +214,11 @@ final class WorkbenchPortableSourceArchiveTests: XCTestCase {
         XCTAssertEqual(adopted.dashboardId, registered.dashboardId)
         XCTAssertTrue(try XCTUnwrap(store.resolveProject(adopted.projectId)).hasSuffix("/Screens/Adopted"))
         XCTAssertEqual(try Data(contentsOf: descriptorURL), originalBytes)
+        let adoptedPath = URL(fileURLWithPath: try XCTUnwrap(store.resolveProject(adopted.projectId)))
+        for (path, bytes) in files {
+            XCTAssertEqual(try Data(contentsOf: external.appendingPathComponent(path)), bytes)
+            XCTAssertEqual(try Data(contentsOf: adoptedPath.appendingPathComponent(path)), bytes)
+        }
         XCTAssertTrue(try XCTUnwrap(store.resolveProject(adopted.projectId)).contains("/Screens/"))
         let current = try XCTUnwrap(store.current())
         XCTAssertTrue(current.coverage.complete)

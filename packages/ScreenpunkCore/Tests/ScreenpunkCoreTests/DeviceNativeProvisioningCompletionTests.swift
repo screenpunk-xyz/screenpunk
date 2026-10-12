@@ -483,6 +483,27 @@ final class DeviceNativeProvisioningCompletionTests:XCTestCase {
         print("Native completion public encoder sizes: \(sizes)")
     }
     #else
-    func testUnsupportedDigestPlatformCannotClaimNativeCompletion()throws {XCTAssertThrowsError(try DeviceNativeDeliveryAttachmentCodec.hash(Data()))}
+    func testPortableDigestDoesNotPromoteUnsupportedLegacyObservation() throws {
+        XCTAssertEqual(try DeviceNativeDeliveryAttachmentCodec.hash(Data()),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        let observation=try DeviceDeliveryObservationCandidate.validating(installationID:UUID(),transitionID:UUID(),generationID:UUID(),entries:[],configuredEntryID:nil)
+        XCTAssertThrowsError(try DeviceDeliveryCandidateCodec.observationDigest(observation)) {
+            XCTAssertEqual($0 as? DeviceDeliveryCandidateFailure,.digestUnavailable)
+        }
+        let r=try root(),probe=Probe()
+        let journal=DeviceLocalProvisioningIntentStore(root:r,rootID:UUID(),protectedRoots:[],boundary:{try probe.hit($0)})
+        try journal.initializeExplicit()
+        let before=try snapshot(r),events=probe.events
+        let legacy=DevicePersistedState(owner:nil,activeRevision:nil,activeStoredRevision:nil,lastDeployment:nil,savedAt:Date(timeIntervalSince1970:0))
+        let encoder=JSONEncoder();encoder.dateEncodingStrategy = .iso8601
+        let bytes=try encoder.encode(legacy)
+        _=try DeviceNativeDeliveryAttachmentCodec.hash(bytes)
+        XCTAssertEqual(DeviceStructuralStateReader.read(structural:.missing,legacy:.bytes(bytes),expectation:.unbound,packages:[]),.blocked(.digestUnavailable))
+        XCTAssertEqual(try snapshot(r),before);XCTAssertEqual(probe.events,events)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:r.appendingPathComponent("operations").path).isEmpty)
+        for name in ["native-completion.method","native-completion.binding","native-completion.record","native-completion.confirm"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath:r.appendingPathComponent(name).path))
+        }
+    }
     #endif
 }

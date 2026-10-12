@@ -43,7 +43,9 @@ final class WorkbenchWorkspaceMetadataTests: XCTestCase {
         let version = try WorkbenchSourceHasher.hash([
             "screenpunk.project.json": Data(contentsOf: descriptorURL),
             "screen.json": Data(contentsOf: external.appendingPathComponent("screen.json")),
-            "web/index.html": Data(contentsOf: external.appendingPathComponent("web/index.html"))])
+            "web/index.html": Data(contentsOf: external.appendingPathComponent("web/index.html")),
+            "web/styles.css": Data(contentsOf: external.appendingPathComponent("web/styles.css")),
+            "web/app.js": Data(contentsOf: external.appendingPathComponent("web/app.js"))])
         _ = try transfer.adoptExternal(projectId: project.projectId,
             expectedSourceVersion: version, name: "adopted")
         XCTAssertEqual(try aligned(), before + 2)

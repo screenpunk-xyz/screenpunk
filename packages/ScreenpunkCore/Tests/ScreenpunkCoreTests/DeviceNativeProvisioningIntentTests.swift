@@ -263,10 +263,21 @@ final class DeviceNativeProvisioningIntentTests:XCTestCase {
         try DeviceNativeProvisioningCoordinator(journal:other,structural:f.structural).verifyExact(current,plan:f.plan,baseline:f.request.baseline)
     }
 
-    #else
-    func testNativeGenesisUnsupportedDigestFailsClosed()throws {
-        let r=try root(),store=DeviceStructuralStore(root:r,rootID:UUID());try store.initializeExplicit()
-        XCTAssertThrowsError(try store.initializeNativeGenesisExplicit(empty(owner)))
-    }
     #endif
+    func testPortableDigestSupportsExactGenesisAndRejectsChangedInputWithoutEffects() throws {
+        let r=try root(),probe=Probe(),id=UUID()
+        let store=DeviceStructuralStore(root:r,rootID:id,boundary:{try probe.hit($0)})
+        try store.initializeExplicit()
+        let state=try empty(owner),baseline=try store.initializeNativeGenesisExplicit(state)
+        XCTAssertEqual(baseline.state,state)
+        XCTAssertEqual(baseline.stateBytes,try DeviceNativeStructuralStateCodec.encode(state))
+        let restored=try DeviceStructuralStore(root:r,rootID:id).restoreNativeGenesisExplicit()
+        XCTAssertEqual(restored.state,state);XCTAssertEqual(restored.stateBytes,baseline.stateBytes)
+        let before=try snapshot(r),events=probe.events
+        XCTAssertThrowsError(try store.initializeNativeGenesisExplicit(empty(owner))) {
+            XCTAssertEqual($0 as? DeviceStructuralStoreError,.conflict)
+        }
+        XCTAssertEqual(try snapshot(r),before);XCTAssertEqual(probe.events,events)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:r.appendingPathComponent("operations").path).isEmpty)
+    }
 }
