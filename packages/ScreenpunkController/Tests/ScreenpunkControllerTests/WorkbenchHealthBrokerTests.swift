@@ -6,9 +6,10 @@ import Darwin
 
 final class WorkbenchHealthBrokerTests: XCTestCase {
     private func environment(timeout: TimeInterval = 1, connections: Int = 32, frame: Int = 8 * 1024 * 1024,
-                             staging: Int = 64 * 1024 * 1024, peers: any WorkbenchPeerCredentials = WorkbenchSystemPeerCredentials()) throws -> WorkbenchBrokerEnvironment {
+                             staging: Int = 64 * 1024 * 1024, peers: any WorkbenchPeerCredentials = WorkbenchSystemPeerCredentials(),
+                             clock: any WorkbenchClock = WorkbenchSystemClock()) throws -> WorkbenchBrokerEnvironment {
         try WorkbenchBrokerEnvironment(runtimeDirectory: URL(fileURLWithPath: "/private/tmp/sp-wb-" + UUID().uuidString.prefix(12)),
-            limits: WorkbenchIPCLimits(maxFrameBytes: frame, maxConnections: connections, maxStagingBytes: staging, timeout: timeout), peerCredentials: peers)
+            limits: WorkbenchIPCLimits(maxFrameBytes: frame, maxConnections: connections, maxStagingBytes: staging, timeout: timeout), peerCredentials: peers, clock: clock)
     }
     private func cleanup(_ env: WorkbenchBrokerEnvironment) { try? FileManager.default.removeItem(at: env.runtimeDirectory) }
     private func code(_ expected: WorkbenchIPCErrorCode, _ action: () throws -> Void, file: StaticString = #filePath, line: UInt = #line) {
@@ -141,16 +142,22 @@ final class WorkbenchHealthBrokerTests: XCTestCase {
         until { server.activeConnectionCount == 0 }
     }
     func testAuthenticationAndHelloShareOneDeadline() throws {
-        let env = try environment(timeout: 0.3); defer { cleanup(env) }
-        let server = WorkbenchBrokerServer(environment: env); try server.start(); defer { server.stop() }
-        let fd = try raw(env); defer { Darwin.close(fd) }
-        until { server.activeConnectionCount == 1 }
-        Thread.sleep(forTimeInterval: 0.18)
-        try authenticate(fd, env, hello: false)
-        let observe = try WorkbenchBrokerEnvironment(runtimeDirectory: env.runtimeDirectory, limits: .init(timeout: 1))
-        let start = ProcessInfo.processInfo.systemUptime
+        let clock = HandshakeClock(); let peers = CountingPeers()
+        let env = try environment(timeout: 0.3, peers: peers, clock: clock); defer { cleanup(env) }
+        let server = WorkbenchBrokerServer(environment: env); try server.start()
+        // Let the listener's polling deadline progress during teardown.
+        defer { clock.resume(); server.stop() }
+        // Client I/O uses real time so a regression cannot hang with the frozen server clock.
+        let observe = try WorkbenchBrokerEnvironment(runtimeDirectory: env.runtimeDirectory, limits: .init(timeout: 5))
+        let fd = try raw(observe); defer { Darwin.close(fd) }
+        // Peer validation happens after the server captures its handshake deadline at 0.3.
+        until { peers.calls == 1 }
+        clock.advance(to: 0.18)
+        try authenticate(fd, observe, hello: false)
+        // Expire the original deadline while a fresh hello deadline (0.48) would remain valid.
+        clock.advance(to: 0.31)
         code(.disconnected) { _ = try response(fd, observe) }
-        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 0.25)
+        until { server.activeConnectionCount == 0 }
     }
     func testPartialAuthenticatedPayloadDeadlineReleasesStaging() throws {
         let env = try environment(timeout: 0.2, frame: 1024); defer { cleanup(env) }
@@ -389,6 +396,16 @@ final class WorkbenchHealthBrokerTests: XCTestCase {
     }
 }
 private struct FixedPeers: WorkbenchPeerCredentials { let uid: UInt32; func effectiveUID(socket: Int32) throws -> UInt32 { uid } }
+private final class HandshakeClock: WorkbenchClock, @unchecked Sendable {
+    private let lock = NSLock(); private var time: TimeInterval = 0
+    private var resumedAt: TimeInterval?
+    func now() -> TimeInterval {
+        lock.lock(); defer { lock.unlock() }
+        return time + (resumedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0)
+    }
+    func advance(to value: TimeInterval) { lock.lock(); time = value; lock.unlock() }
+    func resume() { lock.lock(); resumedAt = ProcessInfo.processInfo.systemUptime; lock.unlock() }
+}
 private final class CountingPeers: WorkbenchPeerCredentials, @unchecked Sendable {
     private let lock = NSLock(); private var count = 0
     var calls: Int { lock.lock(); defer { lock.unlock() }; return count }
