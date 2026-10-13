@@ -59,6 +59,11 @@ private final class WorkbenchLANLink: DeviceLink {
     func confirmPairing(code: String) throws { try client.confirmPairing(code: code) }
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord { try client.deploy(body) }
     func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt { try client.deployScreenSet(body) }
+    func relayCloudArchiveChunk(_ body: LANCloudArchiveChunk) throws -> LANCloudArchiveChunkReceipt { try client.relayCloudArchiveChunk(body) }
+    func relayCloudCommand(_ body: LANCloudRelay) throws -> LANCloudRelayReceipt { try client.relayCloudCommand(body) }
+    func installUnifiedScreens(_ body: LANUnifiedScreenInstall) throws -> LANActiveQuery { try client.installUnifiedScreens(body) }
+    func selectUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery { try client.selectUnifiedScreen(body) }
+    func removeUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery { try client.removeUnifiedScreen(body) }
     func queryActiveState() throws -> LANActiveQuery { try client.queryActiveState() }
     func connectionInventory() throws -> DeviceConnectionInventory { try client.connectionInventory() }
     func updateHomeConnection(_ update: DeviceHomeAssistantUpdate) throws -> DeviceConnectionInventory { try client.updateHomeConnection(update) }

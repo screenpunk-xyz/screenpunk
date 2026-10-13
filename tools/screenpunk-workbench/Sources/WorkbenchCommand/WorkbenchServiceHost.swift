@@ -9,6 +9,7 @@ import ScreenpunkApple
 final class WorkbenchServiceHost {
     private let ownerLock: WorkbenchServiceOwnerLock
     private let server: WorkbenchBrokerServer
+    private var cloudSyncTask: Task<Void, Never>?
 
     init(broker: WorkbenchBrokerEnvironment, home: URL, documents: CLIWorkspaceDocuments,
          ownerCheck: @escaping () throws -> Void = { try WorkbenchLegacyOwnerGate.assertNoKnownWriter() },
@@ -55,7 +56,42 @@ final class WorkbenchServiceHost {
         _ = try server.start()
         self.ownerLock = lock
         self.server = server
+        cloudSyncTask = Task.detached { [broker, home, documents] in
+            var clients: [String: WorkbenchBrokerClient] = [:]
+            var facades: [String: ControllerCloudWorkbench] = [:]
+            defer { clients.values.forEach { $0.close() } }
+            while !Task.isCancelled {
+                do {
+                    let environment = try WorkbenchCloudCLI.deploymentEnvironment(documents.environment)
+                    if let origin = environment["SCREENPUNK_CLOUD_BASE_URL"], let base = URL(string: origin) {
+                        for clientID in ["screenpunk-cli", "screenpunk-mac"] {
+                            guard try ControllerCloudKeychain(server: base, clientID: clientID).load() != nil else { continue }
+                            if facades[clientID] == nil {
+                                let config = try await ControllerCloudConfiguration.deployment(clientID: clientID, environment: environment, machineRoot: broker.runtimeDirectory.appendingPathComponent("machine"))
+                                let client = WorkbenchBrokerClient(environment: broker)
+                                try client.connect()
+                                guard try client.hello().controllerHomePath == home.path else { client.close(); throw ControllerCloudError.invalidConfiguration }
+                                clients[clientID] = client
+                                facades[clientID] = try ControllerCloudWorkbench(configuration: config, client: client,
+                                    machineRoot: broker.runtimeDirectory.appendingPathComponent("machine"))
+                            }
+                            if let client = clients[clientID] { _ = try client.reconnectIfPeerClosed() }
+                            try await facades[clientID]?.automaticSync()
+                        }
+                    }
+                } catch is CancellationError { break }
+                catch {
+                    // Bounded status evidence, with no tokens or source bytes in service logs.
+                    let value = ["state": "paused", "reason": String(describing: error), "checkedAt": ISO8601DateFormatter().string(from: Date())]
+                    if let bytes = try? JSONSerialization.data(withJSONObject: value) {
+                        try? bytes.write(to: broker.runtimeDirectory.appendingPathComponent("machine/cloud-sync-status.json"), options: .atomic)
+                    }
+                }
+                do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { break }
+            }
+        }
     }
 
-    func stop() { server.stop() }
+    func stop() { cloudSyncTask?.cancel(); cloudSyncTask = nil; server.stop() }
+    deinit { cloudSyncTask?.cancel() }
 }

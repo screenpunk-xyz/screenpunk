@@ -12,7 +12,7 @@ public enum DeviceLocalFilesystemCleanupError: Error, Equatable {
 
 /// A fixed caller-supplied scope. Never construct it from journal-supplied paths.
 public struct DeviceLocalFilesystemCleanupPlan: Sendable {
-    public enum Mode: Equatable, Sendable { case directoryContents, namedFiles([String]) }
+    public enum Mode: Equatable, Sendable { case directoryContents, namedFiles([String]), ownedDirectory(device: UInt64, inode: UInt64), ownedEmptyDirectory(device: UInt64, inode: UInt64) }
     public struct Root: Sendable {
         public let directory: URL
         public let mode: Mode
@@ -31,7 +31,8 @@ public struct DeviceLocalFilesystemCleanupPlan: Sendable {
             url.isFileURL && url.path.utf8.count <= 4096 && url.path.split(separator: "/").count <= 128 && url.path.hasPrefix("/") && url.path != "/" && !url.path.utf8.contains(0) &&
             !url.path.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }) && !url.path.contains("//")
         }
-        guard valid(anchor), !roots.isEmpty, roots.count <= 32, protectedRoots.count <= 32,
+        let removesRoots = roots.contains { switch $0.mode { case .ownedDirectory, .ownedEmptyDirectory: return true; default: return false } }
+        guard valid(anchor), !roots.isEmpty, roots.count <= (removesRoots ? 1024 : 32), protectedRoots.count <= 32,
               (1...128).contains(maximumDepth), (1...1_000_000).contains(maximumEntries),
               roots.allSatisfy({ valid($0.directory) }), protectedRoots.allSatisfy(valid) else { throw DeviceLocalFilesystemCleanupError.invalidPlan }
         func contains(_ parent: String, _ child: String) -> Bool { child == parent || child.hasPrefix(parent + "/") }
@@ -42,6 +43,12 @@ public struct DeviceLocalFilesystemCleanupPlan: Sendable {
                   !protectedRoots.contains(where: { contains(path, $0.path) || contains($0.path, path) }),
                   !roots[..<index].contains(where: { contains(path, $0.directory.path) || contains($0.directory.path, path) }) else { throw DeviceLocalFilesystemCleanupError.invalidPlan }
             switch root.mode {
+            case .ownedEmptyDirectory(let device, let inode):
+                guard inode != 0 else { throw DeviceLocalFilesystemCleanupError.invalidPlan }
+                metadataRoots.append(["directory": path, "mode": "ownedEmptyDirectory", "device": device, "inode": inode])
+            case .ownedDirectory(let device, let inode):
+                guard inode != 0 else { throw DeviceLocalFilesystemCleanupError.invalidPlan }
+                metadataRoots.append(["directory": path, "mode": "ownedDirectory", "device": device, "inode": inode])
             case .directoryContents: metadataRoots.append(["directory": path, "mode": "directoryContents"])
             case .namedFiles(let names):
                 guard !names.isEmpty, names.count <= maximumEntries, Set(names).count == names.count,
@@ -52,13 +59,14 @@ public struct DeviceLocalFilesystemCleanupPlan: Sendable {
         self.anchor = anchor; self.roots = roots.sorted { $0.directory.path < $1.directory.path }
         self.protectedRoots = protectedRoots.sorted { $0.path < $1.path }
         self.maximumDepth = maximumDepth; self.maximumEntries = maximumEntries
-        canonicalMetadata = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "anchor": anchor.path,
+        canonicalMetadata = try JSONSerialization.data(withJSONObject: ["schemaVersion": removesRoots ? 2 : 1, "anchor": anchor.path,
             "roots": metadataRoots.sorted { ($0["directory"] as! String) < ($1["directory"] as! String) },
             "protectedRoots": protectedRoots.map(\.path).sorted(), "maximumDepth": maximumDepth, "maximumEntries": maximumEntries], options: [.sortedKeys])
     }
 }
 
-/// No-follow deletion beneath fixed roots; roots themselves are retained. All application writers
+/// No-follow deletion beneath fixed roots. Owned-directory mode additionally removes an exactly
+/// pinned root; original contents/named-file modes retain roots unchanged. All application writers
 /// must already be suspended. Descriptor binding does not promise atomic inode-conditional unlink
 /// against an arbitrary same-UID process concurrently renaming/replacing filesystem entries.
 public final class DeviceLocalFilesystemCleanup {
@@ -225,6 +233,34 @@ public final class DeviceLocalFilesystemCleanup {
             let relative = String(root.directory.path.dropFirst(plan.anchor.path.count + 1))
             guard let directory = try descend(anchor, components: relative.split(separator: "/").map(String.init), device: anchor.identity.st_dev, protected: protected) else { continue }
             switch root.mode {
+            case .ownedDirectory(let device, let inode), .ownedEmptyDirectory(let device, let inode):
+                guard UInt64(truncatingIfNeeded: directory.identity.st_dev) == device,
+                      UInt64(truncatingIfNeeded: directory.identity.st_ino) == inode,
+                      let parent = directory.parent, let name = directory.name else {
+                    throw DeviceLocalFilesystemCleanupError.changedDirectory
+                }
+                let children = try names(directory)
+                if case .ownedEmptyDirectory = root.mode {
+                    guard children.isEmpty else { throw DeviceLocalFilesystemCleanupError.invalidPlan }
+                }
+                for child in children {
+                    try remove(child, from: directory, depth: 1, allowDirectory: true, entries: &entries,
+                               device: anchor.identity.st_dev, protected: protected, step: step)
+                }
+                try sync(directory); try verify(directory)
+                try boundary(.beforeUnlink, directory.path); try verify(directory)
+                try authorized(step) {
+                    try verify(directory)
+                    guard unlinkat(parent.fd, name, AT_REMOVEDIR) == 0 else { throw failure("unlinkatRoot") }
+                }
+                try boundary(.afterUnlink, directory.path)
+                try sync(parent)
+                var absent = stat()
+                guard fstatat(parent.fd, name, &absent, AT_SYMLINK_NOFOLLOW) != 0 else {
+                    throw DeviceLocalFilesystemCleanupError.changedDirectory
+                }
+                guard errno == ENOENT else { throw failure("verifyRootAbsent") }
+                continue
             case .directoryContents:
                 for name in try names(directory) { try remove(name, from: directory, depth: 1, allowDirectory: true, entries: &entries, device: anchor.identity.st_dev, protected: protected, step: step) }
             case .namedFiles(let names):

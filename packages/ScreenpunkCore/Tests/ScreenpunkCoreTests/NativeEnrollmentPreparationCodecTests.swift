@@ -2,11 +2,11 @@ import XCTest
 @testable import ScreenpunkCore
 
 final class NativeEnrollmentPreparationCodecTests: XCTestCase {
-    private func fixture() throws -> NativeEnrollmentPreparation {
+    private func fixture(locationId: UUID? = UUID()) throws -> NativeEnrollmentPreparation {
         let old = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: "old", format: .legacyLocal32)
         let history = try DeviceManagementFormatHistory(transitions: [.init(transitionID: old.transitionID, phase: .locallyFenced)], credentials: [old])
         let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: "new", format: .nativeInstallationV1)
-        let input = try NativeClaimInput(requestId: UUID(), transitionId: binding.transitionID, accountId: UUID(), locationId: UUID(), name: "Cafe\u{301}", profile: "iPad")
+        let input = try NativeClaimInput(requestId: UUID(), transitionId: binding.transitionID, accountId: UUID(), locationId: locationId, name: "Cafe\u{301}", profile: "iPad")
         return try .proposing(preparationId: UUID(), enrollmentId: UUID(), stageReference: "stage", binding: binding, claimInput: input, history: history, enrollment: .init(), retained: [], inventory: .init(finalItems: ["old": .legacy32], stageItems: [:]))
     }
     private func inventory(_ p: NativeEnrollmentPreparation, staged: Bool, final: Bool) -> NativeEnrollmentPreparation.Inventory {
@@ -17,6 +17,20 @@ final class NativeEnrollmentPreparationCodecTests: XCTestCase {
         try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEnrollmentPreparationCodec.encodeReconstructionProposal(p)) as? [String: Any])
     }
     private func data(_ o: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: o, options: [.sortedKeys, .withoutEscapingSlashes]) }
+    func testUnassignedPreparationRoundtripAndMalformedLocation() throws {
+        let p = try fixture(locationId: nil)
+        let bytes = try NativeEnrollmentPreparationCodec.encodeReconstructionProposal(p)
+        let decoded = try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(bytes)
+        XCTAssertNil(decoded.claimInput.locationId)
+        XCTAssertNil(decoded.targetEnrollment.enrollments[0].claimInput.locationId)
+        XCTAssertEqual(decoded.claimInput, p.claimInput)
+        XCTAssertEqual(try nativeEnrollmentBytes(decoded.targetEnrollment), try nativeEnrollmentBytes(p.targetEnrollment))
+        let text = String(decoding: bytes, as: UTF8.self)
+        for invalid in ["true", "false", "0", "\"invalid\"", "{}", "[]"] {
+            XCTAssertThrowsError(try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(Data(text.replacingOccurrences(of: "\"locationId\":null", with: "\"locationId\":" + invalid).utf8)))
+        }
+        XCTAssertThrowsError(try NativeEnrollmentPreparationCodec.decodeReconstructionProposal(Data(text.replacingOccurrences(of: "\"locationId\":null,", with: "").utf8)))
+    }
     func testExactProposalAndEveryPhaseMetadataWithoutQualification() throws {
         let p = try fixture()
         for phase in 0...6 {

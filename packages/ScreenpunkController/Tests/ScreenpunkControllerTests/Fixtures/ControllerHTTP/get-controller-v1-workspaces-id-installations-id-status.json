@@ -1,0 +1,33 @@
+{
+  "empty": false,
+  "state": "requested",
+  "receipt": null,
+  "inventory": {
+    "entries": [
+      {
+        "entryId": "f271d0e0-3933-4f72-b8f1-265100f1173e",
+        "provenance": {
+          "kind": "retainedLocal",
+          "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "retainedEntryId": "f271d0e0-3933-4f72-b8f1-265100f1173e"
+        }
+      }
+    ],
+    "generationId": "c826bb37-7445-4cf9-97df-c059daba21f1",
+    "transitionId": "a9b006b9-3cf0-4446-a6cd-5f2d3cbf80e4",
+    "schemaVersion": 1,
+    "installationId": "cdbdf510-4785-44f9-860c-9bf9be25a318",
+    "configuredEntryId": "f271d0e0-3933-4f72-b8f1-265100f1173e"
+  },
+  "receivedAt": null,
+  "operationId": "0426a57e-68f7-402e-9222-b916d698b255",
+  "generationId": "c826bb37-7445-4cf9-97df-c059daba21f1",
+  "installationId": "cdbdf510-4785-44f9-860c-9bf9be25a318",
+  "activeScreenOrigin": "local",
+  "lastSuccessfulChange": {
+    "origin": "local",
+    "entryId": "f271d0e0-3933-4f72-b8f1-265100f1173e",
+    "changedAt": "2026-10-10T15:15:24.721622-04:00",
+    "generationId": "c826bb37-7445-4cf9-97df-c059daba21f1"
+  }
+}

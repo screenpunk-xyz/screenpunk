@@ -76,7 +76,7 @@ final class DeviceNativeProvisioningIntentTests:XCTestCase {
         let selected=entries.first!.entryID,candidate=try DeviceNativeStructuralState.validating(generationID:desired,owner:.nativeInstallation(who),entries:entries,configuredEntryID:selected)
         let set=try DeviceResultingSetCandidate.validating(entries:entries.map{.validating(entryID:$0.entryID,provenance:.cloud($0.package))},configuredEntryID:selected)
         let rawPlan=Data("exact raw native plan fixture".utf8)
-        let association:[String:Any]=["schemaVersion":1,"operationId":UUID().uuidString.lowercased(),"planId":UUID().uuidString.lowercased(),"installationId":who.installationID.uuidString.lowercased(),"accountId":who.accountID.uuidString.lowercased(),"locationId":who.locationID.uuidString.lowercased(),"transitionId":who.transitionID.uuidString.lowercased(),"planDigest":try DeviceNativeDeliveryAttachmentCodec.hash(rawPlan),"planByteLength":rawPlan.count]
+        let association:[String:Any]=["schemaVersion":1,"operationId":UUID().uuidString.lowercased(),"planId":UUID().uuidString.lowercased(),"installationId":who.installationID.uuidString.lowercased(),"accountId":who.accountID.uuidString.lowercased(),"locationId":who.locationID.map { $0.uuidString.lowercased() } as Any? ?? NSNull(),"transitionId":who.transitionID.uuidString.lowercased(),"planDigest":try DeviceNativeDeliveryAttachmentCodec.hash(rawPlan),"planByteLength":rawPlan.count]
         var command=association;command["sequence"]="1";command["expectedInstalledSetGenerationId"]=initial.generationID.uuidString.lowercased();command["desiredSetGenerationId"]=desired.uuidString.lowercased();command["executionExpiresAt"]="2026-10-04T12:00:00Z";command["resultingSetDigest"]=try DeviceDeliveryCandidateCodec.resultingSetDigest(set)
         let wire=entries.map{e->[String:Any] in let p=e.package;return ["entryId":e.entryID.uuidString.lowercased(),"provenance":["kind":"cloud","package":["packageProfile":DeviceDeliveryPackageCandidate.profile,"publicationId":p.publicationID.uuidString.lowercased(),"projectId":p.projectID.uuidString.lowercased(),"packageId":p.packageID.uuidString.lowercased(),"dashboardId":p.dashboardID.uuidString.lowercased(),"revision":p.revision.uuidString.lowercased(),"manifestDigest":p.manifestDigest.text,"manifestSha256":p.manifestSHA256.text,"archiveSha256":p.archiveSHA256.text,"compressedBytes":p.compressedBytes,"expandedBytes":p.expandedBytes,"archiveEntries":p.archiveEntries]]]}
         command["resultingSet"]=["schemaVersion":1,"entries":wire,"configuredEntryId":selected.uuidString.lowercased()]
@@ -263,10 +263,21 @@ final class DeviceNativeProvisioningIntentTests:XCTestCase {
         try DeviceNativeProvisioningCoordinator(journal:other,structural:f.structural).verifyExact(current,plan:f.plan,baseline:f.request.baseline)
     }
 
-    #else
-    func testNativeGenesisUnsupportedDigestFailsClosed()throws {
-        let r=try root(),store=DeviceStructuralStore(root:r,rootID:UUID());try store.initializeExplicit()
-        XCTAssertThrowsError(try store.initializeNativeGenesisExplicit(empty(owner)))
-    }
     #endif
+    func testPortableDigestSupportsExactGenesisAndRejectsChangedInputWithoutEffects() throws {
+        let r=try root(),probe=Probe(),id=UUID()
+        let store=DeviceStructuralStore(root:r,rootID:id,boundary:{try probe.hit($0)})
+        try store.initializeExplicit()
+        let state=try empty(owner),baseline=try store.initializeNativeGenesisExplicit(state)
+        XCTAssertEqual(baseline.state,state)
+        XCTAssertEqual(baseline.stateBytes,try DeviceNativeStructuralStateCodec.encode(state))
+        let restored=try DeviceStructuralStore(root:r,rootID:id).restoreNativeGenesisExplicit()
+        XCTAssertEqual(restored.state,state);XCTAssertEqual(restored.stateBytes,baseline.stateBytes)
+        let before=try snapshot(r),events=probe.events
+        XCTAssertThrowsError(try store.initializeNativeGenesisExplicit(empty(owner))) {
+            XCTAssertEqual($0 as? DeviceStructuralStoreError,.conflict)
+        }
+        XCTAssertEqual(try snapshot(r),before);XCTAssertEqual(probe.events,events)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:r.appendingPathComponent("operations").path).isEmpty)
+    }
 }

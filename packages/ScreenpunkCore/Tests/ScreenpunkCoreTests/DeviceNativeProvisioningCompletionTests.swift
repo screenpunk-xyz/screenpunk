@@ -101,7 +101,7 @@ final class DeviceNativeProvisioningCompletionTests:XCTestCase {
         let selected=entries.first?.entryID,candidate=try DeviceNativeStructuralState.validating(generationID:desired,owner:.nativeInstallation(who),entries:entries,configuredEntryID:selected)
         let set=try DeviceResultingSetCandidate.validating(entries:entries.map{.validating(entryID:$0.entryID,provenance:.cloud($0.package))},configuredEntryID:selected)
         let rawPlan=Data("exact raw native plan fixture".utf8)
-        let association:[String:Any]=["schemaVersion":1,"operationId":UUID().uuidString.lowercased(),"planId":UUID().uuidString.lowercased(),"installationId":who.installationID.uuidString.lowercased(),"accountId":who.accountID.uuidString.lowercased(),"locationId":who.locationID.uuidString.lowercased(),"transitionId":who.transitionID.uuidString.lowercased(),"planDigest":try DeviceNativeDeliveryAttachmentCodec.hash(rawPlan),"planByteLength":rawPlan.count]
+        let association:[String:Any]=["schemaVersion":1,"operationId":UUID().uuidString.lowercased(),"planId":UUID().uuidString.lowercased(),"installationId":who.installationID.uuidString.lowercased(),"accountId":who.accountID.uuidString.lowercased(),"locationId":who.locationID.map { $0.uuidString.lowercased() } as Any? ?? NSNull(),"transitionId":who.transitionID.uuidString.lowercased(),"planDigest":try DeviceNativeDeliveryAttachmentCodec.hash(rawPlan),"planByteLength":rawPlan.count]
         var command=association;command["sequence"]="1";command["expectedInstalledSetGenerationId"]=initial.generationID.uuidString.lowercased();command["desiredSetGenerationId"]=desired.uuidString.lowercased();command["executionExpiresAt"]="2026-10-04T12:00:00Z";command["resultingSetDigest"]=try DeviceDeliveryCandidateCodec.resultingSetDigest(set)
         let wire=entries.map{e->[String:Any] in let p=e.package;return ["entryId":e.entryID.uuidString.lowercased(),"provenance":["kind":"cloud","package":["packageProfile":DeviceDeliveryPackageCandidate.profile,"publicationId":p.publicationID.uuidString.lowercased(),"projectId":p.projectID.uuidString.lowercased(),"packageId":p.packageID.uuidString.lowercased(),"dashboardId":p.dashboardID.uuidString.lowercased(),"revision":p.revision.uuidString.lowercased(),"manifestDigest":p.manifestDigest.text,"manifestSha256":p.manifestSHA256.text,"archiveSha256":p.archiveSHA256.text,"compressedBytes":p.compressedBytes,"expandedBytes":p.expandedBytes,"archiveEntries":p.archiveEntries]]]}
         let selectedWire:Any; if let selected {selectedWire=selected.uuidString.lowercased()} else {selectedWire=NSNull()}
@@ -299,6 +299,39 @@ final class DeviceNativeProvisioningCompletionTests:XCTestCase {
         XCTAssertEqual(sizes["reservedCopies"],2*(sizes["method"]!+sizes["binding"]!+sizes["request"]!+sizes["response"]!))
         print("NATIVE_HTTP_PUBLIC_ENCODER_SIZES",sizes.sorted{$0.key < $1.key})
     }
+    func testGenuineEmptyEnrollmentGenesisCanSeedCommonInventoryWithoutCloudPackageCompletion() throws {
+        let f = try privateFixture(generic: false)
+        let commonRoot = try root(), store = DeviceMixedInventoryStore(root: commonRoot, rootID: UUID())
+        try store.initializeExplicit()
+        try f.coordinator.verifyUnifiedGenesisSourceExact(f.original.request.baseline)
+        let resolver = DeviceMixedResourceResolver(native: f.coordinator)
+        let source = DeviceMixedNativeSource.genesis(f.original.request.baseline, f.original.roots)
+        let original = try resolver.resolveInitialMigrationExact(local: nil, native: source, generationID: UUID())
+        XCTAssertTrue(original.snapshot.entries.isEmpty)
+        XCTAssertNil(original.snapshot.configuredEntryID)
+        let result = try resolver.commitInitialMigrationExact(original, store: store, operationID: UUID(), admissionEnabled: false)
+        try resolver.verifyCurrentInventoryResourcesExact(original, store: store, current: result.0)
+        XCTAssertEqual(f.backend.adds, 0)
+        let terminal = try terminal(f)
+        let activation = try f.coordinator.retainNativeActivationRequestExact(f.original.request, terminal: terminal, requestID: UUID())
+        _ = try f.coordinator.retainNativeAuthorizationExact(f.original.request, original: activation, response: activationResponse(activation))
+        _ = try f.coordinator.commitNativeStructuralExact(f.original.request, terminal: terminal)
+        XCTAssertThrowsError(try f.coordinator.verifyUnifiedGenesisSourceExact(f.original.request.baseline))
+    }
+    func testCompletedStaticSourceRestoresFromActualDurableStoresWithoutCloudStatusOrArchives() throws {
+        let f = try privateFixture(generic: false), terminal = try terminal(f)
+        let activation = try f.coordinator.retainNativeActivationRequestExact(f.original.request, terminal: terminal, requestID: UUID())
+        _ = try f.coordinator.retainNativeAuthorizationExact(f.original.request, original: activation, response: activationResponse(activation))
+        let structural = try f.coordinator.commitNativeStructuralExact(f.original.request, terminal: terminal)
+        _ = try f.coordinator.completeNativeProvisioningExact(f.original.request, original: structural)
+        let reopened = try reconstructed(f)
+        let restored = try reopened.coordinator.restoreCompletedStaticSourceExact(operationID: f.original.request.delivery.nativeOperationID,
+            grantOperationID: f.original.request.grantOperationID,
+            grantRevisionID: f.original.request.grantInput.identity.revisionID, baseline: reopened.resources.baseline)
+        XCTAssertEqual(restored.0.candidate, f.original.request.candidate)
+        XCTAssertEqual(restored.0.delivery.commandBytes, f.original.request.delivery.commandBytes)
+        try reopened.coordinator.verifyUnifiedInventorySourceExact(restored.0, completed: restored.1)
+    }
     func testDurableOriginalActivationAndGenuineCompletedActivatedReporting()throws {
         let f=try privateFixture(generic:true,count:2,distinct:true),t=try terminal(f),id=UUID(),adds=f.backend.adds
         let request=try f.coordinator.retainNativeActivationRequestExact(f.original.request,terminal:t,requestID:id)
@@ -450,6 +483,27 @@ final class DeviceNativeProvisioningCompletionTests:XCTestCase {
         print("Native completion public encoder sizes: \(sizes)")
     }
     #else
-    func testUnsupportedDigestPlatformCannotClaimNativeCompletion()throws {XCTAssertThrowsError(try DeviceNativeDeliveryAttachmentCodec.hash(Data()))}
+    func testPortableDigestDoesNotPromoteUnsupportedLegacyObservation() throws {
+        XCTAssertEqual(try DeviceNativeDeliveryAttachmentCodec.hash(Data()),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        let observation=try DeviceDeliveryObservationCandidate.validating(installationID:UUID(),transitionID:UUID(),generationID:UUID(),entries:[],configuredEntryID:nil)
+        XCTAssertThrowsError(try DeviceDeliveryCandidateCodec.observationDigest(observation)) {
+            XCTAssertEqual($0 as? DeviceDeliveryCandidateFailure,.digestUnavailable)
+        }
+        let r=try root(),probe=Probe()
+        let journal=DeviceLocalProvisioningIntentStore(root:r,rootID:UUID(),protectedRoots:[],boundary:{try probe.hit($0)})
+        try journal.initializeExplicit()
+        let before=try snapshot(r),events=probe.events
+        let legacy=DevicePersistedState(owner:nil,activeRevision:nil,activeStoredRevision:nil,lastDeployment:nil,savedAt:Date(timeIntervalSince1970:0))
+        let encoder=JSONEncoder();encoder.dateEncodingStrategy = .iso8601
+        let bytes=try encoder.encode(legacy)
+        _=try DeviceNativeDeliveryAttachmentCodec.hash(bytes)
+        XCTAssertEqual(DeviceStructuralStateReader.read(structural:.missing,legacy:.bytes(bytes),expectation:.unbound,packages:[]),.blocked(.digestUnavailable))
+        XCTAssertEqual(try snapshot(r),before);XCTAssertEqual(probe.events,events)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:r.appendingPathComponent("operations").path).isEmpty)
+        for name in ["native-completion.method","native-completion.binding","native-completion.record","native-completion.confirm"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath:r.appendingPathComponent(name).path))
+        }
+    }
     #endif
 }

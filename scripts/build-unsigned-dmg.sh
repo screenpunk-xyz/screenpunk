@@ -130,8 +130,8 @@ rm -rf "$stage" "$dmg" "${dmg}.sha256" "$build_info"
 # Remove obsolete command-line resource layout from earlier development builds.
 rm -rf "$derived/Build/Products/Release/Screenpunk.app/Contents/MacOS/ScreenpunkApple_ScreenpunkApple.bundle" "$derived/Build/Products/Release/Screenpunk.app/Contents/MacOS/ScreenpunkController_ScreenpunkController.bundle"
 echo "=== Release build: arm64, macOS 14+, ad-hoc identity (no Developer ID, no team) ==="
-# Command-line settings override the project's CODE_SIGNING_ALLOWED=NO for this
-# build only; apps/macos/project.yml stays unsigned for PR CI.
+# Command-line settings override the project's normal team signing for this
+# build only; PR CI separately passes CODE_SIGNING_ALLOWED=NO.
 xcodebuild \
   -project "$mac_proj" \
   -scheme ScreenpunkMac \

@@ -23,6 +23,7 @@ else
 fi
 
 ./scripts/generate-xcode.sh
+python3 scripts/ci/test-ios-candidate.py
 
 if ! command -v swift >/dev/null 2>&1; then
   echo "swift is required for apple-build-and-unit"
@@ -57,7 +58,7 @@ core_log="$ROOT/.ci-derived/core-apple.log"
 # Bypass SwiftPM child-output capture while retaining the full generated suite.
 run_full_core_xctest() {
   cd packages/ScreenpunkCore || return $?
-  swift build -c release --build-tests -Xswiftc -enable-testing || return $?
+  swift build -c release --build-tests -Xswiftc -enable-testing -Xswiftc -DSCREENPUNK_CORE_TESTING || return $?
   core_bin_dir=$(swift build -c release --show-bin-path) || return $?
   core_test_bundle="$core_bin_dir/ScreenpunkCorePackageTests.xctest"
   if [[ ! -d "$core_test_bundle" ]]; then

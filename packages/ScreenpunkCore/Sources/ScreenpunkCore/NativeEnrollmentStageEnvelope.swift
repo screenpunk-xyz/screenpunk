@@ -50,7 +50,8 @@ struct NativeEnrollmentStageBinding: Equatable {
         guard a != b else { throw NativeEnrollmentStageError.conflict }
         cloudRootID = root; preparationID = preparation; enrollmentID = enrollment; self.binding = binding; self.input = input; self.stage = a; final = b
         let values = [root, preparation, enrollment, binding.credentialGenerationID, binding.transitionID,
-            input.requestId, input.accountId, input.locationId].map { Data($0.uuidString.lowercased().utf8) }
+            input.requestId, input.accountId].map { Data($0.uuidString.lowercased().utf8) }
+            + [Data((input.locationId?.uuidString.lowercased() ?? "unassigned").utf8)]
             + [a, b, Data("nativeInstallationV1".utf8), Data(input.name.utf8), Data(input.profile.utf8)]
         var bytes = Data("screenpunk-enrollment-stage-envelope-v1\0".utf8)
         for value in values {

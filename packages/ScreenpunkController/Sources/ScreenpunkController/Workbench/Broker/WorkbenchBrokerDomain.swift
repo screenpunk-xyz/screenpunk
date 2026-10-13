@@ -194,9 +194,9 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
             instanceId: instanceId,
             supportedMethods: WorkbenchMethodRegistry.supportedMethods + WorkbenchDomainMethodRegistry.availableReadMethods
                 + WorkbenchDomainMethodRegistry.availableWorkspaceMethods
-                + WorkbenchDeviceControlMethod.allCases.map(\.rawValue)
+                + WorkbenchDeviceControlMethod.advertisedCases.map(\.rawValue)
                 + WorkbenchConnectionControlMethod.allCases.map(\.rawValue)
-                + WorkbenchAuthoringRecoveryMethod.allCases.map(\.rawValue)
+                + WorkbenchAuthoringRecoveryMethod.advertisedCases.map(\.rawValue)
                 + [WorkbenchSourceTextRequest.method, WorkbenchSourceChunkRequest.method]
                 + WorkbenchPackageImportMethod.allCases.map(\.rawValue)
                 + WorkbenchLocalReviewMethod.allCases.map(\.rawValue)
@@ -240,7 +240,9 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
 
     func performDevice(_ request: WorkbenchDeviceControlRequest,
                        cancelled: @escaping () -> Bool = { false }) throws -> WorkbenchDeviceActionResult {
-        let budget = DashboardReadBudget(deadline: ProcessInfo.processInfo.systemUptime + localReadTimeout,
+        let duration: TimeInterval
+        if case .cloudRelayArchive = request { duration = 120 } else { duration = localReadTimeout }
+        let budget = DashboardReadBudget(deadline: ProcessInfo.processInfo.systemUptime + duration,
                                          cancelled: cancelled)
         return try queue.sync {
             activeLock.lock(); let isActive = active; activeLock.unlock()
@@ -271,11 +273,24 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                 case .settingsSet(let id, let revision, let value):
                     result = .init(kind: "settings", settings: try domain.settingsUpdate(deviceId: id, expectedRevision: revision, value: value))
                 case .connections(let id): result = .init(kind: "connections", connections: try domain.connectionInventory(deviceId: id))
+                case .cloudRelayArchive(let id, let installation, let operation, let package, let hash, let path):
+                    let staged = try WorkspaceFiles(path: path, requiredPrivateRoot: true)
+                    let bytes = try staged.read(staged.fd, "archive.zip", maxBytes: 25 * 1024 * 1024)
+                    guard DeploymentDigest.sha256Hex(bytes) == hash else { throw WorkbenchIPCError(.invalidRequest) }
+                    try staged.verifyRoot(); try budget.check()
+                    try controller.devices.relayCloudArchive(deviceId: id, installationId: installation, operationId: operation,
+                        packageId: package, archiveSha256: hash, bytes: bytes, cancelled: cancelled)
+                    let record = try domain.status(deviceId: id, refresh: false)
+                    result = .init(kind: "device", device: WorkbenchDeviceRead(record, currentIdentity: controller.devices.controllerIdentity))
+                case .cloudRelay(let id, let installation, let operation):
+                    _ = try controller.devices.relayCloudCommand(deviceId: id, body: .init(installationId: installation, operationId: operation))
+                    let record = try domain.status(deviceId: id, refresh: false)
+                    result = .init(kind: "device", device: WorkbenchDeviceRead(record, currentIdentity: controller.devices.controllerIdentity))
                 case .screenSet(let id):
-                    let (profile, screens, selected, observedAt, name) = try controller.devices.observeScreenSet(id)
+                    let (profile, screens, selected, observedAt, name, active) = try controller.devices.observeScreenSetWithGeneration(id)
                     result = .init(kind: "screenSet", screenSet: try .init(deviceId: id,
                         name: name, profile: profile, screens: screens,
-                        selectedDashboardId: selected, observedAt: observedAt))
+                        selectedDashboardId: selected, observedAt: observedAt, stateGenerationId: active.stateGenerationId))
                 }
                 try budget.check()
                 try result.validate(for: request.method)

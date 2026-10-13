@@ -27,6 +27,7 @@ export type PairingFailure =
   | "codeMismatch"
   | "identityChanged"
   | "secondOwner"
+  | "controllerLimit"
   | "invalidIdentity"
   | "busy";
 
@@ -74,6 +75,7 @@ export function matchingCode(transcript: PairingTranscript): string {
 
 export interface DevicePairingState {
   owner: PairingIdentity | null;
+  approvedControllers?: PairingIdentity[];
   session: {
     transcript: PairingTranscript;
     expectedCode: string;
@@ -85,11 +87,22 @@ export interface DevicePairingState {
 }
 
 export function emptyPairingState(): DevicePairingState {
-  return { owner: null, session: null };
+  return { owner: null, approvedControllers: [], session: null };
 }
 
 function identitiesEqual(a: PairingIdentity, b: PairingIdentity): boolean {
   return a.role === b.role && bytesToHex(a.publicKey) === bytesToHex(b.publicKey);
+}
+
+export const MAX_APPROVED_CONTROLLERS = 16;
+export function approvedControllers(state: DevicePairingState): PairingIdentity[] {
+  return state.approvedControllers ?? (state.owner ? [state.owner] : []);
+}
+export function controllerIsApproved(state: DevicePairingState, identity: PairingIdentity): boolean {
+  return approvedControllers(state).some(peer => identitiesEqual(peer, identity));
+}
+export function revokeController(state: DevicePairingState, identity: PairingIdentity): DevicePairingState {
+  return { ...state, approvedControllers: approvedControllers(state).filter(peer => !identitiesEqual(peer, identity)), session: state.session && identitiesEqual(state.session.candidateOwner, identity) ? null : state.session };
 }
 
 export function beginPairing(
@@ -101,8 +114,8 @@ export function beginPairing(
   if (candidateOwner.role !== "controller" || candidateOwner.publicKey.length !== PAIRING_IDENTITY_BYTES) {
     throw new PairingError("invalidIdentity");
   }
-  if (state.owner && !identitiesEqual(state.owner, candidateOwner)) {
-    throw new PairingError("secondOwner");
+  if (!controllerIsApproved(state, candidateOwner) && approvedControllers(state).length >= MAX_APPROVED_CONTROLLERS) {
+    throw new PairingError("controllerLimit");
   }
   // A live session belongs to its candidate until it completes, is cancelled,
   // or expires; a late begin from someone else cannot swap the code on screen.
@@ -116,6 +129,7 @@ export function beginPairing(
   }
   return {
     owner: state.owner,
+    approvedControllers: approvedControllers(state),
     session: {
       transcript,
       expectedCode: matchingCode(transcript),
@@ -143,8 +157,8 @@ export function confirmPairing(
   if (!identitiesEqual(presentedOwner, state.session.candidateOwner)) {
     throw new PairingError("identityChanged");
   }
-  if (state.owner && !identitiesEqual(state.owner, presentedOwner)) {
-    throw new PairingError("secondOwner");
+  if (!controllerIsApproved(state, presentedOwner) && approvedControllers(state).length >= MAX_APPROVED_CONTROLLERS) {
+    throw new PairingError("controllerLimit");
   }
   if (code !== state.session.expectedCode) {
     state.session.failures += 1;
@@ -152,7 +166,8 @@ export function confirmPairing(
     throw new PairingError("codeMismatch");
   }
   return {
-    owner: presentedOwner,
+    owner: state.owner ?? presentedOwner,
+    approvedControllers: controllerIsApproved(state, presentedOwner) ? approvedControllers(state) : [...approvedControllers(state), presentedOwner],
     session: { ...state.session, confirmed: true }
   };
 }

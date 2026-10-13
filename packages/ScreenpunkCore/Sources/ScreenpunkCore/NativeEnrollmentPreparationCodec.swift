@@ -144,7 +144,7 @@ public enum NativeEnrollmentPreparationCodec {
         let id = try uuid(o["preparationId"]), enrollmentId = try uuid(o["enrollmentId"]), stage = try string(o["stageReference"])
         let binding = try parseBinding(o["binding"])
         let c = try fields(o["claimInput"], ["requestId", "transitionId", "accountId", "locationId", "name", "profile"])
-        let input = try NativeClaimInput(requestId: uuid(c["requestId"]), transitionId: uuid(c["transitionId"]), accountId: uuid(c["accountId"]), locationId: uuid(c["locationId"]), name: string(c["name"]), profile: string(c["profile"]))
+        let input = try NativeClaimInput(requestId: uuid(c["requestId"]), transitionId: uuid(c["transitionId"]), accountId: uuid(c["accountId"]), locationId: optionalLocation(c["locationId"]), name: string(c["name"]), profile: string(c["profile"]))
         let source: NativeEnrollmentPreparationSource
         let enrollment: NativeEnrollmentEvidence
         if version == 2 {
@@ -230,6 +230,10 @@ public enum NativeEnrollmentPreparationCodec {
         guard case .object(let o) = value, Set(o.keys) == keys else { throw Failure.invalidSchema }; return o
     }
     private static func string(_ value: PreparationJSON?) throws -> String { guard case .string(let s) = value else { throw Failure.invalidSchema }; return s }
+    private static func optionalLocation(_ value: PreparationJSON?) throws -> UUID? {
+        if case .null? = value { return nil }
+        return try uuid(value)
+    }
     private static func uuid(_ value: PreparationJSON?) throws -> UUID {
         let s = try string(value), b = Array(s.utf8)
         guard b.count == 36, b.enumerated().allSatisfy({ [8,13,18,23].contains($0.offset) ? $0.element == 45 : (48...57).contains($0.element) || (65...70).contains($0.element) || (97...102).contains($0.element) }), let id = UUID(uuidString: s) else { throw Failure.invalidSchema }; return id
@@ -256,7 +260,7 @@ public enum NativeEnrollmentPreparationCodec {
         guard data.count <= limit else { throw Failure.capacityExceeded }; return data
     }
 }
-private indirect enum PreparationJSON { case object([String: PreparationJSON]), array([PreparationJSON]), string(String), integer(Int), other }
+private indirect enum PreparationJSON { case object([String: PreparationJSON]), array([PreparationJSON]), string(String), integer(Int), null, boolean(Bool), other }
 private struct PreparationJSONParser {
     typealias Failure = NativeEnrollmentPreparationCodec.Failure
     private let bytes: [UInt8]
@@ -298,7 +302,7 @@ private struct PreparationJSONParser {
         case 34: return .string(try text(end: end))
         case 116, 102, 110:
             let word: [UInt8] = bytes[cursor] == 116 ? Array("true".utf8) : (bytes[cursor] == 102 ? Array("false".utf8) : Array("null".utf8))
-            guard cursor + word.count <= end, Array(bytes[cursor..<(cursor + word.count)]) == word else { throw Failure.invalidJSON }; cursor += word.count; return .other
+            guard cursor + word.count <= end, Array(bytes[cursor..<(cursor + word.count)]) == word else { throw Failure.invalidJSON }; cursor += word.count; return word == Array("null".utf8) ? .null : .boolean(word == Array("true".utf8))
         case 45, 48...57:
             let start = cursor
             if bytes[cursor] == 45 { cursor += 1 }
@@ -357,6 +361,8 @@ private extension PreparationJSON {
         case .array(let a): return a.map { $0.foundation }
         case .string(let s): return s
         case .integer(let i): return i
+        case .null: return NSNull()
+        case .boolean(let value): return value
         case .other: return NSNull()
         }
     }

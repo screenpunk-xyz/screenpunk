@@ -58,7 +58,7 @@ fi
 # Run the complete unfiltered XCTest suite in Release with testing enabled.
 run_full_xctest() {
   cd packages/ScreenpunkCore || return $?
-  swift build -c release --build-tests -Xswiftc -enable-testing || return $?
+  swift build -c release --build-tests -Xswiftc -enable-testing -Xswiftc -DSCREENPUNK_CORE_TESTING || return $?
   test_bin_dir=$(swift build -c release --show-bin-path) || return $?
   test_binary="$test_bin_dir/ScreenpunkCorePackageTests.xctest"
   if [[ ! -f "$test_binary" || ! -x "$test_binary" ]]; then

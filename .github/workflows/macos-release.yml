@@ -40,7 +40,6 @@ jobs:
     timeout-minutes: 60
     environment: apple-release
     env:
-      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       MAC_SIGNING_CERT_P12_BASE64: ${{ secrets.MAC_SIGNING_CERT_P12_BASE64 }}
       MAC_SIGNING_CERT_PASSWORD: ${{ secrets.MAC_SIGNING_CERT_PASSWORD }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}

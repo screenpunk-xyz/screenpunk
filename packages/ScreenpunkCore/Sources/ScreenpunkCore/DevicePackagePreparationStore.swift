@@ -91,6 +91,9 @@ final class DevicePackagePreparationStore {
         Self.epochs[key] = value; return value
     }
     /// Root must already exist. Unknown preexisting setup/content is never silently initialized.
+    func makeIndependentStore(root: URL, rootID: UUID) -> DevicePackagePreparationStore {
+        .init(root: root, rootID: rootID, protectedScope: scope)
+    }
     func initializeExplicit() throws {
         try disk(create: true) { context in
             let binding = try PackagePreparationCodec.encode(context.binding)
@@ -406,6 +409,26 @@ final class DevicePackagePreparationStore {
         let state=try inventory(c),items=try boundItems(inputs,plan:plan,context:c,state:state)
         return try finishBoundItems(c, state: state, items: items)
     }
+    /// Fixed mixed preparation consumes only the private factory-issued command.
+    /// The incoming root is separate from all retained graph roots.
+    func performMixedIncomingPackagesExact(_ command: DeviceMixedPreparedCloudCommand,
+        commandPermit: DeviceNativePackageCommandPermit) throws -> DevicePackageTerminalResolution {
+        try commandPermit.begin(ObjectIdentifier(self)); defer { commandPermit.end() }
+        guard let context = borrowedResourceContext, command.packageInputs.count <= 12 else { throw DeviceLocalResourceGateFailure.invalidScope }
+        let items = try command.packageInputs.map { input -> BoundItem in
+            guard case .supplied(let id, let operationID, let package) = input,
+                  let candidate = command.candidate.entries.first(where: { $0.entryID == id }),
+                  case .cloud(let entry, _) = candidate,
+                  entry.preparedPackage.rootID == rootID,
+                  entry.preparedPackage.preparationOperationID == operationID else { throw DevicePackagePreparationError.conflict }
+            let request = DevicePackagePreparationRequest(operationID: operationID, package: package)
+            let plan = try PackagePreparationCodec.makePlan(request, rootID: rootID, ordinal: 1)
+            guard plan.reference == entry.preparedPackage else { throw DevicePackagePreparationError.conflict }
+            return BoundItem(entryID: id, reference: entry.preparedPackage, request: request, retained: false)
+        }
+        guard Set(items.map(\.entryID)).count == items.count, Set(items.map { $0.request.operationID }).count == items.count else { throw DevicePackagePreparationError.conflict }
+        return try finishBoundItems(context, state: inventory(context), items: items)
+    }
     private func finishBoundItems(_ c: Context, state: Inventory, items: [BoundItem]) throws -> DevicePackageTerminalResolution {
         guard let binding=try readFile(c.root,"root-binding.json",limit:PackagePreparationCodec.metadataLimit),
               binding.bytes == (try PackagePreparationCodec.encode(c.binding)) else{throw DevicePackagePreparationError.unsafeBinding}
@@ -448,6 +471,14 @@ final class DevicePackagePreparationStore {
                 .init(reference:entry.record.plan.reference,
                       package:try checkedPackage(context,record:entry.record,directory:entry.record.plan.leaf,synchronize:false))
             }
+        }
+    }
+    func inspectRetainedTerminalExact(_ references: [DevicePreparedPackageReference], resourcePermit: DeviceLocalResourcePermit) throws -> [DeviceVerifiedPreparedPackage] {
+        try validateResolutionReferences(references)
+        return try disk(resourcePermit: resourcePermit) { context in
+            let selected = try resolutionEntries(references, state: inventory(context))
+            return try selected.map { entry in .init(reference: entry.record.plan.reference,
+                package: try checkedPackage(context, record: entry.record, directory: entry.record.plan.leaf, synchronize: false)) }
         }
     }
     /// Terminal-only exact durability repair. Never adopts a leaf, unknown orphan or replacement.

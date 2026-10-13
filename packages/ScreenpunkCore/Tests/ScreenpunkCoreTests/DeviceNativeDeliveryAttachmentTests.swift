@@ -42,7 +42,7 @@ final class DeviceNativeDeliveryAttachmentTests: XCTestCase {
     private func rebind(_ original:DeviceNativeDeliveryCommandBinding,mutate:(inout [String:Any])->Void)throws->DeviceNativeDeliveryCommandBinding {
         var o=try XCTUnwrap(JSONSerialization.jsonObject(with:original.commandBytes) as? [String:Any]);mutate(&o)
         let a=original.association
-        let headerObject:[String:Any]=["schemaVersion":1,"operationId":a.operationID.uuidString.lowercased(),"planId":a.planID.uuidString.lowercased(),"installationId":a.installationID.uuidString.lowercased(),"accountId":a.accountID.uuidString.lowercased(),"locationId":a.locationID.uuidString.lowercased(),"transitionId":a.transitionID.uuidString.lowercased(),"planDigest":a.planDigest,"planByteLength":a.planByteLength]
+        let headerObject:[String:Any]=["schemaVersion":1,"operationId":a.operationID.uuidString.lowercased(),"planId":a.planID.uuidString.lowercased(),"installationId":a.installationID.uuidString.lowercased(),"accountId":a.accountID.uuidString.lowercased(),"locationId":a.locationID.map { $0.uuidString.lowercased() } as Any? ?? NSNull(),"transitionId":a.transitionID.uuidString.lowercased(),"planDigest":a.planDigest,"planByteLength":a.planByteLength]
         let h=try JSONSerialization.data(withJSONObject:headerObject).base64EncodedString().replacingOccurrences(of:"+",with:"-").replacingOccurrences(of:"/",with:"_").replacingOccurrences(of:"=",with:"")
         return try .bind(command:JSONSerialization.data(withJSONObject:o),associationHeader:h,rawPlan:original.planBytes,nativeOperationID:original.nativeOperationID,journalRootID:original.journalRootID)
     }

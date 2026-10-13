@@ -49,3 +49,22 @@ enum DeviceManagedRenderProjection {
         return .init(operationID:operationID,generationID:generationID,entryID:entryID,displayName:displayName,package:package,validate:validate)
     }
 }
+
+/// Dynamic projection is issued separately after the selected original grant graph and
+/// common inventory have been qualified. Static issuance retains its capability exclusions.
+extension DeviceManagedRenderProjection {
+    static func makeRuntime(package: QualifiedDevicePackage, operationID: UUID, generationID: UUID,
+        entryID: UUID, displayName: String, validate: @escaping () throws -> Void) throws -> DeviceManagedStaticContent {
+        guard package.files.count <= PackageLimits.maxFiles, package.originalManifestBytes.count <= DevicePackageQualifier.manifestLimit,
+            displayName.utf8.count <= 4096 else { throw DeviceManagedRenderFailure.sizeLimit }
+        var total = package.originalManifestBytes.count
+        for file in package.files {
+            guard file.path.utf8.count <= DevicePackageQualifier.pathLimit, file.bytes.count <= PackageLimits.expandedBytes - total else { throw DeviceManagedRenderFailure.sizeLimit }
+            total += file.bytes.count
+        }
+        guard package.files.contains(where: { $0.path == package.manifest.entrypoint }) else { throw DeviceManagedRenderFailure.invalidContent }
+        try validate()
+        return .init(operationID: operationID, generationID: generationID, entryID: entryID,
+            displayName: displayName, package: package, validate: validate)
+    }
+}

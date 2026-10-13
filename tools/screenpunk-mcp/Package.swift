@@ -13,7 +13,10 @@ let package = Package(
         .package(path: "../../packages/ScreenpunkCore"),
         .package(path: "../../packages/ScreenpunkApple"),
         .package(path: "../../packages/ScreenpunkController"),
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.10.2")
+        .package(path: "../../packages/ScreenpunkBrokerMCP"),
+        // 0.12 includes the upstream NetworkTransport actor-isolation race fix;
+        // pin it for the normal Swift 6 dependency build rather than lowering compiler checks.
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1")
     ],
     targets: [
         .executableTarget(
@@ -22,8 +25,13 @@ let package = Package(
                 "ScreenpunkCore",
                 "ScreenpunkApple",
                 "ScreenpunkController",
+                "ScreenpunkBrokerMCP",
                 .product(name: "MCP", package: "swift-sdk")
             ]
+        ),
+        .testTarget(
+            name: "screenpunk-mcp-tests",
+            dependencies: ["screenpunk-mcp", "ScreenpunkController", "ScreenpunkBrokerMCP"]
         )
     ]
 )

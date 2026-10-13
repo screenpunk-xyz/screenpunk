@@ -658,6 +658,17 @@ final class DeviceNativeGrantPreparationStore {
             } catch { close(descriptor); throw error }
         }
     }
+    func qualifiedResetCredentialsExact(_ permit: DeviceLocalResourcePermit) throws -> [DeviceOwnedInstallationResetResources.Credential] {
+        try disk(permit: permit) { _ in
+            try backendInventory().map { item in
+                let service = GrantPreparationCodec.service(rootID)
+                guard let original = try backend.read(service: service, account: item.account, maximumBytes: item.byteCount),
+                    original.item == item, original.bytes.count == item.byteCount else { throw DeviceNativeGrantPreparationError.conflict }
+                return .init(service: service, account: item.account, persistentReference: item.persistentReference,
+                    byteCount: item.byteCount, valueSHA256: try DeviceNativeDeliveryAttachmentCodec.hash(original.bytes))
+            }
+        }
+    }
     private func backendInventory() throws -> [DeviceGrantCredentialItem] {
         var items: [DeviceGrantCredentialItem] = []
         var accounts = Set<String>(), references = Set<Data>(), privateBytes = 0, credentialBytes = 0

@@ -34,8 +34,10 @@ public struct WorkbenchDeviceScreenSetRead: Codable, Sendable, Equatable {
     public let authority: String
     public let deviceProfileHash: String
     public let installedSetHash: String
+    public var stateGenerationId: String? = nil
     init(deviceId: String, name: String, profile: DeviceProfile,
-         screens: [LANScreenSetEntry], selectedDashboardId: String?, observedAt: Date) throws {
+         screens: [LANScreenSetEntry], selectedDashboardId: String?, observedAt: Date, stateGenerationId: String? = nil) throws {
+        self.stateGenerationId = stateGenerationId
         self.deviceId = deviceId; self.name = name; self.profile = profile
         self.screens = screens; self.selectedDashboardId = selectedDashboardId
         self.observedAt = observedAt; authority = "fresh-pinned-owned-screen-set-v1"
@@ -102,13 +104,16 @@ public enum WorkbenchDeviceControlMethod: String, CaseIterable, Sendable {
     case settingsSet = "device.settingsSet"
     case connections = "device.connections"
     case screenSet = "device.screenSet"
+    case cloudRelayArchive = "device.cloudRelayArchive"
+    case cloudRelay = "device.cloudRelay"
+    public static var advertisedCases: [Self] { allCases.filter { $0 != .cloudRelay && $0 != .cloudRelayArchive } }
     var resultKind: String {
         switch self {
         case .discover: return "discovered"
         case .add: return "endpoint"
         case .pairBegin: return "pairing"
         case .pairPending: return "pending"
-        case .pairConfirm, .status: return "device"
+        case .pairConfirm, .status, .cloudRelay, .cloudRelayArchive: return "device"
         case .pairCancel, .forget: return "removed"
         case .settingsGet, .settingsSet: return "settings"
         case .connections: return "connections"
@@ -121,6 +126,8 @@ enum WorkbenchDeviceControlRequest {
     case discover, add(String, Int), pairBegin(String?, String?, Int?), pairPending
     case pairConfirm(String, String), pairCancel(String), forget(String), status(String, Bool)
     case settingsGet(String), settingsSet(String, String, DeviceSettings), connections(String), screenSet(String)
+    case cloudRelay(deviceId: String, installationId: String, operationId: String)
+    case cloudRelayArchive(deviceId: String, installationId: String, operationId: String, packageId: String, archiveSha256: String, stagedPath: String)
 
     var method: WorkbenchDeviceControlMethod {
         switch self {
@@ -136,6 +143,8 @@ enum WorkbenchDeviceControlRequest {
         case .settingsSet: return .settingsSet
         case .connections: return .connections
         case .screenSet: return .screenSet
+        case .cloudRelay: return .cloudRelay
+        case .cloudRelayArchive: return .cloudRelayArchive
         }
     }
 
@@ -188,6 +197,18 @@ enum WorkbenchDeviceControlRequest {
             return .settingsSet(try id("deviceId"), revision, settings)
         case .connections: try exact("deviceId"); return .connections(try id("deviceId"))
         case .screenSet: try exact("deviceId"); return .screenSet(try id("deviceId"))
+        case .cloudRelayArchive:
+            try exact("deviceId", "installationId", "operationId", "packageId", "archiveSha256", "stagedPath")
+            let installation = try id("installationId"), operation = try id("operationId"), package = try id("packageId")
+            guard UUID(uuidString: installation) != nil, UUID(uuidString: operation) != nil, UUID(uuidString: package) != nil,
+                  let hash = params["archiveSha256"] as? String, WorkspaceValidation.sha256(hash),
+                  let path = params["stagedPath"] as? String, WorkspaceValidation.absolute(path) else { throw WorkbenchIPCError(.invalidRequest) }
+            return .cloudRelayArchive(deviceId: try id("deviceId"), installationId: installation, operationId: operation, packageId: package, archiveSha256: hash, stagedPath: path)
+        case .cloudRelay:
+            try exact("deviceId", "installationId", "operationId")
+            let installation = try id("installationId"), operation = try id("operationId")
+            guard UUID(uuidString: installation) != nil, UUID(uuidString: operation) != nil else { throw WorkbenchIPCError(.invalidRequest) }
+            return .cloudRelay(deviceId: try id("deviceId"), installationId: installation, operationId: operation)
         }
     }
 }

@@ -28,6 +28,28 @@ public final class NativeInstallationStatusTransport: @unchecked Sendable {
         let result = try await NativeDeliveryCommandHTTPObservation.collect(installation: installation, current: current, origin: origin)
         try Task.checkCancellation(); try authority.validateCloudRequestStart(context); return result
     }
+    @_spi(NativeInstallation) public func preparing(_ command: NativeDeliveryCommandHTTPObservation,
+        current: NativeCurrentInstallationDispatch, authority: DeviceManagementAuthority,
+        context: DeviceManagementAuthority.CloudInstallationContext) async throws {
+        try authority.validateCloudRequestStart(context)
+        try await command.reportPreparing(current: current, origin: origin)
+        try Task.checkCancellation(); try authority.validateCloudRequestStart(context)
+    }
+    @_spi(NativeInstallation) public func superseded(_ progress: NativeUnifiedCommandProgress,
+        installation: NativeOperationalInstallation, current: NativeCurrentInstallationDispatch,
+        authority: DeviceManagementAuthority, context: DeviceManagementAuthority.CloudInstallationContext) async throws {
+        try authority.validateCloudRequestStart(context)
+        try await progress.report(phase: .superseded, installation: installation, current: current, origin: origin)
+        try Task.checkCancellation(); try authority.validateCloudRequestStart(context)
+    }
+    @_spi(NativeInstallation) public func failed(_ failure: NativeUnifiedCommandMountFailure,
+        code: NativeUnifiedMountFailureCode, installation: NativeOperationalInstallation,
+        current: NativeCurrentInstallationDispatch, authority: DeviceManagementAuthority,
+        context: DeviceManagementAuthority.CloudInstallationContext) async throws {
+        try authority.validateCloudRequestStart(context)
+        try await failure.report(code: code, installation: installation, current: current, origin: origin)
+        try Task.checkCancellation(); try authority.validateCloudRequestStart(context)
+    }
     @_spi(NativeInstallation) public func plan(_ command: NativeDeliveryCommandHTTPObservation, nativeOperationID: UUID,
         current: NativeCurrentInstallationDispatch, authority: DeviceManagementAuthority,
         context: DeviceManagementAuthority.CloudInstallationContext) async throws -> NativeDeliveryPlanHTTPObservation {

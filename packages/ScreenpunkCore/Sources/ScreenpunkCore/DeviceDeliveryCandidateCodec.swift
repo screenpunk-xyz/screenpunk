@@ -25,7 +25,9 @@ enum DeviceDeliveryCandidateCodec {
         try digest(observationBytes(input))
     }
     static func resultingSetDigest(_ input: DeviceResultingSetCandidate) throws -> String {
-        try digest(resultingSetBytes(input))
+        let bytes = try resultingSetBytes(input)
+        do { return try DeviceNativeDeliveryAttachmentCodec.hash(bytes) }
+        catch { throw DeviceDeliveryCandidateFailure.digestUnavailable }
     }
     private static func uuid(_ input: UUID) -> String { input.uuidString.lowercased() }
     private static func setFrames(_ input: DeviceResultingSetCandidate) -> [String] {

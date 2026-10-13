@@ -64,6 +64,21 @@ final class DeviceNativeArchiveQualificationTests:XCTestCase {
             XCTAssertEqual(result.package.manifestSHA256,d.manifestSHA256.text)
         }}
     }
+    func testApprovedNameComesFromHashBoundManifestAndOtherIdentityChecksRemainStrict() throws {
+        let f = try fixture(), bytes = try zip(f.files), approved = try descriptor(bytes, f)
+        let deviceLabel = DevicePackageExpectation(revision: .init(revision: f.expected.revision.revision,
+            dashboardId: f.expected.revision.dashboardId, name: "Different device name", digest: f.expected.revision.digest,
+            orientation: f.expected.revision.orientation, width: f.expected.revision.width, height: f.expected.revision.height),
+            target: f.expected.target, profileID: f.expected.profileID)
+        XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualify(bytes, descriptor: approved, expected: deviceLabel))
+        let qualified = try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(bytes, descriptor: approved, expected: deviceLabel)
+        XCTAssertEqual(qualified.package.manifest.name, "ZIP fixture")
+        XCTAssertEqual(qualified.package.revision.name, "ZIP fixture")
+        XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(bytes,
+            descriptor: descriptor(bytes, f, manifestHash: String(repeating: "f", count: 64)), expected: deviceLabel))
+        let wrongProfile = DevicePackageExpectation(revision: deviceLabel.revision, target: deviceLabel.target, profileID: "wrong")
+        XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(bytes, descriptor: approved, expected: wrongProfile))
+    }
     func testDescriptorHashLengthManifestAndExpandedCountMustMatchActualBytes()throws {
         let f=try fixture(),bytes=try zip(f.files)
         XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualify(bytes,descriptor:descriptor(bytes,f,archiveHash:String(repeating:"f",count:64)),expected:f.expected))

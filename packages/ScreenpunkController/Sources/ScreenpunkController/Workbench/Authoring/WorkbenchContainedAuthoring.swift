@@ -33,6 +33,7 @@ struct WorkbenchSourceKitPin: Codable, Equatable {
 /// on the broker's serial domain queue; no API here opens an external project for writes.
 public final class WorkbenchContainedAuthoring {
     private let workspace: WorkspaceStore
+    var cloudCreationScope: ControllerCloudCreationScope?
     private let localReadTimeout: TimeInterval
     private let checkpoint: ((WorkbenchTransactionCheckpoint) throws -> Void)?
     public init(workspace: WorkspaceStore, localReadTimeout: TimeInterval = 15) {
@@ -445,6 +446,11 @@ public final class WorkbenchContainedAuthoring {
                               after: [String: Data], expected: WorkspaceOverview,
                               register: Bool, root: WorkspaceFiles,
                               requirements: (Data, Data)? = nil) throws {
+        if register, let scope = cloudCreationScope {
+            guard let bytes = after["screenpunk.project.json"] else { throw WorkspaceError.invalidSchema }
+            let descriptor = try WorkspaceJSON.decode(WorkspaceProjectDocument.self, from: bytes, shape: .project)
+            try scope.prepare(project: project, descriptor: descriptor, localWorkspaceId: expected.descriptor.workspaceId)
+        }
         let version = try WorkbenchSourceHasher.hash(after)
         let metadata = WorkbenchSourceHistoryEntry(sourceVersion: version, sourceHashVersion: 1,
             projectId: project.projectId, dashboardId: project.dashboardId,

@@ -9,6 +9,6 @@ enum DeviceNativeContentOwner: Equatable, Sendable {
 struct DeviceNativeInstallationContentOwner: Equatable, Sendable {
     let installationID: UUID
     let accountID: UUID
-    let locationID: UUID
+    let locationID: UUID?
     let transitionID: UUID
 }

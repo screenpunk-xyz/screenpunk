@@ -121,4 +121,49 @@ final class DeviceNativeStructuralStateTests: XCTestCase {
         XCTAssertThrowsError(try DeviceNativeStructuralEntry.validating(entryID: e.entryID, displayName: e.displayName, package: e.package,
             preparedPackage: .init(rootID: UUID(), contentID: e.preparedPackage.contentID, preparationOperationID: UUID(), directory: "../other")))
     }
+    func testMixedSchemaPreservesLocalResourcesOwnershipOrderAndSelection() throws {
+        let cloud = try entry(), localID = UUID(), grantRoot = UUID()
+        let content = String(repeating: "d", count: 64)
+        let reference = DevicePreparedPackageReference(rootID: UUID(), contentID: content, preparationOperationID: UUID(), directory: "package.staging-cas-v1-" + content)
+        let revision = StoredRevision(revision: "local-revision", dashboardId: "local-dashboard", name: "Local", digest: String(repeating: "a", count: 64), orientation: .portrait, width: 390, height: 844)
+        let localOwner = PairingIdentity(role: .controller, publicKey: Array(repeating: 9, count: 32))
+        let local = DeviceMixedStructuralState.Local(entry: .init(entryID: localID, displayName: "Local", revision: revision, packageDirectory: reference.directory), package: reference,
+            grant: .init(identity: .init(rootID: grantRoot, revisionID: UUID()), preparationOperationID: UUID()), owner: localOwner)
+        let cloudGrant = DeviceMixedStructuralState.Grant(identity: .init(rootID: UUID(), revisionID: UUID()), preparationOperationID: UUID())
+        let mixed = try DeviceMixedStructuralState.validating(generationID: generation, installationOwner: owner,
+            entries: [.retainedLocal(local), .cloud(cloud, cloudGrant)], configuredEntryID: localID)
+        let bytes = try DeviceMixedStructuralStateCodec.encode(mixed)
+        let restored = try DeviceMixedStructuralStateCodec.decode(bytes)
+        XCTAssertEqual(restored, mixed)
+        XCTAssertEqual(restored.entries.map(\.entryID), [localID, cloud.entryID])
+        XCTAssertEqual(restored.configuredEntryID, localID)
+        guard case .retainedLocal(let retained) = restored.entries[0] else { return XCTFail() }
+        XCTAssertEqual(retained.owner, localOwner); XCTAssertEqual(retained.package, reference)
+        XCTAssertEqual(retained.grant, local.grant)
+        XCTAssertThrowsError(try DeviceMixedStructuralState.validating(generationID: generation, installationOwner: owner,
+            entries: [.retainedLocal(local), .retainedLocal(local)], configuredEntryID: localID))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rootID = UUID(), inventory = DeviceMixedInventoryStore(root: root, rootID: rootID)
+        try inventory.initializeExplicit()
+        let committed = try DeviceMixedInventoryQualificationHarness.scope(inventory) {
+            try inventory.commitExact(operationID: UUID(), previous: nil, candidate: mixed, admissionEnabled: true, permit: $0)
+        }
+        let reopened = DeviceMixedInventoryStore(root: root, rootID: rootID)
+        XCTAssertEqual(try reopened.readCurrent()?.snapshot, mixed)
+        XCTAssertThrowsError(try DeviceMixedInventoryQualificationHarness.scope(inventory) {
+            try inventory.commitExact(operationID: UUID(), previous: committed.0,
+                candidate: .validating(generationID: UUID(), installationOwner: mixed.installationOwner,
+                    entries: mixed.entries, configuredEntryID: cloud.entryID), admissionEnabled: false, permit: $0)
+        })
+        XCTAssertEqual(try reopened.readCurrent()?.snapshot.entries, mixed.entries)
+        XCTAssertEqual(try reopened.readCurrent()?.snapshot.configuredEntryID, localID)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        var entries = object["entries"] as! [[String: Any]]
+        var altered = entries[0]["local"] as! [String: Any]
+        altered.removeValue(forKey: "owner"); entries[0]["local"] = altered; object["entries"] = entries
+        XCTAssertThrowsError(try DeviceMixedStructuralStateCodec.decode(JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])))
+    }
+
 }

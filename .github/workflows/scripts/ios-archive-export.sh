@@ -64,9 +64,15 @@ try:
     firebase["IS_ANALYTICS_ENABLED"] = False
     expected = generator.build_info(firebase, template, expected_project="screenpunk-stg-6f6e615a",
         expected_bundle="xyz.screenpunk.ios", api_origin="https://staging.screenpunk.xyz")
+    policy_spec = importlib.util.spec_from_file_location("candidate_policy", os.path.join(root, ".github/workflows/scripts/validate-ios-candidate.py"))
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_spec.loader.exec_module(policy)
+    candidate = policy.candidate_input(os.environ)
     # Equality also preserves every unrelated template key and Calendar entry.
     if supplied != expected:
         fail("InfoTemplate")
+    expected = policy.derived_info(expected, candidate)
+    derived_raw = plistlib.dumps(expected, fmt=plistlib.FMT_XML)
     if mode == "prepare":
         directory = os.open(work, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -74,7 +80,7 @@ try:
             try:
                 os.fchmod(fd, 0o600)
                 with os.fdopen(fd, "wb", closefd=False) as stream:
-                    stream.write(raw)
+                    stream.write(derived_raw)
                     stream.flush()
                 os.fsync(fd)
             finally:
@@ -93,6 +99,7 @@ try:
                 actual = plistlib.loads(archive.read(members[0]))
         if not isinstance(actual, dict):
             fail("InfoPlist")
+        policy.validate_candidate(actual, candidate)
         for key in list(generator.FIELDS.values()) + ["ScreenpunkCloudAPIOrigin"]:
             if actual.get(key) != expected[key]:
                 fail(key)
@@ -121,14 +128,17 @@ print("staging archive configuration validated (" + mode + ")")
 PY_STAGING
 }
 validate_staging_info prepare
+candidate_flags='$(inherited)'
+if [[ "${IOS_INTERNAL_CONCURRENT_CANDIDATE:-false}" == true ]]; then
+  candidate_flags+=' SCREENPUNK_INTERNAL_STAGING_CONCURRENT_CANDIDATE'
+fi
 
-require_env APPLE_TEAM_ID
-import_p12 IOS_SIGNING_CERT_P12_BASE64 IOS_SIGNING_CERT_PASSWORD
+require_apple_team_id
+import_p12 IOS_SIGNING_CERT_P12_BASE64 IOS_SIGNING_CERT_PASSWORD "Apple Distribution"
 install_ios_profile
 
 ./scripts/generate-xcode.sh
 ios_proj="${ROOT}/apps/ios/ScreenpunkiOS.xcodeproj"
-enable_generated_signing "$ios_proj"
 
 archive_path="${RELEASE_DIR}/ScreenpunkiOS.xcarchive"
 export_dir="${RELEASE_DIR}/ios-export"
@@ -163,6 +173,11 @@ cat >"$export_plist" <<EOF
 </plist>
 EOF
 
+# Xcode enforces internal-only TestFlight distribution for qualification candidates.
+if [[ "${IOS_INTERNAL_CONCURRENT_CANDIDATE:-false}" == true ]]; then
+  /usr/libexec/PlistBuddy -c 'Add :testFlightInternalTestingOnly bool true' "$export_plist"
+fi
+
 echo "=== iOS device archive (signed, not uploaded) ==="
 xcodebuild archive \
   -project "$ios_proj" \
@@ -174,11 +189,12 @@ xcodebuild archive \
   MARKETING_VERSION="${IOS_MARKETING_VERSION}" \
   CURRENT_PROJECT_VERSION="${IOS_BUILD_NUMBER}" \
   INFOPLIST_FILE="$staging_info" \
+  SWIFT_ACTIVE_COMPILATION_CONDITIONS="$candidate_flags" \
   CODE_SIGNING_ALLOWED=YES \
   CODE_SIGNING_REQUIRED=YES \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
-  CODE_SIGN_IDENTITY="Apple Distribution" \
+  CODE_SIGN_IDENTITY="${SIGNING_IDENTITY_SHA1}" \
   PROVISIONING_PROFILE="${PROFILE_UUID}" \
   PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}"
 

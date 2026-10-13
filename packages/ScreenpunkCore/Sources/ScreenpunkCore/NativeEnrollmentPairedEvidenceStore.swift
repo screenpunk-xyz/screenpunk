@@ -35,6 +35,10 @@ final class NativeEnrollmentPairedEvidenceStore {
     /// Restart reconstruction requires explicit current journal-tip recommit first.
     /// Unknown pending/unbound creation cannot be reconstructed or adopted.
     func recoverRecorded(preparationID: UUID) throws -> Attempt { .init(try journal.capturePairRecovery(preparationID: preparationID)) }
+    func resumeRecorded(preparationID: UUID) throws -> Attempt {
+        if try journal.hasRecordedPairInitialization(preparationID: preparationID) { return try recoverRecorded(preparationID: preparationID) }
+        return try beginOriginal(preparationID: preparationID)
+    }
     func continueExact(_ original: Attempt) throws -> LocalPairDurabilityReceipt {
         do {
             while let event = try journal.advancePairOriginal(original.original) {

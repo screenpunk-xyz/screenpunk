@@ -13,7 +13,8 @@ final class ScreenOrientationTests: XCTestCase {
     func testOrientationActivatesAtomicallyAndRejectsDifferentDeviceSize() throws {
         let owner = PairingIdentityFactory.make(role: .controller)
         var phone = DeviceRuntime(identity: PairingIdentityFactory.make(role: .device), profile: DeviceProfile(deviceId: "phone", name: "Phone"), advertisement: AdvertisedDevice(deviceId: "phone", host: "localhost", port: 7843, source: .advertised))
-        phone.pairing.owner = owner
+        phone.pairing = DevicePairingState(owner: owner)
+        XCTAssertTrue(phone.pairing.isApproved(owner))
         var screen = StoredRevision.offlineFixture
         screen.orientation = .landscape; screen.width = 844; screen.height = 390
         func deployment(_ id: String) -> DeploymentRecord { DeploymentRecord(deploymentId: id, revision: screen.revision, dashboardId: screen.dashboardId, deviceId: "phone", phase: .queued) }

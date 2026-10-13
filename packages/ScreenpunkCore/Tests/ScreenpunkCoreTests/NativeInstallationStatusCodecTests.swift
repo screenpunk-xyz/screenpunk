@@ -21,6 +21,24 @@ final class NativeInstallationStatusCodecTests: XCTestCase {
             "accountId": id, "locationId": id, "createdAt": "2026-01-01T00:00:00Z", "expiresAt": "2026-01-01T00:10:00Z", "outcome": "pending"]]
     }
     private func bytes(_ o: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) }
+    func testExplicitNullLocationAndMalformedAssociation() throws {
+        var o = current(), a = o["activation"] as! [String: Any]
+        o["locationId"] = NSNull(); a["locationId"] = NSNull(); o["activation"] = a
+        guard case .currentGeneration(let result) = try NativeInstallationStatusCodec.decode(bytes(o)) else { return XCTFail() }
+        XCTAssertNil(result.locationId); XCTAssertNil(result.activation.locationId)
+        var c = claim(), receipt = c["claim"] as! [String: Any]
+        receipt["locationId"] = NSNull(); c["claim"] = receipt
+        guard case .claim(let pending) = try NativeInstallationStatusCodec.decode(bytes(c)) else { return XCTFail() }
+        XCTAssertNil(pending.locationId)
+        for invalid in [true, false, 0, "invalid", [:], []] as [Any] {
+            var bad = o; bad["locationId"] = invalid
+            XCTAssertThrowsError(try NativeInstallationStatusCodec.decode(bytes(bad)))
+            var badReceipt = receipt; badReceipt["locationId"] = invalid; c["claim"] = badReceipt
+            XCTAssertThrowsError(try NativeInstallationStatusCodec.decode(bytes(c)))
+        }
+        o.removeValue(forKey: "locationId")
+        XCTAssertThrowsError(try NativeInstallationStatusCodec.decode(bytes(o)))
+    }
     func testThreeBranchesAndDifferentCurrentGeneration() throws {
         guard case .currentGeneration(let c) = try NativeInstallationStatusCodec.decode(bytes(current())) else { return XCTFail() }
         XCTAssertNotEqual(c.generation.generationId, c.activation.initialGeneration.generationId)

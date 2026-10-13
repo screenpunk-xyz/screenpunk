@@ -185,6 +185,13 @@ final class NativeEnrollmentJournalStoreTests: XCTestCase {
         XCTAssertThrowsError(try wrong.initializeExplicit())
         let overlapping = NativeEnrollmentJournalStore(root: f.local, cloudRootID: UUID(), excludedLocalResetRoot: f.local)
         XCTAssertThrowsError(try overlapping.initializeExplicit())
+        let nestedRoot = f.local.appendingPathComponent("cloud", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedRoot, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try NativeEnrollmentJournalStore(root: nestedRoot, cloudRootID: UUID(), excludedLocalResetRoot: f.local).initializeExplicit())
+        XCTAssertThrowsError(try NativeEnrollmentJournalStore(root: f.local, cloudRootID: UUID(), excludedLocalResetRoot: nestedRoot).initializeExplicit())
+        let siblingRoot = f.parent.appendingPathComponent("local-sibling", isDirectory: true)
+        try FileManager.default.createDirectory(at: siblingRoot, withIntermediateDirectories: false)
+        XCTAssertTrue(try NativeEnrollmentJournalStore(root: siblingRoot, cloudRootID: UUID(), excludedLocalResetRoot: f.local).initializeExplicit().qualifiesCurrentJournalTip)
     }
     func testIndependentAttemptChainDetectsInstalledTipDeletionAndSameByteReplacement() throws {
         for replace in [false, true] {

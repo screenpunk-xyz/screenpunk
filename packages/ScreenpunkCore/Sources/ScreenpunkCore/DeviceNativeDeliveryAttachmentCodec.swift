@@ -22,7 +22,10 @@ enum DeviceNativeDeliveryAttachmentCodec {
         #if canImport(CryptoKit)
         return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         #else
-        throw Failure.digestUnavailable
+        var digest = NativeJournalSHA256()
+        do { try digest.update(bytes) }
+        catch { throw Failure.digestUnavailable }
+        return digest.finalized().map { String(format: "%02x", $0) }.joined()
         #endif
     }
     static func uuid(_ value: Any?) throws -> UUID {

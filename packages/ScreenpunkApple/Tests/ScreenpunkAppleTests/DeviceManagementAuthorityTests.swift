@@ -4,6 +4,28 @@ import CryptoKit
 @_spi(NativeInstallation) @testable import ScreenpunkApple
 
 final class DeviceManagementAuthorityTests: XCTestCase {
+    func testLocalInventoryPhysicalOwnershipSurvivesPermissionRevocationButRejectsReplacement() throws {
+        let anchor = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: anchor) }
+        let authority = DeviceManagementAuthority(journal: AuthorityJournal(),
+            credentials: .init(backend: AuthorityBackend(), random: { Data() }),
+            reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor))
+        let lease = try XCTUnwrap(authority.refresh())
+        let ids = try NativeManagedLocalRootIDs(package: UUID(), grant: UUID(), structural: UUID(), provisioning: UUID(), contentGenesis: UUID())
+        let roots = try authority.prepareLocalInventoryRoots(lease: lease, ids: ids)
+        try authority.validateLocalInventoryRoots(roots)
+        try authority.revoke()
+        // This checkpoint grants physical ownership only; the revoked lease still cannot control.
+        try authority.validateLocalInventoryRoots(roots)
+        XCTAssertThrowsError(try authority.withLocalAuthority(lease) {})
+        let retained = roots.namespace.appendingPathComponent("original-packages")
+        try FileManager.default.moveItem(at: roots.packageRoot, to: retained)
+        try FileManager.default.createDirectory(at: roots.packageRoot, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try authority.validateLocalInventoryRoots(roots))
+        XCTAssertThrowsError(try authority.prepareLocalInventoryRoots(lease: lease, ids: ids))
+    }
+
     func testBlockedResetEligibilityRequiresGenuineSameOwnerLocalEvidenceAndNamespace() throws {
         let journal = ManagementTestJournal(), keys = ManagementTestCredentials()
         let anchor = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
@@ -75,7 +97,7 @@ final class DeviceManagementAuthorityTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: parent) }
         let authority = DeviceManagementAuthority(journal: AuthorityJournal(), credentials: .init(backend: AuthorityBackend(), random: { Data() }),
             reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor),
-            supportAnchorSetup: try .fixture(existingPhysicalParent: parent))
+            supportAnchorSetup: try .fixture(existingPhysicalParent: parent), concurrentControlQualified: true)
         try authority.prepareProductionSupportAnchor(); try authority.enterCloudForeground()
         let claim = try NativeClaimInput(requestId: UUID(), transitionId: UUID(), accountId: UUID(), locationId: UUID(), name: "Fixture", profile: "Fixture")
         let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: claim.transitionId, credentialReference: "native." + UUID().uuidString, format: .nativeInstallationV1)
@@ -181,7 +203,19 @@ final class DeviceManagementAuthorityTests: XCTestCase {
         XCTAssertTrue(deliveryPaths.contains("/v1/native/installations/delivery/command"))
         XCTAssertTrue(deliveryPaths.contains(where: { $0.hasPrefix("/v1/native/installations/delivery/plan/") }))
         XCTAssertTrue(deliveryPaths.contains(where: { $0.hasPrefix("/v1/native/installations/delivery/package/") }))
+        let unified = try authority.makeUnifiedInventorySession(context: context, current: refreshed,
+            commonRootID: UUID(), native: execution)
+        try unified.migrate(current: refreshed, operationID: UUID(), generationID: UUID(), admissionEnabled: true)
+        let commonLocal = try authority.makeConcurrentLocalContext(context: context, session: unified)
+        XCTAssertNoThrow(try commonLocal.validate())
         try authority.leaveCloudForeground()
+        // Cloud lifetime ends while the independently qualified Local physical owner remains.
+        XCTAssertNoThrow(try commonLocal.validate())
+        XCTAssertNoThrow(try unified.validatedAssociation())
+        XCTAssertThrowsError(try authority.prepareCurrentInstallationDispatch(context))
+        try authority.revoke()
+        XCTAssertThrowsError(try commonLocal.validate())
+        XCTAssertThrowsError(try unified.validatedAssociation())
         XCTAssertThrowsError(try result.installation.makeStatusRequest(origin: http.origin, activation: result.activation))
         XCTAssertThrowsError(try dispatch.validateInstallationExact(installation: result.installation))
         XCTAssertEqual(storage.adds, 2)
@@ -367,7 +401,7 @@ final class DeviceManagementAuthorityTests: XCTestCase {
 
 }
 
-private final class AuthorityJournal: CloudInstallationTransitionJournal {
+final class AuthorityJournal: CloudInstallationTransitionJournal {
     var value: DeviceManagementTransitionHistory?
     var unavailable = false
     var writeThenThrow = false
@@ -380,7 +414,7 @@ private final class AuthorityJournal: CloudInstallationTransitionJournal {
         if writeThenThrow { unavailable = true; throw DeviceManagementTransitionStoreError.writeOutcomeUncertain }
     }
 }
-private final class AuthorityBackend: CloudInstallationCredentialBackend, @unchecked Sendable {
+final class AuthorityBackend: CloudInstallationCredentialBackend, @unchecked Sendable {
     var values: [String: Data] = [:]
     var inaccessible = false
     func read(reference: String) throws -> Data? {
@@ -456,7 +490,7 @@ private final class AuthorityPromotionHTTP {
         case ("GET", "/v1/native/installations/status"):
             let a = try activation()
             let value: [String: Any] = ["kind": "current-generation", "installationId": installationID.uuidString, "accountId": input.accountId.uuidString,
-                "locationId": input.locationId.uuidString, "transitionId": input.transitionId.uuidString,
+                "locationId": input.locationId.map { $0.uuidString } as Any? ?? NSNull(), "transitionId": input.transitionId.uuidString,
                 "generation": try JSONSerialization.jsonObject(with: nativeEnrollmentBytes(a.initialGeneration)),
                 "activation": try JSONSerialization.jsonObject(with: nativeEnrollmentBytes(a)), "credential": "current", "authority": "active"]
             return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
@@ -465,8 +499,8 @@ private final class AuthorityPromotionHTTP {
     }
 }
 
-private struct FreshOwnerTokens: CloudNativeTokenProvider { func idToken() async throws -> String { "synthetic-human-token" } }
-private final class FreshGrantTransport: DeviceGrantCredentialTransport, @unchecked Sendable {
+struct FreshOwnerTokens: CloudNativeTokenProvider { func idToken() async throws -> String { "synthetic-human-token" } }
+final class FreshGrantTransport: DeviceGrantCredentialTransport, @unchecked Sendable {
     let rootID: UUID
     private var values: [String: DeviceGrantCredentialTransportSecret] = [:]
     init(rootID: UUID) { self.rootID = rootID }
@@ -485,12 +519,14 @@ private final class FreshGrantTransport: DeviceGrantCredentialTransport, @unchec
         values[account] = try .init(observation: observation, bytes: bytes); return observation
     }
 }
-private final class FreshCredentialStorage: NativeEnrollmentCredentialStorage {
+final class FreshCredentialStorage: NativeEnrollmentCredentialStorage {
+    private let original48: Data
+    init(original48: Data = Data(repeating: 17, count: 48)) { self.original48 = original48 }
     private var items: [Data: NativeEnrollmentStoredCredential] = [:]
     private(set) var adds = 0
     private(set) var reads = 0
     func enumerateBounded(maximum: Int) throws -> [NativeEnrollmentStoredCredential] { Array(items.values) }
-    func generateOriginal48() throws -> Data { Data(repeating: 17, count: 48) }
+    func generateOriginal48() throws -> Data { guard original48.count == 48 else { throw NativeEnrollmentPromotionError.blocked }; return original48 }
     func readExactPersistentReference(_ reference: Data) throws -> NativeEnrollmentStoredCredential? { reads += 1; return items[reference] }
     private func add(service: String, account: Data, payload: Data) -> NativeEnrollmentCredentialInsert {
         adds += 1; let ref = Data("fixture-ref-\(adds)".utf8)
@@ -500,7 +536,7 @@ private final class FreshCredentialStorage: NativeEnrollmentCredentialStorage {
     func insertStageOnly(account: Data, envelope: Data) throws -> NativeEnrollmentCredentialInsert { add(service: "xyz.screenpunk.installation.cloud.enrollment-stage.v1", account: account, payload: envelope) }
     func insertFinalOnly(account: Data, original48: Data) throws -> NativeEnrollmentCredentialInsert { add(service: "xyz.screenpunk.installation.cloud", account: account, payload: original48) }
 }
-private final class FreshOwnerHTTP {
+final class FreshOwnerHTTP {
     let claim: NativeClaimInput
     var delivery: AuthorityStaticDeliveryFixture.Value?
     var deliveryPaths: [String] = []
@@ -560,7 +596,7 @@ private final class FreshOwnerHTTP {
             let receipt = try activation(), activation = try JSONSerialization.jsonObject(with: nativeEnrollmentBytes(receipt))
             let generation = try JSONSerialization.jsonObject(with: nativeEnrollmentBytes(receipt.initialGeneration))
             return try JSONSerialization.data(withJSONObject: ["kind":"current-generation", "installationId":installationID.uuidString, "accountId":claim.accountId.uuidString,
-                "locationId":claim.locationId.uuidString, "transitionId":claim.transitionId.uuidString, "generation":generation, "activation":activation, "credential":"current", "authority":"active"])
+                "locationId":claim.locationId.map { $0.uuidString } as Any? ?? NSNull(), "transitionId":claim.transitionId.uuidString, "generation":generation, "activation":activation, "credential":"current", "authority":"active"])
         }
         guard request.httpMethod == "POST", request.value(forHTTPHeaderField: "Authorization") == "Bearer synthetic-human-token",
             request.value(forHTTPHeaderField: "x-screenpunk-installation-credential")?.hasPrefix("spni1_") == true else { throw CancellationError() }
@@ -597,7 +633,7 @@ private final class FreshOwnerHTTP {
     }
 }
 
-private enum AuthorityStaticDeliveryFixture {
+enum AuthorityStaticDeliveryFixture {
     struct Value { let command: Data, header: String, plan: Data, archive: NativeDeliveryArchiveInput }
     static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     static func encoded<T: Encodable>(_ value: T) throws -> Data {
@@ -621,7 +657,7 @@ private enum AuthorityStaticDeliveryFixture {
         let rawPlan = Data("original static fixture plan".utf8)
         let association: [String: Any] = ["schemaVersion": 1, "operationId": UUID().uuidString.lowercased(), "planId": UUID().uuidString.lowercased(),
             "installationId": try XCTUnwrap(state["installationId"]), "accountId": activation.accountId.uuidString.lowercased(),
-            "locationId": activation.locationId.uuidString.lowercased(), "transitionId": try XCTUnwrap(state["transitionId"]),
+            "locationId": activation.locationId.map { $0.uuidString.lowercased() } as Any? ?? NSNull(), "transitionId": try XCTUnwrap(state["transitionId"]),
             "planDigest": hash(rawPlan), "planByteLength": rawPlan.count]
         let exact = association
         var command = exact

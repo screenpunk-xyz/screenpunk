@@ -100,6 +100,7 @@ public struct CloudNativeAccountCapabilities: Decodable, Equatable, Sendable {
     public let owner: Bool
     public let administrator: Bool
     public let canEnroll: Bool
+    public var canEnrollUnassigned: Bool { canEnroll && (owner || administrator) }
 }
 public struct CloudNativeAccount: Decodable, Equatable, Sendable, Identifiable {
     public let id: UUID

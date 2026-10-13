@@ -166,6 +166,11 @@ import ScreenpunkCore
         XCTAssertEqual(f.keys.deletes, 0)
         XCTAssertThrowsError(try f.provider.preferences.generation())
         XCTAssertThrowsError(try f.provider.calendar.snapshot())
+        f.evidence.failPhase = .pending
+        do { try await f.lifecycle.recover(progress: {}); XCTFail("repeated intent uncertainty") } catch {}
+        XCTAssertEqual(f.keys.deletes, 0)
+        XCTAssertThrowsError(try f.provider.preferences.generation())
+        XCTAssertThrowsError(try f.provider.calendar.snapshot())
         try await f.lifecycle.recover(progress: {})
         XCTAssertEqual(f.evidence.record?.resetID, id)
         XCTAssertEqual(f.evidence.record?.phase, .completed)
@@ -181,6 +186,13 @@ import ScreenpunkCore
             XCTAssertEqual(f.keys.deletes, 5)
             XCTAssertThrowsError(try f.provider.preferences.generation())
             f.evidence.onCompletion = nil
+            if !cancelled {
+                f.evidence.failPhase = .completed
+                do { try await f.lifecycle.recover(progress: {}); XCTFail("repeated completion uncertainty") } catch {}
+                XCTAssertEqual(f.keys.deletes, 5)
+                XCTAssertThrowsError(try f.provider.preferences.generation())
+                XCTAssertThrowsError(try f.provider.calendar.snapshot())
+            }
             try await f.lifecycle.recover(progress: {})
             XCTAssertEqual(f.keys.deletes, 5)
             XCTAssertNoThrow(try f.provider.preferences.generation())

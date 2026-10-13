@@ -37,6 +37,7 @@ final class MacWorkbenchModel: ObservableObject {
     private var thumbnailRequests: [String: Task<NSImage?, Never>] = [:]
     private let thumbnailQueue = DispatchQueue(label: "xyz.screenpunk.thumbnail", qos: .utility)
     private var previewRequest = UUID()
+    private var brokerDeviceRequest = UUID()
     @Published var isReactProject = false
     @Published var preview: PackageAssetStore?
     @Published var previewKey = UUID()
@@ -58,12 +59,35 @@ final class MacWorkbenchModel: ObservableObject {
     @Published var busy = false
     @Published var error: String?
     @Published var notice: String?
+    @Published private(set) var controllerBlockedReason: String?
+    @Published private(set) var compatibleBrokerAvailable = false
+    @Published private(set) var brokerMode = false
+    @Published private(set) var brokerWorkspace: WorkbenchWorkspaceStatus?
+    @Published private(set) var brokerPackages: [WorkbenchWorkspacePackageSummary] = []
+    @Published private(set) var brokerDevices: [WorkbenchDeviceRead] = []
+    @Published private(set) var brokerScreenSet: WorkbenchDeviceScreenSetRead?
+    @Published private(set) var brokerSelectedPackage: WorkbenchWorkspacePackageSummary?
+    @Published private(set) var brokerPreviewManifest: DashboardManifest?
+    @Published private(set) var brokerApplyVerified = false
+    @Published private(set) var brokerApplyState = "Apply unavailable until GUI verification"
+    @Published private(set) var brokerApplyRecord: MacBrokerApplyJournal.Record?
     @Published var sheet: WorkbenchSheet?
     @Published var connectionsDeviceID: String?
     @Published var settingsEditor: MacDeviceSettingsModel?
     @Published var draft: ScreenDraft?
     @Published var symbols: [String: String] = [:]
     private(set) var service: ControllerService?
+    private var legacyLease: LegacyControllerLease?
+    private var brokerClient: WorkbenchBrokerClient?
+    var cloudServiceInvocation: CloudScreenServiceInvocation {
+        CloudControllerIntegration.previewInvocation(dashboardId: previewDashboardId,
+            client: { [weak self] in self?.brokerClient },
+            currentDashboard: { [weak self] in self?.previewDashboardId ?? "" })
+    }
+    private var brokerEnvironment: WorkbenchBrokerEnvironment?
+    var brokerConnectionEnvironment: WorkbenchBrokerEnvironment? {
+        brokerMode ? brokerEnvironment : nil
+    }
     private let transport = LANTransport()
     private let queue = DispatchQueue(label: "xyz.screenpunk.workbench", qos: .userInitiated)
     private var timer: Timer?
@@ -82,29 +106,70 @@ final class MacWorkbenchModel: ObservableObject {
     private var root: URL { DashboardPackageStore.defaultRoot() }
     private var draftURL: URL { root.appendingPathComponent("workbench-draft.json") }
 
-    var previewDashboardId: String { record?.manifest.dashboardId ?? "" }
-    var previewRevision: String { record?.manifest.revision ?? "" }
-    var previewManifest: DashboardManifest? { record?.manifest }
-    var previewUsesHomeAssistant: Bool { record?.manifest.connections.contains { $0.alias == "home" } ?? false }
+    var previewDashboardId: String { brokerMode ? brokerPreviewManifest?.dashboardId ?? "" : record?.manifest.dashboardId ?? "" }
+    var previewRevision: String { brokerMode ? brokerPreviewManifest?.revision ?? "" : record?.manifest.revision ?? "" }
+    var previewManifest: DashboardManifest? { brokerMode ? brokerPreviewManifest : record?.manifest }
+    var previewUsesHomeAssistant: Bool { !brokerMode && (record?.manifest.connections.contains { $0.alias == "home" } ?? false) }
     var device: PairedDeviceRecord? { devices.first { $0.id == selection } }
     var detected: WorkbenchSidebar.NearbyEntry? { nearby.first { $0.id == selection } }
-    var screenName: String { screens.first { $0.dashboardId == selectedScreen }?.name ?? record?.manifest.name ?? "Choose Screen" }
+    var screenName: String {
+        brokerMode ? brokerSelectedPackage?.name ?? "Choose Screen" :
+            screens.first { $0.dashboardId == selectedScreen }?.name ?? record?.manifest.name ?? "Choose Screen"
+    }
     var title: String {
+        if brokerMode {
+            return section == "Screens" ? brokerSelectedPackage?.name ?? "Screens" :
+                brokerDevices.first(where: { $0.deviceId == selection })?.name ?? "Devices"
+        }
         if section == "Screens" { return screens.first { $0.dashboardId == selection }?.name ?? "Screens" }
         if let device { return DeviceDisplayName.label(name: device.displayName ?? device.device.profile.name, deviceId: device.id, fallback: "Paired device") }
         return detected?.title ?? "Devices"
     }
     var previewSize: CGSize {
+        if brokerMode {
+            let target = brokerPreviewManifest?.target
+            let profile = section == "Devices" ? brokerScreenSet?.profile : nil
+            let width = profile?.width ?? target?.width ?? screenPreviewProfile.width
+            let height = profile?.height ?? target?.height ?? screenPreviewProfile.height
+            return orientation == .portrait ? CGSize(width: min(width,height), height: max(width,height)) :
+                CGSize(width: max(width,height), height: min(width,height))
+        }
         let width = section == "Screens" ? screenPreviewProfile.width : device?.device.profile.width ?? record?.manifest.target.width ?? 390
         let height = section == "Screens" ? screenPreviewProfile.height : device?.device.profile.height ?? record?.manifest.target.height ?? 844
         return orientation == .portrait ? CGSize(width: min(width,height), height: max(width,height)) : CGSize(width: max(width,height), height: min(width,height))
     }
-    var screenSupport: ScreenOrientationSupport { (try? record.map { try ScreenDesignSettings.read(files: $0.files).orientations }) ?? .both }
+    var screenSupport: ScreenOrientationSupport {
+        if brokerMode {
+            return brokerPreviewManifest?.target.orientation == "landscape" ? .landscape : .portrait
+        }
+        return (try? record.map { try ScreenDesignSettings.read(files: $0.files).orientations }) ?? .both
+    }
     func supports(_ orientation: DeviceOrientation) -> Bool { screenSupport.allows(orientation) }
     var canDuplicate: Bool { record != nil }
     var screenSelectorTitle: String { deviceScreens.multiple ? "\(deviceScreens.ids.count) \(deviceScreens.ids.count == 1 ? "Screen" : "Screens")" : screenName }
-    var applyLabel: String { deviceScreens.ids.count > 1 ? "Apply Screens" : "Apply Screen" }
-    var canApply: Bool { device != nil && !deviceScreens.ids.isEmpty && deviceScreens.ids.allSatisfy { id in screens.contains { $0.dashboardId == id } } && !busy }
+    var applyLabel: String { brokerMode ? "Apply Screen" : deviceScreens.ids.count > 1 ? "Apply Screens" : "Apply Screen" }
+    var canApply: Bool {
+        if brokerMode {
+            return MacBrokerApplyButtonGate.allows(verifiedGUI: brokerApplyVerified,
+                busy: busy, selectedDeviceMatches: brokerScreenSet?.deviceId == selection,
+                hasExactOfflinePackage: brokerSelectedPackage != nil &&
+                    brokerPreviewManifest?.connections.isEmpty == true &&
+                    brokerPreviewManifest?.target.orientation == orientation.rawValue,
+                prior: brokerApplyRecord)
+        }
+        return device != nil && !deviceScreens.ids.isEmpty &&
+            deviceScreens.ids.allSatisfy { id in screens.contains { $0.dashboardId == id } } && !busy
+    }
+    var canRollbackBrokerApply: Bool {
+        guard brokerMode, brokerApplyVerified, !busy,
+              let selected = brokerWorkspace, let record = brokerApplyRecord,
+              record.phase == .active, record.operationId != nil,
+              record.workspaceId == selected.workspaceId,
+              record.selectionGeneration == selected.selectionGeneration,
+              record.deviceId == selection,
+              brokerScreenSet?.deviceId == record.deviceId else { return false }
+        return true
+    }
     var hasUnappliedScreen: Bool {
         guard let device else { return false }
         let installed = device.screenSet?.map(\.dashboardId) ?? appliedScreens[device.id].map { [$0] } ?? []
@@ -142,9 +207,11 @@ final class MacWorkbenchModel: ObservableObject {
     }
 
     func start() {
-        guard timer == nil else { return }
+        guard timer == nil, !brokerMode else { return }
         do {
+            let lease = try LegacyControllerLease(home: DashboardPackageStore.defaultRoot())
             service = try ControllerService.bootstrap()
+            legacyLease = lease
             if let service { let status = transport.attach(to: service); if !service.devices.transportAvailable { error = status } }
             appliedSetSources = UserDefaults.standard.dictionary(forKey: "appliedSetSources") as? [String: [String: String]] ?? [:]
             symbols = UserDefaults.standard.dictionary(forKey: "screenSymbols") as? [String:String] ?? [:]
@@ -168,7 +235,428 @@ final class MacWorkbenchModel: ObservableObject {
             timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
                 Task { @MainActor in guard let self else { return }; self.ticks += 1; self.refresh(probe: self.ticks % 5 == 0, periodic: true) }
             }
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            if case LegacyControllerLeaseError.brokerActive = error {
+                controllerBlockedReason = error.localizedDescription
+                probeCompatibleBroker(homePath: root.resolvingSymlinksInPath().path)
+            } else {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    /// The separately identified GUI test app only connects to its isolated
+    /// broker. It must never fall through to the legacy controller bootstrap.
+    func startBrokerOnly() {
+        guard !brokerMode, !busy, MacGUIRuntime.isolatedTestPaths != nil else { return }
+        controllerBlockedReason = "Waiting for the isolated Screenpunk service."
+        probeCompatibleBroker(homePath: root.resolvingSymlinksInPath().path)
+    }
+
+    /// A lock holder is not proof that it is the compatible broker. Only an
+    /// authenticated hello for this exact controller home enables the opt-in
+    /// limited service preview; it never starts another controller.
+    private func probeCompatibleBroker(homePath: String) {
+        Task.detached { [weak self] in
+            let available: Bool
+            do {
+                let environment = try WorkbenchBrokerEnvironment(runtimeDirectory: MacGUIRuntime.runtimeDirectory)
+                let client = WorkbenchBrokerClient(environment: environment)
+                try client.connect()
+                defer { client.close() }
+                available = try client.hello().controllerHomePath == homePath
+            } catch { available = false }
+            await MainActor.run {
+                guard let self else { return }
+                self.compatibleBrokerAvailable = available
+                if available, self.controllerBlockedReason != nil {
+                    self.activateCompatibleBroker()
+                }
+            }
+        }
+    }
+
+    func activateCompatibleBroker() {
+        guard compatibleBrokerAvailable, !brokerMode, !busy else { return }
+        busy = true
+        Task.detached { [weak self] in
+            let client: WorkbenchBrokerClient
+            let environment: WorkbenchBrokerEnvironment
+            do {
+                environment = try WorkbenchBrokerEnvironment(runtimeDirectory: MacGUIRuntime.runtimeDirectory)
+                client = WorkbenchBrokerClient(environment: environment)
+                try client.connect()
+                let expectedHome = DashboardPackageStore.defaultRoot().resolvingSymlinksInPath().path
+                guard try client.hello().controllerHomePath == expectedHome else {
+                    throw MacBrokerApplyWorkflow.Failure.staleSelection
+                }
+                let selected = try client.workspaceStatus()
+                let packages = selected.state == "selected"
+                    ? try client.listWorkspacePackages(in: selected) : []
+                let devices = try client.listDevices()
+                let previousApply = try Self.applyJournal().load()
+                var verified = false
+                if let session = try? MacBrokerApplySession.open(environment: environment,
+                    expectedControllerHome: expectedHome) {
+                    verified = true
+                    await session.close()
+                }
+                await MainActor.run {
+                    guard let self else { client.close(); return }
+                    self.brokerClient = client; self.brokerEnvironment = environment
+                    self.brokerWorkspace = selected; self.brokerPackages = packages
+                    self.brokerDevices = devices; self.brokerApplyVerified = verified
+                    self.brokerApplyRecord = previousApply
+                    self.brokerApplyState = previousApply.map {
+                        $0.operationId == nil && $0.blocksNewApply
+                            ? "Previous Apply outcome unresolved without an operation ID; use service recovery before another Apply."
+                            : "Previous Apply \($0.phase.rawValue); inspect its durable status before another Apply."
+                    } ?? (verified ? "Verified GUI Apply available" :
+                        "GUI verification unavailable; Apply disabled")
+                    self.brokerMode = true; self.controllerBlockedReason = nil
+                    self.busy = false; self.error = nil
+                    self.section = devices.isEmpty ? "Screens" : "Devices"
+                    if let first = devices.first { self.selectBrokerDevice(first.deviceId) }
+                    else if let first = packages.first { self.selectBrokerPackage(first) }
+                }
+            } catch {
+                await MainActor.run {
+                    self?.busy = false
+                    self?.error = "Compatible service unavailable: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func detachCompatibleBroker() {
+        brokerClient?.close(); brokerClient = nil
+        brokerMode = false; brokerWorkspace = nil
+        brokerPackages = []; brokerDevices = []; brokerScreenSet = nil
+        brokerSelectedPackage = nil; brokerPreviewManifest = nil
+        brokerApplyVerified = false
+        brokerApplyRecord = nil
+    }
+
+    nonisolated private static func applyJournal() -> MacBrokerApplyJournal {
+        return MacBrokerApplyJournal(url: MacGUIRuntime.guiStateDirectory
+            .appendingPathComponent("apply-attempt.json"))
+    }
+
+    private func refreshCompatibleBroker() {
+        guard let client = brokerClient, !refreshing, !busy else { return }
+        refreshing = true
+        Task.detached { [weak self] in
+            do {
+                let selected = try client.workspaceStatus()
+                let packages = selected.state == "selected"
+                    ? try client.listWorkspacePackages(in: selected) : []
+                let devices = try client.listDevices()
+                await MainActor.run {
+                    guard let self else { return }
+                    let switched = self.brokerWorkspace?.workspaceId != selected.workspaceId ||
+                        self.brokerWorkspace?.selectionGeneration != selected.selectionGeneration
+                    self.refreshing = false
+                    self.brokerWorkspace = selected; self.brokerPackages = packages
+                    self.brokerDevices = devices
+                    if switched {
+                        self.previewRequest = UUID(); self.preview = nil
+                        self.brokerDeviceRequest = UUID()
+                        self.brokerPreviewManifest = nil; self.brokerSelectedPackage = nil
+                        self.brokerScreenSet = nil; self.selection = nil; self.selectedScreen = nil
+                        self.notice = "Workspace selection changed; choose a screen and device again."
+                    } else {
+                        if let package = self.brokerSelectedPackage,
+                           !packages.contains(package) {
+                            self.previewRequest = UUID(); self.preview = nil
+                            self.brokerPreviewManifest = nil; self.brokerSelectedPackage = nil
+                            self.selectedScreen = nil
+                        }
+                        if let deviceId = self.brokerScreenSet?.deviceId,
+                           !devices.contains(where: { $0.deviceId == deviceId }) {
+                            self.brokerDeviceRequest = UUID(); self.brokerScreenSet = nil
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self?.refreshing = false
+                    self?.brokerApplyVerified = false
+                    self?.brokerApplyState = "Service connection unavailable; Apply disabled"
+                    self?.error = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func selectBrokerDevice(_ id: String) {
+        guard brokerMode, let client = brokerClient, let selected = brokerWorkspace,
+              brokerDevices.contains(where: { $0.deviceId == id }) else { return }
+        section = "Devices"; selection = id; brokerScreenSet = nil
+        let request = UUID(); brokerDeviceRequest = request
+        Task.detached { [weak self] in
+            do {
+                let observed = try client.freshDeviceScreenSet(deviceId: id)
+                let current = try client.workspaceStatus()
+                guard current.workspaceId == selected.workspaceId,
+                      current.selectionGeneration == selected.selectionGeneration else {
+                    throw MacBrokerApplyWorkflow.Failure.staleSelection
+                }
+                await MainActor.run {
+                    guard let self, self.brokerMode, self.selection == id,
+                          self.brokerDeviceRequest == request, observed.deviceId == id,
+                          self.brokerWorkspace?.workspaceId == selected.workspaceId,
+                          self.brokerWorkspace?.selectionGeneration == selected.selectionGeneration else { return }
+                    self.brokerScreenSet = observed
+                    self.orientation = observed.profile.orientation
+                }
+            } catch {
+                await MainActor.run {
+                    guard self?.selection == id else { return }
+                    self?.error = "Pinned device observation unavailable: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func selectBrokerPackage(_ package: WorkbenchWorkspacePackageSummary) {
+        guard brokerMode, let client = brokerClient, let selected = brokerWorkspace,
+              brokerPackages.contains(package) else { return }
+        brokerSelectedPackage = package; selectedScreen = package.dashboardId
+        if section == "Screens" { selection = package.dashboardId + ":" + package.revision }
+        let request = UUID(); previewRequest = request
+        preview = nil; brokerPreviewManifest = nil
+        Task.detached { [weak self] in
+            do {
+                let assets = try WorkspacePackagePreviewLoader.load(client: client,
+                    selected: selected, summary: package)
+                guard let manifestBytes = assets.assets["manifest.json"]?.data else {
+                    throw MacBrokerApplyWorkflow.Failure.noPackages
+                }
+                let manifest = try JSONDecoder().decode(DashboardManifest.self, from: manifestBytes)
+                let current = try client.workspaceStatus()
+                guard current.workspaceId == selected.workspaceId,
+                      current.selectionGeneration == selected.selectionGeneration else {
+                    throw MacBrokerApplyWorkflow.Failure.staleSelection
+                }
+                await MainActor.run {
+                    guard let self, self.brokerMode, self.previewRequest == request,
+                          self.brokerSelectedPackage == package,
+                          self.brokerWorkspace?.workspaceId == selected.workspaceId,
+                          self.brokerWorkspace?.selectionGeneration == selected.selectionGeneration else { return }
+                    self.brokerPreviewManifest = manifest
+                    if self.section == "Screens",
+                       let packageOrientation = DeviceOrientation(rawValue: manifest.target.orientation) {
+                        self.orientation = packageOrientation
+                    }
+                    if manifest.connections.isEmpty {
+                        self.preview = assets; self.previewKey = UUID()
+                    } else {
+                        self.notice = "Offline preview for this package needs connection-provider review."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    guard self?.previewRequest == request else { return }
+                    self?.notice = "Verified package preview unavailable: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func revealBrokerSource() {
+        guard brokerMode, let client = brokerClient, let selected = brokerWorkspace,
+              let package = brokerSelectedPackage else { return }
+        Task.detached { [weak self] in
+            do {
+                let before = try client.workspaceStatus()
+                guard before.workspaceId == selected.workspaceId,
+                      before.selectionGeneration == selected.selectionGeneration else {
+                    throw MacBrokerApplyWorkflow.Failure.staleSelection
+                }
+                let matches = try client.listProjects().filter {
+                    $0.dashboardId == package.dashboardId
+                }
+                guard matches.count == 1, let project = matches.first else {
+                    await MainActor.run {
+                        self?.notice = "This package has no registered source folder to reveal."
+                    }
+                    return
+                }
+                let path = try client.projectPath(project.projectId)
+                let after = try client.workspaceStatus()
+                guard after.workspaceId == selected.workspaceId,
+                      after.selectionGeneration == selected.selectionGeneration else {
+                    throw MacBrokerApplyWorkflow.Failure.staleSelection
+                }
+                await MainActor.run {
+                    guard self?.brokerSelectedPackage == package else { return }
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                    self?.notice = "Edit source in its folder, then build with the compatible CLI."
+                }
+            } catch {
+                await MainActor.run {
+                    self?.error = "Source folder unavailable: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func rollbackBrokerScreen() { applyBrokerScreen(rollback: true) }
+
+    private func applyBrokerScreen(rollback: Bool = false) {
+        guard (rollback ? canRollbackBrokerApply : canApply),
+              let selected = brokerWorkspace, let environment = brokerEnvironment,
+              let deviceId = brokerScreenSet?.deviceId else { return }
+        let package = brokerSelectedPackage
+        let prior = brokerApplyRecord
+        guard rollback || package != nil else { return }
+        busy = true; error = nil
+        let verifiedGUI = brokerApplyVerified
+        let request = package.map { item in
+            MacBrokerApplyWorkflow.Request(selected: selected, deviceId: deviceId,
+                packages: [item], selectedDashboardId: item.dashboardId,
+                orientation: orientation, bindingIds: [])
+        }
+        Task.detached { [weak self] in
+            var workflow: MacBrokerApplyWorkflow?
+            var submissionStarted = false
+            do {
+                let expectedHome = DashboardPackageStore.defaultRoot().resolvingSymlinksInPath().path
+                if rollback {
+                    guard let prior else { throw MacBrokerApplyWorkflow.Failure.staleSelection }
+                    workflow = try await MacBrokerApplyWorkflow.prepareRollback(
+                        environment: environment, expectedControllerHome: expectedHome,
+                        selected: selected, deviceId: deviceId, prior: prior)
+                } else {
+                    guard let request else { throw MacBrokerApplyWorkflow.Failure.noPackages }
+                    workflow = try await MacBrokerApplyWorkflow.prepare(environment: environment,
+                        expectedControllerHome: expectedHome, request: request)
+                }
+                guard let workflow else { throw MacBrokerApplyWorkflow.Failure.noPackages }
+                let scope = try workflow.reviewText()
+                try workflow.revalidateForReview()
+                let approved = await MainActor.run { () -> Bool in
+                    guard let self, self.brokerMode,
+                          self.brokerWorkspace?.workspaceId == selected.workspaceId,
+                          self.brokerWorkspace?.selectionGeneration == selected.selectionGeneration,
+                          self.selection == deviceId,
+                          (rollback ? self.brokerApplyRecord == prior :
+                              self.brokerSelectedPackage == package) else { return false }
+                    return MacBrokerReviewDialog.approve(scope)
+                }
+                guard approved else {
+                    await workflow.close()
+                    await MainActor.run { self?.busy = false; self?.notice = "Deployment review closed without approval." }
+                    return
+                }
+                try workflow.revalidateForReview()
+                guard let workspaceId = selected.workspaceId,
+                      let generation = selected.selectionGeneration else {
+                    throw MacBrokerApplyWorkflow.Failure.staleSelection
+                }
+                let attempt = MacBrokerApplyJournal.Record(workspaceId: workspaceId,
+                    selectionGeneration: generation, deviceId: deviceId,
+                    planId: workflow.review.plan.planId, planHash: workflow.review.planHash,
+                    idempotencyKey: workflow.idempotencyKey, operationId: nil, phase: .submitting)
+                let journal = Self.applyJournal()
+                submissionStarted = true
+                await MainActor.run {
+                    self?.brokerApplyRecord = attempt
+                    self?.brokerApplyState = "Submitting exact plan; do not start another deployment."
+                }
+                let persisted = try MacBrokerApplyAction.submit(journal: journal,
+                    attempt: attempt, verifiedGUI: verifiedGUI) { markSubmissionBoundary in
+                    let operation = try workflow.applyAfterExplicitReview(willSubmit: markSubmissionBoundary)
+                    return .init(operationId: operation.operationId,
+                        phase: MacBrokerApplyJournal.Record.Phase(rawValue: operation.state.rawValue) ?? .unknown)
+                }
+                await workflow.close()
+                await MainActor.run {
+                    self?.busy = false; self?.brokerApplyRecord = persisted
+                    self?.brokerApplyState = "Apply operation \(persisted.phase.rawValue)."
+                    self?.notice = persisted.phase == .active
+                        ? (rollback ? "Previous screen set restored on device." : "Screen active on device.")
+                        : "Deployment \(persisted.phase.rawValue); check durable status before another attempt."
+                }
+            } catch {
+                await workflow?.close()
+                let saved = try? Self.applyJournal().load()
+                let matchingAttempt = saved?.planId == workflow?.review.plan.planId &&
+                    saved?.idempotencyKey == workflow?.idempotencyKey
+                await MainActor.run {
+                    self?.busy = false
+                    if let saved, (!submissionStarted || matchingAttempt ||
+                        (error as? MacBrokerApplyJournal.Failure) == .conflict) {
+                        self?.brokerApplyRecord = saved
+                    }
+                    if (error as? MacBrokerApplyJournal.Failure) == .conflict,
+                       let saved, saved.blocksNewApply {
+                        self?.brokerApplyState = "Another GUI Apply is pending; inspect its durable status."
+                        self?.error = "Apply is already in progress for this Mac. No package was sent by this attempt."
+                    } else if submissionStarted && !matchingAttempt {
+                        self?.brokerApplyVerified = false
+                        self?.brokerApplyState = "Apply journal unavailable; another Apply is disabled."
+                        self?.error = "Apply status cannot be read safely. No automatic resend occurred. \(error.localizedDescription)"
+                    } else if saved?.blocksNewApply == true {
+                        self?.brokerApplyState = "Apply outcome unknown or pending; inspect durable status."
+                        self?.error = "Apply may have reached the device. No automatic resend occurred. \(error.localizedDescription)"
+                    } else {
+                        self?.error = "Apply unavailable: \(error.localizedDescription)"
+                        if (error as? WorkbenchIPCError)?.code == .incompatibleOwner {
+                            self?.brokerApplyVerified = false
+                            self?.brokerApplyState = "GUI verification unavailable; Apply disabled"
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func inspectBrokerApply(reconcile: Bool = false) {
+        guard brokerMode, !busy, let client = brokerClient, let selected = brokerWorkspace,
+              let record = brokerApplyRecord,
+              selected.workspaceId == record.workspaceId,
+              selected.selectionGeneration == record.selectionGeneration else { return }
+        busy = true
+        Task.detached { [weak self] in
+            do {
+                let method: WorkbenchDeploymentMethod = record.operationId == nil ? .lookup :
+                    (reconcile ? .reconcile : .status)
+                var params: [String: Any] = [
+                    "schemaVersion": 1, "expectedWorkspaceId": record.workspaceId,
+                    "expectedSelectionGeneration": record.selectionGeneration]
+                if let operationId = record.operationId {
+                    params["operationId"] = operationId
+                } else {
+                    params["planId"] = record.planId
+                }
+                let result = try client.performDeployment(method: method, params: params)
+                guard let operation = result.operation,
+                      record.operationId == nil || operation.operationId == record.operationId,
+                      operation.planId == record.planId,
+                      operation.planHash == record.planHash,
+                      operation.idempotencyKey == record.idempotencyKey else {
+                    throw MacBrokerDeploymentAdapter.Error.changedPlan
+                }
+                let outcome = MacBrokerApplyAction.Outcome(operationId: operation.operationId,
+                    phase: MacBrokerApplyJournal.Record.Phase(rawValue: operation.state.rawValue) ?? .unknown)
+                let updated = try MacBrokerApplyAction.observed(journal: Self.applyJournal(),
+                    record: record, outcome: outcome)
+                await MainActor.run {
+                    self?.busy = false; self?.brokerApplyRecord = updated
+                    self?.brokerApplyState = "Apply operation \(updated.phase.rawValue)."
+                    self?.notice = updated.phase == .active ? "Screen active on device." :
+                        "Apply \(updated.phase.rawValue); no new package was sent by this check."
+                }
+            } catch {
+                let current = try? Self.applyJournal().load()
+                await MainActor.run {
+                    self?.busy = false
+                    if let current { self?.brokerApplyRecord = current }
+                    self?.error = "Apply status remains uncertain: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     func run<T: Sendable>(_ operation: @escaping @Sendable (ControllerService) throws -> T, completion: @escaping (T) -> Void) {
@@ -186,6 +674,7 @@ final class MacWorkbenchModel: ObservableObject {
         }
     }
     func refresh(probe: Bool = false, manual: Bool = false, periodic: Bool = false) {
+        if brokerMode { refreshCompatibleBroker(); return }
         if manual { manuallyRefreshingDevices = true; pendingManualProbe = true }
         // A wake, foreground, or manual probe that arrives while a refresh or
         // operation holds the queue is deferred, not dropped.
@@ -231,6 +720,13 @@ final class MacWorkbenchModel: ObservableObject {
         }
     }
     func select(_ id: String?) {
+        if brokerMode {
+            if section == "Devices", let id { selectBrokerDevice(id) }
+            else if let id, let package = brokerPackages.first(where: {
+                $0.dashboardId + ":" + $0.revision == id
+            }) { selectBrokerPackage(package) }
+            return
+        }
         previewRequest = UUID()
         selection = id; notice = nil; preview = nil; record = nil; previewIsApplied = false
         if section == "Screens" { selectedScreen = id }
@@ -298,7 +794,14 @@ final class MacWorkbenchModel: ObservableObject {
             }
         }
     }
-    func switchSection() { select(section == "Devices" ? devices.first?.id ?? nearby.first?.id : screens.first?.dashboardId) }
+    func switchSection() {
+        if brokerMode {
+            if section == "Devices", let first = brokerDevices.first { selectBrokerDevice(first.deviceId) }
+            else if let first = brokerPackages.first { selectBrokerPackage(first) }
+            return
+        }
+        select(section == "Devices" ? devices.first?.id ?? nearby.first?.id : screens.first?.dashboardId)
+    }
     func chooseScreen(_ id: String) {
         guard !busy else { return }
         guard deviceScreens.choose(id) else { error = "Choose up to twelve screens for this device."; return }
@@ -486,6 +989,32 @@ final class MacWorkbenchModel: ObservableObject {
     }
 
     func renameDevice(_ raw: String) {
+        if brokerMode {
+            guard !busy, let id = selection,
+                  brokerDevices.contains(where: { $0.deviceId == id }),
+                  let client = brokerClient else { return }
+            busy = true
+            Task.detached { [weak self] in
+                let outcome = Result {
+                    try WorkbenchDeviceNameForwarder.rename(client: client,
+                        deviceId: id, rawName: raw)
+                }
+                await MainActor.run {
+                    guard let self else { return }
+                    self.busy = false
+                    guard self.brokerMode else { return }
+                    switch outcome {
+                    case .success:
+                        self.sheet = nil
+                        self.notice = "Device name saved through the service."
+                        self.refreshCompatibleBroker()
+                    case .failure:
+                        self.error = "Device rename may be stale or its outcome unknown. Reload device settings before retrying."
+                    }
+                }
+            }
+            return
+        }
         guard let device, let name = DeviceDisplayName.sanitize(raw) else { return }
         run({ service in
             let record = try service.devices.directory.update(device.id) { $0.displayName = name; $0.device.profile.name = name }
@@ -529,6 +1058,33 @@ final class MacWorkbenchModel: ObservableObject {
         sheet = nil
     }
     func forgetDevice() {
+        if brokerMode {
+            guard !busy, let id = selection,
+                  brokerDevices.contains(where: { $0.deviceId == id }),
+                  let client = brokerClient else { return }
+            busy = true
+            Task.detached { [weak self] in
+                let outcome = Result { try client.forgetDevice(id) }
+                await MainActor.run {
+                    guard let self else { return }
+                    self.busy = false
+                    guard self.brokerMode else { return }
+                    switch outcome {
+                    case .success(let removed):
+                        if self.selection == id {
+                            self.selection = nil; self.brokerScreenSet = nil
+                        }
+                        self.notice = removed
+                            ? "Device removed from this Mac. Its installed screen remains until the device is disconnected locally."
+                            : "Device was already absent from this Mac."
+                        self.refreshCompatibleBroker()
+                    case .failure:
+                        self.error = "Forget outcome unknown. Refresh devices before trying again."
+                    }
+                }
+            }
+            return
+        }
         guard let device else { return }
         run({ try $0.devices.forget(deviceId: device.id) }) { _ in
             self.devices.removeAll { $0.id == device.id }; self.appliedScreens[device.id] = nil
@@ -556,6 +1112,7 @@ final class MacWorkbenchModel: ObservableObject {
         }
     }
     func applyScreen() {
+        if brokerMode { applyBrokerScreen(); return }
         guard let device, canApply else { return }
         let ids = deviceScreens.ids
         let visible = selectedScreen.flatMap { ids.contains($0) ? $0 : nil } ?? ids[0]

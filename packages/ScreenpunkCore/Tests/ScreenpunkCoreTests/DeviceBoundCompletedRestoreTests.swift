@@ -263,6 +263,19 @@ final class DeviceBoundCompletedRestoreTests:XCTestCase {
         XCTAssertThrowsError(try gate(r).verifyBoundRestoredRuntimeBinding(result));XCTAssertEqual(r.f.b.adds,adds)
         r.f.b.values[key]=saved
     }
+    func testUnifiedPrivateRuntimeSeedRequiresOriginalCompletedEntryAndCredentials() throws {
+        let ready = try completedNonempty(distinctCredentials())
+        let binding = try restored(ready), resources = gate(ready), adds = ready.f.b.adds
+        let seed = try resources.makeUnifiedRuntimeSeedExact(binding: binding, entryID: id(400))
+        XCTAssertTrue(seed.hasGeneric)
+        XCTAssertThrowsError(try resources.makeUnifiedRuntimeSeedExact(binding: binding, entryID: id(999)))
+        XCTAssertEqual(ready.f.b.adds, adds, "Issuing a runtime never re-provisions or copies private credentials")
+        let key = try XCTUnwrap(ready.f.b.values.keys.first(where: { $0.hasPrefix("credential.") }))
+        let original = ready.f.b.values.removeValue(forKey: key)
+        XCTAssertThrowsError(try resources.makeUnifiedRuntimeSeedExact(binding: binding, entryID: id(400)))
+        XCTAssertEqual(ready.f.b.adds, adds)
+        ready.f.b.values[key] = original
+    }
     func testMandatoryFakeAdmissionAndCallerCancellationSuppressLateCachedResponses()async throws {
         let r=try completedNonempty(),binding=try restored(r),driver=Driver(),http=HTTP(),adds=r.f.b.adds
         let api=try await gate(r).makeGenericRuntimeExact(binding:binding,entryID:id(400),admission:driver,http:http,webSocket:Socket(),resolver:Resolver(),clock:SystemClock())

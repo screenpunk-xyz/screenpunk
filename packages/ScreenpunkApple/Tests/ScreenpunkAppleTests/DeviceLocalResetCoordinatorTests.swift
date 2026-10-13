@@ -49,9 +49,14 @@ import ScreenpunkCore
         do { try await coordinator.retry(); XCTFail("completion uncertainty") } catch {}
         XCTAssertEqual(f.actions, ["suspend", "cleanup"])
         XCTAssertNil(try f.owner.refresh())
+        f.reset.failWrite = true
+        do { try await coordinator.retry(); XCTFail("repeated completion uncertainty") } catch {}
+        XCTAssertEqual(f.actions, ["suspend", "cleanup"])
+        XCTAssertNil(try f.owner.refresh())
+        XCTAssertThrowsError(try context.validate())
         try await coordinator.retry()
         XCTAssertEqual(f.actions, ["suspend", "cleanup"])
-        XCTAssertEqual(f.reset.methods, ["save", "save", "save", "save"])
+        XCTAssertEqual(f.reset.methods, ["save", "save", "save", "save", "save"])
     }
     func testNewResetIntentRetryUsesBeginMethod() async throws {
         let f = try fixture()
@@ -59,8 +64,13 @@ import ScreenpunkCore
         let context = try f.context(), coordinator = try f.coordinator()
         f.reset.failWrite = true
         do { try await coordinator.begin(context: context, resetID: UUID()); XCTFail("expected uncertainty") } catch {}
+        f.reset.failWrite = true
+        do { try await coordinator.retry(); XCTFail("repeated intent uncertainty") } catch {}
+        XCTAssertTrue(f.actions.isEmpty)
+        XCTAssertEqual(f.reset.methods, ["begin", "begin"])
+        XCTAssertThrowsError(try context.validate())
         try await coordinator.retry()
-        XCTAssertEqual(f.reset.methods, ["begin", "begin", "save"])
+        XCTAssertEqual(f.reset.methods, ["begin", "begin", "begin", "save"])
         XCTAssertEqual(f.actions, ["suspend", "cleanup"])
     }
     func testCleanupFailureRetainsPendingAndRepeatsSuspensionBeforeRetry() async throws {

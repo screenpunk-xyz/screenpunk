@@ -11,7 +11,8 @@ enum NativeInstallationStatusValue: Sendable {
         let rotatedAt: String
     }
     struct Current: Sendable {
-        let installationId: UUID, accountId: UUID, locationId: UUID, transitionId: UUID
+        let installationId: UUID, accountId: UUID, transitionId: UUID
+        let locationId: UUID?
         let generation: NativeGenerationReceipt
         let activation: NativeActivationReceipt
         let credential: Credential
@@ -46,12 +47,12 @@ enum NativeInstallationStatusCodec {
             case "current-generation":
                 try keys(root, ["kind", "installationId", "accountId", "locationId", "transitionId", "generation", "activation", "credential", "authority"])
                 let a = try activation(object(root, "activation"))
-                let i = try uuid(root, "installationId"), account = try uuid(root, "accountId"), location = try uuid(root, "locationId"), transition = try uuid(root, "transitionId")
-                guard i == a.installationId, account == a.accountId, location == a.locationId, transition == a.transitionId,
+                let i = try uuid(root, "installationId"), account = try uuid(root, "accountId"), location = try optionalLocation(root, "locationId"), transition = try uuid(root, "transitionId")
+                guard i == a.installationId, account == a.accountId, transition == a.transitionId,
                       let c = NativeInstallationStatusValue.Credential(rawValue: try string(root, "credential")),
                       let authority = NativeInstallationStatusValue.Authority(rawValue: try string(root, "authority")) else { throw Failure.invalidValue }
                 // Current generation can differ from the immutable initial generation.
-                return .currentGeneration(.init(installationId: i, accountId: account, locationId: location, transitionId: transition,
+                return .currentGeneration(.init(installationId: i, accountId: account, transitionId: transition, locationId: location,
                     generation: try generation(object(root, "generation")), activation: a, credential: c, authority: authority))
             default: throw Failure.invalidValue
             }
@@ -63,6 +64,10 @@ enum NativeInstallationStatusCodec {
     }
     private static func string(_ o: [String: Any], _ key: String) throws -> String {
         guard let value = o[key] as? String else { throw Failure.invalidValue }; return value
+    }
+    private static func optionalLocation(_ o: [String: Any], _ key: String) throws -> UUID? {
+        if o[key] is NSNull { return nil }
+        return try uuid(o, key)
     }
     private static func uuid(_ o: [String: Any], _ key: String) throws -> UUID {
         var value = try string(o, key)
@@ -90,14 +95,14 @@ enum NativeInstallationStatusCodec {
     private static func activation(_ o: [String: Any]) throws -> NativeActivationReceipt {
         try keys(o, ["installationId", "deviceId", "requestId", "accountId", "locationId", "transitionId", "activatedAt", "initialGeneration"])
         return try .init(installationId: uuid(o, "installationId"), deviceId: uuid(o, "deviceId"), requestId: uuid(o, "requestId"),
-            accountId: uuid(o, "accountId"), locationId: uuid(o, "locationId"), transitionId: uuid(o, "transitionId"),
+            accountId: uuid(o, "accountId"), locationId: optionalLocation(o, "locationId"), transitionId: uuid(o, "transitionId"),
             activatedAt: timestamp(o, "activatedAt"), initialGeneration: generation(object(o, "initialGeneration")))
     }
     private static func claim(_ o: [String: Any]) throws -> NativeClaimReceipt {
         try keys(o, ["installationId", "requestId", "transitionId", "challengeId", "accountId", "locationId", "createdAt", "expiresAt", "outcome"])
         guard let outcome = NativeClaimReceipt.Outcome(rawValue: try string(o, "outcome")) else { throw Failure.invalidValue }
         return try .init(installationId: uuid(o, "installationId"), requestId: uuid(o, "requestId"), transitionId: uuid(o, "transitionId"),
-            challengeId: uuid(o, "challengeId"), accountId: uuid(o, "accountId"), locationId: uuid(o, "locationId"),
+            challengeId: uuid(o, "challengeId"), accountId: uuid(o, "accountId"), locationId: optionalLocation(o, "locationId"),
             createdAt: timestamp(o, "createdAt"), expiresAt: timestamp(o, "expiresAt"), outcome: outcome)
     }
 }

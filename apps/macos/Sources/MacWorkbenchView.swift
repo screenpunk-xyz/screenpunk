@@ -47,7 +47,13 @@ struct MacWorkbenchView: View {
             case .renameScreen: RenameScreenSheet(model: model)
             case .screenIcon: ScreenIconSheet(model: model)
             case .deviceConnections:
-                if let id = model.connectionsDeviceID { GenericConnectionsSheet(model: model, deviceID: id) }
+                if let id = model.connectionsDeviceID {
+                    if model.brokerMode {
+                        BrokerDeviceConnectionsSheet(model: model, deviceID: id)
+                    } else {
+                        GenericConnectionsSheet(model: model, deviceID: id)
+                    }
+                }
             case .deviceSettings:
                 if let editor = model.settingsEditor { MacDeviceSettingsSheet(editor: editor) { model.sheet = nil } }
             }
@@ -61,13 +67,47 @@ struct MacWorkbenchView: View {
         .confirmationDialog("Delete this screen?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Screen", role: .destructive) { model.deleteScreen() }
         } message: { Text("It will be removed from your library. Screens already running on devices keep running.") }
+        .onDisappear { if model.brokerMode { model.detachCompatibleBroker() } }
     }
 
     private var sidebar: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    if model.section == "Devices" {
+                    if model.brokerMode {
+                        if model.section == "Devices" {
+                            sectionHeader("Devices", count: model.brokerDevices.count) {
+                                refreshDevicesButton
+                            }
+                            ForEach(model.brokerDevices, id: \.deviceId) { device in
+                                sidebarItem(id: device.deviceId, title: device.name,
+                                            subtitle: device.reachability,
+                                            symbol: model.deviceSymbol(device.name)) {
+                                    EmptyView()
+                                }.contextMenu {
+                                    Button("Rename Device…", systemImage: "pencil") {
+                                        model.selectBrokerDevice(device.deviceId)
+                                        model.sheet = .rename
+                                    }
+                                    Button("Forget Device…", systemImage: "trash", role: .destructive) {
+                                        model.selectBrokerDevice(device.deviceId)
+                                        confirmForget = true
+                                    }
+                                }
+                            }
+                        } else {
+                            sectionHeader("Screens", count: model.brokerPackages.count) {
+                                refreshDevicesButton
+                            }
+                            ForEach(Array(model.brokerPackages.enumerated()), id: \.offset) { _, package in
+                                sidebarNavigationItem(package.name, symbol: model.symbol(for: package.dashboardId),
+                                    selected: model.brokerSelectedPackage == package) {
+                                    connectionsSelected = false
+                                    model.selectBrokerPackage(package)
+                                }
+                            }
+                        }
+                    } else if model.section == "Devices" {
                         ForEach(model.nearby) { entry in
                             sidebarItem(id: entry.id, title: entry.title, subtitle: "Ready to pair", symbol: model.deviceSymbol(entry.title), rowID: "nearby:\(entry.id)") {
                                 if model.selection != entry.id {
@@ -138,12 +178,14 @@ struct MacWorkbenchView: View {
                 .padding(.horizontal, 16).padding(.top, 12)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 12) {
-                Divider()
-                sidebarNavigationItem("Plugins", symbol: "puzzlepiece.extension", selected: connectionsSelected, count: activeConnectionCount) {
-                    connectionsSelected = true
-                }
-            }.padding(16)
+            if !model.brokerMode {
+                VStack(spacing: 12) {
+                    Divider()
+                    sidebarNavigationItem("Plugins", symbol: "puzzlepiece.extension", selected: connectionsSelected, count: activeConnectionCount) {
+                        connectionsSelected = true
+                    }
+                }.padding(16)
+            }
         }
     }
 
@@ -176,6 +218,21 @@ struct MacWorkbenchView: View {
     }
     private func moveSidebarSelection(_ offset: Int) {
         connectionsSelected = false
+        if model.brokerMode {
+            if model.section == "Devices" {
+                let ids = model.brokerDevices.map(\.deviceId)
+                guard !ids.isEmpty else { return }
+                let index = model.selection.flatMap { ids.firstIndex(of: $0) } ?? (offset > 0 ? -1 : ids.count)
+                model.selectBrokerDevice(ids[min(max(index + offset, 0), ids.count - 1)])
+            } else {
+                let packages = model.brokerPackages
+                guard !packages.isEmpty else { return }
+                let index = model.brokerSelectedPackage.flatMap { packages.firstIndex(of: $0) }
+                    ?? (offset > 0 ? -1 : packages.count)
+                model.selectBrokerPackage(packages[min(max(index + offset, 0), packages.count - 1)])
+            }
+            return
+        }
         let ids = model.section == "Devices" ? model.nearby.map(\.id) + model.devices.map(\.id) : model.screens.map(\.dashboardId)
         guard !ids.isEmpty else { return }
         let index = model.selection.flatMap { ids.firstIndex(of: $0) } ?? (offset > 0 ? -1 : ids.count)
@@ -284,7 +341,49 @@ struct MacWorkbenchView: View {
     }
 
     @ToolbarContentBuilder private var detailToolbar: some ToolbarContent {
-        if connectionsSelected {
+        if model.brokerMode {
+            if model.section == "Devices", model.brokerScreenSet != nil {
+                ToolbarItem(placement: .navigation) {
+                    Text(model.brokerScreenSet?.profile.model ?? "Device")
+                        .foregroundStyle(.secondary)
+                }
+                ToolbarItem(placement: .principal) {
+                    Menu(model.brokerSelectedPackage?.name ?? "Choose Screen") {
+                        ForEach(Array(model.brokerPackages.enumerated()), id: \.offset) { _, package in
+                            Button(package.name + " · " + String(package.revision.prefix(12))) {
+                                model.selectBrokerPackage(package)
+                            }
+                        }
+                    }.workbenchButton()
+                }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    orientationPicker
+                    Button("Restore Previous Set…", systemImage: "arrow.uturn.backward") {
+                        model.rollbackBrokerScreen()
+                    }
+                    .workbenchButton()
+                    .disabled(!model.canRollbackBrokerApply)
+                    Button { model.applyScreen() } label: {
+                        Label(model.applyLabel, systemImage: "arrow.up.doc")
+                            .foregroundStyle(.white)
+                    }
+                    .workbenchButton(prominent: true)
+                    .tint(WorkbenchPalette.accent)
+                    .controlSize(.large)
+                    .disabled(!model.canApply)
+                }
+            } else if model.section == "Screens", model.brokerSelectedPackage != nil {
+                ToolbarItem(placement: .navigation) {
+                    Button("Reveal Source…", systemImage: "curlybraces") {
+                        model.revealBrokerSource()
+                    }.workbenchButton()
+                }
+            }
+            ToolbarItem(placement: .status) {
+                if model.busy { ProgressView().controlSize(.small) }
+                else { Text(model.brokerApplyState).font(.caption).foregroundStyle(.secondary) }
+            }
+        } else if connectionsSelected {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -397,10 +496,18 @@ struct MacWorkbenchView: View {
         else if model.detected != nil && model.section == "Devices" { pairingState }
         else if let store = model.preview {
             VStack(spacing: 0) {
-                ScreenCanvas(store: store, size: model.previewSize, deviceFrame: model.section == "Devices", dashboardId: model.previewDashboardId, revision: model.previewRevision, usesHomeAssistant: model.previewUsesHomeAssistant, manifest: model.previewManifest, publicConnectionController: model.service,
+                ScreenCanvas(store: store, size: model.previewSize, deviceFrame: model.section == "Devices", dashboardId: model.previewDashboardId, revision: model.previewRevision, usesHomeAssistant: model.previewUsesHomeAssistant, manifest: model.previewManifest, publicConnectionController: model.service, serviceInvocation: model.cloudServiceInvocation,
                              previous: previewNeighbor(-1), next: previewNeighbor(1),
                              carouselPosition: previewPosition, onBrowse: model.browseScreen).id(model.previewKey)
+                if model.brokerMode { brokerOperationBar }
             }
+        } else if model.brokerMode {
+            ContentUnavailableView {
+                Label("Choose a Selected-Workspace Screen", systemImage: "rectangle.on.rectangle")
+            } description: {
+                Text("The native preview opens verified offline package bytes. Connected packages and unsupported provider actions remain unavailable in service mode.")
+            }
+            brokerOperationBar
         } else if model.device != nil {
             ContentUnavailableView {
                 Label("Make This Device Useful Again", systemImage: "rectangle.on.rectangle")
@@ -423,6 +530,19 @@ struct MacWorkbenchView: View {
                 Button("Add by Address…", systemImage: "plus") { model.sheet = .manual }.workbenchButton()
             }
         }
+    }
+
+    private var brokerOperationBar: some View {
+        HStack(spacing: 12) {
+            Text("Offline preview · not device state").font(.caption).foregroundStyle(.secondary)
+            Text(model.brokerApplyState).font(.caption).foregroundStyle(.secondary)
+            if model.brokerApplyRecord?.operationId != nil {
+                Button("Check Apply Status") { model.inspectBrokerApply() }.disabled(model.busy)
+                Button("Reconcile") { model.inspectBrokerApply(reconcile: true) }.disabled(model.busy)
+            } else if model.brokerApplyRecord?.blocksNewApply == true {
+                Button("Look Up Apply") { model.inspectBrokerApply() }.disabled(model.busy)
+            }
+        }.padding(12).frame(maxWidth: .infinity)
     }
     private var previewPosition: String? {
         guard model.section == "Devices", model.deviceScreens.multiple, model.deviceScreens.ids.count > 1,
@@ -485,6 +605,7 @@ struct ScreenCanvas: View {
     var usesHomeAssistant = false
     var manifest: DashboardManifest?
     var publicConnectionController: ControllerService?
+    var serviceInvocation: CloudScreenServiceInvocation?
     @State private var publicSession: PublicReadSession?
     @State private var publicApprovalNeeded = false
     @State private var publicReadError: String?
@@ -520,7 +641,7 @@ struct ScreenCanvas: View {
                             .offset(x: spread).allowsHitTesting(false).accessibilityHidden(true)
                     }
                 }
-                DashboardWebView(store: store, homeAssistant: homeAssistant, publicReads: publicSession?.runtime, rasterResources: publicSession?.resources, revision: revision, onUnlinkHold: {}).id((homeAssistant == nil ? "loading" : "live") + (publicSession == nil ? "" : "public"))
+                DashboardWebView(store: store, homeAssistant: homeAssistant, publicReads: publicSession?.runtime, rasterResources: publicSession?.resources, revision: revision, serviceInvocation: serviceInvocation, onUnlinkHold: {}).id((homeAssistant == nil ? "loading" : "live") + (publicSession == nil ? "" : "public"))
                     .frame(width: size.width, height: size.height)
                     .clipShape(.rect(cornerRadius: deviceFrame ? 28 : 0))
                     .overlay { if deviceFrame { RoundedRectangle(cornerRadius: 28).stroke(.primary.opacity(0.2), lineWidth: 5) } }

@@ -1,10 +1,10 @@
 import XCTest
 @testable import ScreenpunkCore
 final class NativeEnrollmentEvidenceCodecTests: XCTestCase {
-    func fixture(terminal: Bool = false) throws -> (DeviceManagementFormatHistory, NativeEnrollmentEvidence) {
+    func fixture(terminal: Bool = false, locationId: UUID? = UUID()) throws -> (DeviceManagementFormatHistory, NativeEnrollmentEvidence) {
         let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: UUID(), credentialReference: "native", format: .nativeInstallationV1)
         let history = try DeviceManagementFormatHistory(transitions: [.init(transitionID: binding.transitionID, phase: .intent)], credentials: [binding])
-        let id = UUID(), input = try NativeClaimInput(requestId: UUID(), transitionId: binding.transitionID, accountId: UUID(), locationId: UUID(), name: "Cafe\u{301} 😀", profile: " iPad ")
+        let id = UUID(), input = try NativeClaimInput(requestId: UUID(), transitionId: binding.transitionID, accountId: UUID(), locationId: locationId, name: "Cafe\u{301} 😀", profile: " iPad ")
         var e = try NativeEnrollmentRecovery.proposingClaim(in: .init(), history: history, enrollmentId: id, binding: binding, input: input)
         if terminal {
             let receipt = try NativeClaimReceipt(installationId: UUID(), requestId: input.requestId, transitionId: input.transitionId, challengeId: UUID(), accountId: input.accountId, locationId: input.locationId, createdAt: "2026-10-01T01:00:00.125000+01:00", expiresAt: "2026-10-01T01:10:00.125000+01:00", outcome: .cancelled)
@@ -16,6 +16,24 @@ final class NativeEnrollmentEvidenceCodecTests: XCTestCase {
         try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEnrollmentEvidenceCodec.encode(e, history: h)) as? [String: Any])
     }
     func data(_ o: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: o, options: [.sortedKeys, .withoutEscapingSlashes]) }
+    func testUnassignedRoundtripRetryAndMalformedLocation() throws {
+        let (h,e) = try fixture(terminal: true, locationId: nil)
+        let bytes = try NativeEnrollmentEvidenceCodec.encode(e, history: h)
+        let decoded = try NativeEnrollmentEvidenceCodec.decode(bytes, history: h)
+        XCTAssertNil(decoded.enrollments[0].claimInput.locationId)
+        XCTAssertEqual(try nativeEnrollmentBytes(decoded), try nativeEnrollmentBytes(e))
+        let r = decoded.enrollments[0]
+        guard case .terminalClaimObserved(let receipt) = r.events.last else { return XCTFail() }
+        XCTAssertNil(receipt.locationId)
+        let retry = try NativeEnrollmentRecovery.proposingClaimObservation(in: decoded, history: h, enrollmentId: r.localEnrollmentId, result: .claim(receipt))
+        XCTAssertEqual(try nativeEnrollmentBytes(retry), try nativeEnrollmentBytes(decoded))
+        let text = String(decoding: bytes, as: UTF8.self)
+        XCTAssertTrue(text.contains("\"locationId\":null"))
+        for invalid in ["true", "false", "0", "\"invalid\"", "{}", "[]"] {
+            XCTAssertThrowsError(try NativeEnrollmentEvidenceCodec.decode(Data(text.replacingOccurrences(of: "\"locationId\":null", with: "\"locationId\":" + invalid).utf8), history: h))
+        }
+        XCTAssertThrowsError(try NativeEnrollmentEvidenceCodec.decode(Data(text.replacingOccurrences(of: "\"locationId\":null,", with: "").utf8), history: h))
+    }
     func testExactRoundtripTerminalAndFencedProposalOnly() throws {
         for terminal in [false,true] {
             let (h,e) = try fixture(terminal: terminal)
@@ -88,7 +106,7 @@ final class NativeEnrollmentEvidenceCodecTests: XCTestCase {
         XCTAssertThrowsError(try NativeEnrollmentEvidenceCodec.decode(data(o), history: two))
     }
     func testActivationRoundtripAndNestedUnknownFields() throws {
-        let (h,first) = try fixture()
+        let (h,first) = try fixture(locationId: nil)
         let r = first.enrollments[0], c = try NativeClaimReceipt(installationId: UUID(), requestId: r.claimInput.requestId, transitionId: r.claimInput.transitionId, challengeId: UUID(), accountId: r.claimInput.accountId, locationId: r.claimInput.locationId, createdAt: "2026-10-01T00:00:00.125Z", expiresAt: "2026-10-01T00:10:00.125Z", outcome: .pending)
         var e = try NativeEnrollmentRecovery.proposingClaimObservation(in: first, history: h, enrollmentId: r.localEnrollmentId, result: .claim(c))
         let request = UUID()

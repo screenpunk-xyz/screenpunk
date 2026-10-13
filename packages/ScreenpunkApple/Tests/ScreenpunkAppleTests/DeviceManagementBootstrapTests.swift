@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 import ScreenpunkCore
 @testable import ScreenpunkApple
 
@@ -20,7 +21,7 @@ final class DeviceManagementBootstrapTests: XCTestCase {
         XCTAssertEqual(calls, 2); XCTAssertEqual(bootstrap.startupAttempt, 2)
         XCTAssertEqual(bootstrap.startupDiagnostic?.retryChecksOriginalStateOnly, true)
     }
-    func testPreparedOwnerSetupFailureRetainsOwnerAndRetriesBeforeDeferredConstruction() throws {
+    func testPreparedOwnerSetupFailureRetainsOwnerAndRetriesBeforeDeferredConstruction() async throws {
         let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: parent) }
@@ -55,15 +56,21 @@ final class DeviceManagementBootstrapTests: XCTestCase {
         XCTAssertEqual(bootstrap.startupAttempt, 1)
         XCTAssertEqual(bootstrap.startupDiagnostic?.stage, .supportAnchor)
         XCTAssertEqual(bootstrap.startupDiagnostic?.retryChecksOriginalStateOnly, true)
+        // Retry first completes the retained owner's asynchronous reset preflight.
+        let configured = expectation(description: "original owner reaches deferred lifecycle construction")
+        let observation = bootstrap.$startupDiagnostic.first(where: { $0?.stage == .resetConfiguration }).sink { _ in configured.fulfill() }
+        defer { observation.cancel() }
         bootstrap.retry()
+        XCTAssertEqual(constructions, 0); XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0)
+        await fulfillment(of: [configured], timeout: 2)
         XCTAssertEqual(preparations, 1); XCTAssertEqual(constructions, 1)
         XCTAssertEqual(creations, 1); XCTAssertEqual(parentSyncs, 2)
-        XCTAssertEqual(bootstrap.startupAttempt, 2)
+        XCTAssertEqual(bootstrap.startupAttempt, 3, "Initial failure, explicit retry, then continuation after reset preflight")
         XCTAssertEqual(bootstrap.startupDiagnostic?.stage, .resetConfiguration)
         XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0)
         XCTAssertEqual(try inspector.inspect().classification, .confirmedAbsent)
     }
-    func testPreparedOwnerManagedPresenceBlocksDeferredLifecycleAndAllFactories() throws {
+    func testPreparedOwnerManagedPresenceBlocksDeferredLifecycleAndAllFactories() async throws {
         let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: parent) }
@@ -74,7 +81,13 @@ final class DeviceManagementBootstrapTests: XCTestCase {
         let setup = try DeviceProductionSupportAnchorSetup.fixture(existingPhysicalParent: parent, boundary: { _ in setupEffects += 1 })
         let owner = DeviceManagementAuthority(journal: BootstrapJournal(), credentials: .init(backend: BootstrapBackend(), random: { Data() }), reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor), supportAnchorSetup: setup)
         let bootstrap = DeviceManagementBootstrap(preparationFactory: { .init(authority: owner, constructLifecycle: { constructions += 1; throw BootstrapError.factory }) }, retained: { retained += 1; return .empty }, hostFactory: { _ in hosts += 1; throw BootstrapError.factory })
+        let blocked = expectation(description: "managed presence blocks after original-owner reset preflight")
+        let observation = bootstrap.$startupDiagnostic.first(where: { $0?.stage == .namespace }).sink { _ in blocked.fulfill() }
+        defer { observation.cancel() }
         bootstrap.start(); bootstrap.retry()
+        XCTAssertEqual(setupEffects, 0); XCTAssertEqual(constructions, 0); XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0)
+        await fulfillment(of: [blocked], timeout: 2)
+        bootstrap.retry()
         XCTAssertEqual(setupEffects, 0); XCTAssertEqual(constructions, 0); XCTAssertEqual(hosts, 0); XCTAssertEqual(retained, 0)
         guard case .blocked(let snapshot) = bootstrap.state else { return XCTFail("managed") }
         XCTAssertTrue(snapshot.screens.isEmpty)

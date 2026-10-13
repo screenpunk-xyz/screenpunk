@@ -24,11 +24,11 @@ final class CloudAccountJourneyTests: XCTestCase {
         let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
         var actions = CloudAccountJourneyActions(lifecycle: lifecycle, presentation: CloudProviderPresentation(), availability: .qualified)
         let account = UUID(), location = UUID()
-        var captured: (UUID, UUID, String, String)?
-        actions.enrollDevice = { captured = ($0, $1, $2, $3) }
-        actions.enrollDevice?(account, location, "Tester device", "iPad")
+        var captured: (UUID, UUID?, String)?
+        actions.enrollDevice = { captured = ($0, $1, $2) }
+        actions.enrollDevice?(account, location, "Tester device")
         XCTAssertEqual(captured?.0, account); XCTAssertEqual(captured?.1, location)
-        XCTAssertEqual(captured?.2, "Tester device"); XCTAssertEqual(captured?.3, "iPad")
+        XCTAssertEqual(captured?.2, "Tester device")
         XCTAssertNil(lifecycle.coordinator)
     }
 

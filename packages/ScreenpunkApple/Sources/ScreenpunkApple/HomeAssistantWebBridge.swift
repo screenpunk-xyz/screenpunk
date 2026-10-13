@@ -1,5 +1,5 @@
 import Foundation
-import ScreenpunkCore
+@_spi(ManagedRender) import ScreenpunkCore
 import WebKit
 
 /// Only the top-level package frame may invoke approved native operations. No
@@ -9,6 +9,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private weak var webView: WKWebView?
     private let runtime: HomeAssistantDeviceRuntime?
     private let connections: ConnectionRuntime?
+    private let managedRuntime: DeviceUnifiedManagedRuntime?
     private let navigation: DashboardEventRuntime?
     private let revision: String
     private let cameras: CameraPlaybackController?
@@ -45,15 +46,17 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     func setActive(_ value: Bool) {
         guard !isSuspendedForReset, active != value else { return }
         active = value
-        if !value { voiceTapAt = nil; googleTV.close(); googleTVADB.close() }
+        if !value { voiceTapAt = nil; googleTV.close(); googleTVADB.close(); cameras?.stopAll() }
         status(navigation?.status ?? [:])
     }
 
-    init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime? = nil, navigation: DashboardEventRuntime? = nil,
+    init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime? = nil, managedRuntime: DeviceUnifiedManagedRuntime? = nil, navigation: DashboardEventRuntime? = nil,
          revision: String, mapManifest: DashboardManifest? = nil, preferenceStore: ScreenPreferenceStore? = nil, calendarService: GoogleCalendarDeviceService? = nil, stateReadOnly: Bool = false, publicReads: PublicReadRuntime? = nil, resources: PublicRasterResources? = nil, onHealth: @escaping (Bool) -> Void) {
-        self.cameras = runtime.map { CameraPlaybackController(resolver: $0, revision: revision) }
+        if let managedRuntime {
+            self.cameras = CameraPlaybackController(resolver: DeviceUnifiedCameraResolver(runtime: managedRuntime), revision: revision)
+        } else { self.cameras = runtime.map { CameraPlaybackController(resolver: $0, revision: revision) } }
         self.publicReads = publicReads; self.resources = resources
-        self.runtime = runtime; self.connections = connections; self.navigation = navigation
+        self.runtime = runtime; self.connections = connections; self.managedRuntime = managedRuntime; self.navigation = navigation
         self.mapManifest = mapManifest
         let preferenceStore = preferenceStore ?? .shared
         self.calendarService = calendarService ?? .shared
@@ -104,10 +107,12 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
 
     // Frame/origin/size validation remains at the sole script-message entry point.
     func handleValidatedBody(_ body: [String: Any], id: String) {
-        guard !isSuspendedForReset else { return }
+        guard !isSuspendedForReset, managedRuntime == nil || (try? managedRuntime?.verifyResources()) != nil else { return }
         guard body["protocolVersion"] as? Int == 1, body["kind"] as? String == "request" else {
             reply(id: id, error: "validation_failed"); return
         }
+        if let managedRuntime, !["runtime.ready", "runtime.onStatus"].contains(body["method"] as? String ?? ""),
+            (try? managedRuntime.verifyActive()) == nil { reply(id: id, error: "permission_required"); return }
         switch body["method"] as? String {
         case "runtime.ready": reply(id: id, value: NSNull())
         case "runtime.onStatus":
@@ -290,7 +295,9 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
                     if subscribe { try await self.subscribe(id: id, alias: alias, operation: operation, parameters: parameters, generation: generation) }
                     else {
                         let result: ConnectionHTTPResult
-                        if alias == "home", let runtime = self.runtime {
+                        if let managedRuntime = self.managedRuntime {
+                            result = try await managedRuntime.request(alias: alias, operation: operation, parameters: parameters)
+                        } else if alias == "home", let runtime = self.runtime {
                             result = try await runtime.request(revision: self.revision, alias: alias, operation: operation, parameters: parameters)
                         } else if let connections = self.connections {
                             result = try await connections.request(alias: alias, operation: operation, parameters: parameters)
@@ -309,11 +316,21 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private func current(_ generation: UUID) -> Bool { !isSuspendedForReset && generation == documentGeneration && !Task.isCancelled }
+    private func current(_ generation: UUID) -> Bool {
+        guard !isSuspendedForReset, generation == documentGeneration, !Task.isCancelled else { return false }
+        if let managedRuntime { return (try? managedRuntime.verifyActive()) != nil }; return true
+    }
 
     private func subscribe(id: String, alias: String, operation: String, parameters: [String: String], generation: UUID) async throws {
         guard current(generation) else { return }
-        if alias == "home", let runtime {
+        if let managedRuntime {
+            let stream = try await managedRuntime.subscribe(alias: alias, operation: operation, parameters: parameters)
+            guard current(generation) else { return }; reply(id: id, value: NSNull())
+            for try await update in stream {
+                guard current(generation) else { return }; onHealth(true)
+                event(id: id, alias: alias, operation: operation, data: update.data, snapshot: update.isSnapshot)
+            }
+        } else if alias == "home", let runtime {
             let stream = try await runtime.subscribeStates(revision: revision, alias: alias, operation: operation, parameters: parameters)
             guard current(generation) else { return }
             reply(id: id, value: NSNull())
