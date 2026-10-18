@@ -9,7 +9,7 @@ public enum ControllerCloudError: Error, Equatable {
 extension ControllerCloudError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .sourceLimitExceeded: return "This project exceeds the controller source limit of 2,000 files, 25 MiB total, or 5 MiB per file. Source was not truncated or applied."
+        case .sourceLimitExceeded: return "This project exceeds the controller source limit of 2,000 files, 50 MiB total, 52,428,801 bytes per file, or a 71,000,000-byte sync body. Source was not truncated or applied."
         case .conflict: return "The project changed after review. Synchronize and review both revisions again."
         case .accountMismatch: return "This project is linked to a different cloud account."
         case .deletedProject: return "The cloud project is unavailable or deleted. Local source is preserved."

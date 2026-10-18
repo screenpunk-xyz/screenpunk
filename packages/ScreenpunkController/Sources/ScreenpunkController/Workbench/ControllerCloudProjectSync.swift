@@ -1,15 +1,41 @@
 import Foundation
 #if os(macOS)
 
+/// Cloud `POST /controller/v1/workspaces/{id}/projects/{id}/source/sync` bounds.
+/// Total raw bytes are 50 MiB. A file's standard base64 encoding may be at most
+/// 69,905,068 characters, which is 52,428,801 raw bytes (50 MiB and one extra
+/// byte encode to the same length; the next byte is 69,905,072 characters).
+/// The JSON body may be at most 71,000,000 bytes, and at most 2,000 files.
+public enum ControllerCloudSourceLimits {
+    public static let maximumFiles = 2_000
+    public static let maximumTotalBytes = 50 * 1024 * 1024
+    public static let maximumFileBase64Characters = 69_905_068
+    public static let maximumFileBytes = 52_428_801
+    public static let maximumSyncBodyBytes = 71_000_000
+    public static func base64CharacterCount(_ rawBytes: Int) -> Int {
+        rawBytes > 0 ? 4 * ((rawBytes + 2) / 3) : 0
+    }
+    public static func allowsSyncBody(byteCount: Int) -> Bool {
+        (0...maximumSyncBodyBytes).contains(byteCount)
+    }
+    /// Upper bound on default `JSONEncoder` output for a snapshot `validate()` accepts.
+    /// Quotes and solidus characters expand from one byte to two, and splitting the
+    /// total across every file adds at most four base64 characters of padding each.
+    public static let maximumSnapshotJSONBytes =
+        (base64CharacterCount(maximumTotalBytes) + maximumFiles * 4 + maximumFiles * 4_096) * 2
+        + 8_192 + maximumFiles * 16
+}
+
 public struct ControllerCloudSourceSnapshot: Codable, Sendable, Equatable {
     public let revision: String
     public let files: [String: Data]
     public init(revision: String, files: [String: Data]) { self.revision = revision; self.files = files }
     public func validate() throws {
-        guard files.count <= 2_000, files.values.reduce(0, {$0 + $1.count}) <= 25 * 1024 * 1024 else { throw ControllerCloudError.sourceLimitExceeded }
+        guard files.count <= ControllerCloudSourceLimits.maximumFiles,
+              files.values.reduce(0, {$0 + $1.count}) <= ControllerCloudSourceLimits.maximumTotalBytes else { throw ControllerCloudError.sourceLimitExceeded }
         var paths = WorkspacePathCollisionDetector()
         for (path, data) in files {
-            guard data.count <= 5 * 1024 * 1024 else { throw ControllerCloudError.sourceLimitExceeded }
+            guard data.count <= ControllerCloudSourceLimits.maximumFileBytes else { throw ControllerCloudError.sourceLimitExceeded }
             guard WorkspaceValidation.member(path), !ControllerCloudSourcePolicy.excludes(path) else { throw ControllerCloudError.invalidSource }
             try paths.insert(path)
         }

@@ -133,8 +133,8 @@ public struct ControllerCloudHTTPProjects: ControllerCloudProjectRemote {
             let suffix = cursor.map { "?cursor=" + $0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)! } ?? ""
             let manifest = try await session.request(prefix + "/versions/\(head)/manifest" + suffix, as: Manifest.self)
             for entry in manifest.files {
-                guard entry.size >= 0, entry.size <= 5 * 1024 * 1024,
-                      files.count < 2_000, files[entry.path] == nil else { throw ControllerCloudError.invalidSource }
+                guard entry.size >= 0, entry.size <= ControllerCloudSourceLimits.maximumFileBytes,
+                      files.count < ControllerCloudSourceLimits.maximumFiles, files[entry.path] == nil else { throw ControllerCloudError.invalidSource }
                 let body = try JSONSerialization.data(withJSONObject: ["versionId": head, "path": entry.path, "encoding": "base64"])
                 let read = try await session.request(prefix + "/source/read", method: "POST", body: body, as: Read.self)
                 guard read.versionId == head, read.path == entry.path, read.encoding == "base64",
@@ -144,7 +144,7 @@ public struct ControllerCloudHTTPProjects: ControllerCloudProjectRemote {
                     throw ControllerCloudError.invalidResponse
                 }
                 totalBytes += data.count
-                guard totalBytes <= 25 * 1024 * 1024 else { throw ControllerCloudError.invalidSource }
+                guard totalBytes <= ControllerCloudSourceLimits.maximumTotalBytes else { throw ControllerCloudError.invalidSource }
                 files[entry.path] = data
             }
             cursor = manifest.nextCursor
@@ -162,6 +162,7 @@ public struct ControllerCloudHTTPProjects: ControllerCloudProjectRemote {
             "idempotencyKey": idempotencyKey,
             "files": files.keys.sorted().map { ["path": $0, "mediaType": "application/octet-stream", "encoding": "base64", "data": files[$0]!.base64EncodedString()] }
         ])
+        guard ControllerCloudSourceLimits.allowsSyncBody(byteCount: body.count) else { throw ControllerCloudError.sourceLimitExceeded }
         do {
             let version = try await session.request(try path(workspaceId, projectId) + "/source/sync", method: "POST", body: body, as: Version.self)
             guard UUID(uuidString: version.id) != nil else { throw ControllerCloudError.invalidResponse }
