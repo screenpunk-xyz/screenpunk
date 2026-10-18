@@ -31,6 +31,8 @@ public enum ControllerCloudJSON: Codable, Sendable, Equatable {
     }
 }
 public struct ControllerCloudDeploymentReview: Codable, Sendable, Equatable, Identifiable {
+    /// Cloud deployment review accepts at most this many removal entry IDs.
+    public static let maximumRemoveEntryIds = 32
     public var id: String { operationId }
     public let schemaVersion: Int
     public let publicationId: String
@@ -41,10 +43,14 @@ public struct ControllerCloudDeploymentReview: Codable, Sendable, Equatable, Ide
     public let resultingSet: ControllerCloudJSON
     public let resultingSetDigest: String
     public func validate() throws {
+        // The API parses each removal as a UUID, so case variants are one entry.
+        let removalIds = removeEntryIds.compactMap { UUID(uuidString: $0) }
         guard schemaVersion == 1,
               [publicationId, installationId, operationId].allSatisfy({ UUID(uuidString: $0) != nil }),
               !expectedGenerationId.isEmpty, !resultingSetDigest.isEmpty,
-              removeEntryIds.count <= 2_000 else { throw ControllerCloudError.invalidResponse }
+              removeEntryIds.count <= Self.maximumRemoveEntryIds,
+              removalIds.count == removeEntryIds.count,
+              Set(removalIds).count == removalIds.count else { throw ControllerCloudError.invalidResponse }
     }
     public var summary: String {
         "Installation: \(installationId)\nPublication: \(publicationId)\nOperation: \(operationId)\nReviewed generation: \(expectedGenerationId)\nExplicit removals: \(removeEntryIds.count)\n\(resultingSet.prettyPrinted)"

@@ -206,5 +206,37 @@ final class ControllerCloudWorkbenchTests: XCTestCase {
         if let output=ProcessInfo.processInfo.environment["SCREENPUNK_TEST_NATIVE_ARCHIVE_OUT"] {try archive.write(to:URL(fileURLWithPath:output))}
         XCTAssertThrowsError(try ControllerCloudNativeArchive.encode(manifest:manifest,files:["index.html":Data("modified".utf8)]))
     }
+    func testDeploymentReviewRemovalIdsMatchCloudContract() throws {
+        func entry(_ n: Int) -> String { String(format: "00000000-0000-4000-8000-%012d", n) }
+        func review(_ removals: [String]) -> ControllerCloudDeploymentReview {
+            ControllerCloudDeploymentReview(schemaVersion: 1,
+                publicationId: "05f76a3e-5a44-4cf0-8a5b-0d527f866591",
+                installationId: "cdbdf510-4785-44f9-860c-9bf9be25a318",
+                operationId: "ee643e93-5f50-4f44-9a84-1c430e57dfe0",
+                removeEntryIds: removals,
+                expectedGenerationId: "26acbf68-6685-4854-a1cf-43c3638d3767",
+                resultingSet: .object([:]),
+                resultingSetDigest: "9ba262c7a333ceeff9a94374571d110c11162929a5815a756589a6fd50391536")
+        }
+        func accept(_ removals: [String], _ label: String) {
+            XCTAssertNoThrow(try review(removals).validate(), label)
+        }
+        func reject(_ removals: [String], _ label: String) {
+            XCTAssertThrowsError(try review(removals).validate(), label) {
+                XCTAssertEqual($0 as? ControllerCloudError, .invalidResponse, label)
+            }
+        }
+        let lower = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        let upper = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+        XCTAssertEqual(ControllerCloudDeploymentReview.maximumRemoveEntryIds, 32)
+        accept([], "zero removals")
+        accept((0..<32).map(entry), "32 unique removal ids")
+        accept([upper], "uppercase uuid")
+        accept([upper, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"], "distinct mixed-case uuids")
+        reject((0..<33).map(entry), "33 removal ids")
+        reject(["not-a-uuid"], "invalid uuid")
+        reject([entry(1), entry(1)], "duplicate uuid")
+        reject([lower, upper], "case-variant duplicate uuid")
+    }
 }
 #endif
