@@ -3,7 +3,7 @@
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 105697,
-      "sha256": "e33899151b85ff2fea47828319a753cd8611d222ca7ca25edce0358e6acec133"
+      "sha256": "9a22e6bfb159b98a4eb7d67c1e2a0186fa4651f9b055b44d20db0a813d2d562e"
     },
     {
       "path": "index.html",
@@ -19,15 +19,15 @@
     },
     {
       "path": "screen.js",
-      "bytes": 948651,
-      "sha256": "98f9a0527edc8533b203a948a5d68a11c6b3ece0c1d7f2c7de71da5065da0488"
+      "bytes": 948245,
+      "sha256": "dafadbe8d8535608d636a024e5207d4b5e8314ff883c2b96e7c87a20cacd8904"
     }
   ],
   "earthquakes": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 94173,
-      "sha256": "8315efdaedb913d4dd4ac3ab46ea8a522d2df386ab1778cc4032c0d348b7a398"
+      "sha256": "1839ba949cd4d13ae9c4f853efe43278bcb8e24365a72ae866d0b0a12fe06d87"
     },
     {
       "path": "index.html",
@@ -43,8 +43,8 @@
     },
     {
       "path": "screen.js",
-      "bytes": 794585,
-      "sha256": "b98a7cfb2a9a5329bee6ad17d9207ad9bedcd62633b744ea2f910eb4cb7dafa2"
+      "bytes": 794172,
+      "sha256": "4524d8c7a2c37705cfd7ffa04c19feb4214865e3801f960f6f663aa5dce751b7"
     }
   ],
   "cjs": [
