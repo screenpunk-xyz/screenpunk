@@ -86,6 +86,9 @@ final class WorkbenchBuildCoordinator {
         let package = try validateBeforePublication {
             try makePackage(snapshot: snapshot, files: packageFiles)
         }
+        try validateBeforePublication {
+            try PackageConnectionValidation.validate(files: package.files, connections: package.manifest.connections, cancelled: cancelled)
+        }
         if cancelled() { throw WorkspaceError.unavailable }
         let manifest = package.manifest
         let proposed = WorkbenchBuildHead(schemaVersion: 1, projectID: projectID,

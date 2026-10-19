@@ -90,7 +90,7 @@ public final class LegacyBrokerAdapter {
 
     deinit { if ownsClient { client.close() } }
 
-    public static let resourceURIs: [String] = ["screenpunk://help/onboarding",
+    public static let resourceURIs: [String] = ["screenpunk://help/onboarding", "screenpunk://help/connections",
         "screenpunk://workbench/workspace", "screenpunk://workbench/capabilities",
         "screenpunk://projects/{id}", "screenpunk://deployments/plans/{id}"]
 

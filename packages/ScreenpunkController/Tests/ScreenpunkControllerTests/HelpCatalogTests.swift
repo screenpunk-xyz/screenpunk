@@ -3,6 +3,16 @@ import XCTest
 import ScreenpunkCore
 
 final class HelpCatalogTests: XCTestCase {
+    func testConnectionContractMatchesBundledAndFallbackHelp() {
+        let fallback = HelpCatalog.fallbackTopics()["connections"]!
+        XCTAssertEqual(HelpCatalog.topic(id: "connections").body, fallback.body)
+        for word in ["googleTV", "required", "googleCalendar", "appleMaps", "serviceCalls", "cameraEntities", "computed aliases"] {
+            XCTAssertTrue(fallback.body.contains(word))
+        }
+        XCTAssertTrue(HelpCatalog.topic(id: "onboarding").body.contains("get_help(topic: connections)"))
+        XCTAssertTrue(HelpCatalog.topic(id: "authoring").body.contains("get_help(topic: connections)"))
+    }
+
     func testPersistenceHelpMatchesFallbackAndBundledEntryPoint() {
         let fallback = HelpCatalog.fallbackTopics()["persistent-state"]
         let bundled = HelpCatalog.topic(id: "persistent-state")
