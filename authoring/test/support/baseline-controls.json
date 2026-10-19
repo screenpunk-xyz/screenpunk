@@ -3,8 +3,7 @@
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 103405,
-      "sha256": "dae240bebc7877b1893faf8510a0b916a83320e8df7edb7feb753d9f7a6eb88e",
-      "baselineEqual": true
+      "sha256": "73deb6ec6dd79b996e0dcaa44bd0f8584c004ee2d87d8ac5c5d0646c35ee7ac7"
     },
     {
       "path": "index.html",
@@ -20,8 +19,8 @@
     },
     {
       "path": "screen.js",
-      "bytes": 885434,
-      "sha256": "bd096be75a7ae53bbe77aea0b4ad44a2dd12c5569e7dffb29443ce7725559d23"
+      "bytes": 885604,
+      "sha256": "9e9f87c11cda21428d2e237ca9bce6333b7089d6aef230053277945898bdec1e"
     }
   ],
   "earthquakes": [
