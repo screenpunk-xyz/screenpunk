@@ -132,8 +132,10 @@ fi
 # bundle directly so a stalled test is visible and bounded on hosted runners.
 (
   cd packages/ScreenpunkApple
-  swift build --build-tests
-  test_bundle="$(swift build --show-bin-path)/ScreenpunkApplePackageTests.xctest"
+  # Full resource/history qualification is intentionally exercised in these tests.
+  # Use production optimization so that work fits the unchanged bounded runner.
+  swift build -c release --build-tests -Xswiftc -enable-testing
+  test_bundle="$(swift build -c release --show-bin-path)/ScreenpunkApplePackageTests.xctest"
   python3 "$ROOT/scripts/ci/run-xctest.py" "$test_bundle"
 )
 (cd tools/screenpunk-distribution && swift test)
