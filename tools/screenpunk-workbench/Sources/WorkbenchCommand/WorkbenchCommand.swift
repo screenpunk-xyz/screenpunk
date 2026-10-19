@@ -28,6 +28,7 @@ public enum WorkbenchCommand {
                 if words == ["--foreground"] || words == ["run", "--foreground"] { words = ["service", "run", "--foreground"] }
                 else if !options.help && !options.version { throw Options.usage("screenpunk-service requires --foreground.") }
             }
+            let cloudSyncStartup = try options.cloudSyncStartup(for: words)
             if options.version || words == ["version"] {
                 let displayed = try WorkbenchProductionTrust.homebrewRoot().map {
                     try WorkbenchProductionTrust.verifyPackage($0).version
@@ -144,9 +145,10 @@ public enum WorkbenchCommand {
                     environment: environment)
                 let host = try WorkbenchServiceHost(broker: broker, home: home,
                     documents: documents, guiVerifier: guiVerifier, installedReleaseTrust: releaseTrust,
+                    cloudSyncStartup: cloudSyncStartup,
                     onShutdown: { cancellation.requestStop() })
                 defer { host.stop() }
-                presentation.diagnostic("Screenpunk workbench broker ready; Ctrl-C stops this foreground service.")
+                presentation.diagnostic(cloudSyncStartup.readinessDiagnostic)
                 cancellation.wait()
                 host.stop()
                 if cancellation.signalNumber == SIGINT { throw cancelled() }
@@ -1241,7 +1243,7 @@ public enum WorkbenchCommand {
 
     private static func helpText(topic: String?) throws -> String {
         if topic == "service" || topic == "setup" {
-            return "screenpunk service start --json\nscreenpunk setup [--workspace PATH]\n\nmacOS may display a permission or security prompt during the first service start after an install or update. Review it and approve the appropriate prompt for your verified Screenpunk installation. An agent must surface a pending prompt early and wait for you; it cannot dismiss or approve an OS prompt on your behalf.\n\nAfter resolving a pending prompt, retry once with screenpunk service start --json, outside the Codex sandbox through its normal approval flow, using the same installing account without sudo. If it still fails, preserve the complete command, JSON error, stdout/stderr and exit status. Collect screenpunk service logs --json and launchctl print gui/<your UID>/com.screenpunk.workbench before another start or recovery attempt. The UID must be the installing account's effective UID. These diagnostics do not start the broker.\n\nKeep activationError and cleanupError separate. One Studio 1.0.8 start reported activationError=unavailable and cleanupError=insecureRuntime, then worked after the user allowed a pending macOS prompt. The prompt text and precise cause were not established; these errors do not identify a particular macOS permission.\n\nPreserve the workspace, pairing, saved screen preferences and local drafts. Do not reset them, change runtime permissions, delete sockets, bypass ownership guards or delete Keychain entries to get past startup. Review the diagnostic evidence before choosing a supported recovery."
+            return "screenpunk service start --json\nscreenpunk-service --foreground [--local-only]\nscreenpunk setup [--workspace PATH]\n\n--local-only skips automatic Screen syncing for this foreground service process. Saved sync consent and pending work stay unchanged. It cannot convert or reuse a running service. Explicit Cloud commands and other apps are separate.\n\nmacOS may display a permission or security prompt during the first service start after an install or update. Review it and approve the appropriate prompt for your verified Screenpunk installation. An agent must surface a pending prompt early and wait for you; it cannot dismiss or approve an OS prompt on your behalf.\n\nAfter resolving a pending prompt, retry once with screenpunk service start --json, outside the Codex sandbox through its normal approval flow, using the same installing account without sudo. If it still fails, preserve the complete command, JSON error, stdout/stderr and exit status. Collect screenpunk service logs --json and launchctl print gui/<your UID>/com.screenpunk.workbench before another start or recovery attempt. The UID must be the installing account's effective UID. These diagnostics do not start the broker.\n\nKeep activationError and cleanupError separate. One Studio 1.0.8 start reported activationError=unavailable and cleanupError=insecureRuntime, then worked after the user allowed a pending macOS prompt. The prompt text and precise cause were not established; these errors do not identify a particular macOS permission.\n\nPreserve the workspace, pairing, saved screen preferences and local drafts. Do not reset them, change runtime permissions, delete sockets, bypass ownership guards or delete Keychain entries to get past startup. Review the diagnostic evidence before choosing a supported recovery."
         }
         if topic == "status" { return "screenpunk status [--json]\nRead-only release, owned service, workspace, paired device and MCP summary. No service startup or device probe." }
         if let topic, !["cloud", "service", "doctor", "version", "help", "workspace", "setup", "operation",
