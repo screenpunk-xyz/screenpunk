@@ -173,6 +173,8 @@ xcodebuild -project "$ROOT/tools/preview-host/ScreenpunkPreviewHost.xcodeproj" \
 mkdir -p "$app/Contents/Helpers"
 ditto "$OUT_DIR/preview-derived/Build/Products/Release/ScreenpunkPreviewHost.app" "$app/Contents/Helpers/ScreenpunkPreviewHost.app"
 "$ROOT/scripts/bundle-authoring.sh" "$app"
+"$ROOT/scripts/bundle-connection-validator.sh" "$app/Contents/Resources/ConnectionValidator"
+codesign --force --sign - "$app/Contents/Resources/ConnectionValidator/node"
 codesign --force --sign - "$app/Contents/Resources/AuthoringKit/bin/node"
 codesign --force --sign - "$app/Contents/Resources/AuthoringKit/node_modules/@esbuild/darwin-arm64/bin/esbuild"
 codesign --force --sign - "$app/Contents/MacOS/screenpunk-mcp"

@@ -32,6 +32,8 @@ cp "$cli_build/screenpunk-mcp" "$payload/bin/screenpunk-mcp"
 cp "$cli_build/screenpunk-service" "$payload/libexec/screenpunk-service"
 chmod 700 "$payload/bin/screenpunk" "$payload/bin/screenpunk-mcp" "$payload/libexec/screenpunk-service"
 
+"$repo_root/scripts/bundle-connection-validator.sh" "$payload/Resources/ConnectionValidator"
+
 for directory in scripts templates react ui icons licenses; do
   cp -R "$repo_root/authoring/$directory" "$payload/Resources/AuthoringKit/source/$directory"
 done

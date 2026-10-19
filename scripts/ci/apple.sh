@@ -24,6 +24,7 @@ fi
 
 ./scripts/generate-xcode.sh
 python3 scripts/ci/test-ios-candidate.py
+python3 scripts/ci/test-macos-validator-packaging.py
 
 if ! command -v swift >/dev/null 2>&1; then
   echo "swift is required for apple-build-and-unit"
@@ -136,6 +137,7 @@ fi
   python3 "$ROOT/scripts/ci/run-xctest.py" "$test_bundle"
 )
 (cd tools/screenpunk-distribution && swift test)
+"$ROOT/scripts/bundle-connection-validator.sh" "$ROOT/packages/ScreenpunkController/Sources/ScreenpunkController/Resources/ConnectionValidator"
 (cd packages/ScreenpunkController && swift test)
 (cd packages/ScreenpunkAppleController && swift test)
 # Match the release workflow: the pinned MCP dependency requires Swift 5 mode

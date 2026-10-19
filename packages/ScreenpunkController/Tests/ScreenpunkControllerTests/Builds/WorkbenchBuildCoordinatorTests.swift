@@ -41,6 +41,23 @@ final class WorkbenchBuildCoordinatorTests: XCTestCase {
         }
     }
 
+    func testPlainWebConnectionFailurePreservesHeadAndOptionalDeclarationPasses() throws {
+        let fixture = try Fixture(); defer { fixture.cleanup() }
+        let project = try fixture.authoring.create(name: "TV", kind: "web", trustedKitVersion: "1.0.0")
+        let coordinator = WorkbenchBuildCoordinator(workspace: fixture.workspace) { _, _, _, _, _, _ in
+            XCTFail("Plain web must not require a compiler kit"); return ""
+        }
+        let first = try coordinator.build(projectID: project.project.projectId, expectedSourceVersion: project.sourceVersion, baseRevision: nil)
+        let missing = try fixture.authoring.patch(project.project.projectId, expectedSourceVersion: project.sourceVersion,
+            changes: [.init(path: "web/app.js", bytes: Data("screenpunk.connections.request('googleTV','status',{})".utf8))])
+        XCTAssertThrowsError(try coordinator.build(projectID: project.project.projectId, expectedSourceVersion: missing.sourceVersion, baseRevision: first.head.revision))
+        XCTAssertEqual(try coordinator.readHead(projectID: project.project.projectId)?.0, first.head)
+        let valid = try fixture.authoring.patch(project.project.projectId, expectedSourceVersion: missing.sourceVersion,
+            changes: [.init(path: "screen.json", bytes: Data(#"{"name":"TV","connections":[{"alias":"googleTV","required":false}]}"#.utf8))])
+        let saved = try coordinator.build(projectID: project.project.projectId, expectedSourceVersion: valid.sourceVersion, baseRevision: first.head.revision)
+        XCTAssertNotEqual(saved.head.revision, first.head.revision)
+    }
+
     func testPlainWebBuildPublishesVerifiedHistoryAndHeadAcrossReopen() throws {
         let fixture = try Fixture(); defer { fixture.cleanup() }
         let project = try fixture.authoring.create(name: "Web", kind: "web", trustedKitVersion: "1.0.0")

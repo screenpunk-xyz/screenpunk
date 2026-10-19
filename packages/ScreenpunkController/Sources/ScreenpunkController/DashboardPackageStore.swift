@@ -190,6 +190,7 @@ public final class DashboardPackageStore: @unchecked Sendable {
                 deviceBehavior: deviceBehavior ?? previousManifest?.deviceBehavior
             )
             try PackageValidator.validate(manifest)
+            try PackageConnectionValidation.validate(files: Dictionary(uniqueKeysWithValues: assets.map { ($0.path, $0.data) }), connections: connections)
             manifest.digest = try DeploymentDigest.digest(for: manifest)
 
             let dest = revisionDir(dashboardId: id, revision: revision)
