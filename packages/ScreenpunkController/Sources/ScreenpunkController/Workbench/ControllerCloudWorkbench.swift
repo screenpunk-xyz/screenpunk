@@ -561,6 +561,16 @@ public actor ControllerCloudWorkbench {
         try FileManager.default.removeItem(at: file)
         return try await sync.sync(accountId: context.accountId, localProjectId: localId)
     }
+    private func persistCreatedIntent(localId: String, name: String, kind: String, context: CloudSelection) throws {
+        guard WorkspaceValidation.id(localId), let cloudWorkspace = context.workspaceId,
+              ["html", "react"].contains(kind) else { throw ControllerCloudError.invalidSource }
+        let file = try intentDirectory().appendingPathComponent(localId + ".json")
+        if !FileManager.default.fileExists(atPath: file.path) {
+            let intent = CloudNewProjectIntent(accountId: context.accountId, workspaceId: cloudWorkspace, localProjectId: localId,
+                name: name, kind: kind, idempotencyKey: UUID().uuidString, cloudProjectId: nil, requestedCloudProjectId: UUID().uuidString.lowercased())
+            try ControllerCloudPersistence.write(JSONEncoder().encode(intent), to: file)
+        }
+    }
     public struct ScreenSyncRequestOutcome: Sendable {
         public let admitted: Bool
         public let completed: Bool
