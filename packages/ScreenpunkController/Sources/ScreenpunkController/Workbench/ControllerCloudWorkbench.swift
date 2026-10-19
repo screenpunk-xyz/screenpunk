@@ -410,16 +410,6 @@ public actor ControllerCloudWorkbench {
         let first = try await sync.sync(accountId: context.accountId, localProjectId: localId)
         return first.status == .conflict ? try await sync.resolve(accountId: context.accountId, localProjectId: localId, choice: .local) : first
     }
-    private func persistCreatedIntent(localId: String, name: String, kind: String, context: CloudSelection) throws {
-        guard WorkspaceValidation.id(localId), let cloudWorkspace = context.workspaceId,
-              ["html", "react"].contains(kind) else { throw ControllerCloudError.invalidSource }
-        let file = try intentDirectory().appendingPathComponent(localId + ".json")
-        if !FileManager.default.fileExists(atPath: file.path) {
-            let intent = CloudNewProjectIntent(accountId: context.accountId, workspaceId: cloudWorkspace, localProjectId: localId,
-                name: name, kind: kind, idempotencyKey: UUID().uuidString, cloudProjectId: nil)
-            try JSONEncoder().encode(intent).write(to: file, options: .atomic)
-        }
-    }
     /// Bounded background cycle. It uploads/downloads source only and never builds or deploys.
     public func automaticSync() async throws {
         let lock = try await acquireLock(); defer { lock.close() }
