@@ -88,6 +88,7 @@ enum OfficialMCPServer {
                 resources: [
                     Resource(name: "Component catalog", uri: "screenpunk://authoring/catalog", description: "Versioned local component catalog and compatibility evidence"),
                     Resource(name: "React authoring", uri: "screenpunk://authoring/instructions", description: "Offline source, build, preview and deployment workflow"),
+                    Resource(name: "Screen connection declarations", uri: "screenpunk://help/connections", description: "Required manifest declarations and preservation across edits"),
                     Resource(name: "Onboarding", uri: "screenpunk://help/onboarding", description: "MCP setup and live preview"),
                     Resource(name: "Disconnect recovery", uri: "screenpunk://help/unlink", description: "Five-second two-finger device menu gesture and confirmed Disconnect"),
                     Resource(name: "Live preview", uri: "screenpunk://help/preview", description: HelpCatalog.livePreviewLabel),
