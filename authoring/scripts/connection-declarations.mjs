@@ -49,7 +49,9 @@ export function validateConnectionDeclarations(ts, program, sourceFiles, config)
         const alias = ['connectionCall','usePublicRead','useConnectionSubscription'].includes(kind) ? literal(node.arguments[0]) : ['homeCall','cameraCall'].includes(kind) ? 'home' : undefined;
         if (alias !== undefined && !declared.has(alias)) {
           const p = file.getLineAndCharacterOfPosition(node.getStart(file));
-          throw Error(`${file.fileName}:${p.line + 1}:${p.character + 1}: missing connection declaration for "${alias}". Add {"alias":${JSON.stringify(alias)},"required":false} to screen.json connections (or required:true if the entire screen needs setup), retain provider-specific operation/service/camera declarations, and rebuild. Native Settings discovers providers from the manifest; API calls and saved device settings do not declare them.`);
+          const error = Error(`${file.fileName}:${p.line + 1}:${p.character + 1}: missing connection declaration for "${alias}". Add {"alias":${JSON.stringify(alias)},"required":false} to screen.json connections (or required:true if the entire screen needs setup), retain provider-specific operation/service/camera declarations, and rebuild. Native Settings discovers providers from the manifest; API calls and saved device settings do not declare them.`);
+          error.connectionDiagnostic = {path:file.fileName, line:p.line + 1, column:p.character + 1, alias};
+          throw error;
         }
       }
       ts.forEachChild(node, visit);
