@@ -30,14 +30,19 @@ function probeScript(source) {
 }
 
 // Gallery keeps Count inside a fieldset that is disabled until preference phase is ready.
-function countPage({ hydrateAfter }) {
-  let phase = 'loading';
+function countPage({ hydrateAfter, incrementAfter = 250, ready = false } = {}) {
+  let phase = ready ? 'ready' : 'loading';
   let count = 0;
   let hydratedAt = 0;
+  let incrementedAt = 0;
   const polls = [];
   const clicks = [];
+  const observations = [];
   const button = {
-    get textContent() { return `Count ${count}`; },
+    get textContent() {
+      observations.push({ at: performance.now(), count });
+      return `Count ${count}`;
+    },
     matches(selector) {
       const disabled = phase !== 'ready';
       polls.push({ at: performance.now(), disabled });
@@ -48,19 +53,88 @@ function countPage({ hydrateAfter }) {
       clicks.push({ at: performance.now(), disabled });
       if (disabled) return;
       // save() resolves on a later turn; a single 100ms look would still miss it.
-      setTimeout(() => { count += 1; }, 250);
+      setTimeout(() => { count += 1; incrementedAt = performance.now(); }, incrementAfter);
     },
   };
   return {
-    polls, clicks,
+    polls, clicks, observations,
     get count() { return count; },
     get hydratedAt() { return hydratedAt; },
+    get incrementedAt() { return incrementedAt; },
     arm() { if (hydrateAfter != null) setTimeout(() => { phase = 'ready'; hydratedAt = performance.now(); }, hydrateAfter); },
     document: {
       body: { textContent: '' }, activeElement: null,
       querySelectorAll: selector => selector === 'button' ? [button] : [],
       querySelector: () => null,
       dispatchEvent() {},
+    },
+  };
+}
+
+// The probe's 100ms pause can fire late. Drive that clock so one poll lands past the budget.
+function deferredClock() {
+  let now = 0;
+  const pending = [];
+  let handle = 0;
+  const previousNow = performance.now;
+  const previousSetTimeout = globalThis.setTimeout;
+  const previousClearTimeout = globalThis.clearTimeout;
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  performance.now = () => now;
+  globalThis.setTimeout = (fn, delay = 0) => {
+    pending.push({ handle: ++handle, fn, at: now + delay });
+    return handle;
+  };
+  globalThis.clearTimeout = id => {
+    const index = pending.findIndex(entry => entry.handle === id);
+    if (index >= 0) pending.splice(index, 1);
+  };
+  const due = limit => pending.filter(entry => entry.at <= limit).sort((a, b) => a.at - b.at || a.handle - b.handle);
+  return {
+    async fireDue(limit) {
+      for (;;) {
+        const next = due(limit)[0];
+        if (!next) {
+          await flush();
+          if (!due(limit).length) return;
+          continue;
+        }
+        pending.splice(pending.indexOf(next), 1);
+        now = next.at;
+        next.fn();
+        await flush();
+      }
+    },
+    async fireOnly(scheduledAt, at = scheduledAt) {
+      const index = pending.findIndex(entry => entry.at === scheduledAt);
+      if (index < 0) throw new Error(`no timer at ${scheduledAt}; pending ${pending.map(entry => entry.at).join(', ') || 'none'}`);
+      const [entry] = pending.splice(index, 1);
+      now = at;
+      entry.fn();
+      await flush();
+    },
+    async finish(promise) {
+      let settled = false;
+      let value;
+      let failure;
+      promise.then(result => { settled = true; value = result; }, error => { settled = true; failure = error; });
+      for (let guard = 0; guard < 40 && !settled; guard += 1) {
+        await flush();
+        if (settled || pending.length === 0) break;
+        pending.sort((a, b) => a.at - b.at || a.handle - b.handle);
+        const entry = pending.shift();
+        now = Math.max(now, entry.at);
+        entry.fn();
+      }
+      await flush();
+      if (failure) throw failure;
+      if (!settled) throw new Error(`probe still running at ${now}`);
+      return value;
+    },
+    restore() {
+      performance.now = previousNow;
+      globalThis.setTimeout = previousSetTimeout;
+      globalThis.clearTimeout = previousClearTimeout;
     },
   };
 }
@@ -126,5 +200,35 @@ test('synthetic Count probe races preference hydration against the ready deadlin
       assert.ok(page.polls.at(-1).at - origin >= deadline - 40, 'stopped polling before the ready deadline');
       assert.ok(performance.now() - origin < 8000, 'waited without a deadline');
     } finally { restore(); }
+  });
+
+  // 500ms budget: click at 100ms, Count becomes 1 at 510ms, the next poll lands at 520ms.
+  await t.test('records button when Count becomes 1 on a poll after the ready deadline', async () => {
+    const deadline = 500;
+    const page = countPage({ ready: true, incrementAfter: 410 });
+    const restore = install(page.document);
+    const clock = deferredClock();
+    try {
+      const pending = probe(deadline);
+      await clock.fireDue(100);
+      assert.equal(page.clicks.length, 1);
+      assert.equal(page.clicks[0].at, 100);
+      assert.equal(page.clicks[0].disabled, false);
+      await clock.fireDue(400);
+      assert.equal(page.count, 0);
+      await clock.fireOnly(510);
+      assert.equal(page.incrementedAt, 510);
+      assert.equal(page.count, 1);
+      await clock.fireOnly(500, 520);
+      assert.equal(page.observations.some(item => item.count === 1 && item.at < deadline), false);
+      assert.equal(page.observations.some(item => item.count === 1 && item.at === 520), true);
+      const report = await clock.finish(pending);
+      assert.equal(report.syntheticState, true);
+      assert.equal(page.count, 1);
+      assert.deepEqual(report.failures, ['chart', 'button', ...restingFailures.slice(1)]);
+    } finally {
+      clock.restore();
+      restore();
+    }
   });
 });

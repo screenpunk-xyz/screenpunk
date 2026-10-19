@@ -283,7 +283,8 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         const counter=button('Count');
         if(syntheticState){
           // runtime.ready runs before useScreenPreferences leaves the fieldset :disabled.
-          const until=async ok=>{for(;;){if(ok())return true;if(performance.now()>=deadline)return false;await pause()}};
+          // Sample first. A poll already at the ready deadline is a miss, even when the sample matches.
+          const until=async ok=>{for(;;){const ready=ok();if(performance.now()>=deadline)return false;if(ready)return true;await pause()}};
           let countButton;
           const enabled=await until(()=>{countButton=button('Count');return !!countButton&&!countButton.matches(':disabled')});
           if(!enabled)check(false,'button');
