@@ -78,6 +78,7 @@ final class WorkbenchBuildCoordinator {
             packageFiles = try plainWebFiles(snapshot.files)
         }
         let package = try makePackage(snapshot: snapshot, files: packageFiles)
+        try PackageConnectionValidation.validate(files: package.files, connections: package.manifest.connections, cancelled: cancelled)
         if cancelled() { throw WorkspaceError.unavailable }
         let manifest = package.manifest
         let proposed = WorkbenchBuildHead(schemaVersion: 1, projectID: projectID,

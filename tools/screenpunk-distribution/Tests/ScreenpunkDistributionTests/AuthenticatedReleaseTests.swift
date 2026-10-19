@@ -18,6 +18,24 @@ private struct TestOnlyReleaseTrust: DistributionReleaseTrust {
 }
 
 final class AuthenticatedReleaseTests: XCTestCase {
+    func testAppOwnedValidatorPolicyPreservesOldReleasesAndRejectsIncompleteClosure() throws {
+        let base = ["bin/screenpunk", "bin/screenpunk-mcp", "libexec/screenpunk-service"].map {
+            DistributionFile(path: $0, bytes: 1, sha256: String(repeating: "a", count: 64), executable: true)
+        }
+        func manifest(_ extra: [DistributionFile]) -> DistributionManifest {
+            .init(schemaVersion: 1, version: "1.0.0", provenance: "authenticated-release", protocolVersion: 1,
+                  minimumWorkspaceSchema: 1, maximumWorkspaceSchema: 1, authoringKitComplete: true, files: base + extra)
+        }
+        XCTAssertEqual(try ScreenpunkProductionReleaseTrust.executablePolicy(manifest([])).count, 3)
+        let node = DistributionFile(path: "Resources/ConnectionValidator/node", bytes: 1, sha256: String(repeating: "a", count: 64), executable: true)
+        let parser = DistributionFile(path: "Resources/ConnectionValidator/validate.cjs", bytes: 1, sha256: String(repeating: "b", count: 64), executable: false)
+        XCTAssertThrowsError(try ScreenpunkProductionReleaseTrust.executablePolicy(manifest([node])))
+        XCTAssertThrowsError(try ScreenpunkProductionReleaseTrust.executablePolicy(manifest([parser])))
+        XCTAssertEqual(try ScreenpunkProductionReleaseTrust.executablePolicy(manifest([node, parser]))[node.path], "xyz.screenpunk.connection-validator.node")
+        let extra = DistributionFile(path: "Resources/ConnectionValidator/other", bytes: 1, sha256: String(repeating: "b", count: 64), executable: true)
+        XCTAssertThrowsError(try ScreenpunkProductionReleaseTrust.executablePolicy(manifest([node, parser, extra])))
+    }
+
     func testDetachedAuthenticationBindsMeasuredPayloadAndSurvivesArchiveCopy() throws {
         let base = URL(fileURLWithPath: "/private/tmp/screenpunk-release-test-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false,

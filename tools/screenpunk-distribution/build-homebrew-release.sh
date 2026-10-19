@@ -41,6 +41,10 @@ if url.scheme!='https' or not url.hostname or url.username or url.password or ur
 with open(path,'w') as stream: json.dump({'schemaVersion':1,'apiOrigin':origin},stream,separators=(',',':'))
 PY
 identity=98E00BBDF01DE542C912F86A40CB9AE616CBDCCC
+"$repo_root/scripts/bundle-connection-validator.sh" "$stage/payload/Resources/ConnectionValidator"
+codesign --force --sign "${app_identity:-$identity}" --timestamp --options runtime \
+  --identifier xyz.screenpunk.connection-validator.node "$stage/payload/Resources/ConnectionValidator/node"
+codesign --verify --strict "$stage/payload/Resources/ConnectionValidator/node"
 for record in 'screenpunk xyz.screenpunk.cli bin' 'screenpunk-mcp xyz.screenpunk.mcp bin' 'screenpunk-service xyz.screenpunk.service libexec'; do
   read -r name identifier folder <<< "$record"
   codesign --force --sign "$identity" --timestamp --options runtime \
