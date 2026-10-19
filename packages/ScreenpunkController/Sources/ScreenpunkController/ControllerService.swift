@@ -115,7 +115,15 @@ public final class ControllerService: @unchecked Sendable {
             return DashboardFileInput(path: path, text: item["text"]?.string, base64: item["base64"]?.string)
         }
         let target = try parseTarget(object["target"])
-        let connections = try parseConnections(object["connections"])
+        let connections: [ManifestConnection]
+        if object["connections"] == nil, let id = object["dashboardId"]?.string,
+           let base = object["baseRevision"]?.string {
+            // An appearance-only package edit must not implicitly erase provider
+            // discovery. Explicit [] remains the deliberate removal operation.
+            connections = try store.getRevision(dashboardId: id, revision: base).manifest.connections
+        } else {
+            connections = try parseConnections(object["connections"])
+        }
         guard let name = object["name"]?.string, name.isEmpty == false else {
             throw ControllerError.validationFailed(detail: "name required")
         }

@@ -95,7 +95,7 @@
     {
       "name": "update_dashboard",
       "group": "authoring",
-      "description": "Create or update a dashboard. Optimistic baseRevision required after the first revision. Writes a new immutable revision.",
+      "description": "Create or update a dashboard. Optimistic baseRevision required after the first revision. Writes a new immutable revision. Read get_help(topic: connections). Preserve full connection declarations when editing; API calls do not declare a provider. Google TV requires alias googleTV in connections, including when optional.",
       "readOnlyHint": false,
       "destructiveHint": false,
       "idempotentHint": false,
@@ -234,7 +234,7 @@
     {
       "name": "update_screen_project",
       "group": "authoring",
-      "description": "Edit source files with optimistic sourceVersion conflict checks. Accepts text/base64 or delete. Does not build or deploy.",
+      "description": "Edit source files with optimistic sourceVersion conflict checks. Accepts text/base64 or delete. Does not build or deploy. Read get_help(topic: connections). Preserve full connection declarations when editing; API calls do not declare a provider. Google TV requires alias googleTV in connections, including when optional.",
       "readOnlyHint": false,
       "destructiveHint": false,
       "openWorldHint": false
@@ -242,7 +242,7 @@
     {
       "name": "build_screen_project",
       "group": "authoring",
-      "description": "Type-check and build a fixed offline source snapshot into a validated dashboard revision. Supply sourceVersion and the current baseRevision after the first build. Then validate, preview, and obtain deployment approval normally.",
+      "description": "Type-check and build a fixed offline source snapshot into a validated dashboard revision. Supply sourceVersion and the current baseRevision after the first build. Then validate, preview, and obtain deployment approval normally. Read get_help(topic: connections). Preserve full connection declarations when editing; API calls do not declare a provider. Google TV requires alias googleTV in connections, including when optional.",
       "readOnlyHint": false,
       "destructiveHint": false,
       "openWorldHint": false
