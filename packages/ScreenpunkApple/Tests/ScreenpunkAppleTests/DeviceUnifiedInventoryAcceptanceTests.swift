@@ -64,6 +64,39 @@ final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
         XCTAssertEqual(try reopened.mountedAssociation()?.entryID, active.entryID)
         XCTAssertEqual(fixture.storage.adds, 2, "Neither reopen nor cloud disconnect duplicates credentials")
     }
+    func testGenuineLeaseClockAcceptsFreshStatus() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        fixture.clock.advance(by: 8)
+        XCTAssertNoThrow(try fixture.current.requirePresentationCurrent())
+        XCTAssertNoThrow(try fixture.authority.validateCloudRequestStart(fixture.context))
+    }
+    func testGenuineLeaseClockRejectsExpiredStatus() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        fixture.clock.advance(by: 30.001)
+        XCTAssertThrowsError(try fixture.current.requirePresentationCurrent()) {
+            XCTAssertEqual($0 as? NativeEnrollmentPromotionError, .blocked)
+        }
+        XCTAssertThrowsError(try fixture.authority.validateCloudRequestStart(fixture.context)) {
+            XCTAssertEqual($0 as? DeviceManagementAuthority.Failure, .staleLease)
+        }
+    }
+    func testGenuineLeaseClockAcceptsTheThirtySecondBoundary() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        fixture.clock.advance(by: 30)
+        XCTAssertNoThrow(try fixture.current.requirePresentationCurrent(), "Age of exactly 30 seconds stays inside the lease")
+        XCTAssertNoThrow(try fixture.authority.validateCloudRequestStart(fixture.context))
+    }
+}
+
+/// One uptime for the genuine fixture. Setup does not advance it, so wall time cannot age the 30-second lease.
+final class GenuineLeaseClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instant: TimeInterval = 0
+    func now() -> TimeInterval { lock.lock(); defer { lock.unlock() }; return instant }
+    func advance(by seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; instant += seconds }
 }
 
 struct GenuineUnifiedInventoryFixture {
@@ -77,8 +110,9 @@ struct GenuineUnifiedInventoryFixture {
     let generation: UUID
     let storage: FreshCredentialStorage
     let http: FreshOwnerHTTP
+    let clock: GenuineLeaseClock
     func close() { http.close(); try? FileManager.default.removeItem(at: parent) }
-    static func make() async throws -> Self {
+    static func make(clock: GenuineLeaseClock = GenuineLeaseClock()) async throws -> Self {
         let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
         var completed = false
         defer { if !completed { try? FileManager.default.removeItem(at: parent) } }
@@ -87,6 +121,7 @@ struct GenuineUnifiedInventoryFixture {
         let authority = DeviceManagementAuthority(journal: AuthorityJournal(), credentials: .init(backend: AuthorityBackend(), random: { Data() }),
             reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor),
             supportAnchorSetup: try .fixture(existingPhysicalParent: parent), commandIntents: .init(root: parent.appendingPathComponent("command-intents")), concurrentControlQualified: true)
+        authority.adoptUnifiedLeaseClock { clock.now() }
         try authority.prepareProductionSupportAnchor(); try authority.enterCloudForeground()
         let claim = try NativeClaimInput(requestId: UUID(), transitionId: UUID(), accountId: UUID(), locationId: nil, name: "Fixture", profile: "Fixture")
         let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: claim.transitionId,
@@ -108,7 +143,7 @@ struct GenuineUnifiedInventoryFixture {
         let context = try authority.bindOperationalInstallation(installation: result.installation, activation: result.activation, origin: http.origin)
         let status = try authority.prepareCloudStatusRequest(context)
         try authority.beginCloudStatusRequest(context, requestID: status.requestID)
-        try authority.acceptCloudStatus(await status.performFixedTransport(origin: http.origin, configuration: http.configuration), context: context)
+        try authority.acceptCloudStatus(await status.performFixedTransport(origin: http.origin, configuration: http.configuration, uptime: { clock.now() }), context: context)
         let current = try authority.prepareCurrentInstallationDispatch(context)
         let execution = try result.installation.makeDeliveryExecutionSession(current: current)
         let stateBody = try execution.freshGenesisObservation(current: current)
@@ -137,6 +172,6 @@ struct GenuineUnifiedInventoryFixture {
         try common.migrate(current: current, operationID: UUID(), generationID: generation,
             admissionEnabled: authority.qualifiedConcurrentControl(context: context))
         completed = true
-        return .init(authority: authority, context: context, current: current, common: common, execution: execution, parent: parent, commonID: commonID, generation: generation, storage: storage, http: http)
+        return .init(authority: authority, context: context, current: current, common: common, execution: execution, parent: parent, commonID: commonID, generation: generation, storage: storage, http: http, clock: clock)
     }
 }

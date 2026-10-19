@@ -796,19 +796,20 @@ enum NativeOperationalTransportFailure: Error, Equatable { case invalidResponse,
         return try await performFixedTransport(origin: origin, configuration: configuration)
     }
     // Module-internal synthetic URLProtocol seam only; never a public IO-proof constructor.
-    func performFixedTransport(origin: URL, configuration: URLSessionConfiguration) async throws -> NativeOperationalStatusObservation {
+    // `uptime` defaults to `systemUptime`. Callers that pass a clock must use it for the whole lease.
+    func performFixedTransport(origin: URL, configuration: URLSessionConfiguration, uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) async throws -> NativeOperationalStatusObservation {
         try Task.checkCancellation(); try requireOrigin(origin)
         try installation.requireDurableActivationAssociation(activation)
         let driver = Driver(origin: origin)
         let session = URLSession(configuration: configuration, delegate: driver, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        let startedAt = ProcessInfo.processInfo.systemUptime // Original request start, never response arrival.
+        let startedAt = uptime() // Original request start, never response arrival.
         let bytes = try await withTaskCancellationHandler {
             try await driver.run(self, session: session)
         } onCancel: { driver.cancel() }
         try Task.checkCancellation(); try requireOrigin(origin)
         try installation.requireDurableActivationAssociation(activation)
-        return try decodeCurrentStatus(bytes, startedAt: startedAt)
+        return try decodeCurrentStatus(bytes, startedAt: startedAt, uptime: uptime)
     }
     /// Owned per-request collector; cancellation before continuation installation is retained.
     final class Driver: NSObject, URLSessionDataDelegate, @unchecked Sendable {
@@ -891,14 +892,14 @@ enum NativeOperationalTransportFailure: Error, Equatable { case invalidResponse,
             else { finish(.success(bytes)) }
         }
     }
-    fileprivate func decodeCurrentStatus(_ bytes: Data, startedAt: TimeInterval) throws -> NativeOperationalStatusObservation {
+    fileprivate func decodeCurrentStatus(_ bytes: Data, startedAt: TimeInterval, uptime: @escaping () -> TimeInterval) throws -> NativeOperationalStatusObservation {
         guard case .currentGeneration(let current) = try NativeInstallationStatusCodec.decode(bytes),
             current.credential == .current, current.authority == .active,
             current.installationId == activation.installationId, current.accountId == activation.accountId,
             current.transitionId == activation.transitionId,
             try nativeEnrollmentBytes(current.activation) == nativeEnrollmentBytes(activation),
             try nativeEnrollmentBytes(current.generation) == nativeEnrollmentBytes(activation.initialGeneration) else { throw NativeEnrollmentPromotionError.blocked }
-        return .init(requestID: requestID, installation: installation, startedAt: startedAt, currentLocationID: current.locationId)
+        return .init(requestID: requestID, installation: installation, startedAt: startedAt, currentLocationID: current.locationId, uptime: uptime)
     }
 }
 @_spi(NativeInstallation) public final class NativeOperationalStatusObservation: @unchecked Sendable {
@@ -907,18 +908,20 @@ enum NativeOperationalTransportFailure: Error, Equatable { case invalidResponse,
     private static let currentProcess = UUID()
     private let installation: NativeOperationalInstallation
     private let startedAt: TimeInterval, issuedProcess: UUID
-    fileprivate init(requestID: UUID, installation: NativeOperationalInstallation, startedAt: TimeInterval, currentLocationID: UUID?) {
+    private let uptime: () -> TimeInterval
+    fileprivate init(requestID: UUID, installation: NativeOperationalInstallation, startedAt: TimeInterval, currentLocationID: UUID?, uptime: @escaping () -> TimeInterval) {
         self.currentLocationID = currentLocationID
         self.requestID = requestID; self.installation = installation; self.startedAt = startedAt; issuedProcess = Self.currentProcess
+        self.uptime = uptime
     }
     fileprivate func requireFresh(for installation: NativeOperationalInstallation) throws {
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = uptime()
         guard self.installation === installation, issuedProcess == Self.currentProcess, startedAt.isFinite, now.isFinite,
             startedAt >= 0, now >= startedAt, now - startedAt <= 30 else { throw NativeEnrollmentPromotionError.blocked }
     }
     fileprivate func remainingPresentationTime(for installation: NativeOperationalInstallation) throws -> TimeInterval {
         try requireFresh(for: installation)
-        return max(0, 30 - (ProcessInfo.processInfo.systemUptime - startedAt))
+        return max(0, 30 - (uptime() - startedAt))
     }
     public func belongs(to expected: NativeOperationalInstallation) -> Bool { installation === expected }
 }

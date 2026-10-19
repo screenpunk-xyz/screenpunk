@@ -91,6 +91,12 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         self.supportAnchorSetup = supportAnchorSetup
     }
 
+    /// Replaces the lease clock before any status stamp. Production init keeps `systemUptime`.
+    func adoptUnifiedLeaseClock(_ clock: @escaping () -> TimeInterval) {
+        lock.lock(); defer { lock.unlock() }
+        cloudClock = clock
+    }
+
     /// Original first-native directory ownership. No server IDs or management
     /// permission are manufactured by this local initialization reservation.
     @_spi(NativeInstallation) public final class FreshCloudEnrollmentRoots {
