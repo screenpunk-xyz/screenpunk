@@ -1,0 +1,4 @@
+:root { color-scheme: dark; font-family: -apple-system, sans-serif; background: #141414; color: #fafafa; }
+body { margin: 0; }
+main { padding: 24px; }
+#clock { font-size: 2rem; font-variant-numeric: tabular-nums; }

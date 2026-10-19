@@ -18,7 +18,7 @@ public final class GenericConnectionDeviceVault: @unchecked Sendable {
         var configuration: ConnectionProvisioning
         var generation: UUID
     }
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private let store: any CredentialStore
     public static let storageService = "xyz.screenpunk.device.connections"
     static let storageKey = "approved-grants-v1"
@@ -66,6 +66,17 @@ public final class GenericConnectionDeviceVault: @unchecked Sendable {
         }
         try record.configuration.validate()
         return record
+    }
+    /// Migration consumes the exact approved record under the vault lock. The callback must
+    /// persist its own durable, secret-protected grant attempt before returning; no credential
+    /// bytes are projected into inventory, status, or a package.
+    func withMigrationConfiguration<T>(owner: String, dashboardId: String, revision: String,
+        _ consume: (ConnectionProvisioning?) throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        let matches = try load().filter { $0.owner == owner && $0.configuration.dashboardId == dashboardId && $0.configuration.revision == revision }
+        guard matches.count <= 1 else { throw ConnectionFailure.validationFailed }
+        if let configuration = matches.first?.configuration { try configuration.validate() }
+        return try consume(matches.first?.configuration)
     }
     /// Recreated on package/approval change. Old actors fail closed even across in-flight I/O.
     public func makeRuntime(scope: Scope, currentScope: @escaping @Sendable () -> Scope?,

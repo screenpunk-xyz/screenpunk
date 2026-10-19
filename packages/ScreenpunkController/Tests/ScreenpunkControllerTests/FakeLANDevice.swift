@@ -22,6 +22,9 @@ final class FakeLANDevice: @unchecked Sendable {
     var maxTransferBytes: Int? = LANProtocolLimits.maxMessageBytes
     var installedSet: [LANScreenSetEntry]?
     var selectedDashboardId: String?
+    var cloudInstallationId: String?
+    var controllerApproved: Bool?
+    var localControllerPinHex: String?
     var failSetAtIndex: Int?
     private var completedSets: [String: (LANScreenSetDeployBody, LANScreenSetReceipt)] = [:]
     var failProvisioning = false
@@ -163,7 +166,7 @@ final class FakeLANDevice: @unchecked Sendable {
                     throw TransferFailure.notPaired
                 }
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
-            case .connectionsInventory, .connectionsUpdateHome, .connectionsProvision, .connectionsRevoke, .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
+            case .pairRevoke, .screenSelect, .screenRemove, .screenInstall, .cloudRelay, .cloudArchiveChunk, .connectionsInventory, .connectionsUpdateHome, .connectionsProvision, .connectionsRevoke, .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
                 throw TransferFailure.validationFailed
             }
         } catch {
@@ -287,7 +290,7 @@ final class FakeLANLink: DeviceLink {
         return try LANCodec.decodePayload(DeviceSettingsSnapshot.self, json: reply.payloadJSON)
     }
     func queryActiveState() throws -> LANActiveQuery {
-        LANActiveQuery(revision: try queryActive(), screens: device.installedSet, selectedDashboardId: device.selectedDashboardId)
+        LANActiveQuery(revision: try queryActive(), screens: device.installedSet, selectedDashboardId: device.selectedDashboardId, cloudInstallationId: device.cloudInstallationId, controllerApproved: device.controllerApproved, localControllerPinHex: device.localControllerPinHex)
     }
 
     func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {

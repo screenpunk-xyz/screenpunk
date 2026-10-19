@@ -3,7 +3,11 @@ import ScreenpunkCore
 
 public protocol CloudInstallationTransitionJournal {
     func load() throws -> DeviceManagementTransitionHistory?
+    func loadEvidence() throws -> DeviceManagementEvidence?
     func save(_ history: DeviceManagementTransitionHistory) throws
+}
+public extension CloudInstallationTransitionJournal {
+    func loadEvidence() throws -> DeviceManagementEvidence? { try load().map(DeviceManagementEvidence.legacy) }
 }
 extension DeviceManagementTransitionStore: CloudInstallationTransitionJournal {}
 
@@ -15,25 +19,22 @@ public enum CloudInstallationRecovery {
         case legacyLocal, locallyFenced
         case blocked(Reason)
     }
-    public enum Reason: Equatable { case journalUnavailable, credentialUnavailable, orphanedCredential, missingCredential, pendingIntent }
+    public enum Reason: Equatable { case journalUnavailable, credentialUnavailable, orphanedCredential, missingCredential, pendingIntent, nativeAuthorityUnresolved }
 
     /// Snapshot evidence only: future callers must serialize authority changes and startup.
     /// Classification never deletes a credential or infers remote cleanup completion.
     public static func localEligibility(journal: any CloudInstallationTransitionJournal,
                                         credentials: CloudInstallationCredentialStore) -> LocalEligibility {
-        let history: DeviceManagementTransitionHistory?
-        do { history = try journal.load() } catch { return .blocked(.journalUnavailable) }
+        let history: DeviceManagementFormatHistory?
+        do { history = try journal.loadEvidence()?.formattedHistory } catch { return .blocked(.journalUnavailable) }
         let references: Set<String>
         do { references = try credentials.references() } catch { return .blocked(.credentialUnavailable) }
-        guard let history else { return references.isEmpty ? .legacyLocal : .blocked(.orphanedCredential) }
-        let recorded = Set(history.credentials.map(\.credentialReference))
+        let recorded = Set(history?.credentials.map(\.credentialReference) ?? [])
         guard references.subtracting(recorded).isEmpty else { return .blocked(.orphanedCredential) }
         guard references == recorded else { return .blocked(.missingCredential) }
-        do {
-            for reference in recorded {
-                guard try credentials.secret(for: reference) != nil else { return .blocked(.missingCredential) }
-            }
-        } catch { return .blocked(.credentialUnavailable) }
+        do { _ = try credentials.inventory(history: history) } catch { return .blocked(.credentialUnavailable) }
+        guard let history else { return .legacyLocal }
+        guard history.credentials.allSatisfy({ $0.format == .legacyLocal32 }) else { return .blocked(.nativeAuthorityUnresolved) }
         guard history.transitions.allSatisfy({ $0.phase == .locallyFenced }) else { return .blocked(.pendingIntent) }
         return .locallyFenced
     }

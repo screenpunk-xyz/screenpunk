@@ -1,5 +1,10 @@
 # MCP install
 
+> **Mac CLI integration checkout:** This page describes the earlier standalone
+> MCP bundle. Its automatic controller/helper startup and full tool table do
+> not describe the broker-attached adapter in this checkout. See
+> [Mac CLI consumers](mac-cli-consumers.md) before configuring this build.
+
 Screenpunk's agent interface is a Swift executable bundled inside the Mac
 app and spoken to over stdio. Your agent client launches it. It starts the
 per-user controller and the hidden preview helper on demand, does the work,

@@ -21,6 +21,11 @@ public protocol DeviceLink: AnyObject {
     func confirmPairing(code: String) throws
     func deploy(_ body: LANDeployBody) throws -> DeploymentRecord
     func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt
+    func relayCloudArchiveChunk(_ body: LANCloudArchiveChunk) throws -> LANCloudArchiveChunkReceipt
+    func relayCloudCommand(_ body: LANCloudRelay) throws -> LANCloudRelayReceipt
+    func installUnifiedScreens(_ body: LANUnifiedScreenInstall) throws -> LANActiveQuery
+    func selectUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery
+    func removeUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery
     func queryActiveState() throws -> LANActiveQuery
     func connectionInventory() throws -> DeviceConnectionInventory
     func updateHomeConnection(_ update: DeviceHomeAssistantUpdate) throws -> DeviceConnectionInventory
@@ -59,6 +64,21 @@ public extension DeviceLink {
     func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
         throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to apply screens.")
     }
+    func relayCloudArchiveChunk(_ body: LANCloudArchiveChunk) throws -> LANCloudArchiveChunkReceipt {
+        throw ControllerError(code: .unsupportedVersion, detail: "This device does not support approved cloud archive relay.")
+    }
+    func relayCloudCommand(_ body: LANCloudRelay) throws -> LANCloudRelayReceipt {
+        throw ControllerError(code: .unsupportedVersion, detail: "This device does not support cloud command relay.")
+    }
+    func installUnifiedScreens(_ body: LANUnifiedScreenInstall) throws -> LANActiveQuery {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to install concurrently managed screens.")
+    }
+    func selectUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to select concurrently managed screens.")
+    }
+    func removeUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery {
+        throw ControllerError(code: .unsupportedVersion, detail: "Update Screenpunk on this device to remove concurrently managed screens.")
+    }
     func queryActiveState() throws -> LANActiveQuery { LANActiveQuery(revision: try queryActive()) }
 
     func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
@@ -92,6 +112,9 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
     public var selectedDashboardId: String?
     public var settingsSnapshot: DeviceSettingsSnapshot?
     public var temporaryActivation: DeviceTemporaryActivationStatus?
+    public var cloudInstallationId: String?
+    public var approvedControllerIdentity: PairingIdentity?
+    public var deniedControllerIdentity: PairingIdentity?
 
     public init(
         device: PairedDevice,
@@ -102,7 +125,8 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
         lastSeenAt: Date? = nil,
         displayName: String? = nil,
         screenSet: [LANScreenSetEntry]? = nil,
-        selectedDashboardId: String? = nil
+        selectedDashboardId: String? = nil,
+        cloudInstallationId: String? = nil
     ) {
         self.device = device
         self.host = host
@@ -113,6 +137,7 @@ public struct PairedDeviceRecord: Sendable, Equatable, Codable, Identifiable {
         self.displayName = displayName
         self.screenSet = screenSet
         self.selectedDashboardId = selectedDashboardId
+        self.cloudInstallationId = cloudInstallationId
     }
 
     public var devicePin: [UInt8]? { PeerPin.bytes(devicePinHex) }

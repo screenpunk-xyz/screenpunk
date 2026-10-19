@@ -31,6 +31,20 @@ public struct CloudInstallationCredentialStore: Sendable {
         for reference in references { try Self.validate(reference) }
         return references
     }
+    /// Complete service inventory. Only declared formats are accepted; no secret escapes this classifier.
+    func inventory(history: DeviceManagementFormatHistory?) throws -> [String: CloudInstallationCredentialFormat] {
+        let observed = try references()
+        let bindings = history?.credentials ?? []
+        guard observed == Set(bindings.map(\.credentialReference)) else { throw CloudInstallationCredentialError.invalidReference }
+        var result: [String: CloudInstallationCredentialFormat] = [:]
+        for binding in bindings {
+            guard let bytes = try backend.read(reference: binding.credentialReference),
+                  bytes.count == (binding.format == .legacyLocal32 ? 32 : 48) else { throw CloudInstallationCredentialError.malformedSecret }
+            result[binding.credentialReference] = binding.format
+        }
+        guard try references() == observed else { throw CloudInstallationCredentialError.invalidReference }
+        return result
+    }
     /// Load an existing immutable key, or create it once and verify the same reference.
     /// A nonduplicate write error is recoverable only if exact attempted bytes can be read back.
     func stage(reference: String) throws -> Data {

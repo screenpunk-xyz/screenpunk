@@ -1,0 +1,11 @@
+# Credential format migration
+
+The management journal can explicitly represent `legacyLocal32` and `nativeInstallationV1` bindings in schema 3. It preserves every transition, credential generation, reference, order and local fence. The existing 64-transition, 128-key and 64-KiB limits still apply; history is never pruned. Schema 1 is interpreted through its existing deterministic binding before migration. Reads do not migrate or generate identifiers.
+
+The explicit owner migration accepts exact existing legacy evidence and derives only its format-annotated equivalent. It uses the same journal path and Keychain service. Legacy journal load/save and legacy staging reject schema 3 instead of projecting or downgrading it. No native key insertion, remote request or enrollment is implemented by this change.
+
+Migration revokes existing leases and retains the exact source across failures. Before acknowledgement, retry distinguishes a failure before the Core write attempt from an uncertain Core commit. After the Core method acknowledges completion, retry only verifies the exact target, reset eligibility and complete credential inventory; it does not repeat the write. Diagnostic readback alone cannot acknowledge an uncertain commit. Successful migration returns no authority: a separate fresh refresh must qualify a new lease.
+
+Inventory requires all and only the recorded references, with each legacy key containing 32 bytes and each native key containing 48 bytes. Missing, orphaned, inaccessible or mismatched values block admission. A native binding remains blocked for Local mode even when all local transitions are fenced: this schema contains no durable remote revocation or activation outcome that could authorize that transition. Fully fenced legacy-only history remains eligible after fresh verification.
+
+The narrow Core `ManagementMigration` SPI is a source-level API convention, not a security boundary. It accepts no arbitrary target or callback; exact-source and derived-target checks constrain the transformation. Cooperating app callers use the serialized authority owner. The journal transaction and before/after Keychain inventory are not an atomic transaction across external filesystem and Keychain writers. Same-size external key replacement, external rollback and physical power-loss behavior are not newly qualified here.

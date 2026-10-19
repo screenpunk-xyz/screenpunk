@@ -6,6 +6,7 @@ import CryptoKit
 /// Authenticated pairing fixtures. The short code is a SAS from a transcript
 /// MAC, not a cipher and not an encryption key.
 public enum PairingLimits: Sendable {
+    public static let maxApprovedControllers = 16
     public static let expirySeconds: TimeInterval = 120
     public static let maxFailedAttempts = 5
     public static let codeDigits = 6
@@ -54,7 +55,8 @@ public enum PairingFailure: String, Error, Sendable, Equatable {
     case rateLimited
     case codeMismatch
     case identityChanged
-    case secondOwner
+    case secondOwner // Legacy protocol error retained for compatibility.
+    case controllerLimit
     case invalidIdentity
     /// Another controller's code is on screen and has not expired. The
     /// session belongs to that candidate until it completes, is cancelled,
@@ -123,15 +125,34 @@ public struct PairingSession: Sendable, Equatable {
     }
 }
 
-/// One owning controller identity per device. No credentials are stored here.
+/// Approved local control pins are independent from the original content owner.
+/// Pins are public identities; approval requires a fresh on-device SAS confirmation.
 public struct DevicePairingState: Sendable, Equatable {
     public var owner: PairingIdentity?
+    public private(set) var approvedControllers: [PairingIdentity]
     public var session: PairingSession?
 
-    public init(owner: PairingIdentity? = nil, session: PairingSession? = nil) {
+    public init(owner: PairingIdentity? = nil, session: PairingSession? = nil, approvedControllers: [PairingIdentity]? = nil) {
         self.owner = owner
         self.session = session
+        // Missing registry is a legacy state. An explicit empty registry means revoked.
+        let candidates = approvedControllers ?? owner.map { [$0] } ?? []
+        var pins = Set<[UInt8]>()
+        self.approvedControllers = candidates.filter {
+            $0.role == .controller && $0.isWellFormed && pins.insert($0.publicKey).inserted
+        }.prefix(PairingLimits.maxApprovedControllers).map { $0 }
     }
+
+    public func isApproved(_ controller: PairingIdentity) -> Bool {
+        controller.role == .controller && controller.isWellFormed && approvedControllers.contains(controller)
+    }
+
+    /// Revoke only this controller's control permission. Content and other peers remain.
+    public mutating func revoke(_ controller: PairingIdentity) {
+        approvedControllers.removeAll { $0 == controller }
+        if session?.candidateOwner == controller { session = nil }
+    }
+
 
     public mutating func begin(
         transcript: PairingTranscript,
@@ -142,8 +163,8 @@ public struct DevicePairingState: Sendable, Equatable {
         guard candidateOwner.role == .controller, candidateOwner.isWellFormed else {
             throw PairingFailure.invalidIdentity
         }
-        if let owner, owner != candidateOwner {
-            throw PairingFailure.secondOwner
+        if !isApproved(candidateOwner), approvedControllers.count >= PairingLimits.maxApprovedControllers {
+            throw PairingFailure.controllerLimit
         }
         if let session, session.isLive(at: clock.now), session.candidateOwner != candidateOwner {
             throw PairingFailure.busy
@@ -168,8 +189,8 @@ public struct DevicePairingState: Sendable, Equatable {
         if presentedOwner != session.candidateOwner {
             throw PairingFailure.identityChanged
         }
-        if let owner, owner != presentedOwner {
-            throw PairingFailure.secondOwner
+        if !isApproved(presentedOwner), approvedControllers.count >= PairingLimits.maxApprovedControllers {
+            throw PairingFailure.controllerLimit
         }
         if code != session.expectedCode {
             session.failures += 1
@@ -179,7 +200,8 @@ public struct DevicePairingState: Sendable, Equatable {
             }
             throw PairingFailure.codeMismatch
         }
-        owner = presentedOwner
+        if owner == nil { owner = presentedOwner }
+        if !isApproved(presentedOwner) { approvedControllers.append(presentedOwner) }
         session.confirmed = true
         self.session = session
     }

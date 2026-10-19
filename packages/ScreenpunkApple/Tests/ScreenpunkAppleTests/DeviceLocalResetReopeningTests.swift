@@ -65,10 +65,16 @@ import ScreenpunkCore
         XCTAssertNil(coordinator.reopeningCapability)
         XCTAssertThrowsError(try f.domains.calendar.snapshot())
         XCTAssertEqual(f.cleanups, 1)
+        f.reset.failCompletion = true
+        do { try await coordinator.retry(); XCTFail("repeated completion uncertainty") } catch {}
+        XCTAssertNil(coordinator.reopeningCapability)
+        XCTAssertThrowsError(try f.domains.calendar.snapshot())
+        XCTAssertThrowsError(try f.domains.preferences.generation())
+        XCTAssertEqual(f.cleanups, 1); XCTAssertEqual(f.retirements, 1)
         try await coordinator.retry()
-        XCTAssertEqual(f.cleanups, 1)
+        XCTAssertEqual(f.cleanups, 1); XCTAssertEqual(f.retirements, 1)
         try f.domains.open(XCTUnwrap(coordinator.reopeningCapability))
-        XCTAssertEqual(f.reset.methods, ["save", "save", "save"])
+        XCTAssertEqual(f.reset.methods, ["save", "save", "save", "save"])
     }
     func testCancellationDuringCompletedSaveRetainsSessionForExplicitCapabilityRecovery() async throws {
         let f = try ReopeningFixture(), coordinator = try f.coordinator()

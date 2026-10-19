@@ -20,9 +20,8 @@
     },
     {
       "path": "screen.js",
-      "bytes": 883031,
-      "sha256": "ffb8b2ad6a6ce80dc03e6db3450801a684fc8f2076c7568f379b6ded57924f07",
-      "baselineEqual": true
+      "bytes": 885434,
+      "sha256": "bd096be75a7ae53bbe77aea0b4ad44a2dd12c5569e7dffb29443ce7725559d23"
     }
   ],
   "earthquakes": [
@@ -46,9 +45,8 @@
     },
     {
       "path": "screen.js",
-      "bytes": 729617,
-      "sha256": "1fe6b28345ed0e00c556d9f63bf85b1f8eb272ecd1f5bc8909cf7bc1125e32d0",
-      "baselineEqual": true
+      "bytes": 731458,
+      "sha256": "185b1e65fcd763a1cd0c357c31b243bae346d1a40571e5c8a29a7bc215d27db5"
     }
   ],
   "cjs": [

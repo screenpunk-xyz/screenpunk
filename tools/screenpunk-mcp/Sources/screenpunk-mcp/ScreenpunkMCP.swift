@@ -1,24 +1,18 @@
 import Foundation
 import ScreenpunkController
 import ScreenpunkCore
+import ScreenpunkBrokerMCP
 
 @main
 enum ScreenpunkMCP {
     static func main() async {
         do {
-            let service = try ControllerService.bootstrap()
-            let transport = LANTransport()
-            let lanStatus = transport.attach(to: service)
-            FileHandle.standardError.write(
-                Data("screenpunk-mcp bootstrap \(PackageLimits.schemaMajor) helper=\(service.helperStarted) \(lanStatus)\n".utf8)
-            )
+            let broker = try LegacyBrokerAdapter()
             if ProcessInfo.processInfo.environment["SCREENPUNK_MCP_TRANSPORT"] == "jsonrpc" {
-                JSONRPCFallback.run(service: service)
+                JSONRPCFallback.run(broker: broker)
             } else {
-                try await OfficialMCPServer.run(service: service)
+                try await OfficialMCPServer.run(broker: broker)
             }
-            // The Bonjour browser must outlive the server loop.
-            withExtendedLifetime(transport) {}
         } catch {
             FileHandle.standardError.write(
                 Data("screenpunk-mcp failed \(error.localizedDescription)\n".utf8)

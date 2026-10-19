@@ -1,0 +1,17 @@
+{
+  "items": [
+    {
+      "id": "05f93b4e-7b95-40fa-bb3d-e1b2f59a6356",
+      "name": "First workspace",
+      "membershipId": "6ec286a3-1019-4da3-9ed6-fa839ec4e6d8",
+      "role": "administrator"
+    },
+    {
+      "id": "291ea7be-3e51-4a2d-8628-4af9bdfe899d",
+      "name": "Second workspace",
+      "membershipId": "0fd95d26-15f0-4bbd-ae38-a98eb3650cfc",
+      "role": "member"
+    }
+  ],
+  "nextCursor": null
+}

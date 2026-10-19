@@ -20,6 +20,9 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
     private var homeAssistantBridge: HomeAssistantPreviewBridge?
     private var finished = false
     private var waitingForReady = false
+    private var readyDeadline = Date()
+    // Set while the authoring probe is publishing its own ready-bounded result.
+    private var authoringProbeActive = false
     // Read-only carousel imagery can capture a loaded page even without a runtime.ready call.
     private var documentThumbnail: Bool {
         ProcessInfo.processInfo.environment["SCREENPUNK_DOCUMENT_THUMBNAIL"] == "1"
@@ -125,6 +128,24 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         config.userContentController.addUserScript(readyScript)
 #if DEBUG
         if ProcessInfo.processInfo.environment["SCREENPUNK_AUTHORING_PROBE"] == "1" {
+            // Debug-only synthetic interaction fixture; never claims native durability.
+            if ProcessInfo.processInfo.environment["SCREENPUNK_AUTHORING_STATE_FIXTURE"] == "1", homeAssistantBridge == nil {
+                config.userContentController.addUserScript(WKUserScript(source: """
+                (() => {
+                  const values = new Map();
+                  window.__authoringSyntheticState = true;
+                  window.screenpunk.state = {
+                    get: async key => values.has(key) ? JSON.parse(values.get(key)) : null,
+                    set: async (key, value) => { values.set(key, JSON.stringify(value)); },
+                    remove: async key => { values.delete(key); }
+                  };
+                  window.screenpunk.runtime.onStatus = listener => {
+                    listener({active:true, preview:true, persistentState:1, persistentStateWritable:1});
+                    return () => {};
+                  };
+                })();
+                """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            }
             config.userContentController.addUserScript(WKUserScript(source: "window.__authoringViolations=[];addEventListener('securitypolicyviolation',e=>window.__authoringViolations.push(e.violatedDirective));", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
 #endif
@@ -155,13 +176,24 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+        readyDeadline = Date().addingTimeInterval(timeout)
+        let expire: () -> Void = { [weak self] in
             guard let self, !self.finished else { return }
             if self.waitingForReady {
                 self.fail("not_ready")
             } else {
                 self.fail("timeout")
             }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+            guard let self, !self.finished else { return }
+            // The probe reports `button` at this same deadline; let that result land.
+            if self.authoringProbeActive {
+                self.authoringProbeActive = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: expire)
+                return
+            }
+            expire()
         }
     }
 
@@ -237,14 +269,28 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
 
 #if DEBUG
     private func probeAuthoring(_ webView: WKWebView) {
+        authoringProbeActive = true
+        let readyBudgetMs = max(0, Int(readyDeadline.timeIntervalSinceNow * 1000))
         let script = """
+        const deadline=performance.now()+\(readyBudgetMs);
         const readyMilliseconds=Math.round(performance.now());
         const pause=()=>new Promise(r=>setTimeout(r,100));
         await pause();
         const failures=[]; const check=(ok,name)=>{if(!ok)failures.push(name)};
         const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes(text));
         check(!!document.querySelector('.recharts-surface'),'chart');
-        const counter=button('Count');counter?.click();await pause();check(button('Count')?.textContent.includes('1'),'button');
+        const syntheticState=window.__authoringSyntheticState===true;
+        const counter=button('Count');
+        if(syntheticState){
+          // runtime.ready runs before useScreenPreferences leaves the fieldset :disabled.
+          // Sample first. A poll already at the ready deadline is a miss, even when the sample matches.
+          const until=async ok=>{for(;;){const ready=ok();if(performance.now()>=deadline)return false;if(ready)return true;await pause()}};
+          let countButton;
+          const enabled=await until(()=>{countButton=button('Count');return !!countButton&&!countButton.matches(':disabled')});
+          if(!enabled)check(false,'button');
+          else{countButton.click();check(await until(()=>!!button('Count')?.textContent?.includes('1')),'button');}
+        }
+        else {check(counter?.matches(':disabled'),'durable-edit-disabled');counter?.click();await pause();check(button('Count')?.textContent.includes('0'),'no-volatile-edit');check(document.body.textContent.includes('unsupported'),'unsupported-status');}
         button('Details')?.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));await pause();check(document.body.textContent.includes('Arrow keys'),'tabs');
         const trigger=button('Open dialog');trigger?.focus();trigger?.click();await pause();
         check(!!document.querySelector('[role=dialog]'),'dialog');
@@ -253,15 +299,17 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         check(!document.querySelector('[role=dialog]'),'dialog-close');
         check(document.activeElement===trigger,'focus-restoration');
         const select=document.querySelector('[role=combobox]');select?.focus();
-        select?.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));await pause();
-        check(!!document.querySelector('[role=listbox]'),'select');
+        if(syntheticState){
+          select?.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));await pause();
+          check(!!document.querySelector('[role=listbox]'),'select');
+        } else check(select?.matches(':disabled'),'durable-choice-disabled');
         document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await pause();
         button('Value')?.click();await pause();
         check(document.querySelector('th[aria-sort=ascending],th[aria-sort=descending]')!==null,'table-sort');
         const beforeSlide=document.querySelector('.sp-slides')?.style.transform;
         document.querySelector('[aria-label="Next slide"]')?.click();await pause();
         check(document.querySelector('.sp-slides')?.style.transform!==beforeSlide,'carousel');
-        return {failures,violations:window.__authoringViolations,readyMilliseconds,probeFinishedMilliseconds:Math.round(performance.now()),width:innerWidth,height:innerHeight};
+        return {syntheticState,nativePersistenceVerified:false,failures,violations:window.__authoringViolations,readyMilliseconds,probeFinishedMilliseconds:Math.round(performance.now()),width:innerWidth,height:innerHeight};
         """
         Task { @MainActor [weak self] in
             guard let self else { return }
