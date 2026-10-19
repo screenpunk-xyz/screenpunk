@@ -187,6 +187,30 @@ final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
         XCTAssertEqual(try reopened.mountedAssociation()?.entryID, active.entryID)
         XCTAssertEqual(fixture.storage.adds, 2, "Neither reopen nor cloud disconnect duplicates credentials")
     }
+    func testStaleGenuineClockRejectsCloudLeaseAndPresentation() async throws {
+        let clock = GenuineInventoryClock()
+        let fixture = try await GenuineUnifiedInventoryFixture.make(clock: clock)
+        defer { fixture.close() }
+        clock.advance(30)
+        XCTAssertNoThrow(try fixture.authority.validateCloudRequestStart(fixture.context))
+        XCTAssertNoThrow(try fixture.current.requirePresentationCurrent())
+        clock.advance(0.001)
+        XCTAssertThrowsError(try fixture.authority.validateCloudRequestStart(fixture.context)) {
+            XCTAssertEqual($0 as? DeviceManagementAuthority.Failure, .staleLease)
+        }
+        XCTAssertThrowsError(try fixture.current.requirePresentationCurrent()) {
+            XCTAssertEqual($0 as? NativeEnrollmentPromotionError, .blocked)
+        }
+    }
+}
+
+/// One uptime source for the genuine fixture's cloud lease and status observation.
+/// It stays still until `advance`, so a stalled runner cannot age a fresh lease past 30s.
+final class GenuineInventoryClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval = 1_000
+    func now() -> TimeInterval { lock.lock(); defer { lock.unlock() }; return value }
+    func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; value += seconds }
 }
 
 struct GenuineUnifiedInventoryFixture {
@@ -213,7 +237,9 @@ struct GenuineUnifiedInventoryFixture {
         }
     }
     func close() { http.close(); try? FileManager.default.removeItem(at: parent) }
-    static func make(prepareLocal: ((DeviceManagementAuthority, URL) throws -> DeviceLegacyMigrationSession)? = nil) async throws -> Self {
+    static func make(clock: GenuineInventoryClock = GenuineInventoryClock(),
+        prepareLocal: ((DeviceManagementAuthority, URL) throws -> DeviceLegacyMigrationSession)? = nil) async throws -> Self {
+        let now: () -> TimeInterval = { clock.now() }
         let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
         var completed = false
         defer { if !completed { try? FileManager.default.removeItem(at: parent) } }
@@ -222,6 +248,7 @@ struct GenuineUnifiedInventoryFixture {
         let authority = DeviceManagementAuthority(journal: AuthorityJournal(), credentials: .init(backend: AuthorityBackend(), random: { Data() }),
             reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor),
             supportAnchorSetup: try .fixture(existingPhysicalParent: parent), commandIntents: .init(root: parent.appendingPathComponent("command-intents")), concurrentControlQualified: true)
+        authority.adoptCloudClock(now)
         try authority.prepareProductionSupportAnchor()
         let local = try prepareLocal?(authority, parent)
         try authority.enterCloudForeground()
@@ -246,7 +273,7 @@ struct GenuineUnifiedInventoryFixture {
         let context = try authority.bindOperationalInstallation(installation: result.installation, activation: result.activation, origin: http.origin)
         let status = try authority.prepareCloudStatusRequest(context)
         try authority.beginCloudStatusRequest(context, requestID: status.requestID)
-        try authority.acceptCloudStatus(await status.performFixedTransport(origin: http.origin, configuration: http.configuration), context: context)
+        try authority.acceptCloudStatus(await status.performFixedTransport(origin: http.origin, configuration: http.configuration, clock: now), context: context)
         let current = try authority.prepareCurrentInstallationDispatch(context)
         let execution = try result.installation.makeDeliveryExecutionSession(current: current)
         let stateBody = try execution.freshGenesisObservation(current: current)
