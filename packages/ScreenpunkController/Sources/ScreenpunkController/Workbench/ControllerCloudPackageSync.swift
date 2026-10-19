@@ -132,8 +132,9 @@ struct ControllerCloudPackageSync {
         }
         for var record in records where record.binding.status != .deleted && record.retiredForSource != true {
             if cloudProjectIds != nil && !cloudProjectIds!.contains(record.binding.cloudProjectId) && localDashboardIds?.contains(record.dashboardId) != true { continue }
-            // Unavailable copies require an admitted feed upsert plus fresh exact project/package metadata.
-            if record.binding.status == .unavailable && cloudProjectIds?.contains(record.binding.cloudProjectId) != true { continue }
+            // A reset can have no upserts. Re-admission still requires fresh project metadata
+            // from the current authoritative listing, followed by exact package metadata below.
+            if record.binding.status == .unavailable && !cloud.contains(where: { $0.id == record.binding.cloudProjectId }) { continue }
             try ControllerCloudAutomaticSyncAuthorization.requireConsent()
             if sourceBindings.contains(where: { $0.workspaceId == record.binding.workspaceId && $0.cloudProjectId == record.binding.cloudProjectId }) {
                 // Keep any historical local content and identity journal, but never continue a

@@ -330,6 +330,116 @@ final class ControllerCloudWorkbenchTests: XCTestCase {
         try await cloud.setScreenSyncEnabled(false)
     }
 
+    func testFeedResetReadmitsUnavailableSourceOnlyAfterFreshAccessibleMetadata() async throws {
+        let (root, server, client, cloud) = try defaultWorkspaceFixture()
+        defer { client.close(); server.stop(); try? FileManager.default.removeItem(at: root) }
+        try await cloud.selectWorkspace(workspace, creatingLocalWorkspaceAt: root.appendingPathComponent("Screenpunk").path)
+        let base = CloudWorkbenchHTTPStub.handler!
+        let ids = [UUID().uuidString.lowercased(), UUID().uuidString.lowercased()]
+        let head = UUID().uuidString.lowercased()
+        let descriptor: [String: Any] = ["schemaVersion": 1, "projectId": UUID().uuidString, "dashboardId": UUID().uuidString,
+            "name": "Same name", "kind": "web", "kitVersion": "builtin-web-1", "entry": "web/index.html", "screenConfig": "screen.json"]
+        var normalized = descriptor; normalized.removeValue(forKey: "projectId"); normalized.removeValue(forKey: "dashboardId")
+        let files = ["screenpunk.project.json": try JSONSerialization.data(withJSONObject: normalized, options: [.sortedKeys]),
+            "screen.json": Data("{}".utf8), "web/index.html": Data("<!doctype html><html><body>Cloud</body></html>".utf8)]
+        var failedBinding = false, sourceReads = 0, creates = 0, deleted = Set<String>()
+        var feedKind = "remove", feedCursor = "1"
+        var feedReset = false, offline = false
+        func object(_ id: String) -> [String: Any] { ["id": id, "accountId": "account", "name": "Same name", "sourceKind": "html", "kitVersion": "builtin-web-1", "headVersionId": head] }
+        func response(_ value: Any, status: Int = 200) throws -> (Int, Data) { (status, try JSONSerialization.data(withJSONObject: value)) }
+        CloudWorkbenchHTTPStub.handler = { request in
+            let path = request.url!.path
+            if offline { throw ControllerCloudError.http(503) }
+            if path.hasSuffix("/changes") && feedReset { return try response(["schemaVersion": 1, "items": [], "nextCursor": feedCursor, "highWaterCursor": feedCursor, "hasMore": false, "resetRequired": true]) }
+            if path.hasSuffix("/changes") { return try response(["schemaVersion": 1, "items": [["projectId": ids[0], "cursor": feedCursor, "kind": feedKind,
+                "headVersionId": feedKind == "remove" ? NSNull() : head as Any, "packagesChanged": false]], "nextCursor": feedCursor, "highWaterCursor": feedCursor, "hasMore": false, "resetRequired": false]) }
+            if path.hasSuffix("/projects") {
+                if request.httpMethod == "POST" { creates += 1; throw ControllerCloudError.invalidResponse }
+                return try response(["items": ids.filter { !deleted.contains($0) }.map(object), "nextCursor": NSNull()])
+            }
+            if let id = ids.first(where: { path.hasSuffix("/projects/" + $0) }) { return try response(object(id), status: deleted.contains(id) ? 404 : 200) }
+            if path.hasSuffix("/binding") {
+                if !failedBinding { failedBinding = true; return try response([:], status: 503) }
+                return try response(["id": UUID().uuidString.lowercased()])
+            }
+            if path.hasSuffix("/manifest") {
+                return try response(["files": files.keys.sorted().map { ["path": $0, "sha256": DeploymentDigest.sha256Hex(files[$0]!), "size": files[$0]!.count, "mediaType": "application/octet-stream"] }, "nextCursor": NSNull()])
+            }
+            if path.hasSuffix("/source/read") {
+                sourceReads += 1
+                let body = try Self.requestObject(request), member = body["path"] as! String, bytes = files[member]!
+                return try response(["versionId": head, "path": member, "sha256": DeploymentDigest.sha256Hex(bytes), "size": bytes.count, "encoding": "base64", "data": bytes.base64EncodedString()])
+            }
+            return try base(request)
+        }
+        try await cloud.setScreenSyncEnabled(true)
+        try await cloud.automaticSync()
+        try await cloud.automaticSync()
+        let imported = try client.listProjects()
+        XCTAssertEqual(imported.count, 2); XCTAssertEqual(Set(imported.map(\.projectId)).count, 2)
+        XCTAssertEqual(Set(imported.map(\.dashboardId)).count, 2)
+        XCTAssertTrue(imported.allSatisfy { !ids.contains($0.projectId) && $0.name == "Same name" })
+        let status = try await cloud.status()
+        XCTAssertEqual(Set(status.bindings.map(\.cloudProjectId)), Set(ids))
+        XCTAssertTrue(status.bindings.allSatisfy { $0.status == .synced }, "statuses: \(status.bindings.map { $0.status.rawValue })")
+        let localProgress = try await ControllerCloudWorkbench.screenSyncProgress(baseURL: URL(string: "https://cloud.test")!, client: client, machineRoot: root.appendingPathComponent("machine"))
+        XCTAssertTrue(imported.allSatisfy { localProgress[$0.dashboardId]?.state == "synced" && localProgress[$0.dashboardId]?.lastSuccessfulSyncAt != nil })
+        let before = sourceReads
+        try await cloud.automaticSync()
+        XCTAssertEqual(sourceReads, before, "unchanged metadata must not download source again")
+        XCTAssertEqual(creates, 0, "a Cloud restore must not arm upload-as-new")
+        let baseURL = URL(string: "https://cloud.test")!, machine = root.appendingPathComponent("machine")
+        if let old = try ControllerCloudWorkbench.pendingScreenSyncRequest(baseURL: baseURL, machineRoot: machine) {
+            try ControllerCloudWorkbench.acknowledgeScreenSyncRequest(baseURL: baseURL, machineRoot: machine, requestId: old.requestId)
+        }
+        deleted.insert(ids[0])
+        try cloud.requestScreenSync(.remoteInvalidation)
+        var event = try XCTUnwrap(ControllerCloudWorkbench.pendingScreenSyncRequest(baseURL: baseURL, machineRoot: machine))
+        let removed = try await cloud.processScreenSyncRequest(event)
+        XCTAssertTrue(removed.completed); XCTAssertEqual(sourceReads, before, "remove hints cannot perform ordinary source sync")
+        var removedStatus = try await cloud.status()
+        XCTAssertEqual(removedStatus.bindings.first { $0.cloudProjectId == ids[0] }?.status, .unavailable)
+        XCTAssertEqual(try client.listProjects().map(\.projectId), imported.map(\.projectId))
+        try ControllerCloudWorkbench.acknowledgeScreenSyncRequest(baseURL: baseURL, machineRoot: machine, requestId: event.requestId)
+        feedReset = true; feedCursor = "20"
+        try cloud.requestScreenSync(.remoteInvalidation)
+        event = try XCTUnwrap(ControllerCloudWorkbench.pendingScreenSyncRequest(baseURL: baseURL, machineRoot: machine))
+        offline = true
+        do { _ = try await cloud.processScreenSyncRequest(event); XCTFail("Offline metadata cannot authorize readmission") } catch {}
+        offline = false
+        let denied = try await cloud.processScreenSyncRequest(event)
+        XCTAssertTrue(denied.completed)
+        let deniedStatus = try await cloud.status()
+        XCTAssertEqual(deniedStatus.bindings.first { $0.cloudProjectId == ids[0] }?.status, .unavailable)
+        try ControllerCloudWorkbench.acknowledgeScreenSyncRequest(baseURL: baseURL, machineRoot: machine, requestId: event.requestId)
+        deleted.remove(ids[0]); feedCursor = "30"
+        try cloud.requestScreenSync(.remoteInvalidation)
+        event = try XCTUnwrap(ControllerCloudWorkbench.pendingScreenSyncRequest(baseURL: baseURL, machineRoot: machine))
+        let restored = try await cloud.processScreenSyncRequest(event)
+        XCTAssertTrue(restored.completed)
+        removedStatus = try await cloud.status()
+        XCTAssertEqual(removedStatus.bindings.first { $0.cloudProjectId == ids[0] }?.status, .synced)
+        XCTAssertEqual(try client.listProjects().map(\.projectId), imported.map(\.projectId), "fresh readmission preserves the established local identity")
+        XCTAssertEqual(sourceReads, before, "an unchanged re-admitted head needs no source download")
+
+        let archived = imported[0], latest = try client.workspaceStatus()
+        let inspected = try XCTUnwrap(client.performAuthoring(method: .projectInspect, params: ["schemaVersion": 1, "projectId": archived.projectId]).project)
+        _ = try client.archiveScreen(params: ["schemaVersion": 1, "expectedWorkspaceId": latest.workspaceId!,
+            "expectedSelectionGeneration": latest.selectionGeneration!, "expectedCatalogGeneration": latest.generation!,
+            "dashboardId": archived.dashboardId, "projectId": archived.projectId, "expectedSourceVersion": inspected.sourceVersion])
+        try await cloud.automaticSync()
+        XCTAssertEqual(try client.listProjects().count, 1, "archived source must not reappear")
+        let archivedStatus = try await cloud.status()
+        let remaining = try XCTUnwrap(archivedStatus.bindings.first { $0.localProjectId != archived.projectId })
+        deleted.insert(remaining.cloudProjectId)
+        try await cloud.automaticSync()
+        let afterDelete = try await cloud.status()
+        XCTAssertEqual(afterDelete.bindings.first { $0.cloudProjectId == remaining.cloudProjectId }?.status, .deleted)
+        XCTAssertEqual(try client.listProjects().count, 1, "Cloud deletion keeps the local copy")
+        XCTAssertEqual(creates, 0)
+        try await cloud.setScreenSyncEnabled(false)
+    }
+
     func testCloudDiscoveryUsesNewIdentitiesAndRecoversAfterBindingFailureWithoutNameMatching() async throws {
         let (root, server, client, cloud) = try defaultWorkspaceFixture()
         defer { client.close(); server.stop(); try? FileManager.default.removeItem(at: root) }
@@ -422,6 +532,86 @@ final class ControllerCloudWorkbenchTests: XCTestCase {
         XCTAssertEqual(afterDelete.bindings.first { $0.cloudProjectId == remaining.cloudProjectId }?.status, .deleted)
         XCTAssertEqual(try client.listProjects().count, 1, "Cloud deletion keeps the local copy")
         XCTAssertEqual(creates, 0)
+        try await cloud.setScreenSyncEnabled(false)
+    }
+
+    func testFeedResetReadmitsUnavailablePackageOnlyFromFreshListedProject() async throws {
+        let (root, server, client, cloud) = try defaultWorkspaceFixture()
+        defer { client.close(); server.stop(); try? FileManager.default.removeItem(at: root) }
+        try await cloud.selectWorkspace(workspace, creatingLocalWorkspaceAt: root.appendingPathComponent("Screenpunk").path)
+        let base = CloudWorkbenchHTTPStub.handler!
+        let remote = UUID().uuidString.lowercased(), packageID = UUID().uuidString.lowercased()
+        let content = Data("<!doctype html><html><body>Package</body></html>".utf8)
+        var manifest = DashboardManifest(schemaVersion: 1, dashboardId: UUID().uuidString.lowercased(), name: "Package only",
+            revision: UUID().uuidString.lowercased(), entrypoint: "index.html", sdkVersion: "1",
+            target: .init(profileId: "test", width: 800, height: 480, scale: 1, orientation: "landscape"), connections: [],
+            files: [.init(path: "index.html", bytes: content.count, sha256: DeploymentDigest.sha256Hex(content))])
+        manifest.digest = try DeploymentDigest.digest(for: manifest)
+        let original = manifest
+        let archive = try ControllerCloudNativeArchive.encode(manifest: original, files: ["index.html": content])
+        var fileRequests = 0, writes = 0
+        var listed = true, feedReset = false, feedCursor = "1"
+        func response(_ value: Any) throws -> (Int, Data) { (200, try JSONSerialization.data(withJSONObject: value)) }
+        let descriptor: [String: Any] = ["packageId": packageID, "projectId": remote, "sourceVersionId": NSNull(),
+            "packageDigest": original.digest!, "manifestSha256": DeploymentDigest.sha256Hex(try JSONEncoder().encode(original)),
+            "archiveSha256": DeploymentDigest.sha256Hex(archive), "archiveBytes": archive.count,
+            "manifest": try JSONSerialization.jsonObject(with: JSONEncoder().encode(original))]
+        CloudWorkbenchHTTPStub.handler = { request in
+            let path = request.url!.path
+            if path.hasSuffix("/realtime/session") { return try base(request) }
+            if path.hasSuffix("/changes") { return try response(["schemaVersion": 1,
+                "items": feedReset ? [] : [["projectId": remote, "cursor": feedCursor, "kind": "remove", "headVersionId": NSNull(), "packagesChanged": false]],
+                "nextCursor": feedCursor, "highWaterCursor": feedCursor, "hasMore": false, "resetRequired": feedReset]) }
+            if path.hasSuffix("/projects") && !listed { return try response(["items": [], "nextCursor": NSNull()]) }
+            if request.httpMethod != "GET" && !path.hasSuffix("/connections") { writes += 1; throw ControllerCloudError.invalidResponse }
+            if path.hasSuffix("/projects") { return try response(["items": [["id": remote, "accountId": "account", "name": "Package only", "sourceKind": "imported", "headVersionId": NSNull()]], "nextCursor": NSNull()]) }
+            if path.hasSuffix("/packages") { return try response(["items": [descriptor], "nextCursor": NSNull()]) }
+            if path.hasSuffix("/file") {
+                fileRequests += 1
+                return try response(["projectId": remote, "packageId": packageID, "packageDigest": original.digest!,
+                    "path": "index.html", "sha256": original.files[0].sha256, "size": content.count,
+                    "offset": 0, "dataBase64": content.base64EncodedString(), "nextOffset": NSNull()])
+            }
+            return try base(request)
+        }
+        try await cloud.setScreenSyncEnabled(true)
+        try await cloud.automaticSync()
+        let selected = try client.workspaceStatus(), imported = try client.listWorkspacePackages(in: selected)
+        XCTAssertEqual(imported.count, 1)
+        let item = try XCTUnwrap(imported.first)
+        XCTAssertNotEqual(item.dashboardId, original.dashboardId); XCTAssertNotEqual(item.revision, original.revision)
+        XCTAssertEqual(item.name, original.name)
+        XCTAssertTrue(try client.listProjects().isEmpty, "package restore must not fabricate source/builds")
+        let localProgress = try await ControllerCloudWorkbench.screenSyncProgress(baseURL: URL(string: "https://cloud.test")!, client: client, machineRoot: root.appendingPathComponent("machine"))
+        XCTAssertEqual(localProgress[item.dashboardId]?.state, "synced")
+        XCTAssertNotNil(localProgress[item.dashboardId]?.lastSuccessfulSyncAt)
+        let previous = fileRequests
+        try await cloud.automaticSync()
+        XCTAssertEqual(fileRequests, previous)
+        let baseURL = URL(string: "https://cloud.test")!, machine = root.appendingPathComponent("machine")
+        if let old = try ControllerCloudWorkbench.pendingScreenSyncRequest(baseURL: baseURL, machineRoot: machine) {
+            try ControllerCloudWorkbench.acknowledgeScreenSyncRequest(baseURL: baseURL, machineRoot: machine, requestId: old.requestId)
+        }
+        listed = false
+        for cursor in ["1", "20", "30"] {
+            feedCursor = cursor; feedReset = cursor != "1"; listed = cursor == "30"
+            try cloud.requestScreenSync(.remoteInvalidation)
+            let event = try XCTUnwrap(ControllerCloudWorkbench.pendingScreenSyncRequest(baseURL: baseURL, machineRoot: machine))
+            let result = try await cloud.processScreenSyncRequest(event)
+            XCTAssertTrue(result.completed)
+            let status = try await cloud.status()
+            XCTAssertEqual(status.bindings.first { $0.cloudProjectId == remote }?.status, listed ? .synced : .unavailable)
+            XCTAssertEqual(try client.listWorkspacePackages(in: client.workspaceStatus()).map(\.dashboardId), [item.dashboardId])
+            try ControllerCloudWorkbench.acknowledgeScreenSyncRequest(baseURL: baseURL, machineRoot: machine, requestId: event.requestId)
+        }
+        XCTAssertEqual(fileRequests, previous, "Readmission of unchanged package preserves local bytes")
+        let latest = try client.workspaceStatus()
+        _ = try client.archiveScreen(params: ["schemaVersion": 1, "expectedWorkspaceId": latest.workspaceId!,
+            "expectedSelectionGeneration": latest.selectionGeneration!, "expectedCatalogGeneration": latest.generation!,
+            "dashboardId": item.dashboardId, "expectedRevision": item.revision, "expectedDigest": item.digest])
+        try await cloud.automaticSync()
+        XCTAssertTrue(try client.listWorkspacePackages(in: client.workspaceStatus()).isEmpty)
+        XCTAssertEqual(fileRequests, previous); XCTAssertEqual(writes, 0, "no publish/build/delete or echo upload")
         try await cloud.setScreenSyncEnabled(false)
     }
 
@@ -574,6 +764,32 @@ final class ControllerCloudWorkbenchTests: XCTestCase {
     func testOldStatusDecodesScreenSyncAsOff() throws {
         let bytes = Data(#"{"accountId":"account","workspaces":[],"bindings":[]}"#.utf8)
         XCTAssertFalse(try JSONDecoder().decode(ControllerCloudWorkbenchStatus.self, from: bytes).screenSyncEnabled)
+    }
+
+    func testBrokerCloudImportAcceptsEscapedSnapshotWithinLocalRawLimit() async throws {
+        let (root, server, client, cloud) = try defaultWorkspaceFixture()
+        defer { client.close(); server.stop(); try? FileManager.default.removeItem(at: root) }
+        try await cloud.selectWorkspace(workspace, creatingLocalWorkspaceAt: root.appendingPathComponent("Screenpunk").path)
+        let original = try XCTUnwrap(client.performAuthoring(method: .projectCreate, params: ["schemaVersion": 1, "name": "Large source", "kind": "web"]).project)
+        let source = try ControllerCloudBrokerSource(client: client, scratchRoot: root.appendingPathComponent("source-transfer"))
+        let snapshot = try await source.read(projectId: original.project.projectId)
+        var files = snapshot.files
+        for index in 0..<3 { files["web/asset-\(index).bin"] = Data(repeating: 0xff, count: 5 * 1024 * 1024) }
+        let large = ControllerCloudSourceSnapshot(revision: snapshot.revision, files: files)
+        try large.validate()
+        XCTAssertLessThan(files.values.reduce(0) { $0 + $1.count }, 25 * 1024 * 1024)
+        let encoded = try JSONEncoder().encode(large)
+        XCTAssertGreaterThan(encoded.count, 36 * 1024 * 1024)
+        let staged = root.appendingPathComponent("staged")
+        try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try encoded.write(to: staged.appendingPathComponent("snapshot.json"))
+        let selected = try client.workspaceStatus(), intent = UUID().uuidString.lowercased()
+        let imported = try XCTUnwrap(client.performAuthoring(method: .cloudProjectCreate, params: ["schemaVersion": 1,
+            "intentId": intent, "dashboardId": UUID().uuidString.lowercased(), "name": "Restored large source", "path": staged.path,
+            "expectedWorkspaceId": selected.workspaceId!, "expectedSelectionGeneration": selected.selectionGeneration!]).project)
+        XCTAssertEqual(imported.project.projectId, intent)
+        let restored = try await source.read(projectId: intent)
+        for index in 0..<3 { XCTAssertEqual(restored.files["web/asset-\(index).bin"], files["web/asset-\(index).bin"]) }
     }
 
     func testBrokerCloudImportResumesBeforeBindingWithSameFreshIdentityAndPreservesLaterEdits() async throws {

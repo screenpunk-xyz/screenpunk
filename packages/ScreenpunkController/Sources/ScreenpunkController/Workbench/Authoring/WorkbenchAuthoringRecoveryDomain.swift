@@ -65,7 +65,7 @@ public final class WorkbenchAuthoringRecoveryDomain {
             case .cloudProjectCreate(let intent, let dashboard, let name, let path):
                 try mutationGate(); try check()
                 let staged = try WorkspaceFiles(path: path, requiredPrivateRoot: true)
-                let snapshot = try JSONDecoder().decode(ControllerCloudSourceSnapshot.self, from: staged.read(staged.fd, "snapshot.json", maxBytes: 36 * 1024 * 1024))
+                let snapshot = try JSONDecoder().decode(ControllerCloudSourceSnapshot.self, from: staged.read(staged.fd, "snapshot.json", maxBytes: ControllerCloudSourceLimits.maximumSnapshotJSONBytes))
                 try snapshot.validate()
                 guard let bytes = snapshot.files["screenpunk.project.json"],
                       var shape = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw WorkspaceError.invalidSchema }

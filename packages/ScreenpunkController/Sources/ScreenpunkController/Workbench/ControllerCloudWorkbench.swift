@@ -654,7 +654,7 @@ public actor ControllerCloudWorkbench {
                 try ControllerCloudPackageSync(root: root, session: session, client: client, accountId: account,
                     workspaceId: request.workspaceId, localWorkspaceId: request.localWorkspaceId).markUnavailable(cloudProjectIds: removed)
                 // Only a fresh admitted nonempty source head can re-enable an unavailable source binding.
-                for project in try await discoverCloudProjects(workspaceId: request.workspaceId, projectIds: targets) where project.headVersionId != nil {
+                for project in try await discoverCloudProjects(workspaceId: request.workspaceId, projectIds: full ? nil : targets) where project.headVersionId != nil {
                     try await sync.remoteEligibility(accountId: account, workspaceId: request.workspaceId, cloudProjectIds: [project.id], admitted: true)
                 }
                 try requireRequest(request)
