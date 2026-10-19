@@ -261,7 +261,7 @@ private final class BonjourServiceResolver: @unchecked Sendable {
     private static let reply: DNSServiceResolveReply = { _, _, _, error, _, target, port, _, _, context in
         guard let context else { return }
         let resolver = Unmanaged<BonjourServiceResolver>.fromOpaque(context).takeUnretainedValue()
-        let host = Self.succeeded(error) ? target.map { String(cString: $0) } : nil
+        let host = BonjourServiceResolver.succeeded(error) ? target.map { String(cString: $0) } : nil
         let resolvedPort = host == nil ? 0 : Int(UInt16(bigEndian: port))
         resolver.queue.async { [weak resolver] in resolver?.finish(host, resolvedPort) }
     }
