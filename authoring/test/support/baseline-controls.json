@@ -3,7 +3,7 @@
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 105697,
-      "sha256": "9a22e6bfb159b98a4eb7d67c1e2a0186fa4651f9b055b44d20db0a813d2d562e"
+      "sha256": "b24738d3dea4b29615594d154360a818d608a8b4df38aa1dddc11e159dc19ae1"
     },
     {
       "path": "index.html",
@@ -19,15 +19,15 @@
     },
     {
       "path": "screen.js",
-      "bytes": 948245,
-      "sha256": "dafadbe8d8535608d636a024e5207d4b5e8314ff883c2b96e7c87a20cacd8904"
+      "bytes": 948425,
+      "sha256": "132a1110d4617bf1be01d53ef72b32e554ab27268faee0a72753a16a365b1275"
     }
   ],
   "earthquakes": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 94173,
-      "sha256": "1839ba949cd4d13ae9c4f853efe43278bcb8e24365a72ae866d0b0a12fe06d87"
+      "sha256": "242337705fcf1349815a21ac221791f16c725fc613077d48d69c1c6311cc1aec"
     },
     {
       "path": "index.html",
@@ -51,7 +51,7 @@
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 5771,
-      "sha256": "a12af22c9e77aa68095d24e8da97551bb00ee0862b90ca53a8de70a0769ed116"
+      "sha256": "46e2cf90d3d65133137c2a9bf5995cdd8455cd8211da9a5ea3680560d75b7173"
     },
     {
       "path": "index.html",
@@ -65,15 +65,15 @@
     },
     {
       "path": "screen.js",
-      "bytes": 745489,
-      "sha256": "ef7f3e74a1cc0b667c2a152385f0505189ccade3c0ead9bdde10550ddf6bd231"
+      "bytes": 749271,
+      "sha256": "a01f553ab7d6f82ca7906d1232dd0e941732534a68b429ed13b84472d726bdc8"
     }
   ],
   "mixed": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 5771,
-      "sha256": "a12af22c9e77aa68095d24e8da97551bb00ee0862b90ca53a8de70a0769ed116"
+      "sha256": "46e2cf90d3d65133137c2a9bf5995cdd8455cd8211da9a5ea3680560d75b7173"
     },
     {
       "path": "index.html",
@@ -87,8 +87,8 @@
     },
     {
       "path": "screen.js",
-      "bytes": 745925,
-      "sha256": "f812e58185f8b2e0926d96bc13c879555fefa0303601b33ad452b66dfac5edb4"
+      "bytes": 749707,
+      "sha256": "dc081ec99bd196031c5b436fafcf6ed83023fbd66bff2b9efaf8b2c350dc7a16"
     }
   ]
 }
