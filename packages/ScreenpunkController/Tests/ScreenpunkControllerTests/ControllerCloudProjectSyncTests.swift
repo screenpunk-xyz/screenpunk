@@ -135,11 +135,37 @@ final class ControllerCloudProjectSyncTests: XCTestCase {
         let head = await remote.read(workspaceId:"workspace",projectId:"remote"); XCTAssertEqual(head?.files,source("x","second").files)
     }
     func testLargeSourceFailsExplicitlyWithoutTruncation() throws {
-        let files = Dictionary(uniqueKeysWithValues:(0..<2_001).map { ("assets/\($0).txt",Data()) })
-        do { try ControllerCloudSourceSnapshot(revision:"v",files:files).validate(); XCTFail("source silently truncated") }
-        catch { XCTAssertEqual(error as? ControllerCloudError,.sourceLimitExceeded) }
-        let large = ControllerCloudSourceSnapshot(revision:"v",files:["asset.bin":Data(repeating:0,count:5*1024*1024+1)])
-        XCTAssertThrowsError(try large.validate()) { XCTAssertEqual($0 as? ControllerCloudError,.sourceLimitExceeded) }
+        let limits = ControllerCloudSourceLimits.self
+        XCTAssertEqual(limits.maximumFiles, 2_000)
+        XCTAssertEqual(limits.maximumTotalBytes, 50 * 1024 * 1024)
+        XCTAssertEqual(limits.maximumFileBytes, 52_428_801)
+        XCTAssertEqual(limits.maximumSyncBodyBytes, 71_000_000)
+        XCTAssertEqual(limits.base64CharacterCount(1), Data([0]).base64EncodedString().count)
+        XCTAssertEqual(limits.base64CharacterCount(2), Data([0, 0]).base64EncodedString().count)
+        XCTAssertEqual(limits.base64CharacterCount(3), Data([0, 0, 0]).base64EncodedString().count)
+        // 50 MiB and one extra byte encode to the same 69,905,068-character length; the next byte does not.
+        XCTAssertEqual(limits.base64CharacterCount(limits.maximumFileBytes), 69_905_068)
+        XCTAssertEqual(limits.base64CharacterCount(limits.maximumTotalBytes), 69_905_068)
+        XCTAssertGreaterThan(limits.base64CharacterCount(limits.maximumFileBytes + 1), 69_905_068)
+        XCTAssertTrue(limits.allowsSyncBody(byteCount: limits.maximumSyncBodyBytes))
+        XCTAssertFalse(limits.allowsSyncBody(byteCount: limits.maximumSyncBodyBytes + 1))
+        XCTAssertEqual(ControllerCloudError.sourceLimitExceeded.errorDescription,
+            "This project exceeds the controller source limit of 2,000 files, 50 MiB total, 52,428,801 bytes per file, or a 71,000,000-byte sync body. Source was not truncated or applied.")
+
+        let atCount = Dictionary(uniqueKeysWithValues:(0..<limits.maximumFiles).map { ("assets/\($0).txt", Data()) })
+        XCTAssertNoThrow(try ControllerCloudSourceSnapshot(revision:"v", files:atCount).validate())
+        let overCount = Dictionary(uniqueKeysWithValues:(0..<(limits.maximumFiles + 1)).map { ("assets/\($0).txt", Data()) })
+        do { try ControllerCloudSourceSnapshot(revision:"v", files:overCount).validate(); XCTFail("source silently truncated") }
+        catch { XCTAssertEqual(error as? ControllerCloudError, .sourceLimitExceeded) }
+
+        XCTAssertNoThrow(try ControllerCloudSourceSnapshot(revision:"v", files:["asset.bin": Data(count: limits.maximumTotalBytes)]).validate())
+        let overTotal = ControllerCloudSourceSnapshot(revision:"v", files:["asset.bin": Data(count: limits.maximumTotalBytes + 1)])
+        XCTAssertThrowsError(try overTotal.validate()) { XCTAssertEqual($0 as? ControllerCloudError, .sourceLimitExceeded) }
+        // 52,428,801 is the largest raw file cloud's base64 cap accepts, and it is one byte over the 50 MiB total.
+        XCTAssertEqual(limits.maximumFileBytes, limits.maximumTotalBytes + 1)
+        let overFile = ControllerCloudSourceSnapshot(revision:"v", files:["asset.bin": Data(count: limits.maximumFileBytes + 1)])
+        XCTAssertThrowsError(try overFile.validate()) { XCTAssertEqual($0 as? ControllerCloudError, .sourceLimitExceeded) }
+        XCTAssertGreaterThan(limits.maximumSnapshotJSONBytes, limits.base64CharacterCount(limits.maximumTotalBytes))
     }
     func testSourceRejectsCredentialAndTraversalPaths() throws {
         for path in ["../secret",".env","credentials.json","key.pem","node_modules/key"] {

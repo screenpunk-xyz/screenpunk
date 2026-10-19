@@ -6,7 +6,7 @@ extension WorkbenchContainedAuthoring {
     func applyCloudSource(projectId: String, expectedSourceVersion: String, stagedPath: String) throws -> WorkbenchSourceProject {
         guard WorkspaceValidation.absolute(stagedPath), WorkspaceValidation.sha256(expectedSourceVersion) else { throw WorkspaceError.invalidPath }
         let staged = try WorkspaceFiles(path: stagedPath, requiredPrivateRoot: true)
-        let snapshot = try JSONDecoder().decode(ControllerCloudSourceSnapshot.self, from: staged.read(staged.fd, "snapshot.json", maxBytes: 36 * 1024 * 1024))
+        let snapshot = try JSONDecoder().decode(ControllerCloudSourceSnapshot.self, from: staged.read(staged.fd, "snapshot.json", maxBytes: ControllerCloudSourceLimits.maximumSnapshotJSONBytes))
         try snapshot.validate()
         let (overview, project, before) = try capture(projectId)
         guard try WorkbenchSourceHasher.hash(before) == expectedSourceVersion else { throw WorkspaceError.conflict }
