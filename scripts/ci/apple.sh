@@ -136,6 +136,7 @@ fi
   python3 "$ROOT/scripts/ci/run-xctest.py" "$test_bundle"
 )
 (cd tools/screenpunk-distribution && swift test)
+"$ROOT/scripts/bundle-connection-validator.sh" "$ROOT/packages/ScreenpunkController/Sources/ScreenpunkController/Resources/ConnectionValidator"
 (cd packages/ScreenpunkController && swift test)
 (cd packages/ScreenpunkAppleController && swift test)
 # Match the release workflow: the pinned MCP dependency requires Swift 5 mode

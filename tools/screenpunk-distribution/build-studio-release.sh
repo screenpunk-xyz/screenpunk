@@ -65,6 +65,10 @@ cli_build=$(swift build --disable-sandbox -c release --package-path "$repo_root/
 cp "$cli_build/screenpunk" "$stage/payload/bin/screenpunk"
 cp "$cli_build/screenpunk-mcp" "$stage/payload/bin/screenpunk-mcp"
 cp "$cli_build/screenpunk-service" "$stage/payload/libexec/screenpunk-service"
+"$repo_root/scripts/bundle-connection-validator.sh" "$stage/payload/Resources/ConnectionValidator"
+codesign --force --sign "${app_identity:-$identity}" --timestamp --options runtime \
+  --identifier xyz.screenpunk.connection-validator.node "$stage/payload/Resources/ConnectionValidator/node"
+codesign --verify --strict "$stage/payload/Resources/ConnectionValidator/node"
 for record in 'screenpunk xyz.screenpunk.cli bin' 'screenpunk-mcp xyz.screenpunk.mcp bin' 'screenpunk-service xyz.screenpunk.service libexec'; do
   read -r name identifier folder <<< "$record"
   codesign --force --sign "$app_identity" --timestamp --options runtime \
