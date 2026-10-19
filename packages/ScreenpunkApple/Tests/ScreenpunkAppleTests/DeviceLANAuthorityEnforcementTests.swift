@@ -47,6 +47,9 @@ final class DeviceLANAuthorityEnforcementTests: XCTestCase {
         let beforeGrant = try server.homeAssistantVault.record(owner: PeerPin.hex(owner.publicKey), revision: revision.revision)
         let before = try Data(contentsOf: store.stateURL), settings = server.settingsSnapshot
         try context.revoke()
+        XCTAssertThrowsError(try context.validate()) {
+            XCTAssertEqual($0 as? DeviceManagementAuthority.Failure, .staleLease)
+        }
         let mutations: [() throws -> Void] = [
             { try server.confirmLocally() }, { try server.cancelPairing() }, { try server.expirePairingIfNeeded() },
             { try server.disconnect(keepScreens: true) }, { try server.disconnect(keepScreens: false) },
@@ -56,7 +59,9 @@ final class DeviceLANAuthorityEnforcementTests: XCTestCase {
             { try server.markSettingsApplied(revision: settings.revision) }, { try server.markSettingsUnapplied(revision: settings.revision) },
             { try server.updateTemporaryActivationStatus(.init()) }, { try server.unlink() }, { try server.start() }
         ]
-        for mutate in mutations { XCTAssertThrowsError(try mutate()) { XCTAssertEqual($0 as? DeviceManagementAuthority.Failure, .staleLease) } }
+        // Revocation retires the scene gate. Requests now stop at that earlier
+        // fence before they can acquire authority or touch retained resources.
+        for mutate in mutations { XCTAssertThrowsError(try mutate()) { XCTAssertEqual($0 as? TransferFailure, .interrupted) } }
         XCTAssertEqual(try Data(contentsOf: store.stateURL), before)
         XCTAssertEqual(server.settingsSnapshot, settings)
         XCTAssertNotNil(server.activePackage?.assets["index.html"])
