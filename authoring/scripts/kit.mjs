@@ -18,7 +18,7 @@ const pin=JSON.parse(await fs.readFile(path.join(root,'toolchain.json'),'utf8'))
 const bytes=await fs.readFile(archive);
 if(createHash('sha256').update(bytes).digest('hex')!==pin.node.sha256) throw Error('Node archive checksum mismatch');
 await fs.mkdir(destination,{recursive:true});
-for(const name of ['scripts','tsconfig.json','react','ui','templates','licenses','icons','catalog.json','README.md','PERSISTENCE.md','package.json','package-lock.json','toolchain.json']) await fs.cp(path.join(root,name),path.join(destination,name),{recursive:true});
+for(const name of ['scripts','tsconfig.json','react','ui','templates','licenses','icons','types','catalog.json','README.md','PERSISTENCE.md','package.json','package-lock.json','toolchain.json']) await fs.cp(path.join(root,name),path.join(destination,name),{recursive:true});
 await fs.cp(path.join(root,'node_modules'),path.join(destination,'node_modules'),{recursive:true,filter:src=>!src.split(path.sep).includes('.bin')});
 await fs.mkdir(path.join(root,'dist'),{recursive:true});
 const extraction=await fs.mkdtemp(path.join(root,'dist/node-'));
