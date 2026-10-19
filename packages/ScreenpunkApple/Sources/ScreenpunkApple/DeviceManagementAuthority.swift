@@ -69,7 +69,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     private var freshCloudRoots: FreshCloudEnrollmentRoots?
     private var freshOperationalReader: FreshEnrollmentStepOwner?
     private var unifiedRoot: (context: CloudInstallationContext, root: UnifiedRootReservation)?
-    private let cloudClock: () -> TimeInterval
+    private var cloudClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     @_spi(NativeInstallation) public final class CloudInstallationContext: @unchecked Sendable {
         fileprivate let owner: UUID, process: UUID, generation: UUID
         fileprivate let installation: NativeOperationalInstallation, activation: NativeActivationReceipt, origin: URL
@@ -81,7 +81,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         }
     }
 
-    public init(journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore, reset: any DeviceLocalResetEvidence = DeviceLocalResetEvidenceAdapter.production(), managedNamespace: DeviceManagedNamespaceInspector = .production(), supportAnchorSetup: DeviceProductionSupportAnchorSetup = .production(), commandIntents: DeviceCommandIntentCoordinator? = nil, concurrentControlQualified: Bool = false, cloudClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+    public init(journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore, reset: any DeviceLocalResetEvidence = DeviceLocalResetEvidenceAdapter.production(), managedNamespace: DeviceManagedNamespaceInspector = .production(), supportAnchorSetup: DeviceProductionSupportAnchorSetup = .production(), commandIntents: DeviceCommandIntentCoordinator? = nil, concurrentControlQualified: Bool = false) {
         self.commandIntents = commandIntents
         self.concurrentControlQualified = concurrentControlQualified
         self.journal = journal
@@ -89,7 +89,11 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         self.reset = reset
         self.managedNamespace = managedNamespace
         self.supportAnchorSetup = supportAnchorSetup
-        self.cloudClock = cloudClock
+    }
+
+    /// Test-only. Production keeps the `systemUptime` default for the 30s cloud window.
+    internal func adoptCloudClock(_ clock: @escaping () -> TimeInterval) {
+        lock.lock(); cloudClock = clock; lock.unlock()
     }
 
     /// Original first-native directory ownership. No server IDs or management

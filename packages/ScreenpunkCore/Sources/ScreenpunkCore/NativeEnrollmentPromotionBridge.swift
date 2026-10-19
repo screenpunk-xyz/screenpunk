@@ -796,7 +796,7 @@ enum NativeOperationalTransportFailure: Error, Equatable { case invalidResponse,
         return try await performFixedTransport(origin: origin, configuration: configuration)
     }
     // Module-internal synthetic URLProtocol seam only; never a public IO-proof constructor.
-    func performFixedTransport(origin: URL, configuration: URLSessionConfiguration, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) async throws -> NativeOperationalStatusObservation {
+    internal func performFixedTransport(origin: URL, configuration: URLSessionConfiguration, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) async throws -> NativeOperationalStatusObservation {
         try Task.checkCancellation(); try requireOrigin(origin)
         try installation.requireDurableActivationAssociation(activation)
         let driver = Driver(origin: origin)
