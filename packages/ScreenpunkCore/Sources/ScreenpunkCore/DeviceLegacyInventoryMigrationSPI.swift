@@ -953,12 +953,16 @@ private final class DeviceUnifiedInventoryOperationGate {
         try resolver.verifyCurrentInventoryResourcesExact(original, store: store, current: capture)
         if let work = cloudWork {
             guard let outcome = work.outcome else { throw NativeDeliveryExecutionError.phase }
-            guard work.incoming.command.candidate == capture.snapshot else { throw DeviceStructuralStoreError.conflict }
+            guard work.incoming.command.candidate.installationOwner == capture.snapshot.installationOwner,
+                capture.snapshot.detachment == nil, capture.snapshot.logoutIntent == nil else { throw DeviceStructuralStoreError.conflict }
+            // This reports an already committed generation; a later Local intent may be
+            // current. Validate the historical commit and exact outcome without remounting it.
+            try resolver.retainIncomingHTTPExact(original, store: store, incoming: work.incoming, kind: .outcome, bytes: outcome.bytes)
             return outcome
         }
         guard let record = try store.pendingIncomingOutcomesExact().first else { return nil }
         let incoming = try resolver.restoredIncomingCloudExact(operationID: record.operationID)
-        guard incoming.command.candidate == capture.snapshot else { throw DeviceStructuralStoreError.conflict }
+        guard incoming.command.candidate.installationOwner == capture.snapshot.installationOwner else { throw DeviceStructuralStoreError.conflict }
         var object = try JSONSerialization.jsonObject(with: record.request) as! [String: Any]
         let requestID = try DeviceNativeDeliveryAttachmentCodec.uuid(object["activationRequestId"])
         _ = try DeviceNativeDeliveryHTTPCodec.observe(record.request, kind: .activationRequest,

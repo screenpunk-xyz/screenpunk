@@ -4,6 +4,58 @@ import Foundation
 @_spi(NativeInstallation) @testable import ScreenpunkApple
 
 final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
+    func testPendingCloudOutcomeSurvivesLocalSelectionAndRestartWithoutRollingBack() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let delivery = try UnifiedArchiveComposition.make(fixture: fixture, changedPublication: false)
+        fixture.http.delivery = delivery.value
+        fixture.http.unavailableDeliveryPackageIDs = [delivery.retainedPackageID]
+        let pathStart = fixture.http.deliveryPaths.count
+        let command = try await NativeDeliveryCommandHTTPObservation.collect(installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        let plan = try await command.fetchPlan(current: fixture.current, origin: fixture.http.origin,
+            nativeOperationID: UUID(), configuration: fixture.http.configuration)
+        _ = try plan.acceptUnified(session: fixture.common, current: fixture.current)
+        let archives = try await plan.fetchArchives(current: fixture.current, origin: fixture.http.origin,
+            target: delivery.value.archive.target, profileID: "Fixture", revisionName: "Fixture", configuration: fixture.http.configuration)
+        try archives.prepareUnified(session: fixture.common, current: fixture.current,
+            packageRootID: UUID(), grantOperationID: UUID(), grantRevisionID: UUID())
+        let packagePaths = Array(fixture.http.deliveryPaths.dropFirst(pathStart)).filter { $0.contains("/delivery/package/") }
+        XCTAssertEqual(packagePaths.map { URL(fileURLWithPath: $0).lastPathComponent }, [delivery.incomingPackageID])
+        XCTAssertFalse(packagePaths.contains { $0.hasSuffix("/" + delivery.retainedPackageID) })
+        let activation = try fixture.common.retainCloudActivationRequest(requestID: UUID(), current: fixture.current)
+        let authorization = try await NativeDeliveryActivationHTTPObservation.collect(body: activation, installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        try fixture.common.retainCloudAuthorization(requestBody: activation, observation: authorization)
+        let outcome = try fixture.common.dispatchCloudAndRetainActivatedOutcome(current: fixture.current)
+        let cloudState = try fixture.common.validatedAssociation()
+        let priorPresentation = try fixture.common.selectedContent(operationID: UUID())
+        let localGeneration = UUID()
+        let owner = try OutcomeReplayLocalOwner(fixture: fixture)
+        try fixture.common.selectOrRemove(operationID: UUID(), generationID: localGeneration,
+            retainedEntryIDs: cloudState.entries.map(\.entryID), selected: delivery.retainedEntryID, owner: owner)
+        let localState = try fixture.common.validatedAssociation()
+        XCTAssertEqual(localState.generationID, localGeneration)
+        XCTAssertEqual(localState.configuredEntryID, delivery.retainedEntryID)
+        XCTAssertThrowsError(try fixture.common.confirmMountedLocalContent(priorPresentation))
+        XCTAssertThrowsError(try fixture.current.requireInstallationAssociation(fixture.installation))
+        let refreshedCurrent = try fixture.authority.prepareCurrentInstallationDispatch(fixture.context)
+        let retry = try XCTUnwrap(fixture.common.restorePendingCloudOutcome(current: refreshedCurrent))
+        XCTAssertEqual(retry.bytes, outcome.bytes)
+        XCTAssertEqual(try fixture.common.validatedAssociation().generationID, localGeneration)
+        let reopened = try fixture.authority.restoreUnifiedInventorySession(context: fixture.context,
+            commonRootID: fixture.commonID, native: fixture.execution)
+        let restored = try XCTUnwrap(reopened.restorePendingCloudOutcome(current: refreshedCurrent))
+        XCTAssertEqual(restored.bytes, outcome.bytes)
+        XCTAssertEqual(try reopened.validatedAssociation().generationID, localGeneration)
+        XCTAssertEqual(try reopened.selectedContent(operationID: UUID()).entryID, delivery.retainedEntryID)
+        let receipt = try await NativeDeliveryReceiptHTTPObservation.collect(body: restored, installation: fixture.installation,
+            origin: fixture.http.origin, configuration: fixture.http.configuration)
+        _ = try reopened.retainCloudOutcomeAcknowledgment(body: restored, observation: receipt)
+        XCTAssertNil(try reopened.restorePendingCloudOutcome(current: refreshedCurrent))
+        XCTAssertEqual(try reopened.validatedAssociation().generationID, localGeneration)
+    }
+
     func testUnifiedArchiveCollectionReusesExactRetainedCloudAndFetchesOnlyNewPackage() async throws {
         let fixture = try await GenuineUnifiedInventoryFixture.make()
         defer { fixture.close() }
@@ -272,5 +324,23 @@ private enum UnifiedArchiveComposition {
             header: next.header, plan: next.plan, archive: changedPublication ? original.archive : next.archive),
             retainedEntryID: retainedID, incomingEntryID: next.archive.entryID,
             retainedPackageID: retainedPackage, incomingPackageID: try packageID(in: next.command))
+    }
+}
+
+// Substitutes the already-approved LAN peer boundary only; production authority
+// still admits the Local intent and performs its fixed inventory mutation.
+private final class OutcomeReplayLocalOwner: NativeUnifiedLocalInventoryOwner {
+    let commonRootID: UUID
+    let peerPinHex = String(repeating: "7", count: 64)
+    let authority: DeviceManagementAuthority
+    let checkpoint: DeviceCommandIntentCoordinator.Checkpoint?
+    init(fixture: GenuineUnifiedInventoryFixture) throws {
+        commonRootID = fixture.commonID; authority = fixture.authority
+        checkpoint = try authority.acceptUnifiedLocalIntent(peerPinHex: peerPinHex, validateApproved: {})
+    }
+    func performFixedUnifiedLocalDispatch(command: NativeInstallationUnifiedLocalDispatchCommand) throws -> NativeInstallationUnifiedLocalDispatchResult {
+        try authority.performFixedUnifiedLocalDispatch(command: command, peerPinHex: peerPinHex, checkpoint: checkpoint) {
+            try command.performDuringFixedOwner()
+        }
     }
 }
