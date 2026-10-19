@@ -83,6 +83,8 @@ xcodebuild -project "$ROOT/tools/preview-host/ScreenpunkPreviewHost.xcodeproj" \
 mkdir -p "$app/Contents/Helpers"
 ditto "$RELEASE_DIR/preview-derived/Build/Products/Release/ScreenpunkPreviewHost.app" "$app/Contents/Helpers/ScreenpunkPreviewHost.app"
 "$ROOT/scripts/bundle-authoring.sh" "$app"
+# This job has a fresh checkout; apple-precheck's SwiftPM resources are not inputs.
+"$ROOT/scripts/bundle-connection-validator.sh" "$app/Contents/Resources/ConnectionValidator"
 
 echo "=== nested Mach-O signing (inside-out; no --deep) ==="
 # Sign nested executables before their enclosing helper and product app.
@@ -91,7 +93,11 @@ while IFS= read -r bin; do
   if [[ "$bin" == "$app/Contents/MacOS/Screenpunk" ]]; then
     continue
   fi
-  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY_SHA1" "$bin"
+  if [[ "$bin" == "$app/Contents/Resources/ConnectionValidator/node" ]]; then
+    codesign --force --options runtime --timestamp --identifier xyz.screenpunk.connection-validator.node --sign "$SIGNING_IDENTITY_SHA1" "$bin"
+  else
+    codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY_SHA1" "$bin"
+  fi
 done < <(
   find "$app/Contents" -type f -print0 2>/dev/null \
     | xargs -0 file \

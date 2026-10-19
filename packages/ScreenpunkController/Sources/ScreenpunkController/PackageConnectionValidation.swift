@@ -21,13 +21,8 @@ enum PackageConnectionValidation {
         active += 1; admission.unlock()
         defer { admission.lock(); active -= 1; admission.unlock() }
         guard !cancelled() else { throw failure("Connection validation cancelled; previous package kept.") }
-        let candidates = explicitRoot.map { [$0] } ?? [
-            Bundle.module.resourceURL?.appendingPathComponent("ConnectionValidator"),
-            Bundle.main.resourceURL?.appendingPathComponent("ConnectionValidator"),
-            Bundle.main.executableURL?.resolvingSymlinksInPath().deletingLastPathComponent()
-                .deletingLastPathComponent().appendingPathComponent("Resources/ConnectionValidator")
-        ].compactMap { $0 }
-        guard let selectedRoot = candidates.first(where: { FileManager.default.fileExists(atPath: $0.appendingPathComponent("validate.cjs").path) }) else {
+        guard let selectedRoot = explicitRoot ?? BundledResources.connectionValidator(),
+              FileManager.default.fileExists(atPath: selectedRoot.appendingPathComponent("validate.cjs").path) else {
             throw failure("App-owned connection validator is unavailable. Repair the Screenpunk application; no authoring kit is required. Previous package kept.")
         }
         let root = selectedRoot.resolvingSymlinksInPath()

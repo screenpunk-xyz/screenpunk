@@ -6,6 +6,26 @@ private final class ControllerResourceAnchor {}
 /// resource layouts. Resolve the executable before looking beside it so Homebrew's
 /// public binary links cannot redirect resource lookup to /opt/homebrew/bin.
 enum BundledResources {
+    static func connectionValidator(executable: URL? = Bundle.main.executableURL,
+                                    mainResourceURL: URL? = Bundle.main.resourceURL,
+                                    mainBundleURL: URL = Bundle.main.bundleURL,
+                                    containingBundleURL: URL? = Bundle(for: ControllerResourceAnchor.self).bundleURL) -> URL? {
+        let directory = executable?.resolvingSymlinksInPath().deletingLastPathComponent()
+        let resources = directory?.deletingLastPathComponent().appendingPathComponent("Resources")
+        let bundleName = "ScreenpunkController_ScreenpunkController.bundle"
+        let candidates = [resources, mainResourceURL,
+            resources?.appendingPathComponent(bundleName),
+            mainResourceURL?.appendingPathComponent(bundleName),
+            directory?.appendingPathComponent(bundleName),
+            mainBundleURL.appendingPathComponent(bundleName),
+            containingBundleURL?.deletingLastPathComponent().appendingPathComponent(bundleName)]
+        for candidate in candidates.compactMap({ $0 }) {
+            let root = candidate.appendingPathComponent("ConnectionValidator")
+            if file("validate", ext: "cjs", in: root) != nil { return root }
+        }
+        return nil
+    }
+
     static func url(forResource name: String, withExtension ext: String,
                     executable: URL? = Bundle.main.executableURL,
                     mainResourceURL: URL? = Bundle.main.resourceURL,

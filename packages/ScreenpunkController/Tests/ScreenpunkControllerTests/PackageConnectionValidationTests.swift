@@ -4,8 +4,29 @@ import ScreenpunkCore
 
 final class PackageConnectionValidationTests: XCTestCase {
     private let tv = "screenpunk.connections.request('googleTV','status',{})"
+    func testCleanFlatAndSwiftPMLayoutsResolveWithoutGeneratedModuleAccessor() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let executable = temporary.appendingPathComponent("release/bin/screenpunk-mcp")
+        let resources = temporary.appendingPathComponent("release/Resources")
+        let absent = temporary.appendingPathComponent("absent")
+        func discover() -> URL? {
+            BundledResources.connectionValidator(executable: executable, mainResourceURL: absent,
+                mainBundleURL: absent, containingBundleURL: absent)
+        }
+        XCTAssertNil(discover())
+        for relative in ["ConnectionValidator", "ScreenpunkController_ScreenpunkController.bundle/ConnectionValidator"] {
+            let helper = resources.appendingPathComponent(relative)
+            try FileManager.default.createDirectory(at: helper, withIntermediateDirectories: true)
+            try Data("fixture".utf8).write(to: helper.appendingPathComponent("validate.cjs"))
+            XCTAssertEqual(discover()?.standardizedFileURL, helper.standardizedFileURL)
+            try FileManager.default.removeItem(at: helper)
+        }
+        XCTAssertNil(discover())
+        XCTAssertThrowsError(try PackageConnectionValidation.validate(files: ["APP.JS": Data(tv.utf8)], connections: [], root: absent))
+    }
     func testExternalAndInlineCallsRequireDeclarationWithoutAuthoringKit() throws {
-        for files in [["app.js": Data(tv.utf8)], ["index.html": Data(("<html>\n<script>" + tv + "</script>").utf8)]] {
+        for files in [["app.js": Data(tv.utf8)], ["APP.JS": Data(tv.utf8)], ["index.html": Data(("<html>\n<script>" + tv + "</script>").utf8)]] {
             XCTAssertThrowsError(try PackageConnectionValidation.validate(files: files, connections: [])) { error in
                 XCTAssertTrue(String(describing: error).contains("googleTV"))
             }

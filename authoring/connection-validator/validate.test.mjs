@@ -5,6 +5,14 @@ import {validateConnectionFiles} from '../scripts/validate-connection-files.mjs'
 import {validatePackage} from './validate.mjs';
 const tv="screenpunk.connections.request('googleTV','status',{})";
 const check=(text,connections=[],path='index.html')=>validatePackage(ts,[{path,text}],connections,validateConnectionFiles);
+test('uppercase executable roots are scanned and missing parser roots fail closed',()=>{
+ for(const path of ['APP.JS','APP.MJS','APP.CJS','APP.JSX','APP.TS','APP.TSX']){
+  assert.throws(()=>check(tv,[],path),/missing connection declaration.*googleTV/);
+  assert.doesNotThrow(()=>check(tv,[{alias:'googleTV',required:false}],path));
+ }
+ const droppingParser={...ts,createProgram:()=>({getSourceFile:()=>undefined})};
+ assert.throws(()=>validateConnectionFiles(droppingParser,[{path:'app.js',text:tv}],{connections:[]}),/could not parse/);
+});
 test('external and HTML5 inline calls require declaration; optional declarations pass',()=>{
  for(const [text,path] of [[tv,'app.js'],[tv,'app.mjs'],['<html>\n<script type="module">'+tv+'</script>','index.html'],['<SCRIPT data-x=">">'+tv+'</SCRIPT>','index.html']]){
   assert.throws(()=>check(text,[],path),/missing connection declaration.*googleTV/);
