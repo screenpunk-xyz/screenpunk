@@ -29,7 +29,9 @@ const {default:ts}=await import(job.kit+'/node_modules/typescript/lib/typescript
   };
   host.getCurrentDirectory = () => source;
   host.writeFile = () => { throw Error('Compiler emission is disabled'); };
-  const program = ts.createProgram(files.filter(f => /\.[cm]?[jt]sx?$/.test(f)), options, host);
+  const assetDeclarations = path.join(kitRoot, 'types/asset-modules.d.ts');
+  if (!inventory.has(assetDeclarations)) throw Error('Captured kit asset declarations are missing');
+  const program = ts.createProgram([...files.filter(f => /\.[cm]?[jt]sx?$/.test(f)), assetDeclarations], options, host);
   for(const file of program.getSourceFiles().filter(f=>f.fileName.startsWith(source+path.sep))) {
     const visit=node=>{
       if(ts.isCallExpression(node) && node.expression.kind===ts.SyntaxKind.ImportKeyword && (!node.arguments[0] || !ts.isStringLiteral(node.arguments[0]))) throw Error('Dynamic imports must use a literal package-local path');

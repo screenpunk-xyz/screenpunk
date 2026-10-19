@@ -107,3 +107,16 @@ test('renamed stage ownership ends at publication; combined cleanup retains prim
  await fsp.writeFile(path.join(source,'src/main.tsx'),'const bad: number="bad";');const stageFailure=Error('stage cleanup blocked'),captureFailure=Error('capture cleanup blocked');let failedPaths=[];
  fsp.rm=async(p,...a)=>{if(path.basename(String(p)).startsWith('.screenpunk-build-')){failedPaths.push(p);throw stageFailure;}if(path.basename(String(p)).startsWith('screenpunk-capture-')){failedPaths.push(p);throw captureFailure;}return rm(p,...a);};try{await assert.rejects(buildProject(source,output),e=>{assert.ok(e instanceof AggregateError);assert.equal(e.errors[0],e.cause);assert.match(e.cause.message,/not assignable/);assert.ok(e.errors.includes(stageFailure));assert.ok(e.errors.includes(captureFailure));assert.deepEqual(e.cleanupPaths,failedPaths);assert.equal(e.committed,undefined);return true;});}finally{fsp.rm=rm;for(const p of failedPaths)await rm(p,{recursive:true,force:true});}assert.ok(fs.existsSync(path.join(output,'screen.js')));
 }));
+
+
+test('direct typed asset imports use captured kit declarations and still require real files',async()=>fixture(async({source,output})=>{
+ const src=path.join(source,'src');
+ await fsp.writeFile(path.join(src,'main.tsx'),'import icon from "./icon.svg";import photo from "./pixel.png";import font from "./font.woff2";import webp from "./photo.webp";document.body.textContent=icon+photo+font+webp;');
+ await fsp.writeFile(path.join(src,'icon.svg'),'<svg xmlns="http://www.w3.org/2000/svg"/>');
+ await fsp.writeFile(path.join(src,'pixel.png'),Buffer.from([137,80,78,71,13,10,26,10]));
+ await fsp.writeFile(path.join(src,'font.woff2'),'wOF2fixture');
+ await fsp.writeFile(path.join(src,'photo.webp'),'RIFFfixtureWEBP');
+ const result=await buildProject(source,output);assert.equal(result.files.filter(f=>f.path.startsWith('assets/')).length,4);
+ await fsp.unlink(path.join(src,'icon.svg'));
+ await assert.rejects(buildProject(source,output),/resolve|inventory/);
+}));
