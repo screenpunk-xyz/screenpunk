@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Attempt a hidden AppKit/WKWebView snapshot on macOS. Never write a placeholder PNG.
-# Exit 0 after an honest SNAPSHOT_UNAVAILABLE record when the runner cannot produce one.
+# Runtime snapshot unavailability is recorded honestly; build failures fail the job.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
@@ -45,7 +45,7 @@ then
   mkdir -p "$ROOT/tests/feasibility/preview"
   printf '%s\n' "SNAPSHOT_UNAVAILABLE reason=preview_host_compile_failed" \
     > "$ROOT/tests/feasibility/preview/last-attempt.txt"
-  exit 0
+  exit 1
 fi
 
 app="$(find "$derived/Build/Products" -name 'ScreenpunkPreviewHost.app' -print -quit || true)"
@@ -54,7 +54,7 @@ if [[ -z "$app" || ! -x "$app/Contents/MacOS/ScreenpunkPreviewHost" ]]; then
   mkdir -p "$ROOT/tests/feasibility/preview"
   printf '%s\n' "SNAPSHOT_UNAVAILABLE reason=preview_host_binary_missing" \
     > "$ROOT/tests/feasibility/preview/last-attempt.txt"
-  exit 0
+  exit 1
 fi
 
 # React gallery checks use the same native package scheme and content policy.

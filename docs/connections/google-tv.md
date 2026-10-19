@@ -1,5 +1,16 @@
 # Google TV test connector
 
+## Preserve user data across updates
+
+Every screen that accepts user-entered data or preferences should persist them
+with native `screenpunk.state.get/set/remove`. Keep dashboardId and versioned keys
+stable, restore before defaults, save user edits, and preserve data on read or
+migration failure. Check persistentState/persistentStateWritable; report unsupported
+or read-only hosts. Verify values survive a screen update and app relaunch.
+Device-local state is not remote agent access or cross-device sync; app deletion,
+device reset and confirmed Disconnect can erase it. See [the authoring default](../../docs/screen-authoring-persistence.md).
+
+
 Status: experimental implementation for local hardware testing. Mac and iOS share the same native Android TV Remote v2 connector. This is not an official Google API and is not a guarantee of HDMI-CEC or YouTube TV channel behavior.
 
 ## Hardware and purpose
@@ -19,7 +30,7 @@ Changing the TV's identity clears previous screen/link approvals. Forget removes
 
 ## Screen API
 
-Uses the already available JavaScript SDK; no new external library or manifest HTTP grant is needed. The native app looks up the active package's `dashboardId`; JavaScript cannot supply a different identity, host, pairing code, certificate, or permission grant.
+Declare `{"alias":"googleTV","required":false}` in the `connections` array in screen.json (and retain it in the built manifest). Use `required:true` only when the whole screen must wait for setup. Optional still means declared: Settings uses the manifest to discover Google TV. Preserve this declaration across revisions. No external library or publicHTTP grant is needed. The native app looks up the active package's `dashboardId`; JavaScript cannot supply a different identity, host, pairing code, certificate, or permission grant.
 
 ```js
 const { value: status } = await screenpunk.connections.request('googleTV', 'status', {});

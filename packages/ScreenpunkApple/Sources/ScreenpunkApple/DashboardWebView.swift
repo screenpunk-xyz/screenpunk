@@ -1,5 +1,5 @@
 import SwiftUI
-import ScreenpunkCore
+@_spi(ManagedRender) import ScreenpunkCore
 #if canImport(WebKit)
 import WebKit
 #if os(iOS)
@@ -11,6 +11,7 @@ import AppKit
 
 #if os(iOS)
 public struct DashboardWebView: UIViewRepresentable {
+    @Environment(\.deviceRuntimeLifetime) private var runtimeLifetime
     public var store: PackageAssetStore
     public var onReady: () -> Void
     public var onUnlinkHold: () -> Void
@@ -23,20 +24,22 @@ public struct DashboardWebView: UIViewRepresentable {
     public var active: Bool
     public var onSettingsApplied: (Bool) -> Void
     public var onConnectionHealth: (Bool) -> Void
+    public var serviceInvocation: CloudScreenServiceInvocation?
 
-    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, serviceInvocation: CloudScreenServiceInvocation? = nil, onUnlinkHold: @escaping () -> Void) {
         self.store = store
         self.homeAssistant = homeAssistant
         self.publicReads = publicReads; self.rasterResources = rasterResources
         self.revision = revision
         self.connections = connections; self.settings = settings; self.active = active; self.onSettingsApplied = onSettingsApplied
         self.onConnectionHealth = onConnectionHealth
+        self.serviceInvocation = serviceInvocation
         self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, lifetime: runtimeLifetime ?? DeviceRuntimeLifetime(), homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, serviceInvocation: serviceInvocation, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeUIView(context: Context) -> WKWebView {
@@ -53,6 +56,7 @@ public struct DashboardWebView: UIViewRepresentable {
 
 #elseif os(macOS)
 public struct DashboardWebView: NSViewRepresentable {
+    @Environment(\.deviceRuntimeLifetime) private var runtimeLifetime
     public var store: PackageAssetStore
     public var onReady: () -> Void
     public var onUnlinkHold: () -> Void
@@ -65,20 +69,22 @@ public struct DashboardWebView: NSViewRepresentable {
     public var active: Bool
     public var onSettingsApplied: (Bool) -> Void
     public var onConnectionHealth: (Bool) -> Void
+    public var serviceInvocation: CloudScreenServiceInvocation?
 
-    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+    public init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, serviceInvocation: CloudScreenServiceInvocation? = nil, onUnlinkHold: @escaping () -> Void) {
         self.store = store
         self.homeAssistant = homeAssistant
         self.publicReads = publicReads; self.rasterResources = rasterResources
         self.revision = revision
         self.connections = connections; self.settings = settings; self.active = active; self.onSettingsApplied = onSettingsApplied
         self.onConnectionHealth = onConnectionHealth
+        self.serviceInvocation = serviceInvocation
         self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold
     }
 
     public func makeCoordinator() -> DashboardWebCoordinator {
-        DashboardWebCoordinator(store: store, homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, onUnlinkHold: onUnlinkHold)
+        DashboardWebCoordinator(store: store, lifetime: runtimeLifetime ?? DeviceRuntimeLifetime(), homeAssistant: homeAssistant, publicReads: publicReads, rasterResources: rasterResources, revision: revision, connections: connections, settings: settings, active: active, onSettingsApplied: onSettingsApplied, onConnectionHealth: onConnectionHealth, onReady: onReady, serviceInvocation: serviceInvocation, onUnlinkHold: onUnlinkHold)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -99,8 +105,20 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     let handler: PackageSchemeHandler
     var onReady: () -> Void
     var onUnlinkHold: () -> Void
+    private let lifetime: DeviceRuntimeLifetime
+    private let managedStaticContent: DeviceManagedStaticContent?
+    private var managedRuntime: DeviceUnifiedManagedRuntime?
+    var hasCapabilityBridge: Bool { bridge != nil }
+    var hasEventRuntime: Bool { events != nil }
+    private var retirementRegistration: UUID?
+    private(set) var isRetired = false
     private var installedRules = false
     private var bridge: HomeAssistantWebBridge?
+    private var serviceBridge: CloudScreenServiceBridge?
+    private var serviceMounted: (@MainActor () async throws -> Void)?
+    private var serviceMountFailed: (@MainActor (String) async -> Void)?
+    private var managedFailureReported = false
+    private var serviceMountTask: Task<Void,Never>?
     private var events: DashboardEventRuntime?
     private weak var webView: WKWebView?
     private var active: Bool
@@ -108,54 +126,187 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     private var programmaticURL: String?
     private var onSettingsApplied: (Bool) -> Void
     private var settingsValid = true
+    private var allowsAudioAutoplay = false
 
-    init(store: PackageAssetStore, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, onUnlinkHold: @escaping () -> Void) {
+    init(store: PackageAssetStore, lifetime: DeviceRuntimeLifetime = DeviceRuntimeLifetime(), preferenceStore: ScreenPreferenceStore? = nil, homeAssistant: HomeAssistantDeviceRuntime? = nil, publicReads: PublicReadRuntime? = nil, rasterResources: PublicRasterResources? = nil, revision: String = "", connections: ConnectionRuntime? = nil, settings: DeviceSettings = .init(), active: Bool = true, onSettingsApplied: @escaping (Bool) -> Void = { _ in }, onConnectionHealth: @escaping (Bool) -> Void = { _ in }, onReady: @escaping () -> Void = {}, serviceInvocation: CloudScreenServiceInvocation? = nil, onUnlinkHold: @escaping () -> Void) {
+        self.lifetime = lifetime
+        managedStaticContent = nil
+        let rasterResources = rasterResources ?? PublicRasterResources()
         self.handler = PackageSchemeHandler(store: store, rasterResources: rasterResources)
         self.onReady = onReady
         self.onUnlinkHold = onUnlinkHold
         self.active = active; self.onSettingsApplied = onSettingsApplied
+        guard !lifetime.isRetired else {
+            super.init(); isRetired = true; self.active = false; self.onReady = {}; self.onUnlinkHold = {}; self.onSettingsApplied = { _ in }; return
+        }
         if let data = store.assets["manifest.json"]?.data {
             do {
                 let manifest = try JSONDecoder().decode(DashboardManifest.self, from: data)
+                try manifest.deviceBehavior?.validate()
                 let events = try DashboardEventRuntime(manifest: manifest, revision: revision, settings: settings,
                                                        homeAssistant: homeAssistant, connections: connections)
+                allowsAudioAutoplay = manifest.deviceBehavior?.allowsAudioAutoplay == true
                 self.events = events; initialPath = events.page.path; settingsValid = events.settingsApplied
             } catch { settingsValid = false }
         }
-        self.bridge = HomeAssistantWebBridge(runtime: homeAssistant, connections: connections, navigation: events,
-                                              revision: revision, publicReads: publicReads, resources: rasterResources, onHealth: onConnectionHealth)
         super.init()
+        let health: (Bool) -> Void = { [weak self] value in
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            onConnectionHealth(value)
+        }
+        self.bridge = HomeAssistantWebBridge(runtime: homeAssistant, connections: connections, navigation: events,
+                                              revision: revision, preferenceStore: preferenceStore ?? .shared, publicReads: publicReads, resources: rasterResources, onHealth: health)
         events?.onPage = { [weak self] page in self?.load(path: page.path) }
         events?.onStatus = { [weak self] status in self?.bridge?.status(status) }
-        events?.onHealth = onConnectionHealth
+        events?.onHealth = health
+        if let serviceInvocation {
+            let services = CloudScreenServiceBridge(lifetime: lifetime, declaredOperations: CloudScreenServiceBridge.declaredOperations(store.assets["screenpunk.services.json"]?.data), invoke: serviceInvocation)
+            services.setMounted() // Authoring preview; never a device-runtime mount.
+            serviceBridge = services
+        }
+        retirementRegistration = lifetime.register { [weak self] in self?.retireForReset() }
     }
 
+    /// Non-authorizing, unmounted static transport. No capability bridge, preferences, event
+    /// runtime, raster resources, mutable credentials or Local host are constructed in this path.
+    init(managedStatic content: DeviceManagedStaticContent, lifetime: DeviceRuntimeLifetime, serviceInvocation: CloudScreenServiceInvocation? = nil, serviceMounted: (@MainActor () async throws -> Void)? = nil, serviceMountFailed: (@MainActor (String) async -> Void)? = nil) {
+        self.lifetime = lifetime; managedStaticContent = content
+        self.serviceMounted = serviceMounted; self.serviceMountFailed = serviceMountFailed
+        let valid = !lifetime.isRetired && (try? content.verifyResources()) != nil
+        var assets: [String: PackageAsset] = [:]
+        if valid {
+            for asset in content.assets {
+                assets[asset.path] = .init(path: asset.path, data: asset.bytes, mime: PackageAssetStore.mime(for: asset.path))
+            }
+        }
+        handler = PackageSchemeHandler(store: .init(assets: assets), rasterResources: nil)
+        onReady = {}; onUnlinkHold = {}; onSettingsApplied = { _ in }; active = valid
+        initialPath = content.entrypoint; settingsValid = valid
+        super.init()
+        guard valid else { isRetired = true; return }
+        if let serviceInvocation { serviceBridge = CloudScreenServiceBridge(lifetime: lifetime, declaredOperations: CloudScreenServiceBridge.declaredOperations(content.assets.first(where: { $0.path == "screenpunk.services.json" })?.bytes), invoke: serviceInvocation) }
+        retirementRegistration = lifetime.register { [weak self] in self?.retireForReset() }
+    }
+    /// Genuine common runtime issuance supplies private grant operations and the
+    /// current-or-mounted inventory validator. The static initializer remains separate.
+    init(managedRuntime runtime: DeviceUnifiedManagedRuntime, lifetime: DeviceRuntimeLifetime,
+        settings: DeviceSettings = .init(), serviceInvocation: CloudScreenServiceInvocation? = nil,
+        serviceMounted: (@MainActor () async throws -> Void)? = nil,
+        serviceMountFailed: (@MainActor (String) async -> Void)? = nil) {
+        let content = runtime.content
+        managedRuntime = runtime
+        self.lifetime = lifetime; managedStaticContent = content
+        self.serviceMounted = serviceMounted; self.serviceMountFailed = serviceMountFailed
+        let valid = !lifetime.isRetired && (try? runtime.verifyResources()) != nil
+        var assets: [String: PackageAsset] = [:]
+        if valid { for asset in content.assets { assets[asset.path] = .init(path: asset.path, data: asset.bytes, mime: PackageAssetStore.mime(for: asset.path)) } }
+        let resources = PublicRasterResources()
+        handler = PackageSchemeHandler(store: .init(assets: assets), rasterResources: resources)
+        onReady = {}; onUnlinkHold = {}; onSettingsApplied = { _ in }; active = valid
+        initialPath = content.entrypoint; settingsValid = valid
+        super.init()
+        guard valid else { isRetired = true; return }
+        do {
+            let events = try DashboardEventRuntime(manifest: runtime.manifest, revision: content.revision,
+                settings: settings, homeAssistant: nil, connections: nil, managedRuntime: runtime)
+            self.events = events; initialPath = events.page.path; settingsValid = events.settingsApplied
+            self.active = false // Hidden candidate cannot execute or play media before the bound mount receipt.
+            allowsAudioAutoplay = runtime.manifest.deviceBehavior?.allowsAudioAutoplay == true
+            let reads = try runtime.publicReads.map { provisioning in
+                try PublicReadRuntime(provisioning: provisioning,
+                    transport: runtime.guardedHTTP(HomeAssistantHTTPTransport()),
+                    isCurrent: { (try? runtime.verifyActive()) != nil })
+            }
+            bridge = HomeAssistantWebBridge(runtime: nil, managedRuntime: runtime, navigation: events,
+                revision: content.revision, mapManifest: runtime.manifest, publicReads: reads, resources: resources,
+                onHealth: { _ in })
+            events.onPage = { [weak self] page in self?.load(path: page.path) }
+            events.onStatus = { [weak self] status in self?.bridge?.status(status) }
+            if let serviceInvocation {
+                serviceBridge = CloudScreenServiceBridge(lifetime: lifetime,
+                    declaredOperations: CloudScreenServiceBridge.declaredOperations(content.assets.first(where: { $0.path == "screenpunk.services.json" })?.bytes), invoke: serviceInvocation)
+            }
+            retirementRegistration = lifetime.register { [weak self] in
+                self?.retireForReset(); Task { await runtime.cancel() }
+            }
+        } catch { retireForReset(); Task { await runtime.cancel() } }
+    }
+    /// SwiftUI may reuse a coordinator while replacing value-view properties. Never adopt new
+    /// content or lifetime into an existing static renderer; the parent must recreate it explicitly.
+    func updateManagedStatic(content: DeviceManagedStaticContent, lifetime: DeviceRuntimeLifetime) {
+        guard let original = managedStaticContent, original === content, self.lifetime === lifetime else {
+            retireForReset(); return
+        }
+        update(settings: .init(), active: true, onSettingsApplied: { _ in })
+    }
+    private func managedResourcesValid() -> Bool {
+        guard let content = managedStaticContent else { return true } // Existing legacy path unchanged.
+        do { try content.verifyResources(); return true }
+        catch { retireForReset(); return false }
+    }
     func update(settings: DeviceSettings, active: Bool, onSettingsApplied: @escaping (Bool) -> Void) {
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired else { return }
         self.onSettingsApplied = onSettingsApplied
         events?.update(settings: settings)
         if let events { settingsValid = events.settingsApplied }
-        self.active = active
-        bridge?.setActive(active)
-        if active { events?.start() } else { events?.stop(); bridge?.cancel() }
+        let executable = active && (managedRuntime == nil || (try? managedRuntime?.verifyActive()) != nil)
+        self.active = executable
+        serviceBridge?.setActive(executable)
+        bridge?.setActive(executable)
+        if executable { events?.start() } else { events?.stop(); bridge?.cancel(); webView?.pauseAllMediaPlayback(completionHandler: nil) }
+        if managedRuntime != nil { webView?.setAllMediaPlaybackSuspended(!executable, completionHandler: nil) }
         // Defer callback to avoid publishing SwiftUI state during view update.
         let valid = settingsValid
-        DispatchQueue.main.async { onSettingsApplied(valid) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            onSettingsApplied(valid)
+        }
     }
 
-    func stop() { bridge?.setActive(false); events?.stop(); bridge?.cancel() }
+    func retireForReset() {
+        guard !isRetired else { return }
+        isRetired = true; active = false
+        lifetime.unregister(retirementRegistration); retirementRegistration = nil
+        serviceMountTask?.cancel(); serviceMountTask = nil; serviceMounted = nil; serviceMountFailed = nil
+        serviceBridge?.retire()
+        bridge?.suspendForReset(); events?.stop()
+        events?.onPage = nil; events?.onStatus = nil; events?.onHealth = nil
+        onReady = {}; onUnlinkHold = {}; onSettingsApplied = { _ in }
+        if let webView {
+            webView.stopLoading(); webView.navigationDelegate = nil; webView.uiDelegate = nil
+            webView.pauseAllMediaPlayback(completionHandler: nil)
+            webView.configuration.userContentController.removeAllScriptMessageHandlers()
+#if os(iOS)
+            webView.scrollView.delegate = nil
+#endif
+        }
+        webView = nil; programmaticURL = nil
+    }
+
+    func stop() { serviceBridge?.retire(); bridge?.setActive(false); events?.stop(); bridge?.cancel(); webView?.pauseAllMediaPlayback(completionHandler: nil) }
 
     private func load(path: String) {
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired else { return }
         guard let url = URL(string: "\(IsolationPolicy.customScheme)://\(IsolationPolicy.packageHost)/\(path)") else { return }
         bridge?.cancel(); programmaticURL = url.absoluteString
         webView?.load(URLRequest(url: url))
     }
 
-    deinit { let bridge = bridge; Task { @MainActor in bridge?.cancel() } }
+    deinit {
+        let bridge = bridge, lifetime = lifetime, registration = retirementRegistration
+        Task { @MainActor in lifetime.unregister(registration); bridge?.cancel() }
+    }
 
     func makeWebView() -> WKWebView {
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired else {
+            let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
+            config.defaultWebpagePreferences.allowsContentJavaScript = false
+            return WKWebView(frame: .zero, configuration: config)
+        }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         BundledAudio.configure(config)
+        if allowsAudioAutoplay { config.mediaTypesRequiringUserActionForPlayback = .video }
         config.setURLSchemeHandler(handler, forURLScheme: IsolationPolicy.customScheme)
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         if let bridge {
@@ -165,6 +316,10 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
                let source = try? String(contentsOf: url) {
                 config.userContentController.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             }
+        }
+        if let serviceBridge {
+            config.userContentController.addScriptMessageHandler(serviceBridge, contentWorld: .page, name: "screenpunkServices")
+            config.userContentController.addUserScript(WKUserScript(source: CloudScreenServiceBridge.sdk, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
         let webView = WKWebView(frame: .zero, configuration: config)
         self.webView = webView
@@ -190,20 +345,22 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
 #endif
         installUnlinkRecognizer(on: webView)
         installContentRules(on: webView)
+        if managedRuntime != nil { webView.setAllMediaPlaybackSuspended(true, completionHandler: nil) }
         load(path: initialPath)
         if active { events?.start() }
-        DispatchQueue.main.async { [weak self] in guard let self else { return }; self.onSettingsApplied(self.settingsValid) }
+        DispatchQueue.main.async { [weak self] in guard let self, !self.isRetired, !self.lifetime.isRetired else { return }; self.onSettingsApplied(self.settingsValid) }
         return webView
     }
 
     private func installContentRules(on webView: WKWebView) {
-        guard !installedRules else { return }
+        guard !isRetired, !lifetime.isRetired, !installedRules else { return }
         installedRules = true
         let data = Data(IsolationPolicy.contentRuleListJSON.utf8)
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: "screenpunk-isolation",
             encodedContentRuleList: String(data: data, encoding: .utf8) ?? "[]"
-        ) { list, _ in
+        ) { [weak self, weak webView] list, _ in
+            guard let self, !self.isRetired, !self.lifetime.isRetired, let webView else { return }
             if let list {
                 webView.configuration.userContentController.add(list)
             }
@@ -213,13 +370,15 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
     private func installUnlinkRecognizer(on webView: WKWebView) {
 #if os(iOS)
         let recognizer = TwoFingerHoldRecognizer { [weak self] in
-            self?.onUnlinkHold()
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            self.onUnlinkHold()
         }
         recognizer.cancelsTouchesInView = false
         webView.addGestureRecognizer(recognizer)
 #elseif os(macOS)
         let recognizer = TwoFingerHoldRecognizer { [weak self] in
-            self?.onUnlinkHold()
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            self.onUnlinkHold()
         }
         webView.addGestureRecognizer(recognizer)
 #endif
@@ -230,6 +389,7 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired else { decisionHandler(.cancel); return }
         let url = navigationAction.request.url?.absoluteString ?? ""
         guard IsolationEvaluator.isLocalPackageURL(url) else { decisionHandler(.cancel); return }
         if navigationAction.targetFrame?.isMainFrame == true, let events {
@@ -253,9 +413,43 @@ public final class DashboardWebCoordinator: NSObject, WKNavigationDelegate, WKUI
         nil
     }
 
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onReady() }
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard managedResourcesValid(), !isRetired, !lifetime.isRetired, !managedFailureReported else { return }
+        onReady()
+        if let serviceMounted, serviceMountTask == nil {
+            serviceMountTask = Task { [weak self] in
+                do {
+                    try await serviceMounted(); try Task.checkCancellation()
+                    guard let self, !self.isRetired, !self.lifetime.isRetired, self.managedResourcesValid() else { return }
+                    self.serviceBridge?.setMounted()
+                    if let runtime = self.managedRuntime {
+                        try runtime.verifyActive()
+                        self.update(settings: .init(), active: true, onSettingsApplied: { _ in })
+                    }
+                } catch { self?.reportManagedMountFailure("mount_validation_failed") }
+            }
+        }
+    }
 
+    private func reportManagedMountFailure(_ code: String) {
+        guard managedStaticContent != nil, !isRetired, !lifetime.isRetired, !managedFailureReported else { return }
+        managedFailureReported = true; serviceBridge?.setActive(false)
+        serviceMountTask?.cancel(); serviceMountTask = nil
+        guard let callback = serviceMountFailed else { return }
+        Task { [weak self] in
+            guard let self, !self.isRetired, !self.lifetime.isRetired else { return }
+            await callback(code)
+        }
+    }
+    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        reportManagedMountFailure("navigation_failed")
+    }
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        reportManagedMountFailure("navigation_failed")
+    }
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !isRetired, !lifetime.isRetired else { return }
+        if managedStaticContent != nil { reportManagedMountFailure("render_process_terminated"); return }
         bridge?.cancel()
         load(path: events?.page.path ?? initialPath)
     }
@@ -266,6 +460,7 @@ extension DashboardWebCoordinator: UIScrollViewDelegate {
     public func viewForZooming(in scrollView: UIScrollView) -> UIView? { nil }
 
     public func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        guard !isRetired, !lifetime.isRetired else { return }
         scrollView.pinchGestureRecognizer?.isEnabled = false
     }
 

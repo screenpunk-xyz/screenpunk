@@ -103,7 +103,7 @@ public struct MCPToolRouter: Sendable {
                 "devicePinHex": result.devicePinHex,
                 "expiresAt": iso(result.expiresAt),
                 "rePairing": result.rePairing,
-                "detail": "Show this code to the user. The device shows its own code. Only if both match, the user taps Confirm on the device; then call confirm_pairing. Codes expire after \(Int(PairingLimits.expirySeconds)) seconds."
+                "detail": "Show this code to the user. The device shows its own code. Ask the user whether both codes match exactly. Only if they say yes and have tapped Confirm on the device, call confirm_pairing; confirm_pairing is the Mac-side confirmation, so never call it on your own. Codes expire after \(Int(PairingLimits.expirySeconds)) seconds."
             ])
         case "confirm_pairing":
             let record = try service.devices.confirmPairing(deviceId: try requireString(arguments, "deviceId"))
@@ -337,6 +337,8 @@ public struct MCPToolRouter: Sendable {
             "pairedAt": iso(record.pairedAt),
             "capabilities": ["tls": "1.3", "transfer": "lan", "runtimeProxy": false]
         ]
+        if let status = record.temporaryActivation, let data = try? JSONEncoder().encode(status),
+           let value = try? JSONSerialization.jsonObject(with: data) { object["temporaryActivation"] = value }
         if let seen = record.lastSeenAt {
             object["lastSeenAt"] = iso(seen)
         }

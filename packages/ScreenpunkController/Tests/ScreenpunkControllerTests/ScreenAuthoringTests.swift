@@ -13,6 +13,34 @@ final class ScreenAuthoringTests: XCTestCase {
         let service = ControllerService(store: try DashboardPackageStore(root: root.appendingPathComponent("controller")))
         return (root, ScreenAuthoring(root: service.store.root, kit: kit), service)
     }
+    func testPackageUpdateOmittingConnectionsPreservesExactBaseDeclarations() throws {
+        let (root, _, service) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let first = try service.store.putDashboard(dashboardId: nil, name: "TV", baseRevision: nil,
+            target: ManifestTarget(profileId: "phone", width: 390, height: 844, scale: 3, orientation: "portrait", safeArea: nil),
+            connections: [ManifestConnection(alias: "googleTV", required: false)],
+            files: [.init(path: "index.html", text: "<p>TV</p>", base64: nil)])
+        var args: [String: JSONValue] = ["dashboardId": .string(first.manifest.dashboardId),
+            "baseRevision": .string(first.manifest.revision), "name": .string("Renamed TV"),
+            "target": try JSONValue.parse(JSONEncoder().encode(first.manifest.target)),
+            "files": .array([.object(["path": .string("index.html"), "text": .string("<p>New title</p>")])])]
+        let next = try service.updateDashboard(arguments: .object(args))
+        XCTAssertEqual(next.manifest.connections, first.manifest.connections)
+        args["baseRevision"] = .string(next.manifest.revision)
+        args["connections"] = .array([])
+        XCTAssertTrue(try service.updateDashboard(arguments: .object(args)).manifest.connections.isEmpty)
+    }
+
+    func testAppearanceEditPreservesConnectionMetadataExactly() throws {
+        let (root, authoring, _) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        let project = try authoring.create(starter: "gallery")
+        let id = project["projectId"]!.string!
+        let metadata = #"{"name":"TV","connections":[{"alias":"googleTV","required":false},{"alias":"home","required":false,"cameraEntities":["camera.room"]}]}"#
+        let configured = try authoring.update(id: id, expected: project["sourceVersion"]!.string!, edits: [.object(["path": .string("screen.json"), "text": .string(metadata)])])
+        _ = try authoring.update(id: id, expected: configured["sourceVersion"]!.string!, edits: [.object(["path": .string("src/main.tsx"), "text": .string("export const title = 'Changed'")])])
+        let read = try authoring.get(id: id, paths: ["screen.json"])
+        XCTAssertEqual(read["files"]!.array!.first!["base64"]!.string, Data(metadata.utf8).base64EncodedString())
+    }
+
     func testSourceConflictsAndUnsafePathsLeaveSourceIntact() throws {
         let (root, authoring, _) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
         let project = try authoring.create(starter: "gallery")

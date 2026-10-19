@@ -1,0 +1,26 @@
+{
+  "version": {
+    "id": "55074fbf-5060-443c-a72f-6f5cc59eed1b",
+    "accountId": "05f93b4e-7b95-40fa-bb3d-e1b2f59a6356",
+    "projectId": "fb1890dd-093e-4c1a-9b25-e8376e1992c9",
+    "parentVersionId": null,
+    "manifestHash": "c3f887a3d599427a7878d688c9cc4eb00c4e64c9fbe52c98142a90040fbbb2fe",
+    "creatorId": "77bc7291-642f-43e5-98ee-714f39605bf3",
+    "createdAt": "2026-10-10T19:15:24.574Z"
+  },
+  "files": [
+    {
+      "path": "assets/data.json",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "size": 2,
+      "mediaType": "application/json"
+    },
+    {
+      "path": "index.html",
+      "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      "size": 5,
+      "mediaType": "text/html"
+    }
+  ],
+  "nextCursor": null
+}

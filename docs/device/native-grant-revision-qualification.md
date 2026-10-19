@@ -1,0 +1,13 @@
+# Native grant revision qualification
+
+`DeviceGrantRevisionQualifier` is an internal, unmounted consistency check for a complete proposed grant revision. It accepts explicit entry identities and genuinely qualified packages, existing Generic, Home Assistant and public-read declarations, a supplied controller identity, credential revision references and credential bytes. It neither authenticates the supplied owner nor establishes stored-secret, installation, structural or execution authority.
+
+Every expected entry must be represented, including entries with no grants. Package revision identity and relevant strings are compared as exact UTF-8. Generic and public capabilities must match the qualified manifest; Home Assistant schema versions retain their existing validation and permission semantics. No owner, credential sharing, configured selection or legacy migration choice is inferred.
+
+Credential inputs have unique revision IDs. Each entry's local kind/key reference must be unique, match its binding and consume exact supplied bytes. Explicit sharing of one credential revision across entries or kinds is permitted only when every binding matches those bytes. Missing, conflicting and unreferenced inputs fail. Retained revision references must be unique and belong to the same supplied root; their presence does not prove persistence or retention.
+
+The qualified result retains private canonical bytes only for exact comparison. Its public metadata is a schema projection that removes credential inputs, Generic secret fields and Home Assistant tokens. Descriptions and reflection are redacted. Metadata is allowed to coincidentally contain a short credential's text: no substring-based credential policy is imposed. No secret digest is emitted.
+
+Typed and strict raw input paths share collection and size limits: 12 entries, 396 credential inputs, 128 retained references, 8 KiB per secret, 1 MiB of unique credential input bytes and a separate 1 MiB aggregate for repeated inline Generic/HA secret bytes. Private encoding is bounded to 4 MiB, public metadata to 256 KiB. The raw parser rejects duplicate and unknown fields, malformed UTF-8 and surrogate sequences, trailing values, excessive depth and excessive nodes before typed decoding. Sharing does not bypass aggregate limits.
+
+This component does not write files or Keychain items, install grants, migrate records, modify existing provisioning validators, or change deployment, restore or reset callers. Immutable storage, recovery, complete inventory qualification and admission of every production writer remain separate integration requirements.

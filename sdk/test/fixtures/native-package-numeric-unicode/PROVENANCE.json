@@ -1,0 +1,18 @@
+{
+  "architecture" : "arm64",
+  "collisionCorpusSha256" : "08a15f912998819306798d770d15845e5642dcf3d71b3282cd4286a41fdc751d",
+  "corpusSha256" : "7bc044863ee6211867bf6969cf8ae5d082e3091f6464dea4e2b9cf424094ec15",
+  "generatedAtUTC" : "2026-10-03T02:30:01Z",
+  "generationCommand" : "env CLANG_MODULE_CACHE_PATH=/absolute/owned/clang SWIFT_MODULECACHE_PATH=/absolute/owned/swift SWIFTPM_MODULECACHE_OVERRIDE=/absolute/owned/swift SCREENPUNK_EXPORT_NUMERIC_UNICODE_ORACLE=/absolute/new/owned/output swift test --package-path packages/ScreenpunkController --disable-sandbox --disable-automatic-resolution --scratch-path /absolute/owned/build --cache-path /absolute/owned/cache --filter PackageNumericUnicodeFixtureTests",
+  "generatorPath" : "packages/ScreenpunkController/Tests/ScreenpunkControllerTests/PackageNumericUnicodeFixtureTests.swift",
+  "generatorSha256" : "e6b3bc3b849e8f1b29e540a38b08d0d4806643de273fa349ab88bca399ba8613",
+  "normalization" : "None. Explicit fixed manifest IDs; input member/file order and original Unicode spellings retained; native decode/encode observed unchanged",
+  "operatingSystem" : "Version 26.6.2 (Build 25G83)",
+  "prettyManifestSemantics" : "Native prettyPrinted/sortedKeys/withoutEscapingSlashes re-encoding, not a ControllerStore persisted file; rejected vectors never accepted packages",
+  "scope" : "Native serialization/manifest metadata only; synthetic one-byte inventory, no materialized assets, parser, archive, compiler, runtime or untrusted-source qualification",
+  "sourceCommit" : "859f9c2f492fea87ab64e49b3ea9037339e17478",
+  "sourceInventorySha256" : "11392325a6d04115658bba754e5f5490b83c412469d13f04c8ef0bb137b83ef4",
+  "sourceRepository" : "https://github.com/screenpunk-xyz/screenpunk",
+  "sourceVerificationPolicy" : "Historical SOURCE and generator/corpus/collision provenance always checked; matching all current source bytes is explicit export only",
+  "swiftVersion" : "swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0"
+}

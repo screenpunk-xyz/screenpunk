@@ -20,7 +20,8 @@ let package = Package(
             resources: [
                 .copy("Resources/offline-fixture"),
                 .copy("Resources/runtime-sdk.js"),
-                .copy("Resources/ADB-LICENSE.txt")
+                .copy("Resources/ADB-LICENSE.txt"),
+                .copy("Resources/ScreenpunkAppIcon.png")
             ]
         ),
         .testTarget(

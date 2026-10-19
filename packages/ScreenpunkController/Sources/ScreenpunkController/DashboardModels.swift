@@ -82,7 +82,7 @@ public struct MCPCatalogFile: Sendable, Equatable {
 
 public enum MCPCatalog: Sendable {
     public static func load() -> MCPCatalogFile {
-        if let url = BundledResources.bundle.url(forResource: "mcp-catalog", withExtension: "json"),
+        if let url = BundledResources.url(forResource: "mcp-catalog", withExtension: "json"),
            let data = try? Data(contentsOf: url),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         {

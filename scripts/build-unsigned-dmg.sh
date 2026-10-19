@@ -130,8 +130,8 @@ rm -rf "$stage" "$dmg" "${dmg}.sha256" "$build_info"
 # Remove obsolete command-line resource layout from earlier development builds.
 rm -rf "$derived/Build/Products/Release/Screenpunk.app/Contents/MacOS/ScreenpunkApple_ScreenpunkApple.bundle" "$derived/Build/Products/Release/Screenpunk.app/Contents/MacOS/ScreenpunkController_ScreenpunkController.bundle"
 echo "=== Release build: arm64, macOS 14+, ad-hoc identity (no Developer ID, no team) ==="
-# Command-line settings override the project's CODE_SIGNING_ALLOWED=NO for this
-# build only; apps/macos/project.yml stays unsigned for PR CI.
+# Command-line settings override the project's normal team signing for this
+# build only; PR CI separately passes CODE_SIGNING_ALLOWED=NO.
 xcodebuild \
   -project "$mac_proj" \
   -scheme ScreenpunkMac \
@@ -173,6 +173,8 @@ xcodebuild -project "$ROOT/tools/preview-host/ScreenpunkPreviewHost.xcodeproj" \
 mkdir -p "$app/Contents/Helpers"
 ditto "$OUT_DIR/preview-derived/Build/Products/Release/ScreenpunkPreviewHost.app" "$app/Contents/Helpers/ScreenpunkPreviewHost.app"
 "$ROOT/scripts/bundle-authoring.sh" "$app"
+"$ROOT/scripts/bundle-connection-validator.sh" "$app/Contents/Resources/ConnectionValidator"
+codesign --force --sign - "$app/Contents/Resources/ConnectionValidator/node"
 codesign --force --sign - "$app/Contents/Resources/AuthoringKit/bin/node"
 codesign --force --sign - "$app/Contents/Resources/AuthoringKit/node_modules/@esbuild/darwin-arm64/bin/esbuild"
 codesign --force --sign - "$app/Contents/MacOS/screenpunk-mcp"
@@ -194,6 +196,7 @@ else
 fi
 
 echo "=== packaged MCP and native preview acceptance ==="
+python3 "$ROOT/scripts/check-apple-runtime-features.py" "$app"
 python3 "$ROOT/scripts/check-packaged-mcp.py" "$app"
 
 echo "=== DMG ==="

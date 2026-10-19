@@ -18,9 +18,13 @@ final class FakeLANDevice: @unchecked Sendable {
     var supportsScreenSets = true
     var supportsPublicReads = false
     var supportsDynamicPublicPaths = false
+    var supportsDeviceBehavior = false
     var maxTransferBytes: Int? = LANProtocolLimits.maxMessageBytes
     var installedSet: [LANScreenSetEntry]?
     var selectedDashboardId: String?
+    var cloudInstallationId: String?
+    var controllerApproved: Bool?
+    var localControllerPinHex: String?
     var failSetAtIndex: Int?
     private var completedSets: [String: (LANScreenSetDeployBody, LANScreenSetReceipt)] = [:]
     var failProvisioning = false
@@ -34,8 +38,17 @@ final class FakeLANDevice: @unchecked Sendable {
     private(set) var pinnedController: [UInt8]?
     private(set) var receivedFiles: [String: Data] = [:]
     private(set) var deployAttempts = 0
+    /// Every `connect` a link attempted against this device's factory, including
+    /// ones aimed at other addresses that failed as offline.
+    private(set) var connectAttempts = 0
     private let clock = FixedClock(Date())
     private let lock = NSLock()
+
+    func recordConnectAttempt() {
+        lock.lock()
+        connectAttempts += 1
+        lock.unlock()
+    }
 
     init(deviceId: String, name: String) {
         let identity = PairingIdentityFactory.make(role: .device)
@@ -85,7 +98,14 @@ final class FakeLANDevice: @unchecked Sendable {
             switch LANMethod(rawValue: request.method) {
             case .hello:
                 let shown = claimedHelloPin ?? identityPin
-                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: (supportsPublicReads ? ["public-read-http-v1"] : []) + (supportsDynamicPublicPaths ? ["public-read-dynamic-path-v1"] : []) + (supportsGeneralServices ? ["home-assistant-services-v1"] : []) + (supportsHomeAssistant ? ["home-assistant-http-v1"] : []) + (supportsScreenSets ? ["screen-set-v1"] : []), maxTransferBytes: maxTransferBytes, profile: runtime.profile))
+                var capabilities: [String] = []
+                if supportsDeviceBehavior { capabilities.append("home-assistant-temporary-activation-v1") }
+                if supportsPublicReads { capabilities.append("public-read-http-v1") }
+                if supportsDynamicPublicPaths { capabilities.append("public-read-dynamic-path-v1") }
+                if supportsGeneralServices { capabilities.append("home-assistant-services-v1") }
+                if supportsHomeAssistant { capabilities.append("home-assistant-http-v1") }
+                if supportsScreenSets { capabilities.append("screen-set-v1") }
+                return ok(request, payload: LANHello(role: .device, deviceId: runtime.profile.deviceId, pinHex: PeerPin.hex(shown), name: runtime.profile.name, capabilities: capabilities, maxTransferBytes: maxTransferBytes, profile: runtime.profile))
             case .pairBegin:
                 let body = try LANCodec.decodePayload(LANPairBegin.self, json: request.payloadJSON)
                 guard PeerPin.matches(expected: peerPin, presentedHex: body.controllerPinHex) else {
@@ -146,7 +166,7 @@ final class FakeLANDevice: @unchecked Sendable {
                     throw TransferFailure.notPaired
                 }
                 return ok(request, payload: LANActiveQuery(revision: runtime.activeRevision))
-            case .connectionsInventory, .connectionsUpdateHome, .connectionsProvision, .connectionsRevoke, .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
+            case .pairRevoke, .screenSelect, .screenRemove, .screenInstall, .cloudRelay, .cloudArchiveChunk, .connectionsInventory, .connectionsUpdateHome, .connectionsProvision, .connectionsRevoke, .deploySet, .homeAssistantProvision, .homeAssistantRevoke, .none:
                 throw TransferFailure.validationFailed
             }
         } catch {
@@ -221,6 +241,7 @@ final class FakeLANLink: DeviceLink {
     }
 
     func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?) throws {
+        device.recordConnectAttempt()
         guard device.online, host == device.host, port == device.port else { throw TransferFailure.deviceOffline }
         // Either side failing pin verification aborts the TLS handshake.
         guard device.acceptTLS(controllerPin: controllerPin) else { throw TransferFailure.notPaired }
@@ -269,7 +290,7 @@ final class FakeLANLink: DeviceLink {
         return try LANCodec.decodePayload(DeviceSettingsSnapshot.self, json: reply.payloadJSON)
     }
     func queryActiveState() throws -> LANActiveQuery {
-        LANActiveQuery(revision: try queryActive(), screens: device.installedSet, selectedDashboardId: device.selectedDashboardId)
+        LANActiveQuery(revision: try queryActive(), screens: device.installedSet, selectedDashboardId: device.selectedDashboardId, cloudInstallationId: device.cloudInstallationId, controllerApproved: device.controllerApproved, localControllerPinHex: device.localControllerPinHex)
     }
 
     func provisionHomeAssistant(_ configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {

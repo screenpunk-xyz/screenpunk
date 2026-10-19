@@ -3,13 +3,14 @@ import SwiftUI
 import UIKit
 import ScreenpunkCore
 
-enum DeviceSetupPage: Hashable { case settings, googleTV, googleCalendar, display, screens, guided }
+enum DeviceSetupPage: Hashable { case settings, general, googleTV, googleCalendar, display, screens, guided }
 
 @MainActor
 struct DeviceConnectorCatalog {
     let manifests: [DashboardManifest]
     var usesTV: Bool { manifests.contains { $0.connections.contains { $0.alias == "googleTV" } } }
     var usesCalendar: Bool { manifests.contains { $0.connections.contains { ["googleCalendar", "google-calendar"].contains($0.alias) } } }
+    var showsCalendar: Bool { usesCalendar || !((try? GoogleCalendarDeviceService.shared.snapshot().accounts.isEmpty) ?? true) }
     var showsTV: Bool { usesTV || !GoogleTVConfiguration.load().host.isEmpty || !GoogleTVADBConfiguration.load().host.isEmpty }
     func missing(for dashboardID: String?) -> DeviceSetupPage? {
         guard let manifest = manifests.first(where: { $0.dashboardId == dashboardID }) else { return nil }
@@ -20,7 +21,7 @@ struct DeviceConnectorCatalog {
                 let developer = operations.contains("launchChannel") || operations.contains("togglePower")
                 if (basic && GoogleTVConfiguration.load().pin.count != 32) || (developer && GoogleTVADBConfiguration.load().serverPin.count != 32) { return .googleTV }
             }
-            if ["googleCalendar", "google-calendar"].contains(connection.alias) { return .googleCalendar }
+            if ["googleCalendar", "google-calendar"].contains(connection.alias), !GoogleCalendarDeviceService.shared.isReady(dashboard: manifest.dashboardId) { return .googleCalendar }
         }
         return nil
     }
@@ -31,6 +32,7 @@ struct DeviceSetupMenu: View {
     @ObservedObject var host: DeviceLANHost
     let initialPage: DeviceSetupPage?
     let onConnectionsChanged: () -> Void
+    var onConnect: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var settingsOpen = false
@@ -66,8 +68,8 @@ struct DeviceSetupMenu: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.55), value: settingsOpen)
         .onAppear {
             updateSize()
-            if let initialPage { settingsOpen = true; selection = initialPage; if initialPage != .settings { path = [initialPage] } }
-            else { selection = catalog.showsTV ? .googleTV : catalog.usesCalendar ? .googleCalendar : .display }
+            if let initialPage { settingsOpen = true; selection = initialPage == .settings ? .general : initialPage; if initialPage != .settings { path = [initialPage] } }
+            else { selection = catalog.showsTV ? .googleTV : catalog.showsCalendar ? .googleCalendar : .general }
         }
         .onReceive(clock) { _ in updateSize() }
         .tint(.blue)
@@ -126,13 +128,17 @@ struct DeviceSetupMenu: View {
     private var split: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                if catalog.showsTV || catalog.usesCalendar {
+                Section("This device") {
+                    Label("General", systemImage: "gearshape").tag(DeviceSetupPage.general)
+                    Label("Your screens", systemImage: "rectangle.on.rectangle").tag(DeviceSetupPage.screens)
+                }
+                if catalog.showsTV || catalog.showsCalendar {
                     Section("Connections") {
                         if catalog.showsTV { Label("Google TV", systemImage: "tv").tag(DeviceSetupPage.googleTV) }
-                        if catalog.usesCalendar { Label("Google Calendar", systemImage: "calendar").tag(DeviceSetupPage.googleCalendar) }
+                        if catalog.showsCalendar { Label("Google Calendar", systemImage: "calendar").tag(DeviceSetupPage.googleCalendar) }
                     }
                 }
-                Section("This device") { Label("Display and behavior", systemImage: "sun.max").tag(DeviceSetupPage.display) }
+
             }.navigationTitle("Settings").modifier(DeviceMenuSidebarToolbar()).navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 320)
                 .toolbar { ToolbarItem(placement: .topBarLeading) {
                     if #available(iOS 26, *) { back.buttonStyle(.glass).buttonBorderShape(.circle).padding(.top, 8) } else { back }
@@ -146,28 +152,30 @@ struct DeviceSetupMenu: View {
     }
     private var settingsList: some View {
         Form {
-            if catalog.showsTV || catalog.usesCalendar {
+            Section("This device") {
+                NavigationLink(value: DeviceSetupPage.general) { Label("General", systemImage: "gearshape") }
+                NavigationLink(value: DeviceSetupPage.screens) { Label("Your screens", systemImage: "rectangle.on.rectangle") }
+            }
+            if catalog.showsTV || catalog.showsCalendar {
                 Section("Connections") {
                     if catalog.showsTV { NavigationLink(value: DeviceSetupPage.googleTV) {
                         Label { VStack(alignment: .leading, spacing: 4) { Text("Google TV"); Text(catalog.usesTV ? "TV connection and pairing" : "Not used by any screen").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "tv").foregroundStyle(.blue) }
                     } }
-                    if catalog.usesCalendar { NavigationLink(value: DeviceSetupPage.googleCalendar) {
-                        Label { VStack(alignment: .leading, spacing: 4) { Text("Google Calendar"); Text("Calendar connection").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "calendar").foregroundStyle(.blue) }
+                    if catalog.showsCalendar { NavigationLink(value: DeviceSetupPage.googleCalendar) {
+                        Label { VStack(alignment: .leading, spacing: 4) { Text("Google Calendar"); Text(catalog.usesCalendar ? "Calendar connection" : "Not used by any screen").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "calendar").foregroundStyle(.blue) }
                     } }
                 }
             }
-            Section("This device") {
-                NavigationLink(value: DeviceSetupPage.display) { Label { VStack(alignment: .leading, spacing: 4) { Text("Display and behavior"); Text("Brightness and screen preferences").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "sun.max").foregroundStyle(.blue) } }
-            }
+
         }
     }
     @ViewBuilder private func destination(_ page: DeviceSetupPage) -> some View {
         switch page {
         case .settings: settingsList
         case .googleTV: DeviceGoogleTVSettings { connectionsRevision = UUID(); onConnectionsChanged() }
-        case .googleCalendar: Form { Section { Text("Google Calendar is not available in this device build yet."); Text("This screen requests Google Calendar. Account sign-in and calendar selection will be available when the connector is implemented.").foregroundStyle(.secondary) } }
-        case .display: DeviceLocalSettingsSheet(host: host, embedded: true)
-        case .screens: List(screens, id: \.dashboardId) { screen in Button { host.selectScreen(screen.dashboardId); if host.errorMessage == nil { dismiss() } } label: { HStack { Text(screen.name); Spacer(); if screen.dashboardId == host.screenSet?.selectedDashboardId { Image(systemName: "checkmark") } } } }
+        case .googleCalendar: DeviceGoogleCalendarSettings(manifests: catalog.manifests) { connectionsRevision = UUID(); onConnectionsChanged() }
+        case .general, .display: DeviceProductionGeneral(host: host, connect: { dismiss(); onConnect() })
+        case .screens: DeviceProductionScreens(host: host, opened: { dismiss() })
         case .guided: ScrollView { VStack(alignment: .leading, spacing: 24) {
             Text("Guided Access keeps this iPad in Screenpunk and helps prevent accidental exits.").foregroundStyle(.secondary)
             instruction("1. Turn it on", "Open Settings → Accessibility → Guided Access. Turn it on and set a passcode under Passcode Settings. Set Display Auto-Lock to Never if available.")
@@ -178,7 +186,7 @@ struct DeviceSetupMenu: View {
         }
     }
     private func title(_ page: DeviceSetupPage) -> String {
-        switch page { case .settings: return "Settings"; case .googleTV: return "Google TV"; case .googleCalendar: return "Google Calendar"; case .display: return "Display and behavior"; case .screens: return "Choose a screen"; case .guided: return "Lock Screenpunk on screen" }
+        switch page { case .settings: return "Settings"; case .general: return "General"; case .googleTV: return "Google TV"; case .googleCalendar: return "Google Calendar"; case .display: return "Display and behavior"; case .screens: return "Your screens"; case .guided: return "Lock Screenpunk on screen" }
     }
     private func instruction(_ title: String, _ text: String) -> some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.headline); Text(text).foregroundStyle(.secondary) } }
     private func row(_ title: String, subtitle: String, icon: String, disclosure: Bool, detail: String? = nil) -> some View {

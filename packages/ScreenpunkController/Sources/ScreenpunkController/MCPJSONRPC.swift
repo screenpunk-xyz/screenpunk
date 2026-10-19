@@ -68,6 +68,7 @@ public struct MCPJSONRPC: Sendable {
                     resource("screenpunk://authoring/catalog", "Component catalog"),
                     resource("screenpunk://authoring/instructions", "React authoring"),
                     resource("screenpunk://help/onboarding", "Onboarding"),
+                    resource("screenpunk://help/connections", "Screen connection declarations"),
                     resource("screenpunk://help/unlink", "Disconnect recovery"),
                     resource("screenpunk://help/preview", "Live preview"),
                     resource("screenpunk://help/pairing", "Pairing"),

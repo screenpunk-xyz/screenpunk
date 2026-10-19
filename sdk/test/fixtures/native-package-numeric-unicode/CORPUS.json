@@ -1,0 +1,1319 @@
+{
+  "comparisons" : [
+    {
+      "left" : "A",
+      "nsStringDefaultResult" : -1,
+      "nsStringLiteralResult" : -1,
+      "right" : "a",
+      "swiftEqual" : false,
+      "swiftLeftLess" : true,
+      "swiftRightLess" : false
+    },
+    {
+      "left" : "_",
+      "nsStringDefaultResult" : -1,
+      "nsStringLiteralResult" : -1,
+      "right" : "a",
+      "swiftEqual" : false,
+      "swiftLeftLess" : true,
+      "swiftRightLess" : false
+    },
+    {
+      "left" : "",
+      "nsStringDefaultResult" : -1,
+      "nsStringLiteralResult" : 1,
+      "right" : "𐀀",
+      "swiftEqual" : false,
+      "swiftLeftLess" : true,
+      "swiftRightLess" : false
+    },
+    {
+      "left" : "é",
+      "nsStringDefaultResult" : 0,
+      "nsStringLiteralResult" : 1,
+      "right" : "é",
+      "swiftEqual" : true,
+      "swiftLeftLess" : false,
+      "swiftRightLess" : false
+    },
+    {
+      "left" : "é",
+      "nsStringDefaultResult" : -1,
+      "nsStringLiteralResult" : -1,
+      "right" : "z",
+      "swiftEqual" : false,
+      "swiftLeftLess" : false,
+      "swiftRightLess" : true
+    }
+  ],
+  "groups" : [
+    "dictionary-ascii-case-numeric-order",
+    "dictionary-bmp-supplementary-order",
+    "inventory-bmp-supplementary-order",
+    "dictionary-canonical-equivalent-single",
+    "dictionary-canonical-equivalent-collision",
+    "inventory-canonical-equivalent-single-and-collision",
+    "double-small-format-switch",
+    "double-large-format-switch",
+    "double-zero-field-types",
+    "double-rounding-range-edges",
+    "target-double-field-parity"
+  ],
+  "observations" : [
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"A\":1,\"_\":3,\"a\":2}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "10",
+          "keyUTF8Hex" : "3130",
+          "nativeScalarUTF8" : "10"
+        },
+        {
+          "key" : "2",
+          "keyUTF8Hex" : "32",
+          "nativeScalarUTF8" : "2"
+        },
+        {
+          "key" : "A",
+          "keyUTF8Hex" : "41",
+          "nativeScalarUTF8" : "1"
+        },
+        {
+          "key" : "_",
+          "keyUTF8Hex" : "5f",
+          "nativeScalarUTF8" : "3"
+        },
+        {
+          "key" : "a",
+          "keyUTF8Hex" : "61",
+          "nativeScalarUTF8" : "2"
+        }
+      ],
+      "digest" : "de629206cc7aea584120e57f1556e785de7c807f06589953dea0f4c9448141d7",
+      "group" : "dictionary-ascii-case-numeric-order",
+      "id" : "dictionary-ascii-forward",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"de629206cc7aea584120e57f1556e785de7c807f06589953dea0f4c9448141d7\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"A\" : 1,\n          \"_\" : 3,\n          \"a\" : 2\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"A\":1,\"a\":2,\"_\":3,\"10\":10,\"2\":2}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"\":1,\"￿\":3,\"𐀀\":2,\"😀\":4}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "",
+          "keyUTF8Hex" : "ee8080",
+          "nativeScalarUTF8" : "1"
+        },
+        {
+          "key" : "￿",
+          "keyUTF8Hex" : "efbfbf",
+          "nativeScalarUTF8" : "3"
+        },
+        {
+          "key" : "𐀀",
+          "keyUTF8Hex" : "f0908080",
+          "nativeScalarUTF8" : "2"
+        },
+        {
+          "key" : "😀",
+          "keyUTF8Hex" : "f09f9880",
+          "nativeScalarUTF8" : "4"
+        }
+      ],
+      "digest" : "32a94a4f66d627cd70dc7fc6d7deaac9732a27faecdce140559ffbc85cfb651d",
+      "group" : "dictionary-bmp-supplementary-order",
+      "id" : "dictionary-unicode-forward",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"32a94a4f66d627cd70dc7fc6d7deaac9732a27faecdce140559ffbc85cfb651d\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"\" : 1,\n          \"￿\" : 3,\n          \"𐀀\" : 2,\n          \"😀\" : 4\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"\":1,\"𐀀\":2,\"￿\":3,\"😀\":4}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\".js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"￿.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"𐀀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"😀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "ce631e53ae0cb276a48a085b631a503f2d2746138c989a8f356c3d8d2e32b51e",
+      "group" : "inventory-bmp-supplementary-order",
+      "id" : "inventory-unicode-forward",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"ce631e53ae0cb276a48a085b631a503f2d2746138c989a8f356c3d8d2e32b51e\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \".js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"￿.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"𐀀.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"😀.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\".js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"𐀀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"￿.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"😀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\".js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"￿.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"𐀀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"😀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "beb1595d5bbb6a7df5cb476c92acc7e572c69f0296ee654734c625fde3c711a6",
+      "group" : "inventory-canonical-equivalent-single-and-collision",
+      "id" : "inventory-equivalent-collision-forward",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"beb1595d5bbb6a7df5cb476c92acc7e572c69f0296ee654734c625fde3c711a6\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Café.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Café.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+        "duplicatePath"
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"A\":1,\"_\":3,\"a\":2}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "10",
+          "keyUTF8Hex" : "3130",
+          "nativeScalarUTF8" : "10"
+        },
+        {
+          "key" : "2",
+          "keyUTF8Hex" : "32",
+          "nativeScalarUTF8" : "2"
+        },
+        {
+          "key" : "A",
+          "keyUTF8Hex" : "41",
+          "nativeScalarUTF8" : "1"
+        },
+        {
+          "key" : "_",
+          "keyUTF8Hex" : "5f",
+          "nativeScalarUTF8" : "3"
+        },
+        {
+          "key" : "a",
+          "keyUTF8Hex" : "61",
+          "nativeScalarUTF8" : "2"
+        }
+      ],
+      "digest" : "de629206cc7aea584120e57f1556e785de7c807f06589953dea0f4c9448141d7",
+      "group" : "dictionary-ascii-case-numeric-order",
+      "id" : "dictionary-ascii-reverse",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"de629206cc7aea584120e57f1556e785de7c807f06589953dea0f4c9448141d7\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"A\" : 1,\n          \"_\" : 3,\n          \"a\" : 2\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"2\":2,\"10\":10,\"_\":3,\"a\":2,\"A\":1}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"\":1,\"￿\":3,\"𐀀\":2,\"😀\":4}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "",
+          "keyUTF8Hex" : "ee8080",
+          "nativeScalarUTF8" : "1"
+        },
+        {
+          "key" : "￿",
+          "keyUTF8Hex" : "efbfbf",
+          "nativeScalarUTF8" : "3"
+        },
+        {
+          "key" : "𐀀",
+          "keyUTF8Hex" : "f0908080",
+          "nativeScalarUTF8" : "2"
+        },
+        {
+          "key" : "😀",
+          "keyUTF8Hex" : "f09f9880",
+          "nativeScalarUTF8" : "4"
+        }
+      ],
+      "digest" : "32a94a4f66d627cd70dc7fc6d7deaac9732a27faecdce140559ffbc85cfb651d",
+      "group" : "dictionary-bmp-supplementary-order",
+      "id" : "dictionary-unicode-reverse",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"32a94a4f66d627cd70dc7fc6d7deaac9732a27faecdce140559ffbc85cfb651d\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"\" : 1,\n          \"￿\" : 3,\n          \"𐀀\" : 2,\n          \"😀\" : 4\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"😀\":4,\"￿\":3,\"𐀀\":2,\"\":1}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\".js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"￿.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"𐀀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"😀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "ce631e53ae0cb276a48a085b631a503f2d2746138c989a8f356c3d8d2e32b51e",
+      "group" : "inventory-bmp-supplementary-order",
+      "id" : "inventory-unicode-reverse",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"ce631e53ae0cb276a48a085b631a503f2d2746138c989a8f356c3d8d2e32b51e\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \".js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"￿.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"𐀀.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"😀.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"😀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"￿.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"𐀀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\".js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\".js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"￿.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"𐀀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"😀.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "22e9cb0bf9d32fe744bc0274704617a57a6cdec942690be76ea8f7719df09c3a",
+      "group" : "inventory-canonical-equivalent-single-and-collision",
+      "id" : "inventory-equivalent-collision-reverse",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"22e9cb0bf9d32fe744bc0274704617a57a6cdec942690be76ea8f7719df09c3a\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Café.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Café.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+        "duplicatePath"
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"z\":3,\"é\":1}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "z",
+          "keyUTF8Hex" : "7a",
+          "nativeScalarUTF8" : "3"
+        },
+        {
+          "key" : "é",
+          "keyUTF8Hex" : "c3a9",
+          "nativeScalarUTF8" : "1"
+        }
+      ],
+      "digest" : "96f9fc8b6c859e67e10e82a1ed4a8f8835277b77f40f54009b80c29a1315b52a",
+      "group" : "dictionary-canonical-equivalent-single",
+      "id" : "dictionary-equivalent-single-composed",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"96f9fc8b6c859e67e10e82a1ed4a8f8835277b77f40f54009b80c29a1315b52a\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"z\" : 3,\n          \"é\" : 1\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"é\":1,\"z\":3}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"Cafz.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "1c2eb222ce20dd0b65ce1d83a7b24dc445a41a74dd4f9406c97bf983d1dca04a",
+      "group" : "inventory-canonical-equivalent-single-and-collision",
+      "id" : "inventory-equivalent-single-composed",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"1c2eb222ce20dd0b65ce1d83a7b24dc445a41a74dd4f9406c97bf983d1dca04a\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Cafz.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Café.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Cafz.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"Cafz.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"é\":1,\"z\":3}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "é",
+          "keyUTF8Hex" : "65cc81",
+          "nativeScalarUTF8" : "1"
+        },
+        {
+          "key" : "z",
+          "keyUTF8Hex" : "7a",
+          "nativeScalarUTF8" : "3"
+        }
+      ],
+      "digest" : "1e311add99287ae698584e2e2a6c70851e90309804b9bb5ef79d7a734a9622ff",
+      "group" : "dictionary-canonical-equivalent-single",
+      "id" : "dictionary-equivalent-single-decomposed",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"1e311add99287ae698584e2e2a6c70851e90309804b9bb5ef79d7a734a9622ff\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"é\" : 1,\n          \"z\" : 3\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"é\":1,\"z\":3}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"Cafz.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "2d724667a0ea041db2d6b7f98dd9a2c181f7f43f27cfb4a990b5615991c86bd6",
+      "group" : "inventory-canonical-equivalent-single-and-collision",
+      "id" : "inventory-equivalent-single-decomposed",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"2d724667a0ea041db2d6b7f98dd9a2c181f7f43f27cfb4a990b5615991c86bd6\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Cafz.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Café.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Cafz.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"Cafz.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"fourDown\":9.999999999999999e-05,\"fourNegative\":-0.0001,\"fourUp\":0.00010000000000000002,\"power0\":1e-08,\"power1\":1e-07,\"power2\":1e-06,\"power3\":1e-05,\"power4\":0.0001,\"power5\":0.001,\"sixDown\":9.999999999999997e-07,\"sixNegative\":-1e-06,\"sixUp\":1.0000000000000002e-06}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "fourDown",
+          "keyUTF8Hex" : "666f7572446f776e",
+          "nativeScalarUTF8" : "9.999999999999999e-05"
+        },
+        {
+          "key" : "fourNegative",
+          "keyUTF8Hex" : "666f75724e65676174697665",
+          "nativeScalarUTF8" : "-0.0001"
+        },
+        {
+          "key" : "fourUp",
+          "keyUTF8Hex" : "666f75725570",
+          "nativeScalarUTF8" : "0.00010000000000000002"
+        },
+        {
+          "key" : "power0",
+          "keyUTF8Hex" : "706f77657230",
+          "nativeScalarUTF8" : "1e-08"
+        },
+        {
+          "key" : "power1",
+          "keyUTF8Hex" : "706f77657231",
+          "nativeScalarUTF8" : "1e-07"
+        },
+        {
+          "key" : "power2",
+          "keyUTF8Hex" : "706f77657232",
+          "nativeScalarUTF8" : "1e-06"
+        },
+        {
+          "key" : "power3",
+          "keyUTF8Hex" : "706f77657233",
+          "nativeScalarUTF8" : "1e-05"
+        },
+        {
+          "key" : "power4",
+          "keyUTF8Hex" : "706f77657234",
+          "nativeScalarUTF8" : "0.0001"
+        },
+        {
+          "key" : "power5",
+          "keyUTF8Hex" : "706f77657235",
+          "nativeScalarUTF8" : "0.001"
+        },
+        {
+          "key" : "sixDown",
+          "keyUTF8Hex" : "736978446f776e",
+          "nativeScalarUTF8" : "9.999999999999997e-07"
+        },
+        {
+          "key" : "sixNegative",
+          "keyUTF8Hex" : "7369784e65676174697665",
+          "nativeScalarUTF8" : "-1e-06"
+        },
+        {
+          "key" : "sixUp",
+          "keyUTF8Hex" : "7369785570",
+          "nativeScalarUTF8" : "1.0000000000000002e-06"
+        }
+      ],
+      "digest" : "0e68b6710514a51d27b5abe32b2f72fe3e15502a376c8133aae0458e92c67e9f",
+      "group" : "double-small-format-switch",
+      "id" : "double-small-switch",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"0e68b6710514a51d27b5abe32b2f72fe3e15502a376c8133aae0458e92c67e9f\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"fourDown\" : 9.999999999999999e-05,\n          \"fourNegative\" : -0.0001,\n          \"fourUp\" : 0.00010000000000000002,\n          \"power0\" : 1e-08,\n          \"power1\" : 1e-07,\n          \"power2\" : 1e-06,\n          \"power3\" : 1e-05,\n          \"power4\" : 0.0001,\n          \"power5\" : 0.001,\n          \"sixDown\" : 9.999999999999997e-07,\n          \"sixNegative\" : -1e-06,\n          \"sixUp\" : 1.0000000000000002e-06\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"power0\":1e-08,\"power1\":1e-07,\"power2\":1e-06,\"power3\":1e-05,\"power4\":0.0001,\"power5\":0.001,\"sixDown\":9.999999999999997e-07,\"sixUp\":1.0000000000000002e-06,\"sixNegative\":-1e-06,\"fourDown\":9.999999999999999e-05,\"fourUp\":0.00010000000000000002,\"fourNegative\":-0.0001}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "3e45798ee2308c3a",
+          "path" : "eventRules.0.source.parameters.power0",
+          "rawLexeme" : "1e-08",
+          "requestedBinary64" : "3e45798ee2308c3a"
+        },
+        {
+          "decodedBinary64" : "3e7ad7f29abcaf48",
+          "path" : "eventRules.0.source.parameters.power1",
+          "rawLexeme" : "1e-07",
+          "requestedBinary64" : "3e7ad7f29abcaf48"
+        },
+        {
+          "decodedBinary64" : "3eb0c6f7a0b5ed8d",
+          "path" : "eventRules.0.source.parameters.power2",
+          "rawLexeme" : "1e-06",
+          "requestedBinary64" : "3eb0c6f7a0b5ed8d"
+        },
+        {
+          "decodedBinary64" : "3ee4f8b588e368f1",
+          "path" : "eventRules.0.source.parameters.power3",
+          "rawLexeme" : "1e-05",
+          "requestedBinary64" : "3ee4f8b588e368f1"
+        },
+        {
+          "decodedBinary64" : "3f1a36e2eb1c432d",
+          "path" : "eventRules.0.source.parameters.power4",
+          "rawLexeme" : "0.0001",
+          "requestedBinary64" : "3f1a36e2eb1c432d"
+        },
+        {
+          "decodedBinary64" : "3f50624dd2f1a9fc",
+          "path" : "eventRules.0.source.parameters.power5",
+          "rawLexeme" : "0.001",
+          "requestedBinary64" : "3f50624dd2f1a9fc"
+        },
+        {
+          "decodedBinary64" : "3eb0c6f7a0b5ed8c",
+          "path" : "eventRules.0.source.parameters.sixDown",
+          "rawLexeme" : "9.999999999999997e-07",
+          "requestedBinary64" : "3eb0c6f7a0b5ed8c"
+        },
+        {
+          "decodedBinary64" : "3eb0c6f7a0b5ed8e",
+          "path" : "eventRules.0.source.parameters.sixUp",
+          "rawLexeme" : "1.0000000000000002e-06",
+          "requestedBinary64" : "3eb0c6f7a0b5ed8e"
+        },
+        {
+          "decodedBinary64" : "beb0c6f7a0b5ed8d",
+          "path" : "eventRules.0.source.parameters.sixNegative",
+          "rawLexeme" : "-1e-06",
+          "requestedBinary64" : "beb0c6f7a0b5ed8d"
+        },
+        {
+          "decodedBinary64" : "3f1a36e2eb1c432c",
+          "path" : "eventRules.0.source.parameters.fourDown",
+          "rawLexeme" : "9.999999999999999e-05",
+          "requestedBinary64" : "3f1a36e2eb1c432c"
+        },
+        {
+          "decodedBinary64" : "3f1a36e2eb1c432e",
+          "path" : "eventRules.0.source.parameters.fourUp",
+          "rawLexeme" : "0.00010000000000000002",
+          "requestedBinary64" : "3f1a36e2eb1c432e"
+        },
+        {
+          "decodedBinary64" : "bf1a36e2eb1c432d",
+          "path" : "eventRules.0.source.parameters.fourNegative",
+          "rawLexeme" : "-0.0001",
+          "requestedBinary64" : "bf1a36e2eb1c432d"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"power0\":100000000000000,\"power1\":1000000000000000,\"power2\":1e+16,\"power3\":1e+17,\"power4\":1e+20,\"power5\":1e+21,\"power6\":1e+22,\"sixteenDown\":9.999999999999998e+15,\"sixteenNegative\":-1e+16,\"sixteenUp\":1.0000000000000002e+16,\"twentyOneDown\":9.999999999999999e+20,\"twentyOneNegative\":-1e+21,\"twentyOneUp\":1.0000000000000001e+21}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "power0",
+          "keyUTF8Hex" : "706f77657230",
+          "nativeScalarUTF8" : "100000000000000"
+        },
+        {
+          "key" : "power1",
+          "keyUTF8Hex" : "706f77657231",
+          "nativeScalarUTF8" : "1000000000000000"
+        },
+        {
+          "key" : "power2",
+          "keyUTF8Hex" : "706f77657232",
+          "nativeScalarUTF8" : "1e+16"
+        },
+        {
+          "key" : "power3",
+          "keyUTF8Hex" : "706f77657233",
+          "nativeScalarUTF8" : "1e+17"
+        },
+        {
+          "key" : "power4",
+          "keyUTF8Hex" : "706f77657234",
+          "nativeScalarUTF8" : "1e+20"
+        },
+        {
+          "key" : "power5",
+          "keyUTF8Hex" : "706f77657235",
+          "nativeScalarUTF8" : "1e+21"
+        },
+        {
+          "key" : "power6",
+          "keyUTF8Hex" : "706f77657236",
+          "nativeScalarUTF8" : "1e+22"
+        },
+        {
+          "key" : "sixteenDown",
+          "keyUTF8Hex" : "7369787465656e446f776e",
+          "nativeScalarUTF8" : "9.999999999999998e+15"
+        },
+        {
+          "key" : "sixteenNegative",
+          "keyUTF8Hex" : "7369787465656e4e65676174697665",
+          "nativeScalarUTF8" : "-1e+16"
+        },
+        {
+          "key" : "sixteenUp",
+          "keyUTF8Hex" : "7369787465656e5570",
+          "nativeScalarUTF8" : "1.0000000000000002e+16"
+        },
+        {
+          "key" : "twentyOneDown",
+          "keyUTF8Hex" : "7477656e74794f6e65446f776e",
+          "nativeScalarUTF8" : "9.999999999999999e+20"
+        },
+        {
+          "key" : "twentyOneNegative",
+          "keyUTF8Hex" : "7477656e74794f6e654e65676174697665",
+          "nativeScalarUTF8" : "-1e+21"
+        },
+        {
+          "key" : "twentyOneUp",
+          "keyUTF8Hex" : "7477656e74794f6e655570",
+          "nativeScalarUTF8" : "1.0000000000000001e+21"
+        }
+      ],
+      "digest" : "943f78e07edb8635d4e1fcd0f3adf8ac4bf94486edaadb50b87406360d8248c2",
+      "group" : "double-large-format-switch",
+      "id" : "double-large-switch",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"943f78e07edb8635d4e1fcd0f3adf8ac4bf94486edaadb50b87406360d8248c2\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"power0\" : 100000000000000,\n          \"power1\" : 1000000000000000,\n          \"power2\" : 1e+16,\n          \"power3\" : 1e+17,\n          \"power4\" : 1e+20,\n          \"power5\" : 1e+21,\n          \"power6\" : 1e+22,\n          \"sixteenDown\" : 9.999999999999998e+15,\n          \"sixteenNegative\" : -1e+16,\n          \"sixteenUp\" : 1.0000000000000002e+16,\n          \"twentyOneDown\" : 9.999999999999999e+20,\n          \"twentyOneNegative\" : -1e+21,\n          \"twentyOneUp\" : 1.0000000000000001e+21\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"power0\":100000000000000.0,\"power1\":1000000000000000.0,\"power2\":1e+16,\"power3\":1e+17,\"power4\":1e+20,\"power5\":1e+21,\"power6\":1e+22,\"sixteenDown\":9.999999999999998e+15,\"sixteenUp\":1.0000000000000002e+16,\"sixteenNegative\":-1e+16,\"twentyOneDown\":9.999999999999999e+20,\"twentyOneUp\":1.0000000000000001e+21,\"twentyOneNegative\":-1e+21}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "42d6bcc41e900000",
+          "path" : "eventRules.0.source.parameters.power0",
+          "rawLexeme" : "100000000000000.0",
+          "requestedBinary64" : "42d6bcc41e900000"
+        },
+        {
+          "decodedBinary64" : "430c6bf526340000",
+          "path" : "eventRules.0.source.parameters.power1",
+          "rawLexeme" : "1000000000000000.0",
+          "requestedBinary64" : "430c6bf526340000"
+        },
+        {
+          "decodedBinary64" : "4341c37937e08000",
+          "path" : "eventRules.0.source.parameters.power2",
+          "rawLexeme" : "1e+16",
+          "requestedBinary64" : "4341c37937e08000"
+        },
+        {
+          "decodedBinary64" : "4376345785d8a000",
+          "path" : "eventRules.0.source.parameters.power3",
+          "rawLexeme" : "1e+17",
+          "requestedBinary64" : "4376345785d8a000"
+        },
+        {
+          "decodedBinary64" : "4415af1d78b58c40",
+          "path" : "eventRules.0.source.parameters.power4",
+          "rawLexeme" : "1e+20",
+          "requestedBinary64" : "4415af1d78b58c40"
+        },
+        {
+          "decodedBinary64" : "444b1ae4d6e2ef50",
+          "path" : "eventRules.0.source.parameters.power5",
+          "rawLexeme" : "1e+21",
+          "requestedBinary64" : "444b1ae4d6e2ef50"
+        },
+        {
+          "decodedBinary64" : "4480f0cf064dd592",
+          "path" : "eventRules.0.source.parameters.power6",
+          "rawLexeme" : "1e+22",
+          "requestedBinary64" : "4480f0cf064dd592"
+        },
+        {
+          "decodedBinary64" : "4341c37937e07fff",
+          "path" : "eventRules.0.source.parameters.sixteenDown",
+          "rawLexeme" : "9.999999999999998e+15",
+          "requestedBinary64" : "4341c37937e07fff"
+        },
+        {
+          "decodedBinary64" : "4341c37937e08001",
+          "path" : "eventRules.0.source.parameters.sixteenUp",
+          "rawLexeme" : "1.0000000000000002e+16",
+          "requestedBinary64" : "4341c37937e08001"
+        },
+        {
+          "decodedBinary64" : "c341c37937e08000",
+          "path" : "eventRules.0.source.parameters.sixteenNegative",
+          "rawLexeme" : "-1e+16",
+          "requestedBinary64" : "c341c37937e08000"
+        },
+        {
+          "decodedBinary64" : "444b1ae4d6e2ef4f",
+          "path" : "eventRules.0.source.parameters.twentyOneDown",
+          "rawLexeme" : "9.999999999999999e+20",
+          "requestedBinary64" : "444b1ae4d6e2ef4f"
+        },
+        {
+          "decodedBinary64" : "444b1ae4d6e2ef51",
+          "path" : "eventRules.0.source.parameters.twentyOneUp",
+          "rawLexeme" : "1.0000000000000001e+21",
+          "requestedBinary64" : "444b1ae4d6e2ef51"
+        },
+        {
+          "decodedBinary64" : "c44b1ae4d6e2ef50",
+          "path" : "eventRules.0.source.parameters.twentyOneNegative",
+          "rawLexeme" : "-1e+21",
+          "requestedBinary64" : "c44b1ae4d6e2ef50"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"negative\":-0,\"positive\":0}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "negative",
+          "keyUTF8Hex" : "6e65676174697665",
+          "nativeScalarUTF8" : "-0"
+        },
+        {
+          "key" : "positive",
+          "keyUTF8Hex" : "706f736974697665",
+          "nativeScalarUTF8" : "0"
+        }
+      ],
+      "digest" : "43a5a1dfe64c3cad6a8801b5fdcae3b65aae76b8391f97edf1a5ca8d290ebb65",
+      "group" : "double-zero-field-types",
+      "id" : "double-zero-parameters",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"43a5a1dfe64c3cad6a8801b5fdcae3b65aae76b8391f97edf1a5ca8d290ebb65\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"negative\" : -0,\n          \"positive\" : 0\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"positive\":0.0,\"negative\":-0.0}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "eventRules.0.source.parameters.positive",
+          "rawLexeme" : "0.0",
+          "requestedBinary64" : "0000000000000000"
+        },
+        {
+          "decodedBinary64" : "8000000000000000",
+          "path" : "eventRules.0.source.parameters.negative",
+          "rawLexeme" : "-0.0",
+          "requestedBinary64" : "8000000000000000"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":0,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "9e013e70ace9142ae5125803a5993801e6fc9bf6125d5abfad4008ccb8e88164",
+      "group" : "double-zero-field-types",
+      "id" : "zero-typed-fields-positive",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"9e013e70ace9142ae5125803a5993801e6fc9bf6125d5abfad4008ccb8e88164\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : 0,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 0\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":0,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "eventRules.0.condition.equals",
+          "rawLexeme" : "0"
+        },
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "0"
+        },
+        {
+          "decodedInteger" : "0",
+          "path" : "eventRules.0.priority",
+          "rawLexeme" : "0"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":-0,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":-0},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "2ab52e6e94292ea48d1362b4122bd1feb9f3b2795729dbfcdd0352155a6720d4",
+      "group" : "double-zero-field-types",
+      "id" : "zero-typed-fields-negative",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"2ab52e6e94292ea48d1362b4122bd1feb9f3b2795729dbfcdd0352155a6720d4\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : -0,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : -0\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":-0,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":-0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":-0},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "8000000000000000",
+          "path" : "eventRules.0.condition.equals",
+          "rawLexeme" : "-0"
+        },
+        {
+          "decodedBinary64" : "8000000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "-0"
+        },
+        {
+          "decodedInteger" : "0",
+          "path" : "eventRules.0.priority",
+          "rawLexeme" : "-0"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"publicData\",\"publicHTTP\":{\"operations\":[{\"maxAgeSeconds\":300,\"name\":\"read\",\"parameters\":{},\"path\":\"/values\",\"response\":\"json\",\"staleSeconds\":0}],\"origin\":\"https://data.example.org\",\"userAgent\":\"Screenpunk/1 (public data reader)\"},\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "fb20b8397de0866465db2caeb2320a10780d3a93f288ebebd2a7d515cb6c60c3",
+      "group" : "double-zero-field-types",
+      "id" : "zero-int-staleSeconds",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"publicData\",\n      \"publicHTTP\" : {\n        \"operations\" : [\n          {\n            \"maxAgeSeconds\" : 300,\n            \"name\" : \"read\",\n            \"parameters\" : {\n\n            },\n            \"path\" : \"/values\",\n            \"response\" : \"json\",\n            \"staleSeconds\" : 0\n          }\n        ],\n        \"origin\" : \"https://data.example.org\",\n        \"userAgent\" : \"Screenpunk/1 (public data reader)\"\n      },\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"fb20b8397de0866465db2caeb2320a10780d3a93f288ebebd2a7d515cb6c60c3\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"publicData\",\"publicHTTP\":{\"operations\":[{\"maxAgeSeconds\":300,\"name\":\"read\",\"parameters\":{},\"path\":\"/values\",\"response\":\"json\",\"staleSeconds\":-0}],\"origin\":\"https://data.example.org\",\"userAgent\":\"Screenpunk/1 (public data reader)\"},\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedInteger" : "0",
+          "path" : "connections.0.publicHTTP.operations.0.staleSeconds",
+          "rawLexeme" : "-0"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"fifth\":0.2,\"greatest\":1.7976931348623157e+308,\"normal\":2.2250738585072014e-308,\"oneDown\":0.9999999999999999,\"oneUp\":1.0000000000000002,\"subnormal\":5e-324,\"sum\":0.30000000000000004,\"tenth\":0.1,\"twoDown\":1.9999999999999998,\"twoUp\":2.0000000000000004}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "fifth",
+          "keyUTF8Hex" : "6669667468",
+          "nativeScalarUTF8" : "0.2"
+        },
+        {
+          "key" : "greatest",
+          "keyUTF8Hex" : "6772656174657374",
+          "nativeScalarUTF8" : "1.7976931348623157e+308"
+        },
+        {
+          "key" : "normal",
+          "keyUTF8Hex" : "6e6f726d616c",
+          "nativeScalarUTF8" : "2.2250738585072014e-308"
+        },
+        {
+          "key" : "oneDown",
+          "keyUTF8Hex" : "6f6e65446f776e",
+          "nativeScalarUTF8" : "0.9999999999999999"
+        },
+        {
+          "key" : "oneUp",
+          "keyUTF8Hex" : "6f6e655570",
+          "nativeScalarUTF8" : "1.0000000000000002"
+        },
+        {
+          "key" : "subnormal",
+          "keyUTF8Hex" : "7375626e6f726d616c",
+          "nativeScalarUTF8" : "5e-324"
+        },
+        {
+          "key" : "sum",
+          "keyUTF8Hex" : "73756d",
+          "nativeScalarUTF8" : "0.30000000000000004"
+        },
+        {
+          "key" : "tenth",
+          "keyUTF8Hex" : "74656e7468",
+          "nativeScalarUTF8" : "0.1"
+        },
+        {
+          "key" : "twoDown",
+          "keyUTF8Hex" : "74776f446f776e",
+          "nativeScalarUTF8" : "1.9999999999999998"
+        },
+        {
+          "key" : "twoUp",
+          "keyUTF8Hex" : "74776f5570",
+          "nativeScalarUTF8" : "2.0000000000000004"
+        }
+      ],
+      "digest" : "56f5f5cd6637699f95b6289fb288e970ff5ae30e2a754259ef65a9ef7b410e72",
+      "group" : "double-rounding-range-edges",
+      "id" : "double-range-and-rounding",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"56f5f5cd6637699f95b6289fb288e970ff5ae30e2a754259ef65a9ef7b410e72\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"fifth\" : 0.2,\n          \"greatest\" : 1.7976931348623157e+308,\n          \"normal\" : 2.2250738585072014e-308,\n          \"oneDown\" : 0.9999999999999999,\n          \"oneUp\" : 1.0000000000000002,\n          \"subnormal\" : 5e-324,\n          \"sum\" : 0.30000000000000004,\n          \"tenth\" : 0.1,\n          \"twoDown\" : 1.9999999999999998,\n          \"twoUp\" : 2.0000000000000004\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"tenth\":0.1,\"fifth\":0.2,\"sum\":0.30000000000000004,\"oneDown\":0.9999999999999999,\"oneUp\":1.0000000000000002,\"twoDown\":1.9999999999999998,\"twoUp\":2.0000000000000004,\"subnormal\":5e-324,\"normal\":2.2250738585072014e-308,\"greatest\":1.7976931348623157e+308}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "3fb999999999999a",
+          "path" : "eventRules.0.source.parameters.tenth",
+          "rawLexeme" : "0.1",
+          "requestedBinary64" : "3fb999999999999a"
+        },
+        {
+          "decodedBinary64" : "3fc999999999999a",
+          "path" : "eventRules.0.source.parameters.fifth",
+          "rawLexeme" : "0.2",
+          "requestedBinary64" : "3fc999999999999a"
+        },
+        {
+          "decodedBinary64" : "3fd3333333333334",
+          "path" : "eventRules.0.source.parameters.sum",
+          "rawLexeme" : "0.30000000000000004",
+          "requestedBinary64" : "3fd3333333333334"
+        },
+        {
+          "decodedBinary64" : "3fefffffffffffff",
+          "path" : "eventRules.0.source.parameters.oneDown",
+          "rawLexeme" : "0.9999999999999999",
+          "requestedBinary64" : "3fefffffffffffff"
+        },
+        {
+          "decodedBinary64" : "3ff0000000000001",
+          "path" : "eventRules.0.source.parameters.oneUp",
+          "rawLexeme" : "1.0000000000000002",
+          "requestedBinary64" : "3ff0000000000001"
+        },
+        {
+          "decodedBinary64" : "3fffffffffffffff",
+          "path" : "eventRules.0.source.parameters.twoDown",
+          "rawLexeme" : "1.9999999999999998",
+          "requestedBinary64" : "3fffffffffffffff"
+        },
+        {
+          "decodedBinary64" : "4000000000000001",
+          "path" : "eventRules.0.source.parameters.twoUp",
+          "rawLexeme" : "2.0000000000000004",
+          "requestedBinary64" : "4000000000000001"
+        },
+        {
+          "decodedBinary64" : "0000000000000001",
+          "path" : "eventRules.0.source.parameters.subnormal",
+          "rawLexeme" : "5e-324",
+          "requestedBinary64" : "0000000000000001"
+        },
+        {
+          "decodedBinary64" : "0010000000000000",
+          "path" : "eventRules.0.source.parameters.normal",
+          "rawLexeme" : "2.2250738585072014e-308",
+          "requestedBinary64" : "0010000000000000"
+        },
+        {
+          "decodedBinary64" : "7fefffffffffffff",
+          "path" : "eventRules.0.source.parameters.greatest",
+          "rawLexeme" : "1.7976931348623157e+308",
+          "requestedBinary64" : "7fefffffffffffff"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"value\":9007199254740991}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "value",
+          "keyUTF8Hex" : "76616c7565",
+          "nativeScalarUTF8" : "9007199254740991"
+        }
+      ],
+      "digest" : "12c7359059d9ec5f5de131c570a9ae77aa0c6f95649a07b187d0d566ebc123a3",
+      "group" : "double-rounding-range-edges",
+      "id" : "raw-number-9007199254740991",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"12c7359059d9ec5f5de131c570a9ae77aa0c6f95649a07b187d0d566ebc123a3\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"value\" : 9007199254740991\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"value\":9007199254740991}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "433fffffffffffff",
+          "path" : "eventRules.0.source.parameters.value",
+          "rawLexeme" : "9007199254740991"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"value\":9007199254740992}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "value",
+          "keyUTF8Hex" : "76616c7565",
+          "nativeScalarUTF8" : "9007199254740992"
+        }
+      ],
+      "digest" : "184a9d74fe38ff2f8d254cb6f4d99c81a143b0f59547f3ed9ce0c5f3c52cb886",
+      "group" : "double-rounding-range-edges",
+      "id" : "raw-number-9007199254740992",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"184a9d74fe38ff2f8d254cb6f4d99c81a143b0f59547f3ed9ce0c5f3c52cb886\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"value\" : 9007199254740992\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"value\":9007199254740992}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "4340000000000000",
+          "path" : "eventRules.0.source.parameters.value",
+          "rawLexeme" : "9007199254740992"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"value\":9007199254740992}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+        {
+          "key" : "value",
+          "keyUTF8Hex" : "76616c7565",
+          "nativeScalarUTF8" : "9007199254740992"
+        }
+      ],
+      "digest" : "184a9d74fe38ff2f8d254cb6f4d99c81a143b0f59547f3ed9ce0c5f3c52cb886",
+      "group" : "double-rounding-range-edges",
+      "id" : "raw-number-9007199254740993",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"184a9d74fe38ff2f8d254cb6f4d99c81a143b0f59547f3ed9ce0c5f3c52cb886\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"value\" : 9007199254740992\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"value\":9007199254740993}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "4340000000000000",
+          "path" : "eventRules.0.source.parameters.value",
+          "rawLexeme" : "9007199254740993"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "decodeAccepted" : false,
+      "decodeIssue" : "typeMismatch:eventRules.Index 0.source.parameters.value",
+      "group" : "double-rounding-range-edges",
+      "id" : "raw-number-1e400",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"value\":1e400}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "samples" : [
+        {
+          "path" : "eventRules.0.source.parameters.value",
+          "rawLexeme" : "1e400"
+        }
+      ]
+    },
+    {
+      "decodeAccepted" : false,
+      "decodeIssue" : "dataCorrupted:",
+      "group" : "double-rounding-range-edges",
+      "id" : "raw-int-overflow",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":9223372036854775808}}",
+      "samples" : [
+        {
+          "path" : "target.width",
+          "rawLexeme" : "9223372036854775808"
+        }
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0.5},\"scale\":1.25,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "4c2d83c2eba5ccd915e31fa9cdcde52917d78a5cebed091737463e86c69a5407",
+      "group" : "target-double-field-parity",
+      "id" : "target-fractional",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"4c2d83c2eba5ccd915e31fa9cdcde52917d78a5cebed091737463e86c69a5407\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 0.5\n    },\n    \"scale\" : 1.25,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0.5},\"scale\":1.25,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "3ff4000000000000",
+          "path" : "target.scale",
+          "rawLexeme" : "1.25",
+          "requestedBinary64" : "3ff4000000000000"
+        },
+        {
+          "decodedBinary64" : "3fe0000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "0.5",
+          "requestedBinary64" : "3fe0000000000000"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0},\"scale\":7.999999999999999,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "2ba63d745995e9a7fcee9ed577f098be63060368f26800ba5ff859e73af6afad",
+      "group" : "target-double-field-parity",
+      "id" : "target-scaleUpperDown",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"2ba63d745995e9a7fcee9ed577f098be63060368f26800ba5ff859e73af6afad\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 0\n    },\n    \"scale\" : 7.999999999999999,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0.0},\"scale\":7.999999999999999,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "401fffffffffffff",
+          "path" : "target.scale",
+          "rawLexeme" : "7.999999999999999",
+          "requestedBinary64" : "401fffffffffffff"
+        },
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "0.0",
+          "requestedBinary64" : "0000000000000000"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0},\"scale\":8,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "8dfb82972c8a1490f81b0ce0b1ae53fcd31a9f8cf197ed3ee464238998de829c",
+      "group" : "target-double-field-parity",
+      "id" : "target-scaleUpper",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"8dfb82972c8a1490f81b0ce0b1ae53fcd31a9f8cf197ed3ee464238998de829c\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 0\n    },\n    \"scale\" : 8,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0.0},\"scale\":8.0,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "4020000000000000",
+          "path" : "target.scale",
+          "rawLexeme" : "8.0",
+          "requestedBinary64" : "4020000000000000"
+        },
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "0.0",
+          "requestedBinary64" : "0000000000000000"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0},\"scale\":8.000000000000002,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "19f6bc4920f18760c6a7717048b3dbbfb5ce71a984031cdc5fae030143ed4098",
+      "group" : "target-double-field-parity",
+      "id" : "target-scaleUpperUp",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"19f6bc4920f18760c6a7717048b3dbbfb5ce71a984031cdc5fae030143ed4098\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 0\n    },\n    \"scale\" : 8.000000000000002,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0.0},\"scale\":8.000000000000002,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "4020000000000001",
+          "path" : "target.scale",
+          "rawLexeme" : "8.000000000000002",
+          "requestedBinary64" : "4020000000000001"
+        },
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "0.0",
+          "requestedBinary64" : "0000000000000000"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0},\"scale\":5e-324,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "ce98e0fc829e13c5c22da0fdc29d750b08edcb35188754dc78d6fa964f5fcc98",
+      "group" : "target-double-field-parity",
+      "id" : "target-scalePositiveMinimum",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"ce98e0fc829e13c5c22da0fdc29d750b08edcb35188754dc78d6fa964f5fcc98\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 0\n    },\n    \"scale\" : 5e-324,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0.0},\"scale\":5e-324,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "0000000000000001",
+          "path" : "target.scale",
+          "rawLexeme" : "5e-324",
+          "requestedBinary64" : "0000000000000001"
+        },
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "0.0",
+          "requestedBinary64" : "0000000000000000"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0},\"scale\":0,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "33f29be5fab537075711fbabd37b530054962f9d1ade2f88aa1f0f6cf9dd2747",
+      "group" : "target-double-field-parity",
+      "id" : "target-scaleZero",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"33f29be5fab537075711fbabd37b530054962f9d1ade2f88aa1f0f6cf9dd2747\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 0\n    },\n    \"scale\" : 0,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0.0},\"scale\":0.0,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "target.scale",
+          "rawLexeme" : "0.0",
+          "requestedBinary64" : "0000000000000000"
+        },
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "0.0",
+          "requestedBinary64" : "0000000000000000"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0},\"scale\":-0,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "94cb9e3101682f4ce42cf2efe6099fbef38e4999b3a38a3bcf3c8b8615d2454a",
+      "group" : "target-double-field-parity",
+      "id" : "target-scaleNegativeZero",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"94cb9e3101682f4ce42cf2efe6099fbef38e4999b3a38a3bcf3c8b8615d2454a\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 0\n    },\n    \"scale\" : -0,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":0.0},\"scale\":-0.0,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "8000000000000000",
+          "path" : "target.scale",
+          "rawLexeme" : "-0.0",
+          "requestedBinary64" : "8000000000000000"
+        },
+        {
+          "decodedBinary64" : "0000000000000000",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "0.0",
+          "requestedBinary64" : "0000000000000000"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":-5e-324},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "79d659bbba3d518656879a39e37a690aeb39232e42726b95fd53538ae9245da1",
+      "group" : "target-double-field-parity",
+      "id" : "target-safeAreaBelowZero",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"79d659bbba3d518656879a39e37a690aeb39232e42726b95fd53538ae9245da1\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : -5e-324\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":-5e-324},\"scale\":3.0,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "4008000000000000",
+          "path" : "target.scale",
+          "rawLexeme" : "3.0",
+          "requestedBinary64" : "4008000000000000"
+        },
+        {
+          "decodedBinary64" : "8000000000000001",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "-5e-324",
+          "requestedBinary64" : "8000000000000001"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":5e-324},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "decodedDictionaryMembersByRawUTF8" : [
+
+      ],
+      "digest" : "691da059dd043b96f1b5d4a720525d372311c92b54f19b57838e47d0d8517e6e",
+      "group" : "target-double-field-parity",
+      "id" : "target-safeAreaAboveZero",
+      "prettyManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"691da059dd043b96f1b5d4a720525d372311c92b54f19b57838e47d0d8517e6e\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Numeric Unicode fixture\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 5e-324\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "rawInputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{}},\"userConfigurable\":false}],\"files\":[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Numeric Unicode fixture\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":5e-324},\"scale\":3.0,\"width\":390}}",
+      "samples" : [
+        {
+          "decodedBinary64" : "4008000000000000",
+          "path" : "target.scale",
+          "rawLexeme" : "3.0",
+          "requestedBinary64" : "4008000000000000"
+        },
+        {
+          "decodedBinary64" : "0000000000000001",
+          "path" : "target.safeArea.top",
+          "rawLexeme" : "5e-324",
+          "requestedBinary64" : "0000000000000001"
+        }
+      ],
+      "sortedFileInventoryUTF8" : "[{\"bytes\":1,\"path\":\"index.html\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    }
+  ],
+  "schemaVersion" : 1,
+  "scope" : "Native serialization/manifest metadata only; synthetic one-byte inventory, no materialized assets, parser, archive, compiler, runtime or untrusted-source qualification",
+  "sourceCommit" : "859f9c2f492fea87ab64e49b3ea9037339e17478"
+}

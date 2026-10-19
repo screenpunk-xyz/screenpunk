@@ -1,12 +1,165 @@
 import XCTest
-import ScreenpunkCore
-@testable import ScreenpunkApple
+@_spi(ManagedRender) @_spi(NativeInstallation) @_spi(DeviceGrantTransport) import ScreenpunkCore
+@_spi(NativeInstallation) @testable import ScreenpunkApple
 #if canImport(Network)
 import Network
 #endif
 
 #if canImport(Network) && canImport(Security)
 final class LANTransferTests: XCTestCase {
+    func testTwoApprovedTLSControllersSelectCloudInventoryAndRejectStaleChanges() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let identity = try TLSIdentity.make(role: .device, commonName: "common-device")
+        let first = try TLSIdentity.make(role: .controller, commonName: "common-first")
+        let second = try TLSIdentity.make(role: .controller, commonName: "common-second")
+        let context = try fixture.authority.makeConcurrentLocalContext(context: fixture.context, session: fixture.common)
+        let profile = DeviceProfile(deviceId: "common-test", name: "Common")
+        let server = try DeviceLANServer(management: context, runtime: .init(identity: identity.pairingIdentity,
+            profile: profile, advertisement: .init(deviceId: profile.deviceId, host: "127.0.0.1", port: 0, source: .advertised)),
+            identity: identity, homeAssistantVault: .init(store: MemoryCredentialStore()))
+        server.prepareIncomingLocalScreens = { operation, peer, screens, selected, validate in
+            let ids = try NativeManagedLocalRootIDs(package: UUID(), grant: UUID(), structural: UUID(), provisioning: UUID(), contentGenesis: UUID())
+            let roots = try fixture.authority.prepareIncomingLocalInventoryRoots(context: context, operationID: operation, ids: ids)
+            XCTAssertTrue(roots.namespace.path.hasPrefix("/private/"), "Incoming fixture roots must use the physical parent")
+            let local = try DeviceLegacyMigrationSession(packageRoot: roots.packageRoot, packageRootID: ids.package,
+                grantRoot: roots.grantRoot, grantRootID: ids.grant, structuralRoot: roots.structuralRoot, structuralRootID: ids.structural,
+                provisioningRoot: roots.provisioningRoot, provisioningRootID: ids.provisioning,
+                legacyStateRoot: fixture.parent.appendingPathComponent("legacy-state"), legacyArchiveRoot: fixture.parent.appendingPathComponent("legacy-archive"),
+                resetRoot: fixture.parent.appendingPathComponent("reset"), cloudRoot: fixture.parent.appendingPathComponent("cloud"),
+                managementRoot: fixture.parent.appendingPathComponent("management"), preferencesRoot: fixture.parent.appendingPathComponent("preferences"),
+                otherProtectedRoots: [], credentialTransport: FreshGrantTransport(rootID: ids.grant),
+                validateRoots: { try fixture.authority.validateLocalInventoryRoots(roots) })
+            do { try local.prepareAndCommit(screens: screens, selected: selected, owner: peer, profile: profile, profileID: "fixture-phone",
+                operationID: operation, grantOperationID: UUID(), generationID: UUID(), grantRevisionID: UUID(),
+                legacyGrantSet: nil, validateOriginal: validate) }
+            catch { XCTFail("Local qualification failed: \(type(of: error)) \(error)"); throw error }
+            return try DeviceIncomingLocalPreparation(completed: local, operationID: operation)
+        }
+        try server.attachUnifiedLocalSession(fixture.common)
+        try server.start(); defer { server.stop() }
+        let a = ControllerLANClient(identity: first), b = ControllerLANClient(identity: second)
+        defer { a.cancel(); b.cancel() }
+        for client in [a,b] {
+            try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: identity.pin)
+            XCTAssertTrue(try client.hello().capabilities?.contains("unified-local-screen-control-v1") == true)
+            let pairing = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+            try server.confirmLocally(); try client.confirmPairing(code: pairing.code)
+        }
+        let baseline = try a.queryActiveState()
+        let dashboard = try XCTUnwrap(baseline.screens?.first?.dashboardId)
+        let generation = try XCTUnwrap(baseline.stateGenerationId)
+        let operation = UUID().uuidString.lowercased()
+        let change = LANScreenManagementChange(operationId: operation, expectedGenerationId: generation, dashboardId: dashboard)
+        let applied = try a.selectUnifiedScreen(change)
+        XCTAssertEqual(applied.stateGenerationId, operation)
+        XCTAssertEqual(try a.selectUnifiedScreen(change).stateGenerationId, operation, "Exact retry uses completed common receipt")
+        XCTAssertThrowsError(try b.selectUnifiedScreen(.init(operationId: UUID().uuidString, expectedGenerationId: generation, dashboardId: dashboard)))
+        XCTAssertEqual(try b.queryActiveState().stateGenerationId, operation)
+        let localEntry = UUID().uuidString.lowercased()
+        let localOperation = UUID().uuidString.lowercased()
+        let html = Data("<html><body>Local screen</body></html>".utf8)
+        var manifest = DashboardManifest(schemaVersion: 1, dashboardId: UUID().uuidString.lowercased(), name: "Local",
+            revision: UUID().uuidString.lowercased(), entrypoint: "index.html", sdkVersion: "1",
+            target: .init(profileId: "fixture-phone", width: 390, height: 844, scale: 3, orientation: "portrait"),
+            connections: [], files: [.init(path: "index.html", bytes: html.count, sha256: PeerPin.hex(PeerPin.sha256(html)))])
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        manifest.digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(manifest)))
+        let revision = StoredRevision(revision: manifest.revision, dashboardId: manifest.dashboardId, name: manifest.name,
+            digest: manifest.digest!, orientation: .portrait, width: 390, height: 844)
+        let localDeployment = DeploymentRecord(deploymentId: localOperation, revision: revision.revision,
+            dashboardId: revision.dashboardId, deviceId: profile.deviceId, phase: .queued)
+        let localFiles = try [("manifest.json",encoder.encode(manifest)),("index.html",html)].map { path,bytes in
+            LANFileBlob(path: path, sha256: PeerPin.hex(PeerPin.sha256(bytes)), dataBase64: bytes.base64EncodedString())
+        }
+        let localPlan = LANUnifiedScreenInstall(operationId: localOperation, expectedGenerationId: operation,
+            retainedEntryIds: try XCTUnwrap(applied.commonEntries).map(\.entryId), selectedEntryId: localEntry,
+            incoming: [.init(entryId: localEntry, screen: .init(name: "Local", deployment: .init(deployment: localDeployment,
+                revision: revision, files: localFiles)))])
+        let installed = try b.installUnifiedScreens(localPlan)
+        XCTAssertEqual(installed.stateGenerationId, localOperation)
+        XCTAssertEqual(installed.commonEntries?.count, 2)
+        XCTAssertEqual(installed.commonEntries?.first?.origin, "cloud")
+        XCTAssertEqual(installed.commonEntries?.last?.origin, "retainedLocal")
+        XCTAssertEqual(try b.installUnifiedScreens(localPlan).stateGenerationId, localOperation)
+        // A genuine local grant graph backs this opaque runtime. Private-call
+        // admission stays with the actual mounted object through replacement.
+        let oldRuntime = try await fixture.common.makeManagedRuntime(operationID: UUID(), http: URLSessionHTTPTransport(),
+            webSocket: URLSessionWebSocketTransport(), resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock())
+        XCTAssertThrowsError(try oldRuntime.verifyActive())
+        try fixture.common.confirmMountedLocalContent(oldRuntime.content)
+        XCTAssertNoThrow(try oldRuntime.verifyActive())
+        manifest.revision = UUID().uuidString.lowercased(); manifest.digest = nil
+        manifest.digest = PeerPin.hex(PeerPin.sha256(try encoder.encode(manifest)))
+        let replacementRevision = StoredRevision(revision: manifest.revision, dashboardId: manifest.dashboardId, name: manifest.name,
+            digest: manifest.digest!, orientation: .portrait, width: 390, height: 844)
+        let replacementOperation = UUID().uuidString.lowercased()
+        let replacementFiles = try [("manifest.json", encoder.encode(manifest)), ("index.html", html)].map { path, bytes in
+            LANFileBlob(path: path, sha256: PeerPin.hex(PeerPin.sha256(bytes)), dataBase64: bytes.base64EncodedString())
+        }
+        let replacement = LANUnifiedScreenInstall(operationId: replacementOperation, expectedGenerationId: localOperation,
+            retainedEntryIds: try XCTUnwrap(installed.commonEntries).map(\.entryId), selectedEntryId: localEntry,
+            incoming: [.init(entryId: localEntry, screen: .init(name: "Local", deployment: .init(deployment:
+                DeploymentRecord(deploymentId: replacementOperation, revision: manifest.revision, dashboardId: manifest.dashboardId,
+                    deviceId: profile.deviceId, phase: .queued), revision: replacementRevision, files: replacementFiles)))])
+        _ = try b.installUnifiedScreens(replacement)
+        let candidateRuntime = try await fixture.common.makeManagedRuntime(operationID: UUID(), http: URLSessionHTTPTransport(),
+            webSocket: URLSessionWebSocketTransport(), resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock())
+        XCTAssertThrowsError(try candidateRuntime.verifyActive())
+        try fixture.common.confirmMountFailure(candidateRuntime.content, code: "navigation_failed")
+        XCTAssertNoThrow(try oldRuntime.verifyActive(), "A failed replacement preserves mounted private-call admission")
+        try fixture.common.confirmMountedLocalContent(candidateRuntime.content)
+        XCTAssertThrowsError(try oldRuntime.verifyActive(), "The new actual mount retires the old runtime")
+        XCTAssertNoThrow(try candidateRuntime.verifyActive())
+        _ = try b.removeUnifiedScreen(.init(operationId: UUID().uuidString.lowercased(), expectedGenerationId: replacementOperation,
+            dashboardId: manifest.dashboardId))
+        let cloudCandidate = try fixture.common.selectedContent(operationID: UUID())
+        try fixture.common.confirmMountFailure(cloudCandidate, code: "navigation_failed")
+        XCTAssertNoThrow(try candidateRuntime.verifyActive(), "Removing the old entry cannot stop its still-mounted data before replacement mounts")
+        try fixture.common.confirmMountedLocalContent(cloudCandidate)
+        XCTAssertThrowsError(try candidateRuntime.verifyActive())
+        try server.revokeLocalController(first.pairingIdentity)
+        XCTAssertThrowsError(try a.queryActiveState())
+        XCTAssertEqual(try b.queryActiveState().controllerApproved, true)
+        XCTAssertEqual(try fixture.common.validatedAssociation().entries.count, 1, "Cloud inventory survives explicit local removal and peer revocation")
+    }
+
+    func testTwoApprovedControllersSurviveRestartAndPrimaryCanBeRevokedAlone() throws {
+        let identity = try TLSIdentity.make(role: .device, commonName: "multi-controller-restart")
+        let first = try TLSIdentity.make(role: .controller, commonName: "first-controller")
+        let second = try TLSIdentity.make(role: .controller, commonName: "second-controller")
+        let store = DeviceStateStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("sp-multi-pair-\(UUID())"))
+        defer { try? store.erase() }
+        func makeServer() throws -> DeviceLANServer {
+            try DeviceLANServer(management: testManagementContext(), runtime: .init(identity: identity.pairingIdentity,
+                profile: .init(deviceId: "multi-pair", name: "Multi"), advertisement: .init(deviceId: "multi-pair", host: "127.0.0.1", port: 0, source: .advertised)),
+                identity: identity, store: store, homeAssistantVault: .init(store: MemoryCredentialStore()))
+        }
+        let original = try makeServer(); try original.start(); defer { original.stop() }
+        for peer in [first, second] {
+            let client = ControllerLANClient(identity: peer); defer { client.cancel() }
+            try client.connect(host: "127.0.0.1", port: original.port, pinnedDevice: identity.pin)
+            _ = try client.hello(); let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+            try original.confirmLocally(); try client.confirmPairing(code: begin.code)
+            XCTAssertEqual(try client.queryActiveState().controllerApproved, true)
+        }
+        original.stop()
+        let restored = try makeServer(); try restored.start(); defer { restored.stop() }
+        XCTAssertEqual(restored.runtime.pairing.owner, first.pairingIdentity)
+        XCTAssertEqual(restored.approvedLocalControllers.count, 2)
+        let firstClient = ControllerLANClient(identity: first), secondClient = ControllerLANClient(identity: second)
+        defer { firstClient.cancel(); secondClient.cancel() }
+        for client in [firstClient, secondClient] { try client.connect(host: "127.0.0.1", port: restored.port, pinnedDevice: identity.pin); _ = try client.hello(); XCTAssertEqual(try client.queryActiveState().controllerApproved, true) }
+        try restored.revokeLocalController(first.pairingIdentity)
+        XCTAssertThrowsError(try firstClient.queryActiveState())
+        XCTAssertEqual(try secondClient.queryActiveState().controllerApproved, true)
+        XCTAssertEqual(restored.runtime.pairing.owner, first.pairingIdentity)
+        restored.stop()
+        let third = try makeServer(); defer { third.stop() }
+        XCTAssertFalse(third.runtime.pairing.isApproved(first.pairingIdentity))
+        XCTAssertTrue(third.runtime.pairing.isApproved(second.pairingIdentity))
+    }
+
     func testTLSPairDeployQueryAndSecondOwner() throws {
         let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-test")
         let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-test")
@@ -23,7 +176,7 @@ final class LANTransferTests: XCTestCase {
         let store = DeviceStateStore(root: FileManager.default.temporaryDirectory
             .appendingPathComponent("sp-lan-device-\(UUID().uuidString)", isDirectory: true))
         defer { try? store.erase() }
-        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity, store: store, homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity, store: store, homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()))
         try server.start()
         XCTAssertGreaterThan(server.port, 0)
         defer { server.stop() }
@@ -150,15 +303,25 @@ final class LANTransferTests: XCTestCase {
 
         let attackerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-attacker")
         let attacker = ControllerLANClient(identity: attackerIdentity)
-        do {
-            try attacker.connect(host: "127.0.0.1", port: server.port)
-            _ = try attacker.hello()
-            XCTAssertThrowsError(try attacker.beginPairing(nonce: PairingIdentityFactory.nonce())) { error in
-                XCTAssertEqual(error as? PairingFailure, .secondOwner)
-            }
-        } catch {
-            // TLS pin may reject the second controller before pair.begin.
-        }
+        defer { attacker.cancel() }
+        try attacker.connect(host: "127.0.0.1", port: server.port)
+        _ = try attacker.hello()
+        XCTAssertThrowsError(try attacker.queryActiveState(), "certificate identity does not grant control")
+        let secondBegin = try attacker.beginPairing(nonce: PairingIdentityFactory.nonce())
+        XCTAssertThrowsError(try attacker.queryActiveState(), "pair.begin is not approval")
+        try server.confirmLocally()
+        try attacker.confirmPairing(code: secondBegin.code)
+        XCTAssertEqual(server.approvedLocalControllers.count, 2)
+        XCTAssertEqual(try client.queryActiveState().controllerApproved, true, "first session remains connected")
+        let secondStatus = try attacker.queryActiveState()
+        XCTAssertEqual(secondStatus.controllerApproved, true)
+        XCTAssertEqual(secondStatus.localControllerPinHex, PeerPin.hex(attackerIdentity.pin))
+        XCTAssertEqual(try attacker.queryActive(), StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(try attacker.unpairThisController().controllerApproved, false)
+        XCTAssertThrowsError(try attacker.queryActiveState(), "revoked live session rechecks trust")
+        XCTAssertEqual(try client.queryActive(), StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(server.approvedLocalControllers, [controllerIdentity.pairingIdentity])
+        XCTAssertEqual(store.load()?.approvedControllers, [controllerIdentity.pairingIdentity])
 
         // A Mac relaunch creates a new client while the device stays running.
         client.cancel()
@@ -192,7 +355,7 @@ final class LANTransferTests: XCTestCase {
         // Relaunch: a fresh server over the same store comes back paired and rendering.
         client.cancel()
         server.stop()
-        let relaunched = DeviceLANServer(
+        let relaunched = try DeviceLANServer(management: testManagementContext(),
             runtime: DeviceRuntime(
                 identity: deviceIdentity.pairingIdentity,
                 profile: DeviceProfile(deviceId: "lan-phone", name: "LAN iPhone"),
@@ -228,13 +391,13 @@ final class LANTransferTests: XCTestCase {
             // TLS pin rejects the second controller: the persisted owner still holds.
         }
 
-        relaunched.unlink()
+        try relaunched.unlink()
         XCTAssertFalse(relaunched.runtime.isPaired)
         XCTAssertNil(relaunched.runtime.activeRevision)
         XCTAssertNil(relaunched.activePackage, "Unlink erases the delivered package")
         XCTAssertFalse(store.hasState, "Unlink erases persisted pairing")
         XCTAssertFalse(store.hasPackage, "Unlink erases persisted package bytes")
-        let coldStart = DeviceLANServer(runtime: runtime, identity: deviceIdentity, store: store)
+        let coldStart = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity, store: store)
         XCTAssertFalse(coldStart.runtime.isPaired, "after Unlink a relaunch is unpaired")
         XCTAssertNil(coldStart.activePackage)
     }
@@ -252,7 +415,7 @@ final class LANTransferTests: XCTestCase {
             advertisement: AdvertisedDevice(deviceId: "pause-phone", host: "127.0.0.1", port: 0, source: .advertised)
         )
         // Body timeout far below the pause so the old idle limit would trip.
-        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity, requestBodyTimeout: 0.3)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity, requestBodyTimeout: 0.3)
         try server.start()
         defer { server.stop() }
 
@@ -304,7 +467,7 @@ final class LANTransferTests: XCTestCase {
         let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-claim")
         let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-claim")
         let otherController = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-other")
-        let server = DeviceLANServer(
+        let server = try DeviceLANServer(management: testManagementContext(),
             runtime: DeviceRuntime(
                 identity: deviceIdentity.pairingIdentity,
                 profile: DeviceProfile(deviceId: "claim-phone", name: "Claim"),
@@ -344,6 +507,203 @@ final class LANTransferTests: XCTestCase {
         XCTAssertNotNil(server.pairingCode)
     }
 
+    /// The person compares the code on the device with the Mac and taps
+    /// Confirm. A second controller that sends `pair.begin` in between must not
+    /// replace the session, or the tap would bind the device to it.
+    func testSecondControllerCannotSwapLivePairingSession() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-lock")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-lock")
+        let intruderIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-intruder")
+        let server = try DeviceLANServer(management: testManagementContext(),
+            runtime: DeviceRuntime(
+                identity: deviceIdentity.pairingIdentity,
+                profile: DeviceProfile(deviceId: "lock-phone", name: "Lock"),
+                advertisement: AdvertisedDevice(deviceId: "lock-phone", host: "127.0.0.1", port: 0, source: .advertised)
+            ),
+            identity: deviceIdentity
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let client = ControllerLANClient(identity: controllerIdentity)
+        try client.connect(host: "127.0.0.1", port: server.port)
+        _ = try client.hello()
+        let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+        XCTAssertEqual(server.pairingCode, begin.code)
+
+        let intruder = ControllerLANClient(identity: intruderIdentity)
+        try intruder.connect(host: "127.0.0.1", port: server.port)
+        _ = try intruder.hello()
+        XCTAssertThrowsError(try intruder.beginPairing(nonce: PairingIdentityFactory.nonce())) { error in
+            XCTAssertEqual(error as? PairingFailure, .busy)
+        }
+        XCTAssertEqual(server.pairingCode, begin.code, "the code on screen did not change")
+        XCTAssertEqual(server.runtime.pairing.session?.candidateOwner, controllerIdentity.pairingIdentity)
+
+        // The tap approves this candidate; ownership commits only after its authenticated confirmation.
+        let approvedNonce = try XCTUnwrap(server.pendingPairingRequest?.sessionNonceHex)
+        try server.confirmLocally(expectedSessionNonceHex: approvedNonce)
+        XCTAssertNil(server.runtime.pairing.owner)
+        XCTAssertFalse(server.runtime.isPaired)
+        XCTAssertNil(server.completedPairingSessionNonceHex)
+        XCTAssertTrue(server.awaitingControllerConfirm)
+        XCTAssertThrowsError(try intruder.confirmPairing(code: begin.code)) { error in
+            XCTAssertEqual(error as? PairingFailure, .identityChanged)
+        }
+        XCTAssertNil(server.runtime.pairing.owner, "another controller cannot consume local approval")
+        XCTAssertEqual(server.pendingPairingRequest?.sessionNonceHex, approvedNonce)
+        XCTAssertEqual(server.runtime.pairing.session?.candidateOwner, controllerIdentity.pairingIdentity)
+        XCTAssertNoThrow(try client.confirmPairing(code: begin.code))
+        XCTAssertEqual(server.runtime.pairing.owner, controllerIdentity.pairingIdentity)
+        XCTAssertEqual(server.completedPairingSessionNonceHex, approvedNonce)
+        XCTAssertTrue(server.runtime.isPaired)
+
+        // The same controller may always restart its own session.
+        let restarted = ControllerLANClient(identity: controllerIdentity)
+        try restarted.connect(host: "127.0.0.1", port: server.port, pinnedDevice: deviceIdentity.pin)
+        _ = try restarted.hello()
+        XCTAssertNoThrow(try restarted.beginPairing(nonce: PairingIdentityFactory.nonce()))
+        XCTAssertNoThrow(try restarted.beginPairing(nonce: PairingIdentityFactory.nonce()))
+        try server.cancelPairing()
+    }
+
+    /// Any LAN peer can open a TLS connection to an unpaired device. Idle
+    /// strangers must be dropped and their number bounded, or each one would
+    /// hold a worker thread forever.
+    func testUntrustedConnectionsAreBoundedAndIdleOut() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-slots")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-slots")
+        let server = try DeviceLANServer(management: testManagementContext(),
+            runtime: DeviceRuntime(
+                identity: deviceIdentity.pairingIdentity,
+                profile: DeviceProfile(deviceId: "slots-phone", name: "Slots"),
+                advertisement: AdvertisedDevice(deviceId: "slots-phone", host: "127.0.0.1", port: 0, source: .advertised)
+            ),
+            identity: deviceIdentity,
+            untrustedIdleTimeout: 1.5,
+            maxUntrustedConnections: 2
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let first = try RawController(identity: controllerIdentity, host: "127.0.0.1", port: server.port)
+        let second = try RawController(identity: controllerIdentity, host: "127.0.0.1", port: server.port)
+        XCTAssertEqual(try first.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))).ok, true)
+        XCTAssertEqual(try second.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))).ok, true)
+        XCTAssertEqual(server.untrustedConnectionCount, 2)
+
+        // Third stranger: accepted by TLS, closed by the server before any request is served.
+        let third = try RawController(identity: controllerIdentity, host: "127.0.0.1", port: server.port)
+        XCTAssertThrowsError(try third.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))),
+                             "no slot left for a third untrusted connection")
+        XCTAssertEqual(server.untrustedConnectionCount, 2)
+
+        // Idle strangers time out and free their slots.
+        XCTAssertTrue(waitUntil(timeout: 6) { server.untrustedConnectionCount == 0 }, "idle strangers were dropped")
+        XCTAssertThrowsError(try first.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))),
+                             "an idle stranger's connection was closed")
+        first.cancel(); second.cancel(); third.cancel()
+
+        // Freed slots serve the next peer again.
+        let fresh = try RawController(identity: controllerIdentity, host: "127.0.0.1", port: server.port)
+        defer { fresh.cancel() }
+        XCTAssertEqual(try fresh.send(method: .hello, payload: LANHello(role: .controller, deviceId: "c", pinHex: PeerPin.hex(controllerIdentity.pin))).ok, true)
+    }
+
+    /// The owner's connection is never subject to the untrusted idle deadline.
+    func testOwnerConnectionOutlivesUntrustedIdleTimeout() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-owner-idle")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-owner-idle")
+        let server = try DeviceLANServer(management: testManagementContext(),
+            runtime: DeviceRuntime(
+                identity: deviceIdentity.pairingIdentity,
+                profile: DeviceProfile(deviceId: "owner-idle-phone", name: "Owner"),
+                advertisement: AdvertisedDevice(deviceId: "owner-idle-phone", host: "127.0.0.1", port: 0, source: .advertised)
+            ),
+            identity: deviceIdentity,
+            untrustedIdleTimeout: 1.0
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let client = ControllerLANClient(identity: controllerIdentity)
+        try client.connect(host: "127.0.0.1", port: server.port)
+        _ = try client.hello()
+        let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+        try server.confirmLocally()
+        try client.confirmPairing(code: begin.code)
+        XCTAssertTrue(server.runtime.isPaired)
+        XCTAssertTrue(waitUntil(timeout: 3) { server.untrustedConnectionCount == 0 }, "the owner's connection left the untrusted pool")
+
+        // Well past the untrusted idle deadline; the owner's connection has none.
+        Thread.sleep(forTimeInterval: 2.0)
+        XCTAssertNil(try client.queryActive(), "the owner is still served after the stranger deadline passed")
+    }
+
+    /// A retry of a known deploymentId is answered from the record and leaves
+    /// the installed package alone; the same id with another revision is refused.
+    func testDeployReplayIsIdempotentAndRejectsDifferentRevision() throws {
+        let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-replay")
+        let controllerIdentity = try TLSIdentity.make(role: .controller, commonName: "screenpunk-controller-replay")
+        let store = DeviceStateStore(root: FileManager.default.temporaryDirectory
+            .appendingPathComponent("sp-lan-replay-\(UUID().uuidString)", isDirectory: true))
+        defer { try? store.erase() }
+        let server = try DeviceLANServer(management: testManagementContext(),
+            runtime: DeviceRuntime(
+                identity: deviceIdentity.pairingIdentity,
+                profile: DeviceProfile(deviceId: "replay-phone", name: "Replay"),
+                advertisement: AdvertisedDevice(deviceId: "replay-phone", host: "127.0.0.1", port: 0, source: .advertised)
+            ),
+            identity: deviceIdentity,
+            store: store
+        )
+        try server.start()
+        defer { server.stop() }
+
+        let client = ControllerLANClient(identity: controllerIdentity)
+        try client.connect(host: "127.0.0.1", port: server.port)
+        _ = try client.hello()
+        let begin = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+        try server.confirmLocally()
+        try client.confirmPairing(code: begin.code)
+
+        let files = try LANPackageFiles.offlineFixture()
+        let record = DeploymentRecord(deploymentId: "replay-1", revision: StoredRevision.offlineFixture.revision,
+                                      dashboardId: StoredRevision.offlineFixture.dashboardId, deviceId: "replay-phone", phase: .queued)
+        XCTAssertEqual(try client.deploy(LANDeployBody(deployment: record, revision: StoredRevision.offlineFixture, files: files)).phase, .active)
+        let installed = try XCTUnwrap(server.activePackage)
+
+        // Same id, different revision and different bytes: refused, nothing changes.
+        var other = StoredRevision.offlineFixture
+        other.revision = "44444444-4444-4444-8444-444444444444"
+        var altered = files
+        if let index = altered.firstIndex(where: { $0.path == "index.html" }) {
+            let data = Data("<!doctype html><title>swapped</title>".utf8)
+            altered[index] = LANFileBlob(path: "index.html", sha256: PeerPin.hex(PeerPin.sha256(data)), dataBase64: data.base64EncodedString())
+        }
+        XCTAssertThrowsError(try client.deploy(LANDeployBody(deployment: record, revision: other, files: altered))) { error in
+            XCTAssertEqual(error as? TransferFailure, .validationFailed)
+        }
+        XCTAssertEqual(server.runtime.activeRevision, StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(server.activePackage, installed)
+        XCTAssertEqual(store.load()?.activeStoredRevision, StoredRevision.offlineFixture)
+
+        // Same id, same revision, garbage bytes: the recorded outcome answers; nothing is re-staged.
+        let replay = try client.deploy(LANDeployBody(deployment: record, revision: StoredRevision.offlineFixture, files: altered))
+        XCTAssertEqual(replay.phase, .active)
+        XCTAssertEqual(server.activePackage, installed)
+
+        // A package without index.html cannot activate.
+        let noEntry = DeploymentRecord(deploymentId: "replay-2", revision: other.revision,
+                                       dashboardId: other.dashboardId, deviceId: "replay-phone", phase: .queued)
+        XCTAssertThrowsError(try client.deploy(LANDeployBody(deployment: noEntry, revision: other,
+                                                             files: files.filter { $0.path != "index.html" }))) { error in
+            XCTAssertEqual(error as? TransferFailure, .validationFailed)
+        }
+        XCTAssertEqual(server.runtime.activeRevision, StoredRevision.offlineFixture.revision)
+        XCTAssertEqual(server.activePackage, installed)
+    }
+
     func testPinnedIdentityChangeIsRejected() throws {
         let deviceIdentity = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-pin")
         let otherDevice = try TLSIdentity.make(role: .device, commonName: "screenpunk-device-other")
@@ -375,7 +735,7 @@ final class LANTransferTests: XCTestCase {
                 source: .advertised
             )
         )
-        let server = DeviceLANServer(runtime: runtime, identity: deviceIdentity)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: deviceIdentity)
         try server.start()
         defer { server.stop() }
 
@@ -402,6 +762,16 @@ final class LANTransferTests: XCTestCase {
             XCTAssertNil(server.runtime.pairing.session)
         }
     }
+}
+
+/// Polls `condition` every 20 ms until it holds or `timeout` elapses.
+func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        Thread.sleep(forTimeInterval: 0.02)
+    }
+    return condition()
 }
 
 /// TLS server that presents `identity` but claims `claimedPinHex` in every reply.

@@ -14,17 +14,22 @@ public final class ControllerService: @unchecked Sendable {
     public var connectionInspection: (@Sendable (String?) throws -> Data)?
     private var reviewedRevisions: Set<String> = []
     private let lock = NSLock()
+    private let rendererFactory: @Sendable () -> PreviewRenderer?
 
     public init(
         store: DashboardPackageStore,
         helper: HelperSupervisor = HelperSupervisor(),
         renderer: PreviewRenderer? = nil,
-        devices: DeviceCoordinator? = nil
+        devices: DeviceCoordinator? = nil,
+        rendererFactory: (@Sendable () -> PreviewRenderer?)? = nil,
+        authoringKit: URL? = nil
     ) {
         self.store = store
-        self.authoring = ScreenAuthoring(root: store.root)
+        self.authoring = ScreenAuthoring(root: store.root, kit: authoringKit)
         self.helper = helper
         self.renderer = renderer
+        self.helperStarted = renderer != nil
+        self.rendererFactory = rendererFactory ?? { helper.makeRenderer() }
         self.devices = devices ?? DeviceCoordinator(
             directory: DeviceDirectory(url: DeviceDirectory.defaultURL(controllerHome: store.root))
         )
@@ -34,16 +39,31 @@ public final class ControllerService: @unchecked Sendable {
         linkFactory: DeviceLinkFactory? = nil,
         hub: LoopbackDiscovery = LoopbackDiscovery.shared
     ) throws -> ControllerService {
-        let store = try DashboardPackageStore(root: DashboardPackageStore.defaultRoot())
-        let helper = HelperSupervisor()
+        let root = DashboardPackageStore.defaultRoot()
+        return try bootstrap(root: root, deviceDirectoryURL: DeviceDirectory.defaultURL(controllerHome: root),
+                             hub: hub, linkFactory: linkFactory)
+    }
+
+    /// Creates the domain without resolving a preview helper, loading identity,
+    /// or starting LAN discovery. The broker supplies its machine-local device
+    /// directory separately from its authoring/package store.
+    public static func bootstrap(
+        root: URL,
+        deviceDirectoryURL: URL,
+        hub: LoopbackDiscovery = LoopbackDiscovery(),
+        linkFactory: DeviceLinkFactory? = nil,
+        helper: HelperSupervisor = HelperSupervisor(),
+        rendererFactory: (@Sendable () -> PreviewRenderer?)? = nil,
+        authoringKit: URL? = nil
+    ) throws -> ControllerService {
+        let store = try DashboardPackageStore(root: root)
         let devices = DeviceCoordinator(
-            directory: DeviceDirectory(url: DeviceDirectory.defaultURL(controllerHome: store.root)),
+            directory: DeviceDirectory(url: deviceDirectoryURL),
             hub: hub,
             linkFactory: linkFactory
         )
-        let service = ControllerService(store: store, helper: helper, renderer: helper.makeRenderer(), devices: devices)
-        service.ensureHelper()
-        return service
+        return ControllerService(store: store, helper: helper, devices: devices,
+                                 rendererFactory: rendererFactory, authoringKit: authoringKit)
     }
 
     /// Revisions rendered through `previewDashboard` in this controller process.
@@ -65,7 +85,7 @@ public final class ControllerService: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         if renderer == nil {
-            renderer = helper.makeRenderer()
+            renderer = rendererFactory()
         }
         helperStarted = renderer != nil
         return helperStarted
@@ -95,7 +115,15 @@ public final class ControllerService: @unchecked Sendable {
             return DashboardFileInput(path: path, text: item["text"]?.string, base64: item["base64"]?.string)
         }
         let target = try parseTarget(object["target"])
-        let connections = try parseConnections(object["connections"])
+        let connections: [ManifestConnection]
+        if object["connections"] == nil, let id = object["dashboardId"]?.string,
+           let base = object["baseRevision"]?.string {
+            // An appearance-only package edit must not implicitly erase provider
+            // discovery. Explicit [] remains the deliberate removal operation.
+            connections = try store.getRevision(dashboardId: id, revision: base).manifest.connections
+        } else {
+            connections = try parseConnections(object["connections"])
+        }
         guard let name = object["name"]?.string, name.isEmpty == false else {
             throw ControllerError.validationFailed(detail: "name required")
         }
@@ -108,7 +136,8 @@ public final class ControllerService: @unchecked Sendable {
             files: files,
             pages: try parseNavigationField([DashboardPage].self, object["pages"], name: "pages"),
             defaultPageId: object["defaultPageId"]?.string,
-            eventRules: try parseNavigationField([ManifestEventRule].self, object["eventRules"], name: "eventRules")
+            eventRules: try parseNavigationField([ManifestEventRule].self, object["eventRules"], name: "eventRules"),
+            deviceBehavior: try parseNavigationField(DeviceBehavior.self, object["deviceBehavior"], name: "deviceBehavior")
         )
     }
 
@@ -121,6 +150,7 @@ public final class ControllerService: @unchecked Sendable {
     public func validateDashboard(dashboardId: String, revision: String?) throws -> DashboardManifest {
         let record = try store.getRevision(dashboardId: dashboardId, revision: revision)
         try PackageValidator.validate(record.manifest)
+        try PackageWebContentValidation.requireCompatible(record.files)
         return record.manifest
     }
 
@@ -133,6 +163,7 @@ public final class ControllerService: @unchecked Sendable {
         _ = ensureHelper()
         let record = try store.getRevision(dashboardId: dashboardId, revision: revision)
         try PackageValidator.validate(record.manifest)
+        try PackageWebContentValidation.requireCompatible(record.files)
         guard let renderer else {
             throw ControllerError.snapshotUnavailable(reason: "helper_not_found")
         }
@@ -272,6 +303,7 @@ public final class ControllerService: @unchecked Sendable {
         // Prepare every package before obtaining credentials or sending a mutation.
         let packages = try records.enumerated().map { index, record -> LANDeployBody in
             try PackageValidator.validate(record.manifest)
+            try PackageWebContentValidation.requireCompatible(record.files)
             let revision = try storedRevision(for: record.manifest)
             return LANDeployBody(deployment: DeploymentRecord(deploymentId: records.count == 1 ? id : "\(id)-\(index)",
                 revision: revision.revision, dashboardId: revision.dashboardId, deviceId: deviceId, phase: .queued),
@@ -280,7 +312,10 @@ public final class ControllerService: @unchecked Sendable {
         try devices.requireScreenSetSupport(deviceId: deviceId, serviceCalls: records.contains { $0.manifest.connections.contains { $0.serviceCalls != nil } },
             cameras: records.contains { $0.manifest.connections.contains { $0.cameraEntities != nil } },
             publicReads: records.contains { $0.manifest.connections.contains { $0.publicHTTP != nil } },
-            dynamicPublicPaths: records.contains { $0.manifest.connections.contains { $0.publicHTTP?.requiresDynamicPaths == true } })
+            dynamicPublicPaths: records.contains { $0.manifest.connections.contains { $0.publicHTTP?.requiresDynamicPaths == true } },
+            appleMaps: records.contains { $0.manifest.connections.contains { $0.alias == "appleMaps" } },
+            interactiveMaps: records.contains { $0.manifest.connections.contains { $0.alias == "appleMaps" && $0.operations?.contains(where: { $0.name != "snapshot" }) == true } },
+            deviceBehavior: records.contains { $0.manifest.deviceBehavior?.temporaryActivation != nil || $0.manifest.deviceBehavior?.audio != nil })
         let items = try zip(records, packages).map { record, package -> LANScreenSetItem in
             let configuration: HomeAssistantProvisioning?
             if record.manifest.connections.contains(where: { $0.alias == "home" }) {

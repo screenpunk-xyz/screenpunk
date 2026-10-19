@@ -31,6 +31,7 @@ public enum MCPToolSchemas {
                     "connections": .object(["type": .string("array")]),
                     "pages": .object(["type": .string("array"), "description": .string("Approved pages inside this dashboard: objects with id, name and packaged HTML path. Omit to preserve existing pages; [] resets to the entrypoint. See docs/event-navigation.md.")]),
                     "defaultPageId": string("Author starting page ID; device settings may select another approved page."),
+                    "deviceBehavior": .object(["type": .string("object"), "description": .string("Optional temporaryActivation declaration and audio.autoplay permission. Omit to preserve; {} removes behavior. Requires scoped Home Assistant provisioning for activation.")]),
                     "eventRules": .object(["type": .string("array"), "description": .string("Author-declared approved connection sources, conditions, page targets, defaults and permitted overrides. Omit to preserve; [] removes all rules. Never grants connection permissions.")])
                 ]
             )
@@ -61,7 +62,7 @@ public enum MCPToolSchemas {
             return object(
                 required: [],
                 properties: [
-                    "topic": string("home-assistant, unlink, preview, pairing, deploy, or onboarding")
+                    "topic": string("connections, persistent-state, authoring, home-assistant, unlink, preview, pairing, deploy, or onboarding")
                 ]
             )
         case "discover_services":

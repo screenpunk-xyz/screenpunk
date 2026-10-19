@@ -133,7 +133,7 @@ extension HomeAssistantDeviceTests {
         let device = DeviceRuntime(identity: deviceIdentity.pairingIdentity,
             profile: DeviceProfile(deviceId: "ha-phone", name: "HA phone"),
             advertisement: .init(deviceId: "ha-phone", host: "127.0.0.1", port: 0, source: .advertised))
-        let server = DeviceLANServer(runtime: device, identity: deviceIdentity, homeAssistantVault: vault)
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: device, identity: deviceIdentity, homeAssistantVault: vault)
         try server.start()
         defer { server.stop() }
         let client = ControllerLANClient(identity: ownerIdentity)
@@ -170,7 +170,7 @@ extension HomeAssistantDeviceTests {
         XCTAssertThrowsError(try vault.record(owner: PeerPin.hex(ownerIdentity.pin), revision: config.revision))
         config.dashboardId = receipt.dashboardId
         try client.provisionHomeAssistant(config)
-        server.unlink()
+        try server.unlink()
         XCTAssertThrowsError(try vault.record(owner: PeerPin.hex(ownerIdentity.pin), revision: config.revision))
     }
 }

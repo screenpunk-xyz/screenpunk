@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "id": "cdbdf510-4785-44f9-860c-9bf9be25a318",
+      "name": "Controller device",
+      "locationId": null,
+      "profile": "tablet",
+      "status": "active",
+      "installationId": "cdbdf510-4785-44f9-860c-9bf9be25a318"
+    }
+  ],
+  "nextCursor": null
+}
