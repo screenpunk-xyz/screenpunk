@@ -69,7 +69,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     private var freshCloudRoots: FreshCloudEnrollmentRoots?
     private var freshOperationalReader: FreshEnrollmentStepOwner?
     private var unifiedRoot: (context: CloudInstallationContext, root: UnifiedRootReservation)?
-    private var cloudClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    private let cloudClock: () -> TimeInterval
     @_spi(NativeInstallation) public final class CloudInstallationContext: @unchecked Sendable {
         fileprivate let owner: UUID, process: UUID, generation: UUID
         fileprivate let installation: NativeOperationalInstallation, activation: NativeActivationReceipt, origin: URL
@@ -81,7 +81,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         }
     }
 
-    public init(journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore, reset: any DeviceLocalResetEvidence = DeviceLocalResetEvidenceAdapter.production(), managedNamespace: DeviceManagedNamespaceInspector = .production(), supportAnchorSetup: DeviceProductionSupportAnchorSetup = .production(), commandIntents: DeviceCommandIntentCoordinator? = nil, concurrentControlQualified: Bool = false) {
+    public init(journal: any CloudInstallationTransitionJournal, credentials: CloudInstallationCredentialStore, reset: any DeviceLocalResetEvidence = DeviceLocalResetEvidenceAdapter.production(), managedNamespace: DeviceManagedNamespaceInspector = .production(), supportAnchorSetup: DeviceProductionSupportAnchorSetup = .production(), commandIntents: DeviceCommandIntentCoordinator? = nil, concurrentControlQualified: Bool = false, cloudClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.commandIntents = commandIntents
         self.concurrentControlQualified = concurrentControlQualified
         self.journal = journal
@@ -89,6 +89,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         self.reset = reset
         self.managedNamespace = managedNamespace
         self.supportAnchorSetup = supportAnchorSetup
+        self.cloudClock = cloudClock
     }
 
     /// Original first-native directory ownership. No server IDs or management
