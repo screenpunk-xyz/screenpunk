@@ -5,6 +5,28 @@ import ScreenpunkCore
 final class PairingDeployTests: XCTestCase {
     private let controllerIdentity = PairingIdentityFactory.make(role: .controller)
 
+    func testExactDeploymentObservationRequiresFreshPinnedScreenSet() throws {
+        let device = FakeLANDevice(deviceId: "exact-observation", name: "Fixture iPad")
+        let harness = try makeHarness(device: device)
+        let pending = try harness.service.devices.requestPairing(deviceId: nil,
+            host: device.host, port: Int(device.port))
+        device.confirmLocally()
+        _ = try harness.service.devices.confirmPairing(deviceId: pending.deviceId)
+        let peer = WorkbenchNativeDeploymentPeer(devices: harness.service.devices)
+        let fresh = try peer.observe(deviceId: pending.deviceId)
+        XCTAssertEqual(fresh.deviceId, pending.deviceId)
+        XCTAssertTrue(fresh.screens.isEmpty)
+        XCTAssertNil(fresh.selectedDashboardId)
+        device.runtime.activeRevision = "legacy-active-without-full-set"
+        XCTAssertThrowsError(try peer.observe(deviceId: pending.deviceId))
+        device.runtime.activeRevision = nil
+        device.supportsScreenSets = false
+        XCTAssertThrowsError(try peer.observe(deviceId: pending.deviceId))
+        device.supportsScreenSets = true
+        device.online = false
+        XCTAssertThrowsError(try peer.observe(deviceId: pending.deviceId))
+    }
+
     func testTwoDevicesRemainDistinctAcrossPairingDiscoveryAndRestart() throws {
         let phone = FakeLANDevice(deviceId: "device-iphone-mini", name: "iPhone mini")
         let tablet = FakeLANDevice(deviceId: "device-ipad-air", name: "iPad Air")
@@ -46,6 +68,60 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertTrue(try reopened.device(pairedTablet.id, probe: true).device.reachable)
         XCTAssertEqual(reopened.directory.get(pairedPhone.id)?.port, 8001)
         XCTAssertEqual(reopened.directory.get(pairedTablet.id)?.port, 8002)
+    }
+
+    /// Anyone on the LAN can advertise `_screenpunk._tcp`. A burst of dead
+    /// advertisements must cost a bounded number of probes per pass, and a
+    /// failed endpoint must not be probed again on every pass.
+    func testDiscoveryBoundsProbesAndBacksOffFailedEndpoints() throws {
+        let phone = FakeLANDevice(deviceId: "device-real", name: "Real iPhone")
+        phone.online = false
+        let clock = MutableClock()
+        let harness = try makeHarness(device: phone, now: { clock.now })
+        let coordinator = harness.service.devices
+        coordinator.hub.reset()
+        // More dead advertisements than the per-pass probe budget.
+        for index in 0..<(DeviceCoordinator.discoveryProbesPerPass + 4) {
+            coordinator.hub.advertise(AdvertisedDevice(deviceId: "bonjour:ghost-\(index)", host: "192.168.9.\(100 + index)", port: 7843, source: .advertised))
+        }
+
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        XCTAssertEqual(phone.connectAttempts, DeviceCoordinator.discoveryProbesPerPass, "one pass probes a bounded number of unknown endpoints")
+
+        // The next pass probes only the not-yet-tried endpoints; failed ones back off.
+        let afterFirst = phone.connectAttempts
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        XCTAssertEqual(phone.connectAttempts, afterFirst + 4, "already-failed endpoints are not retried within the interval")
+
+        // Fully inside the retry interval: nothing is re-probed.
+        clock.now = clock.now.addingTimeInterval(DeviceCoordinator.discoveryRetryInterval - 1)
+        let afterSecond = phone.connectAttempts
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        XCTAssertEqual(phone.connectAttempts, afterSecond, "every endpoint is still inside its retry interval")
+
+        // A real device advertised at a fresh address is probed and returned.
+        phone.host = "192.168.9.50"; phone.port = 7843; phone.online = true
+        phone.runtime.advertisement = AdvertisedDevice(deviceId: "device-real", host: phone.host, port: Int(phone.port), source: .advertised)
+        coordinator.hub.advertise(phone.runtime.advertisement)
+        XCTAssertEqual(coordinator.discover().map(\.deviceId), ["device-real"])
+
+        // Past the identity cache window and the ghosts' retry interval: the ghosts
+        // become candidates again (bounded per pass) and the now-offline device is
+        // re-probed instead of answered from the stale cache.
+        phone.online = false
+        clock.now = clock.now.addingTimeInterval(11)
+        XCTAssertTrue(coordinator.discover().isEmpty, "the stale identity is not reused once the device stops answering")
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        // Every endpoint has now failed inside the current interval; a pass costs nothing.
+        let settled = phone.connectAttempts
+        XCTAssertTrue(coordinator.discover().isEmpty)
+        XCTAssertEqual(phone.connectAttempts, settled, "all endpoints are backed off")
+
+        // A manual address entered by the person is never held back by an old failure.
+        phone.online = true
+        coordinator.addManual(host: phone.host, port: Int(phone.port))
+        XCTAssertEqual(coordinator.discover().count, 1)
+        XCTAssertEqual(phone.connectAttempts, settled + 1, "addManual clears the endpoint's back-off so it is probed at once")
     }
 
     func testLegacySavedPairingSurvivesNativeIdentityUpgrade() throws {
@@ -687,6 +763,21 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertNil(device.installedSet)
     }
 
+    func testInteractiveMapsRejectOlderDeviceBeforeChangingScreens() throws {
+        let device = FakeLANDevice(deviceId: "maps-old-device", name: "Fixture")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "maps-old-device")
+        let connection = ManifestConnection(alias: "appleMaps", required: false,
+            operations: ["snapshot", "present", "update", "close"].map { .init(name: $0, kind: "http") })
+        let screen = try harness.service.store.putDashboard(dashboardId: nil, name: "Map fixture", baseRevision: nil,
+            target: harness.service.defaultTarget(), connections: [connection], files: [.init(path: "index.html", text: "<p>Public map fixture</p>")])
+        XCTAssertThrowsError(try harness.service.shipSet(records: [screen], deviceId: "maps-old-device", selectedDashboardId: screen.manifest.dashboardId)) {
+            XCTAssertEqual(($0 as? ControllerError)?.code, .unsupportedVersion)
+        }
+        XCTAssertEqual(device.deployAttempts, 0)
+        XCTAssertNil(device.installedSet)
+    }
+
     func testDynamicPathsRequireNewCapabilityBeforeDeploy() throws {
         let device = FakeLANDevice(deviceId: "dynamic-assets", name: "Fixture")
         device.supportsPublicReads = true
@@ -706,6 +797,23 @@ final class PairingDeployTests: XCTestCase {
         XCTAssertNoThrow(try harness.service.devices.requireScreenSetSupport(deviceId: "dynamic-assets", publicReads: true))
         device.supportsDynamicPublicPaths = true
         XCTAssertNoThrow(try harness.service.devices.requireScreenSetSupport(deviceId: "dynamic-assets", publicReads: true, dynamicPublicPaths: true))
+    }
+
+    func testDeviceBehaviorRequiresCapabilityBeforeCredentialsOrTransfer() throws {
+        let device = FakeLANDevice(deviceId: "behavior", name: "Fixture")
+        let harness = try makeHarness(device: device)
+        try pair(harness.router, device: device, deviceId: "behavior")
+        let behavior = DeviceBehavior(audio: .init(autoplay: true))
+        let screen = try harness.service.store.putDashboard(dashboardId: nil, name: "Audio", baseRevision: nil,
+            target: harness.service.defaultTarget(), connections: [], files: [.init(path: "index.html", text: "<p>Audio</p>")], deviceBehavior: behavior)
+        XCTAssertThrowsError(try harness.service.shipSet(records: [screen], deviceId: "behavior", selectedDashboardId: screen.manifest.dashboardId)) {
+            XCTAssertEqual(($0 as? ControllerError)?.code, .unsupportedVersion)
+        }
+        XCTAssertEqual(device.deployAttempts, 0)
+        XCTAssertNil(device.installedSet)
+        device.supportsDeviceBehavior = true
+        XCTAssertNoThrow(try harness.service.shipSet(records: [screen], deviceId: "behavior", selectedDashboardId: screen.manifest.dashboardId))
+        XCTAssertEqual(device.installedSet?.first?.revision, screen.manifest.revision)
     }
 
     private func makeHarness(

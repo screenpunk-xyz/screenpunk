@@ -17,7 +17,7 @@ final class GenericConnectionProvisioningTests: XCTestCase {
         let device = DeviceRuntime(identity: deviceIdentity.pairingIdentity,
             profile: DeviceProfile(deviceId: "generic-phone", name: "Phone"),
             advertisement: .init(deviceId: "generic-phone", host: "127.0.0.1", port: 0, source: .advertised))
-        let server = DeviceLANServer(runtime: device, identity: deviceIdentity,
+        let server = try DeviceLANServer(management: testManagementContext(), runtime: device, identity: deviceIdentity,
             homeAssistantVault: HomeAssistantDeviceVault(store: MemoryCredentialStore()), genericConnectionVault: vault)
         try server.start(); defer { server.stop() }
         let client = ControllerLANClient(identity: ownerIdentity); defer { client.cancel() }

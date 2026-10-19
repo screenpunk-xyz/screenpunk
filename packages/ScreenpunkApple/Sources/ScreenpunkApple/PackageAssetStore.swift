@@ -5,6 +5,12 @@ public struct PackageAsset: Sendable, Equatable {
     public var path: String
     public var data: Data
     public var mime: String
+
+    public init(path: String, data: Data, mime: String) {
+        self.path = path
+        self.data = data
+        self.mime = mime
+    }
 }
 
 public enum PackageAssetError: Error, Equatable {

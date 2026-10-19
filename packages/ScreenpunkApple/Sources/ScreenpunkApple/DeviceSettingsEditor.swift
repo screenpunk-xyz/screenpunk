@@ -14,9 +14,16 @@ public struct DeviceSettingsEditor: View {
     }
 
     public var body: some View {
-        Form {
+        Form { sections }
+#if os(macOS)
+        .formStyle(.grouped)
+#endif
+    }
+
+    /// Sections can be composed into the device General form without nested forms.
+    @ViewBuilder public var sections: some View {
+            if let manifest, manifest.resolvedPages.count > 1 {
             Section {
-                if let manifest {
                     Picker("Starting page", selection: Binding(get: {
                         settings.startingPageByDashboard[manifest.dashboardId] ?? ""
                     }, set: {
@@ -31,11 +38,8 @@ public struct DeviceSettingsEditor: View {
                     }
                     Text("The page within \(manifest.name) shown when Screenpunk opens. This does not select a different saved screen.")
                         .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("Page and event options appear when the current installed dashboard is available.")
-                        .foregroundStyle(.secondary)
-                }
-            } header: { Text("Starting page") }
+            } header: { Text("Starting page within screen") }
+            }
             Section {
                 Picker("Brightness", selection: $settings.brightness.mode) {
                     Text("Use system brightness").tag(DeviceBrightnessMode.system)
@@ -100,10 +104,6 @@ public struct DeviceSettingsEditor: View {
                     }
                 } header: { Text("External events") }
             }
-        }
-#if os(macOS)
-        .formStyle(.grouped)
-#endif
     }
 
     private func brightnessSlider(_ label: String, value: Binding<Double>) -> some View {

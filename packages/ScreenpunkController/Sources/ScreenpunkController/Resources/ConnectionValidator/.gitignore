@@ -1,0 +1,6 @@
+node
+validate.cjs
+SBOM.json
+inventory.json
+NODE-LICENSE.txt
+THIRD-PARTY-NOTICES.txt

@@ -11,11 +11,15 @@ import Glibc
 /// TLS identity stays in the keychain and the owner is a public-key pin.
 public struct DevicePersistedState: Sendable, Equatable, Codable {
     public var owner: PairingIdentity?
+    /// Nil is legacy single-controller state; [] persists explicit full revocation.
+    public var approvedControllers: [PairingIdentity]?
     public var activeRevision: String?
     public var activeStoredRevision: StoredRevision?
     public var lastDeployment: DeploymentRecord?
     public var screenSet: DeviceInstalledScreenSet?
     public var settings: DeviceSettingsSnapshot?
+    /// Public owner pin for installed content; retained across local disconnect.
+    public var contentOwner: PairingIdentity?
     public var savedAt: Date
 
     public init(
@@ -26,6 +30,7 @@ public struct DevicePersistedState: Sendable, Equatable, Codable {
         savedAt: Date = Date()
     ) {
         self.owner = owner
+        self.approvedControllers = owner.map { [$0] } ?? []
         self.activeRevision = activeRevision
         self.activeStoredRevision = activeStoredRevision
         self.lastDeployment = lastDeployment
@@ -40,6 +45,7 @@ public struct DevicePersistedState: Sendable, Equatable, Codable {
             lastDeployment: runtime.lastDeployment,
             savedAt: savedAt
         )
+        approvedControllers = runtime.pairing.approvedControllers
     }
 }
 
@@ -179,7 +185,7 @@ public struct DeviceStateStore: Sendable {
     /// Remove only package generations that no committed screen references.
     public func prunePackageGenerations(keeping directories: Set<String>) {
         guard let contents = try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
-        for url in contents where url.lastPathComponent.hasPrefix("package.staging-") && !directories.contains(url.lastPathComponent) {
+        for url in contents where (url.lastPathComponent == "package" || url.lastPathComponent.hasPrefix("package.staging-")) && !directories.contains(url.lastPathComponent) {
             try? fileManager.removeItem(at: url)
         }
     }
@@ -212,7 +218,7 @@ extension DeviceRuntime {
     /// Rebuilds owner, active revision, and last deployment from disk. Any
     /// in-flight pairing session or staged revision is dropped; those never persist.
     public mutating func restore(_ state: DevicePersistedState) {
-        pairing = DevicePairingState(owner: state.owner)
+        pairing = DevicePairingState(owner: state.owner, approvedControllers: state.approvedControllers)
         activeRevision = state.activeRevision
         stagedRevision = nil
         lastDeployment = state.lastDeployment

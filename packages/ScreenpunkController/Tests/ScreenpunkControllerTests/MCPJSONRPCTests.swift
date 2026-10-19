@@ -2,6 +2,19 @@ import XCTest
 @testable import ScreenpunkController
 
 final class MCPJSONRPCTests: XCTestCase {
+    func testConnectionContractIsDiscoverableAndReadable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sp-connection-help-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rpc = MCPJSONRPC(router: MCPToolRouter(service: ControllerService(store: try DashboardPackageStore(root: root))))
+        let listing = try rpc.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}"#) ?? ""
+        let resources = try JSONValue.parse(Data(listing.utf8))["result"]?["resources"]?.array ?? []
+        XCTAssertTrue(resources.contains { $0["uri"]?.string == "screenpunk://help/connections" })
+        let resource = try rpc.handle(line: #"{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"screenpunk://help/connections"}}"#) ?? ""
+        XCTAssertTrue(resource.contains("googleTV"))
+        XCTAssertTrue(resource.contains("required"))
+        XCTAssertTrue(resource.contains("preserve"))
+    }
+
     func testInitializeListsToolsAndHelpResourceIncludesUnlink() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("sp-ctrl-\(UUID().uuidString)")
         let store = try DashboardPackageStore(root: root)

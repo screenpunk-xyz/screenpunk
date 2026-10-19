@@ -72,16 +72,13 @@ final class PairingTests: XCTestCase {
         try state.confirm(code: honestCode, presentedOwner: owner, clock: FixedClock(start))
         XCTAssertEqual(state.owner, owner)
 
-        XCTAssertThrowsError(
-            try state.begin(
-                transcript: transcript(controller: attackerKey),
-                expectedCode: mitmCode,
-                candidateOwner: controller(attackerKey),
-                clock: FixedClock(start)
-            )
-        ) { error in
-            XCTAssertEqual(error as? PairingFailure, .secondOwner)
-        }
+        let second = controller(attackerKey)
+        try state.begin(transcript: transcript(controller: attackerKey), expectedCode: mitmCode, candidateOwner: second, clock: FixedClock(start))
+        XCTAssertFalse(state.isApproved(second), "begin never grants control")
+        try state.confirm(code: mitmCode, presentedOwner: second, clock: FixedClock(start))
+        XCTAssertTrue(state.isApproved(owner))
+        XCTAssertTrue(state.isApproved(second))
+        XCTAssertEqual(state.owner, owner, "content owner identity remains stable")
 
         var midSession = DevicePairingState()
         try midSession.begin(
@@ -99,6 +96,72 @@ final class PairingTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? PairingFailure, .identityChanged)
         }
+    }
+
+    /// The person compares the code on screen and taps Confirm. Between those
+    /// two moments nobody else may replace the session, or the tap would bind
+    /// the device to whoever sent `pair.begin` last.
+    func testLiveSessionIsLockedToItsCandidate() throws {
+        var state = DevicePairingState()
+        let owner = controller(controllerKey)
+        let attacker = controller(attackerKey)
+        try state.begin(transcript: transcript(), expectedCode: honestCode, candidateOwner: owner, clock: FixedClock(start))
+        XCTAssertThrowsError(
+            try state.begin(
+                transcript: transcript(controller: attackerKey),
+                expectedCode: mitmCode,
+                candidateOwner: attacker,
+                clock: FixedClock(start.addingTimeInterval(60))
+            )
+        ) { error in
+            XCTAssertEqual(error as? PairingFailure, .busy)
+        }
+        XCTAssertEqual(state.session?.candidateOwner, owner, "the live session is untouched")
+        XCTAssertEqual(state.session?.expectedCode, honestCode)
+
+        // The same candidate may restart (new nonce, new code).
+        XCTAssertNoThrow(
+            try state.begin(transcript: transcript(), expectedCode: "111111", candidateOwner: owner, clock: FixedClock(start.addingTimeInterval(61)))
+        )
+        XCTAssertEqual(state.session?.expectedCode, "111111")
+
+        // Once the window closes the lock is gone.
+        XCTAssertNoThrow(
+            try state.begin(
+                transcript: transcript(controller: attackerKey),
+                expectedCode: mitmCode,
+                candidateOwner: attacker,
+                clock: FixedClock(start.addingTimeInterval(61 + PairingLimits.expirySeconds + 1))
+            )
+        )
+        XCTAssertEqual(state.session?.candidateOwner, attacker)
+
+        // A confirmed session is no longer live; a new candidate needs approval.
+        var paired = DevicePairingState()
+        try paired.begin(transcript: transcript(), expectedCode: honestCode, candidateOwner: owner, clock: FixedClock(start))
+        try paired.confirm(code: honestCode, presentedOwner: owner, clock: FixedClock(start))
+        try paired.begin(transcript: transcript(controller: attackerKey), expectedCode: mitmCode, candidateOwner: attacker, clock: FixedClock(start))
+        XCTAssertFalse(paired.isApproved(attacker))
+        XCTAssertTrue(paired.isApproved(owner))
+    }
+
+    func testBoundedRegistryAndSelectiveRevocation() throws {
+        let owner = controller(controllerKey)
+        var state = DevicePairingState(owner: owner)
+        for value in 4..<(PairingLimits.maxApprovedControllers + 3) {
+            let identity = controller([UInt8](repeating: UInt8(value), count: 32))
+            try state.begin(transcript: transcript(controller: identity.publicKey), expectedCode: "123456", candidateOwner: identity, clock: FixedClock(start))
+            try state.confirm(code: "123456", presentedOwner: identity, clock: FixedClock(start))
+        }
+        XCTAssertEqual(state.approvedControllers.count, PairingLimits.maxApprovedControllers)
+        XCTAssertThrowsError(try state.begin(transcript: transcript(controller: attackerKey), expectedCode: mitmCode, candidateOwner: controller(attackerKey), clock: FixedClock(start))) { XCTAssertEqual($0 as? PairingFailure, .controllerLimit) }
+        state.revoke(owner)
+        XCTAssertFalse(state.isApproved(owner))
+        XCTAssertEqual(state.owner, owner)
+        XCTAssertEqual(state.approvedControllers.count, PairingLimits.maxApprovedControllers - 1)
+        let restored = DevicePairingState(owner: state.owner, approvedControllers: state.approvedControllers)
+        XCTAssertFalse(restored.isApproved(owner), "primary revocation is not silently undone")
+        XCTAssertEqual(restored.approvedControllers, state.approvedControllers)
     }
 
     func testNoCredentialsInPublishedVectors() {
@@ -130,7 +193,7 @@ final class PairingTests: XCTestCase {
             let expected = scenario.finalOwner.flatMap { fixture.identities[$0]?.publicKey }
             XCTAssertEqual(owner, expected, "\(scenario.id) final owner")
         }
-        for required in ["ok", "expired", "rateLimited", "codeMismatch", "identityChanged", "secondOwner", "invalidIdentity"] {
+        for required in ["ok", "expired", "rateLimited", "codeMismatch", "identityChanged", "invalidIdentity", "busy"] {
             XCTAssertTrue(exercised.contains(required), "scenarios must exercise \(required)")
         }
     }

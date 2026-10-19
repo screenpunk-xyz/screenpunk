@@ -29,6 +29,11 @@ generate() {
 }
 
 generate "$ROOT/apps/ios/project.yml"
+ios_package_lock="$ROOT/apps/ios/ScreenpunkiOS.xcodeproj/project.xcworkspace/xcshareddata/swiftpm"
+if [[ -f "$ROOT/apps/ios/Package.resolved" ]]; then
+  mkdir -p "$ios_package_lock"
+  cp "$ROOT/apps/ios/Package.resolved" "$ios_package_lock/Package.resolved"
+fi
 generate "$ROOT/apps/macos/project.yml"
 generate "$ROOT/tools/preview-host/project.yml"
 echo "generated Xcode projects from specs"

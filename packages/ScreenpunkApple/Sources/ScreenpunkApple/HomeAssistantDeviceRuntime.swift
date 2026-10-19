@@ -3,12 +3,14 @@ import ScreenpunkCore
 
 /// One atomic Keychain record binds permissions and credentials to their paired owner.
 public final class HomeAssistantDeviceVault: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private let store: any CredentialStore
-    private let account = "provisioning-v1"
-    private let setsAccount = "screen-set-grants-v1"
-    private let publicAccount = "public-read-grants-v1"
-    public init(store: any CredentialStore = KeychainCredentialStore(service: "xyz.screenpunk.device.home-assistant")) {
+    public static let storageService = "xyz.screenpunk.device.home-assistant"
+    static let storageKeys = ["provisioning-v1", "screen-set-grants-v1", "public-read-grants-v1"]
+    private var account: String { Self.storageKeys[0] }
+    private var setsAccount: String { Self.storageKeys[1] }
+    private var publicAccount: String { Self.storageKeys[2] }
+    public init(store: any CredentialStore = KeychainCredentialStore(service: HomeAssistantDeviceVault.storageService)) {
         self.store = store
     }
     struct Record: Codable, Equatable {
@@ -141,6 +143,24 @@ public final class HomeAssistantDeviceVault: @unchecked Sendable {
         guard let data = try store.secret(for: setsAccount) else { return [:] }
         return try JSONDecoder().decode([String: [Record]].self, from: data)
     }
+    /// Scoped legacy export into a durable migration attempt only. Holding the original vault
+    /// lock prevents an approval update/revocation from racing credential qualification.
+    func withMigrationConfiguration<T>(owner: String, dashboardId: String, revision: String,
+        grantSet: String?, _ consume: (HomeAssistantProvisioning?, PublicReadProvisioning?) throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        let records: [Record]
+        if let grantSet { records = try grantSets()[grantSet] ?? [] }
+        else if let data = try store.secret(for: account) { records = [try JSONDecoder().decode(Record.self, from: data)] }
+        else { records = [] }
+        let matches = records.filter { $0.owner == owner && $0.configuration.dashboardId == dashboardId && $0.configuration.revision == revision }
+        guard matches.count <= 1 else { throw ConnectionFailure.validationFailed }
+        let publicMatches = try grantSet.map { try publicSets()[$0] ?? [] } ?? []
+        let reads = publicMatches.filter { $0.owner == owner && $0.configuration.dashboardId == dashboardId && $0.configuration.revision == revision }
+        guard reads.count <= 1 else { throw ConnectionFailure.validationFailed }
+        if let configuration = matches.first?.configuration { try configuration.validate() }
+        if let configuration = reads.first?.configuration { try configuration.validate() }
+        return try consume(matches.first?.configuration, reads.first?.configuration)
+    }
     func record(owner: String, revision: String, grantSet: String? = nil) throws -> Record {
         lock.lock(); defer { lock.unlock() }
         let record: Record
@@ -166,8 +186,11 @@ public actor HomeAssistantDeviceRuntime: CameraStreamResolver {
         public var revision: String
         public var dashboardId: String
         public var grantSet: String?
-        public init(owner: String, revision: String, dashboardId: String, grantSet: String? = nil) {
-            self.owner = owner; self.revision = revision; self.dashboardId = dashboardId; self.grantSet = grantSet
+        public var temporaryActivation: TemporaryActivationConfiguration?
+        public var authorityGeneration: UUID?
+        public init(owner: String, revision: String, dashboardId: String, grantSet: String? = nil, temporaryActivation: TemporaryActivationConfiguration? = nil, authorityGeneration: UUID? = nil) {
+            self.authorityGeneration = authorityGeneration
+            self.owner = owner; self.revision = revision; self.dashboardId = dashboardId; self.grantSet = grantSet; self.temporaryActivation = temporaryActivation
         }
     }
     private let vault: HomeAssistantDeviceVault
@@ -249,6 +272,40 @@ public actor HomeAssistantDeviceRuntime: CameraStreamResolver {
             }
             throw (error as? ConnectionFailure) ?? ConnectionFailure.deviceOffline
         }
+    }
+
+    /// Native temporary activation observes one declared entity; a whole-house get_states
+    /// snapshot can exceed the generic WebSocket limit before any event arrives.
+    /// This is deliberately not an arbitrary URL or a page bridge operation.
+    func readTemporaryActivationState(revision: String) async throws -> Data {
+        guard let current = scope(), current.revision == revision,
+              let activation = current.temporaryActivation else { throw ConnectionFailure.permissionRequired }
+        try activation.validate()
+        let record = try vault.record(owner: current.owner, revision: revision, grantSet: current.grantSet)
+        let config = record.configuration
+        guard config.dashboardId == current.dashboardId else { throw ConnectionFailure.permissionRequired }
+        _ = try config.authorize(operation: "getStates", parameters: [:])
+        let grant = config.connectionGrant(path: "/api/states/" + activation.entityId, write: false)
+        let destination = try ConnectionPolicy.authorize(grant: grant, operationName: "request", parameters: [:],
+            resolvedAddresses: resolver.addresses(for: ConnectionPolicy.originHost(config.origin)),
+            binding: .init(authRef: "home-device", placement: .bearer))
+        let transport = self.transport
+        let request = Task {
+            try await transport.send(.init(url: destination.url, method: "GET",
+                headers: ["Authorization": "Bearer " + config.token], body: nil, timeout: 10, maxBytes: 64 * 1024))
+        }
+        pending = request
+        defer { pending = nil }
+        let response = try await withTaskCancellationHandler(operation: { try await request.value },
+                                                             onCancel: { request.cancel() })
+        try Task.checkCancellation()
+        try requireCurrent(record, current)
+        if response.status == 401 || response.status == 403 { throw ConnectionFailure.permissionRequired }
+        guard response.status == 200 else { throw ConnectionFailure.deviceOffline }
+        guard response.body.count <= 64 * 1024 else { throw ConnectionFailure.sizeLimit }
+        guard let state = try JSONSerialization.jsonObject(with: response.body) as? [String: Any],
+              state["entity_id"] as? String == activation.entityId else { throw ConnectionFailure.validationFailed }
+        return response.body
     }
 
     /// A snapshot always precedes live state changes, including after reconnect. The

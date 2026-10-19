@@ -14,8 +14,10 @@
 4. Choose portrait or landscape on the Mac. The device follows that choice.
 
 Codes expire after two minutes. Five wrong confirmations pause pairing;
-start over. A device belongs to one Mac at a time; a second Mac cannot pair
-with it until it is unlinked. To unlink, hold two fingers on the device's
+start over. While a code is on the device screen, only the Mac that
+requested it can restart pairing; another Mac is told the device is busy
+until the code expires or you cancel it on the device. A device belongs to
+one Mac at a time; a second Mac cannot pair with it until it is unlinked. To unlink, hold two fingers on the device's
 screen for five seconds, open the device menu, choose **Disconnect**, and confirm (`get_help` topic `unlink`).
 
 Pairing authorizes one Mac to manage the device. It does not grant access

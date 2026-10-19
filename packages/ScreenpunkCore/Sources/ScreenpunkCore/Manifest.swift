@@ -93,6 +93,7 @@ public struct DashboardManifest: Codable, Sendable, Equatable {
     public var pages: [DashboardPage]?
     public var defaultPageId: String?
     public var eventRules: [ManifestEventRule]?
+    public var deviceBehavior: DeviceBehavior?
 
     public init(
         schemaVersion: Int,
@@ -107,7 +108,8 @@ public struct DashboardManifest: Codable, Sendable, Equatable {
         files: [ManifestFile],
         pages: [DashboardPage]? = nil,
         defaultPageId: String? = nil,
-        eventRules: [ManifestEventRule]? = nil
+        eventRules: [ManifestEventRule]? = nil,
+        deviceBehavior: DeviceBehavior? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.dashboardId = dashboardId
@@ -122,5 +124,6 @@ public struct DashboardManifest: Codable, Sendable, Equatable {
         self.pages = pages
         self.defaultPageId = defaultPageId
         self.eventRules = eventRules
+        self.deviceBehavior = deviceBehavior
     }
 }

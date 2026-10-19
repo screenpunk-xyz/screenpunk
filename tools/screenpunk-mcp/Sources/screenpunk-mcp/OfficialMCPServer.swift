@@ -1,8 +1,44 @@
 import Foundation
 import MCP
 import ScreenpunkController
+import ScreenpunkBrokerMCP
 
 enum OfficialMCPServer {
+    static func run(broker: LegacyBrokerAdapter) async throws {
+        let server = Server(name: "screenpunk", version: "1.0.0",
+                            instructions: HelpCatalog.topic(id: "onboarding").body,
+                            capabilities: .init(resources: .init(subscribe: false, listChanged: false),
+                                                tools: .init(listChanged: false)))
+        await server.withMethodHandler(ListTools.self) { _ in
+            .init(tools: BrokerMCPToolCatalog.tools().map { item in
+                Tool(name: item.name, description: item.description,
+                     inputSchema: toValue(item.schema),
+                     annotations: .init(title: item.name, readOnlyHint: item.readOnly,
+                                        destructiveHint: item.destructive,
+                                        idempotentHint: item.idempotent,
+                                        openWorldHint: item.openWorld))
+            })
+        }
+        await server.withMethodHandler(CallTool.self) { params in
+            let arguments = jsonValue(params.arguments).object?.mapValues { $0.jsonObject() } ?? [:]
+            let result = broker.call(name: params.name, arguments: arguments)
+            return .init(content: [.text(result.text)], isError: result.isError)
+        }
+        await server.withMethodHandler(ListResources.self) { _ in
+            .init(resources: LegacyBrokerAdapter.resourceURIs.map { uri in
+                Resource(name: uri, uri: uri, description: "Typed broker workspace, project or deployment metadata")
+            }, nextCursor: nil)
+        }
+        await server.withMethodHandler(ReadResource.self) { params in
+            let result = broker.resource(params.uri)
+            return .init(contents: [Resource.Content.text(result.text, uri: params.uri,
+                mimeType: params.uri.hasPrefix("screenpunk://help/") ? "text/plain" : "application/json")])
+        }
+        let transport = StdioTransport()
+        try await server.start(transport: transport)
+        await server.waitUntilCompleted()
+    }
+
     static func run(service: ControllerService) async throws {
         _ = service.ensureHelper()
         let presence = AgentPresenceSession(root: service.store.root)
@@ -52,6 +88,7 @@ enum OfficialMCPServer {
                 resources: [
                     Resource(name: "Component catalog", uri: "screenpunk://authoring/catalog", description: "Versioned local component catalog and compatibility evidence"),
                     Resource(name: "React authoring", uri: "screenpunk://authoring/instructions", description: "Offline source, build, preview and deployment workflow"),
+                    Resource(name: "Screen connection declarations", uri: "screenpunk://help/connections", description: "Required manifest declarations and preservation across edits"),
                     Resource(name: "Onboarding", uri: "screenpunk://help/onboarding", description: "MCP setup and live preview"),
                     Resource(name: "Disconnect recovery", uri: "screenpunk://help/unlink", description: "Five-second two-finger device menu gesture and confirmed Disconnect"),
                     Resource(name: "Live preview", uri: "screenpunk://help/preview", description: HelpCatalog.livePreviewLabel),
@@ -81,13 +118,15 @@ enum OfficialMCPServer {
         await server.waitUntilCompleted()
     }
 
-    private static func mcpContent(_ content: [MCPContent]) -> [Tool.Content] {
+    static func mcpContent(_ content: [MCPContent]) -> [Tool.Content] {
         content.map { item in
             switch item {
             case .text(let text):
-                return .text(text)
+                return .text(text: text, annotations: nil, _meta: nil)
             case .image(let data, let mime, let metadata):
-                return .image(data: data, mimeType: mime, metadata: metadata)
+                let fields = metadata?.mapValues { Value.string($0) }
+                return .image(data: data, mimeType: mime, annotations: nil,
+                    _meta: fields.map { Metadata(additionalFields: $0) })
             }
         }
     }

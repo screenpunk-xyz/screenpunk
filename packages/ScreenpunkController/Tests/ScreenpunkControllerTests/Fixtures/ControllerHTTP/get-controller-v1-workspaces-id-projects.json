@@ -1,0 +1,17 @@
+{
+  "items": [
+    {
+      "id": "fb1890dd-093e-4c1a-9b25-e8376e1992c9",
+      "accountId": "05f93b4e-7b95-40fa-bb3d-e1b2f59a6356",
+      "name": "Controller screen",
+      "deletedAt": null,
+      "createdAt": "2026-10-10T19:15:24.528Z",
+      "updatedAt": "2026-10-10T19:15:24.528Z",
+      "sourceKind": "html",
+      "kitVersion": null,
+      "headVersionId": null,
+      "canEdit": true
+    }
+  ],
+  "nextCursor": null
+}

@@ -48,8 +48,16 @@ final class LANDeviceLink: DeviceLink {
     var devicePin: [UInt8]? { client.devicePin }
 
     func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?) throws {
+        try open(host: host, port: port, pinnedDevice: pinnedDevice, timeout: nil)
+    }
+
+    func connect(host: String, port: UInt16, pinnedDevice: [UInt8]?, timeout: TimeInterval) throws {
+        try open(host: host, port: port, pinnedDevice: pinnedDevice, timeout: timeout)
+    }
+
+    private func open(host: String, port: UInt16, pinnedDevice: [UInt8]?, timeout: TimeInterval?) throws {
         do {
-            try client.connect(host: host, port: port, pinnedDevice: pinnedDevice)
+            try client.connect(host: host, port: port, pinnedDevice: pinnedDevice, timeout: timeout)
         } catch let error as NWError {
             // A TLS failure is pin verification refusing the peer on one side
             // (second controller, or a device whose identity changed).

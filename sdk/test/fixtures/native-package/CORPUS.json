@@ -1,0 +1,1445 @@
+{
+  "acceptanceScope" : "Native model decoding, canonical encoding and PackageValidator observations only; no ZIP, compiler, rendering, or device acceptance",
+  "cases" : [
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "db24df95db40aa75447b35df335686889a062e5b9d61b40427cecb6e870a3a47",
+      "id" : "minimal-resolved-gallery",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"db24df95db40aa75447b35df335686889a062e5b9d61b40427cecb6e870a3a47\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":\"text\"}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "f6315e901d323f5c0a81c0619d4a999cd1488b56f705e65205d27f3570a5e954",
+      "id" : "nested-keys-forward",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":\"text\"}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"f6315e901d323f5c0a81c0619d4a999cd1488b56f705e65205d27f3570a5e954\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : \"text\"\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":\"text\"}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "f6315e901d323f5c0a81c0619d4a999cd1488b56f705e65205d27f3570a5e954",
+      "id" : "nested-keys-reversed",
+      "inputManifestUTF8" : "{\"target\":{\"width\":390,\"scale\":3,\"safeArea\":{\"top\":47,\"right\":0,\"left\":0,\"bottom\":34},\"profileId\":\"fixture-phone\",\"orientation\":\"portrait\",\"height\":844},\"sdkVersion\":\"1\",\"schemaVersion\":1,\"revision\":\"22222222-2222-4222-8222-222222222222\",\"name\":\"Component gallery\",\"files\":[{\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\",\"path\":\"THIRD-PARTY-NOTICES.txt\",\"bytes\":51},{\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\",\"path\":\"index.html\",\"bytes\":36},{\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\",\"path\":\"screen.css\",\"bytes\":15},{\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\",\"path\":\"screen.js\",\"bytes\":12}],\"eventRules\":[{\"userConfigurable\":false,\"source\":{\"parameters\":{\"a\":\"text\",\"2\":2,\"10\":10},\"operation\":\"read\",\"mode\":\"live\",\"alias\":\"events\"},\"priority\":0,\"name\":\"Notice\",\"id\":\"notice\",\"defaults\":{\"timeoutSeconds\":30,\"returnBehavior\":\"stay\",\"pageId\":\"default\",\"enabled\":true,\"allowPayloadOverrides\":true},\"condition\":{\"field\":[\"active\"],\"equals\":true},\"allowedReturnBehaviors\":[],\"allowedPageIds\":[],\"allowTimeoutOverride\":false}],\"entrypoint\":\"index.html\",\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"connections\":[{\"required\":false,\"operations\":[{\"name\":\"read\",\"kind\":\"ws\"}],\"alias\":\"events\"}]}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"f6315e901d323f5c0a81c0619d4a999cd1488b56f705e65205d27f3570a5e954\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : \"text\"\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "QQ==",
+          "bytes" : 1,
+          "path" : "A.js",
+          "sha256" : "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd"
+        },
+        {
+          "base64" : "Xw==",
+          "bytes" : 1,
+          "path" : "_.js",
+          "sha256" : "d2e2adf7177b7a8afddbc12d1634cf23ea1a71020f6a1308070a16400fb68fde"
+        },
+        {
+          "base64" : "YQ==",
+          "bytes" : 1,
+          "path" : "a.js",
+          "sha256" : "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"A.js\",\"sha256\":\"559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd\"},{\"bytes\":1,\"path\":\"_.js\",\"sha256\":\"d2e2adf7177b7a8afddbc12d1634cf23ea1a71020f6a1308070a16400fb68fde\"},{\"bytes\":1,\"path\":\"a.js\",\"sha256\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "7fd67bbfe1290649be072c4a2a656f2f155d01d92138223b644cc8d8c3aabab0",
+      "id" : "ascii-file-order",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":1,\"path\":\"a.js\",\"sha256\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"},{\"bytes\":1,\"path\":\"_.js\",\"sha256\":\"d2e2adf7177b7a8afddbc12d1634cf23ea1a71020f6a1308070a16400fb68fde\"},{\"bytes\":1,\"path\":\"A.js\",\"sha256\":\"559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"7fd67bbfe1290649be072c4a2a656f2f155d01d92138223b644cc8d8c3aabab0\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"A.js\",\n      \"sha256\" : \"559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"_.js\",\n      \"sha256\" : \"d2e2adf7177b7a8afddbc12d1634cf23ea1a71020f6a1308070a16400fb68fde\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"a.js\",\n      \"sha256\" : \"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":1,\"path\":\"A.js\",\"sha256\":\"559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd\"},{\"bytes\":1,\"path\":\"_.js\",\"sha256\":\"d2e2adf7177b7a8afddbc12d1634cf23ea1a71020f6a1308070a16400fb68fde\"},{\"bytes\":1,\"path\":\"a.js\",\"sha256\":\"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Café\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "4fa25a20f1a084421391057522db4604a7f00cc1071046c4d74421f3ff692277",
+      "id" : "unicode-composed",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Café\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"4fa25a20f1a084421391057522db4604a7f00cc1071046c4d74421f3ff692277\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Café\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Café\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "1efaa29d4b0993140d01241f599508d211888adeb39ea0996f48f35c058de034",
+      "id" : "unicode-decomposed",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Café\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"1efaa29d4b0993140d01241f599508d211888adeb39ea0996f48f35c058de034\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Café\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"雪 🙂 / quote\\\" backslash\\\\ newline\\n tab\\t   \",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "fd328693b1c9f2a77e452f93e07a1983804498533151648a9603ea25d36361d3",
+      "id" : "unicode-supplementary-escaping",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"雪 🙂 / quote\\\" backslash\\\\ newline\\n tab\\t   \",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"fd328693b1c9f2a77e452f93e07a1983804498533151648a9603ea25d36361d3\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"雪 🙂 / quote\\\" backslash\\\\ newline\\n tab\\t   \",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"a\":\"letter\",\"é\":\"accent\",\"雪\":\"snow\",\"😀\":\"face\"}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "a8f536fb7a9728eabe1a04e25683da9353f601408debf0561b7d5b68b8f373e6",
+      "id" : "unicode-dictionary-order",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"a\":\"letter\",\"é\":\"accent\",\"雪\":\"snow\",\"😀\":\"face\"}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"a8f536fb7a9728eabe1a04e25683da9353f601408debf0561b7d5b68b8f373e6\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"a\" : \"letter\",\n          \"é\" : \"accent\",\n          \"雪\" : \"snow\",\n          \"😀\" : \"face\"\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "db24df95db40aa75447b35df335686889a062e5b9d61b40427cecb6e870a3a47",
+      "id" : "optional-null",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"defaultPageId\":null,\"deviceBehavior\":null,\"entrypoint\":\"index.html\",\"eventRules\":null,\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"pages\":null,\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"db24df95db40aa75447b35df335686889a062e5b9d61b40427cecb6e870a3a47\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"deviceBehavior\":{},\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "781d228ac42787a7b42c434cb384c12ddc45ec79011833e282a9c8caf0fc9272",
+      "id" : "optional-empty-behavior",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"deviceBehavior\":{},\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"deviceBehavior\" : {\n\n  },\n  \"digest\" : \"781d228ac42787a7b42c434cb384c12ddc45ec79011833e282a9c8caf0fc9272\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"pages\":[],\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "dadf02ea687158241cd36b959e4d4c3fe32262a153fa55b20e63a8e925fe295f",
+      "id" : "optional-empty-arrays",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"pages\":[],\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"dadf02ea687158241cd36b959e4d4c3fe32262a153fa55b20e63a8e925fe295f\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"pages\" : [\n\n  ],\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+        "validationFailed"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"deviceBehavior\":{\"audio\":{\"autoplay\":false}},\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "f86ddfad90b3f8c8fd80a15c85f52cb92b62b4c5f956a1f9acd61f17a03d7b61",
+      "id" : "optional-explicit-false",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"deviceBehavior\":{\"audio\":{\"autoplay\":false}},\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"deviceBehavior\" : {\n    \"audio\" : {\n      \"autoplay\" : false\n    }\n  },\n  \"digest\" : \"f86ddfad90b3f8c8fd80a15c85f52cb92b62b4c5f956a1f9acd61f17a03d7b61\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "decodeAccepted" : false,
+      "decodeIssue" : "typeMismatch:deviceBehavior.audio.autoplay",
+      "id" : "optional-invalid-audio-null",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"deviceBehavior\":{\"audio\":{\"autoplay\":null}},\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}"
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "decodeAccepted" : false,
+      "decodeIssue" : "valueNotFound:name",
+      "id" : "required-null-name",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":null,\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}"
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":3}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "e114af01f4623e5f49f09a7fac1f579cd57562dd1757bd0cf619d41620cfa2bd",
+      "id" : "double-integer",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":3.0}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"e114af01f4623e5f49f09a7fac1f579cd57562dd1757bd0cf619d41620cfa2bd\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : 3\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1.25}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "56999d91c476349a35bf33e467aea5bcec7898ad7a7232af3211ced00c965b81",
+      "id" : "double-fraction",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1.25}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"56999d91c476349a35bf33e467aea5bcec7898ad7a7232af3211ced00c965b81\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : 1.25\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1e-07}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "7585327c735fccc459d1b2c21620de985235b01bea171482c74ba95adaf7face",
+      "id" : "double-small-exponent",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1e-7}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"7585327c735fccc459d1b2c21620de985235b01bea171482c74ba95adaf7face\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : 1e-07\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1e+21}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "6bc0333dca6121f5fb4cc6763188af10408663603735f2fc6b54ff9f3b48dcd2",
+      "id" : "double-large-exponent",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1e+21}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"6bc0333dca6121f5fb4cc6763188af10408663603735f2fc6b54ff9f3b48dcd2\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : 1e+21\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":-0}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "456e73e3262491d241ace69092884c380cba27f76409ee4c4a157c7454694c59",
+      "id" : "double-negative-zero",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":-0.0}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"456e73e3262491d241ace69092884c380cba27f76409ee4c4a157c7454694c59\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : -0\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1.2345678901234567}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "fda5f55cf3b0e1795e047297f5db684a42b90f6c3432b0c82c95fe0ef9de7b37",
+      "id" : "double-precision",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1.2345678901234567}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"fda5f55cf3b0e1795e047297f5db684a42b90f6c3432b0c82c95fe0ef9de7b37\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : 1.2345678901234567\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":9007199254740992}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "d6a41f8bd2d48454b84c216058a001b1c012cf81248095657a9e9cf47891ff16",
+      "id" : "double-unsafe-integer",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":9007199254740993}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n    {\n      \"alias\" : \"events\",\n      \"operations\" : [\n        {\n          \"kind\" : \"ws\",\n          \"name\" : \"read\"\n        }\n      ],\n      \"required\" : false\n    }\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"d6a41f8bd2d48454b84c216058a001b1c012cf81248095657a9e9cf47891ff16\",\n  \"entrypoint\" : \"index.html\",\n  \"eventRules\" : [\n    {\n      \"allowTimeoutOverride\" : false,\n      \"allowedPageIds\" : [\n\n      ],\n      \"allowedReturnBehaviors\" : [\n\n      ],\n      \"condition\" : {\n        \"equals\" : true,\n        \"field\" : [\n          \"active\"\n        ]\n      },\n      \"defaults\" : {\n        \"allowPayloadOverrides\" : true,\n        \"enabled\" : true,\n        \"pageId\" : \"default\",\n        \"returnBehavior\" : \"stay\",\n        \"timeoutSeconds\" : 30\n      },\n      \"id\" : \"notice\",\n      \"name\" : \"Notice\",\n      \"priority\" : 0,\n      \"source\" : {\n        \"alias\" : \"events\",\n        \"mode\" : \"live\",\n        \"operation\" : \"read\",\n        \"parameters\" : {\n          \"10\" : 10,\n          \"2\" : 2,\n          \"a\" : 9007199254740992\n        }\n      },\n      \"userConfigurable\" : false\n    }\n  ],\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "decodeAccepted" : false,
+      "decodeIssue" : "typeMismatch:eventRules.Index 0.source.parameters.a",
+      "id" : "double-overflow-decode",
+      "inputManifestUTF8" : "{\"connections\":[{\"alias\":\"events\",\"operations\":[{\"kind\":\"ws\",\"name\":\"read\"}],\"required\":false}],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"eventRules\":[{\"allowTimeoutOverride\":false,\"allowedPageIds\":[],\"allowedReturnBehaviors\":[],\"condition\":{\"equals\":true,\"field\":[\"active\"]},\"defaults\":{\"allowPayloadOverrides\":true,\"enabled\":true,\"pageId\":\"default\",\"returnBehavior\":\"stay\",\"timeoutSeconds\":30},\"id\":\"notice\",\"name\":\"Notice\",\"priority\":0,\"source\":{\"alias\":\"events\",\"mode\":\"live\",\"operation\":\"read\",\"parameters\":{\"10\":10,\"2\":2,\"a\":1e400}},\"userConfigurable\":false}],\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}"
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":2,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "3d7ce491eea560081380fbcfb01822c521509816fb89ee91ba39137ee5815d88",
+      "id" : "invalid-schema",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":2,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"3d7ce491eea560081380fbcfb01822c521509816fb89ee91ba39137ee5815d88\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 2,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+        "unsupportedVersion"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"square\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "0784b44dc6944ca2f01340c18756f5f6d7224f5ac796a123dd43c5e9a0b42b1d",
+      "id" : "invalid-orientation",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"square\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"0784b44dc6944ca2f01340c18756f5f6d7224f5ac796a123dd43c5e9a0b42b1d\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"square\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+        "validationFailed"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"missing.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "5ef7c7f1752f864574ebc8b12b10d0a5eb7459142eff9e513390cbf8a1cda11f",
+      "id" : "missing-entrypoint",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"missing.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"5ef7c7f1752f864574ebc8b12b10d0a5eb7459142eff9e513390cbf8a1cda11f\",\n  \"entrypoint\" : \"missing.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+        "missingEntrypoint",
+        "validationFailed"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "432764e0887aca3db922a159e541df0eae0755eddbf5237a40c7e968ed3b03db",
+      "id" : "duplicate-file",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"432764e0887aca3db922a159e541df0eae0755eddbf5237a40c7e968ed3b03db\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+        "duplicatePath"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "38065252669be9d5c86a534df9f1fc1443941941e5130a4eebfd729064b292ee",
+      "id" : "empty-inventory",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"38065252669be9d5c86a534df9f1fc1443941941e5130a4eebfd729064b292ee\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[]",
+      "validationIssues" : [
+        "missingEntrypoint",
+        "sizeLimit",
+        "validationFailed"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":-1,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "ef333ac279ca2fcd163c65b4e1d2b54a7ee1ce8c3345f16549121b940a36d63c",
+      "id" : "negative-file-size",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":-1,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"ef333ac279ca2fcd163c65b4e1d2b54a7ee1ce8c3345f16549121b940a36d63c\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : -1,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":-1,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+        "sizeLimit"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "eA==",
+          "bytes" : 1,
+          "path" : "foo..bar",
+          "sha256" : "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":1,\"path\":\"foo..bar\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "1b557cb0589eb9c1cea82ced642a82764ba4bccd0aaef4b9114756c6fb839167",
+      "id" : "native-path-dotdot-substring",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"foo..bar\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"1b557cb0589eb9c1cea82ced642a82764ba4bccd0aaef4b9114756c6fb839167\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"foo..bar\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":1,\"path\":\"foo..bar\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        },
+        {
+          "base64" : "eA==",
+          "bytes" : 1,
+          "path" : "src//value.js",
+          "sha256" : "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"src//value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "5ef454ccec0ea1e76d7b82266ab004bddba642a0529e920bea6e600c4955b456",
+      "id" : "native-path-empty-component",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"src//value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"5ef454ccec0ea1e76d7b82266ab004bddba642a0529e920bea6e600c4955b456\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"src//value.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"src//value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        },
+        {
+          "base64" : "eA==",
+          "bytes" : 1,
+          "path" : "src/./value.js",
+          "sha256" : "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"src/./value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "993e6acca3b4f4003236bad2594acb1b381c64b491357f05515b147c40ecb457",
+      "id" : "native-path-dot-component",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"src/./value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"993e6acca3b4f4003236bad2594acb1b381c64b491357f05515b147c40ecb457\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    },\n    {\n      \"bytes\" : 1,\n      \"path\" : \"src/./value.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"src/./value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "eA==",
+          "bytes" : 1,
+          "path" : "Café.js",
+          "sha256" : "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        },
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "fcd2e6d54138e402014a77954dda6b16f22c7cdad53c1438321dd31193fa0a2d",
+      "id" : "native-path-unicode-nfd",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"fcd2e6d54138e402014a77954dda6b16f22c7cdad53c1438321dd31193fa0a2d\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"Café.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":1,\"path\":\"Café.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "eA==",
+          "bytes" : 1,
+          "path" : "../value.js",
+          "sha256" : "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        },
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"../value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "50d9ec1d2615f3fbc7dc650ef7c2abb6a3225ad4a04b8f716195a0035533b7e6",
+      "id" : "rejected-path-traversal",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"../value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"50d9ec1d2615f3fbc7dc650ef7c2abb6a3225ad4a04b8f716195a0035533b7e6\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"../value.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":1,\"path\":\"../value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+        "pathTraversal"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "eA==",
+          "bytes" : 1,
+          "path" : "%2E%2E/value.js",
+          "sha256" : "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        },
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":1,\"path\":\"%2E%2E/value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "632f2e03e68a607c56355009952421260fde0ce5f3e90c23312594bade88cf42",
+      "id" : "rejected-path-encoded-traversal",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"},{\"bytes\":1,\"path\":\"%2E%2E/value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"632f2e03e68a607c56355009952421260fde0ce5f3e90c23312594bade88cf42\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 1,\n      \"path\" : \"%2E%2E/value.js\",\n      \"sha256\" : \"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"\n    },\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":1,\"path\":\"%2E%2E/value.js\",\"sha256\":\"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\"},{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+        "pathTraversal"
+      ]
+    },
+    {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "",
+          "bytes" : 0,
+          "path" : "empty.css",
+          "sha256" : "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":0,\"path\":\"empty.css\",\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "fc194e38629df3ea0d2dbb9e5a174bc3fe3eb0320cb9557739ff0ad178866759",
+      "id" : "native-zero-byte-file",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":0,\"path\":\"empty.css\",\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"fc194e38629df3ea0d2dbb9e5a174bc3fe3eb0320cb9557739ff0ad178866759\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 0,\n      \"path\" : \"empty.css\",\n      \"sha256\" : \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":0,\"path\":\"empty.css\",\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    }
+  ],
+  "inventoryProbes" : [
+    {
+      "declaredExpandedBytes" : 2000,
+      "declaredFileCount" : 2000,
+      "id" : "inventory-at-2000",
+      "materializedAssets" : false,
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "declaredExpandedBytes" : 2001,
+      "declaredFileCount" : 2001,
+      "id" : "inventory-over-2000",
+      "materializedAssets" : false,
+      "validationIssues" : [
+        "sizeLimit"
+      ]
+    },
+    {
+      "declaredExpandedBytes" : 52428800,
+      "declaredFileCount" : 1,
+      "id" : "expanded-at-50MiB",
+      "materializedAssets" : false,
+      "validationIssues" : [
+
+      ]
+    },
+    {
+      "declaredExpandedBytes" : 52428801,
+      "declaredFileCount" : 1,
+      "id" : "expanded-over-50MiB",
+      "materializedAssets" : false,
+      "validationIssues" : [
+        "sizeLimit"
+      ]
+    }
+  ],
+  "parser" : {
+    "actualPersistedWriterVerified" : true,
+    "inputArgumentsUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"files\":[{\"base64\":\"TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K\",\"path\":\"THIRD-PARTY-NOTICES.txt\"},{\"base64\":\"PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+\",\"path\":\"index.html\"},{\"base64\":\"Ym9keXttYXJnaW46MH0K\",\"path\":\"screen.css\"},{\"base64\":\"KCgpPT57fSkoKTsK\",\"path\":\"screen.js\"}],\"name\":\"Component gallery\"}",
+    "normalizedRevision" : "22222222-2222-4222-8222-222222222222",
+    "resolved" : {
+      "assets" : [
+        {
+          "base64" : "TmF0aXZlIG1ldGFkYXRhIGZpeHR1cmU7IG5vIGNvbXBpbGVkIGRlcGVuZGVuY2llcy4K",
+          "bytes" : 51,
+          "path" : "THIRD-PARTY-NOTICES.txt",
+          "sha256" : "df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b"
+        },
+        {
+          "base64" : "PCFkb2N0eXBlIGh0bWw+PGRpdiBpZD0icm9vdCI+PC9kaXY+",
+          "bytes" : 36,
+          "path" : "index.html",
+          "sha256" : "74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c"
+        },
+        {
+          "base64" : "Ym9keXttYXJnaW46MH0K",
+          "bytes" : 15,
+          "path" : "screen.css",
+          "sha256" : "6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf"
+        },
+        {
+          "base64" : "KCgpPT57fSkoKTsK",
+          "bytes" : 12,
+          "path" : "screen.js",
+          "sha256" : "f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866"
+        }
+      ],
+      "canonicalUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "decodeAccepted" : true,
+      "digest" : "db24df95db40aa75447b35df335686889a062e5b9d61b40427cecb6e870a3a47",
+      "id" : "controller-gallery-default-resolution",
+      "inputManifestUTF8" : "{\"connections\":[],\"dashboardId\":\"11111111-1111-4111-8111-111111111111\",\"entrypoint\":\"index.html\",\"files\":[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}],\"name\":\"Component gallery\",\"revision\":\"22222222-2222-4222-8222-222222222222\",\"schemaVersion\":1,\"sdkVersion\":\"1\",\"target\":{\"height\":844,\"orientation\":\"portrait\",\"profileId\":\"fixture-phone\",\"safeArea\":{\"bottom\":34,\"left\":0,\"right\":0,\"top\":47},\"scale\":3,\"width\":390}}",
+      "persistedManifestUTF8" : "{\n  \"connections\" : [\n\n  ],\n  \"dashboardId\" : \"11111111-1111-4111-8111-111111111111\",\n  \"digest\" : \"db24df95db40aa75447b35df335686889a062e5b9d61b40427cecb6e870a3a47\",\n  \"entrypoint\" : \"index.html\",\n  \"files\" : [\n    {\n      \"bytes\" : 51,\n      \"path\" : \"THIRD-PARTY-NOTICES.txt\",\n      \"sha256\" : \"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"\n    },\n    {\n      \"bytes\" : 36,\n      \"path\" : \"index.html\",\n      \"sha256\" : \"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"\n    },\n    {\n      \"bytes\" : 15,\n      \"path\" : \"screen.css\",\n      \"sha256\" : \"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"\n    },\n    {\n      \"bytes\" : 12,\n      \"path\" : \"screen.js\",\n      \"sha256\" : \"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"\n    }\n  ],\n  \"name\" : \"Component gallery\",\n  \"revision\" : \"22222222-2222-4222-8222-222222222222\",\n  \"schemaVersion\" : 1,\n  \"sdkVersion\" : \"1\",\n  \"target\" : {\n    \"height\" : 844,\n    \"orientation\" : \"portrait\",\n    \"profileId\" : \"fixture-phone\",\n    \"safeArea\" : {\n      \"bottom\" : 34,\n      \"left\" : 0,\n      \"right\" : 0,\n      \"top\" : 47\n    },\n    \"scale\" : 3,\n    \"width\" : 390\n  }\n}",
+      "sortedInventoryUTF8" : "[{\"bytes\":51,\"path\":\"THIRD-PARTY-NOTICES.txt\",\"sha256\":\"df727597e09c4ab29cb08cef116dee2c88fa4c428657b75f7183174a0cb4fa6b\"},{\"bytes\":36,\"path\":\"index.html\",\"sha256\":\"74610718f7ec9ca7685cf46fa9e1b826561a5bcba94253fec5f4c0c0957a6c9c\"},{\"bytes\":15,\"path\":\"screen.css\",\"sha256\":\"6d6068180a5c710c68c8ee0e290cb9b37b3450492d3f9e3ae46083deb152fbcf\"},{\"bytes\":12,\"path\":\"screen.js\",\"sha256\":\"f2979a93a325fecf9605263bd141398a311c8e23388ed7dcff74f92f7e632866\"}]",
+      "validationIssues" : [
+
+      ]
+    }
+  },
+  "schemaVersion" : 1,
+  "sourceCommit" : "276c94b89ac7c6feb0e742116eaf2ebf55775240"
+}

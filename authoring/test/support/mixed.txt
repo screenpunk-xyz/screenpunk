@@ -1,0 +1,1 @@
+import { ArrowRight } from "lucide-react"; const lib = require("lucide-react"); globalThis.SHAPE = { same: ArrowRight === lib.ArrowRight, esm: lib.__esModule, getter: !!Object.getOwnPropertyDescriptor(lib,"ArrowRight")?.get };
