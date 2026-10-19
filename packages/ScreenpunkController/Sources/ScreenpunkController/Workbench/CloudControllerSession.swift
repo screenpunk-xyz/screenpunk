@@ -4,7 +4,7 @@ import CryptoKit
 import Security
 
 public enum ControllerCloudError: Error, Equatable {
-    case invalidConfiguration, invalidCallback, signedOut, accountMismatch, conflict, deletedProject, invalidSource, sourceLimitExceeded, invalidResponse, http(Int)
+    case invalidConfiguration, invalidCallback, signedOut, accountMismatch, conflict, deletedProject, invalidSource, invalidRemoveEntryIds, sourceLimitExceeded, invalidResponse, http(Int)
 }
 extension ControllerCloudError: LocalizedError {
     public var errorDescription: String? {
@@ -13,6 +13,8 @@ extension ControllerCloudError: LocalizedError {
         case .conflict: return "The project changed after review. Synchronize and review both revisions again."
         case .accountMismatch: return "This project is linked to a different cloud account."
         case .deletedProject: return "The cloud project is unavailable or deleted. Local source is preserved."
+        case .invalidRemoveEntryIds:
+            return "Deployment review accepts at most \(ControllerCloudDeploymentReview.maximumRemoveEntryIds) removal IDs. Each must be a UUID, and case variants count as the same ID."
         default: return nil
         }
     }

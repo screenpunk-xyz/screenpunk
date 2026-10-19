@@ -42,15 +42,19 @@ public struct ControllerCloudDeploymentReview: Codable, Sendable, Equatable, Ide
     public let expectedGenerationId: String
     public let resultingSet: ControllerCloudJSON
     public let resultingSetDigest: String
-    public func validate() throws {
-        // The API parses each removal as a UUID, so case variants are one entry.
+    /// Cloud deploy-review `removeEntryIds`: at most `maximumRemoveEntryIds` UUIDs, unique by parsed value.
+    /// The API parses each removal as a UUID, so case variants are one entry.
+    static func removeEntryIdsMatchCloudContract(_ removeEntryIds: [String]) -> Bool {
         let removalIds = removeEntryIds.compactMap { UUID(uuidString: $0) }
+        return removeEntryIds.count <= maximumRemoveEntryIds
+            && removalIds.count == removeEntryIds.count
+            && Set(removalIds).count == removalIds.count
+    }
+    public func validate() throws {
         guard schemaVersion == 1,
               [publicationId, installationId, operationId].allSatisfy({ UUID(uuidString: $0) != nil }),
               !expectedGenerationId.isEmpty, !resultingSetDigest.isEmpty,
-              removeEntryIds.count <= Self.maximumRemoveEntryIds,
-              removalIds.count == removeEntryIds.count,
-              Set(removalIds).count == removalIds.count else { throw ControllerCloudError.invalidResponse }
+              Self.removeEntryIdsMatchCloudContract(removeEntryIds) else { throw ControllerCloudError.invalidResponse }
     }
     public var summary: String {
         "Installation: \(installationId)\nPublication: \(publicationId)\nOperation: \(operationId)\nReviewed generation: \(expectedGenerationId)\nExplicit removals: \(removeEntryIds.count)\n\(resultingSet.prettyPrinted)"

@@ -238,5 +238,102 @@ final class ControllerCloudWorkbenchTests: XCTestCase {
         reject([entry(1), entry(1)], "duplicate uuid")
         reject([lower, upper], "case-variant duplicate uuid")
     }
+
+    func testReviewDeploymentRejectsInvalidRemovalIdsBeforeRequest() async throws {
+        let root = URL(fileURLWithPath: "/private/tmp/sp-cloud-review-removals-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let machine = root.appendingPathComponent("machine")
+        let store = try WorkspaceStore(documents: CloudCreationScheduleDocuments(root: root), machineRootPath: machine.path)
+        _ = try store.create(at: root.appendingPathComponent("workspace").path)
+        let controller = try ControllerService.bootstrap(root: root.appendingPathComponent("legacy"), deviceDirectoryURL: machine.appendingPathComponent("devices.json"), rendererFactory: { nil })
+        let environment = try WorkbenchBrokerEnvironment(runtimeDirectory: root.appendingPathComponent("runtime"))
+        let server = WorkbenchBrokerServer(environment: environment, domain: WorkbenchBrokerDomain(controller: controller, workspace: store, mutationGate: {}))
+        try server.start(); defer { server.stop() }
+        let client = WorkbenchBrokerClient(environment: environment); try client.connect(); defer { client.close() }
+        let config = try ControllerCloudConfiguration(baseURL: URL(string: "https://cloud.test")!, authorizationURL: URL(string: "https://cloud.test/issuer/auth")!, tokenURL: URL(string: "https://cloud.test/issuer/token")!, clientID: "screenpunk-cli", redirectURI: "http://127.0.0.1:43871/callback")
+        let cloud = try ControllerCloudWorkbench(configuration: config, client: client, machineRoot: machine, session: session())
+        func json(_ object: [String: Any]) throws -> (Int, Data) { (200, try JSONSerialization.data(withJSONObject: object)) }
+        func requestObject(_ request: URLRequest) throws -> [String: Any] {
+            if let data = request.httpBody { return try JSONSerialization.jsonObject(with: data) as! [String: Any] }
+            guard let stream = request.httpBodyStream else { return [:] }
+            stream.open(); defer { stream.close() }
+            var data = Data(), buffer = [UInt8](repeating: 0, count: 8192)
+            while true { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(contentsOf: buffer.prefix(count)) }
+            return try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        }
+        func contextResponse(_ request: URLRequest) throws -> (Int, Data)? {
+            let path = request.url?.path ?? ""
+            if path == "/controller/v1/session" { return try json(["userId": "account", "clientId": "screenpunk-cli"]) }
+            if path == "/controller/v1/workspaces" { return try json(["items": [["id": workspace, "name": "Workspace", "membershipId": "membership", "role": "owner"]], "nextCursor": NSNull()]) }
+            if path.hasSuffix("/connections") { return try json(["id": try requestObject(request)["controllerId"]!]) }
+            return nil
+        }
+        CloudWorkbenchHTTPStub.handler = { request in
+            if let ready = try contextResponse(request) { return ready }
+            throw ControllerCloudError.invalidResponse
+        }
+        try await cloud.selectWorkspace(workspace)
+
+        let publication = "05f76a3e-5a44-4cf0-8a5b-0d527f866591"
+        let installation = "cdbdf510-4785-44f9-860c-9bf9be25a318"
+        let operation = "ee643e93-5f50-4f44-9a84-1c430e57dfe0"
+        func entry(_ n: Int) -> String { String(format: "00000000-0000-4000-8000-%012x", n) }
+        let removalError = "Deployment review accepts at most 32 removal IDs. Each must be a UUID, and case variants count as the same ID."
+
+        func reject(_ removals: [String], _ label: String) async {
+            var paths: [String] = []
+            CloudWorkbenchHTTPStub.handler = { request in
+                paths.append(request.url?.path ?? request.url?.absoluteString ?? "")
+                return (500, Data("{}".utf8))
+            }
+            do {
+                _ = try await cloud.reviewDeployment(publicationId: publication, installationId: installation, operationId: operation, removeEntryIds: removals)
+                XCTFail("accepted \(label)")
+            } catch {
+                XCTAssertEqual(error as? ControllerCloudError, .invalidRemoveEntryIds, label)
+                XCTAssertEqual((error as? LocalizedError)?.errorDescription, removalError, label)
+            }
+            XCTAssertEqual(paths, [], "\(label) must not send a request")
+        }
+        await reject((0..<33).map(entry), "33 removal ids")
+        await reject(["not-a-uuid"], "invalid uuid")
+        let lower = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        let upper = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+        await reject([lower, upper], "case-variant duplicate uuid")
+
+        func accept(_ removals: [String], _ label: String) async throws {
+            var sent: [[String]] = []
+            CloudWorkbenchHTTPStub.handler = { request in
+                if let ready = try contextResponse(request) { return ready }
+                XCTAssertEqual(request.httpMethod, "POST", label)
+                XCTAssertEqual(request.url?.path, "/controller/v1/workspaces/\(self.workspace)/deployments/review", label)
+                let body = try requestObject(request)
+                let ids = try XCTUnwrap(body["removeEntryIds"] as? [String], label)
+                sent.append(ids)
+                XCTAssertEqual(body["publicationId"] as? String, publication, label)
+                XCTAssertEqual(body["installationId"] as? String, installation, label)
+                XCTAssertEqual(body["operationId"] as? String, operation, label)
+                return try json([
+                    "schemaVersion": 1,
+                    "publicationId": publication,
+                    "installationId": installation,
+                    "operationId": operation,
+                    "removeEntryIds": ids,
+                    "expectedGenerationId": "26acbf68-6685-4854-a1cf-43c3638d3767",
+                    "resultingSet": [:] as [String: Any],
+                    "resultingSetDigest": "9ba262c7a333ceeff9a94374571d110c11162929a5815a756589a6fd50391536"
+                ])
+            }
+            let review = try await cloud.reviewDeployment(publicationId: publication, installationId: installation, operationId: operation, removeEntryIds: removals)
+            XCTAssertEqual(sent, [removals], label)
+            XCTAssertEqual(review.removeEntryIds, removals, label)
+        }
+        try await accept([], "zero removals")
+        var boundary = (0..<32).map(entry)
+        boundary[10] = boundary[10].uppercased()
+        XCTAssertNotEqual(boundary[10], entry(10), "boundary fixture must preserve an uppercase UUID")
+        try await accept(boundary, "32 unique removal ids")
+    }
 }
 #endif

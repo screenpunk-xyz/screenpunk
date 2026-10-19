@@ -453,6 +453,7 @@ public actor ControllerCloudWorkbench {
         try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]).write(to: root.appendingPathComponent("automation-status.json"), options: .atomic)
     }
     public func reviewDeployment(publicationId: String, installationId: String, operationId: String = UUID().uuidString.lowercased(), removeEntryIds: [String] = []) async throws -> ControllerCloudDeploymentReview {
+        guard ControllerCloudDeploymentReview.removeEntryIdsMatchCloudContract(removeEntryIds) else { throw ControllerCloudError.invalidRemoveEntryIds }
         let lock = try await acquireLock(); defer { lock.close() }
         let context = try await context()
         guard [publicationId, installationId, operationId].allSatisfy({ UUID(uuidString: $0) != nil }) else { throw ControllerCloudError.invalidSource }
