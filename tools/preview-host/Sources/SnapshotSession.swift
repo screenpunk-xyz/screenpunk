@@ -20,6 +20,9 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
     private var homeAssistantBridge: HomeAssistantPreviewBridge?
     private var finished = false
     private var waitingForReady = false
+    private var readyDeadline = Date()
+    // Set while the authoring probe is publishing its own ready-bounded result.
+    private var authoringProbeActive = false
     // Read-only carousel imagery can capture a loaded page even without a runtime.ready call.
     private var documentThumbnail: Bool {
         ProcessInfo.processInfo.environment["SCREENPUNK_DOCUMENT_THUMBNAIL"] == "1"
@@ -173,13 +176,24 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+        readyDeadline = Date().addingTimeInterval(timeout)
+        let expire: () -> Void = { [weak self] in
             guard let self, !self.finished else { return }
             if self.waitingForReady {
                 self.fail("not_ready")
             } else {
                 self.fail("timeout")
             }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+            guard let self, !self.finished else { return }
+            // The probe reports `button` at this same deadline; let that result land.
+            if self.authoringProbeActive {
+                self.authoringProbeActive = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: expire)
+                return
+            }
+            expire()
         }
     }
 
@@ -255,7 +269,10 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
 
 #if DEBUG
     private func probeAuthoring(_ webView: WKWebView) {
+        authoringProbeActive = true
+        let readyBudgetMs = max(0, Int(readyDeadline.timeIntervalSinceNow * 1000))
         let script = """
+        const deadline=performance.now()+\(readyBudgetMs);
         const readyMilliseconds=Math.round(performance.now());
         const pause=()=>new Promise(r=>setTimeout(r,100));
         await pause();
@@ -264,7 +281,15 @@ final class SnapshotSession: NSObject, WKNavigationDelegate {
         check(!!document.querySelector('.recharts-surface'),'chart');
         const syntheticState=window.__authoringSyntheticState===true;
         const counter=button('Count');
-        if(syntheticState){counter?.click();await pause();check(button('Count')?.textContent.includes('1'),'button');}
+        if(syntheticState){
+          // runtime.ready runs before useScreenPreferences leaves the fieldset :disabled.
+          // Sample first. A poll already at the ready deadline is a miss, even when the sample matches.
+          const until=async ok=>{for(;;){const ready=ok();if(performance.now()>=deadline)return false;if(ready)return true;await pause()}};
+          let countButton;
+          const enabled=await until(()=>{countButton=button('Count');return !!countButton&&!countButton.matches(':disabled')});
+          if(!enabled)check(false,'button');
+          else{countButton.click();check(await until(()=>!!button('Count')?.textContent?.includes('1')),'button');}
+        }
         else {check(counter?.matches(':disabled'),'durable-edit-disabled');counter?.click();await pause();check(button('Count')?.textContent.includes('0'),'no-volatile-edit');check(document.body.textContent.includes('unsupported'),'unsupported-status');}
         button('Details')?.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));await pause();check(document.body.textContent.includes('Arrow keys'),'tabs');
         const trigger=button('Open dialog');trigger?.focus();trigger?.click();await pause();
