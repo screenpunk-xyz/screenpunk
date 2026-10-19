@@ -134,7 +134,8 @@ public struct DeviceRuntimeRootView: View {
                 .sheet(isPresented: $showSettings) { DeviceLocalSettingsSheet(host: host) }
 #endif
 #if os(iOS)
-                .fullScreenCover(isPresented: $showOnboarding, onDismiss: { if cloudAccountDelivery.onboardingDismissed() { onCloudAccountRequested?() }; if generalAfterOnboarding { generalAfterOnboarding = false; showSettings = true } }) { NavigationStack { productionLanding.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"; showOnboarding = false } } } } }
+                .onChange(of: appliedScreenReadyToShow) { ready in if ready { finishLocalOnboarding() } }
+                .fullScreenCover(isPresented: $showOnboarding, onDismiss: { if cloudAccountDelivery.onboardingDismissed() { onCloudAccountRequested?() }; if DeviceOnboardingFinish.settingsOnCoverDismiss(presentSettingsAfterDismiss: generalAfterOnboarding, screenApplied: host.runtime.activeRevision != nil) { showSettings = true }; generalAfterOnboarding = false }) { NavigationStack { productionLanding.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"; showOnboarding = false } } } } }
                 .sheet(isPresented: $showScreens) { NavigationStack { DeviceProductionScreens(host: host, opened: { showScreens = false }).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showScreens = false } } } } }
 #endif
                 .task(id: "\(host.runtime.activeRevision ?? "none"):\(host.genericConnectionGeneration.uuidString)") {
@@ -255,6 +256,24 @@ public struct DeviceRuntimeRootView: View {
         showOnboarding = true
     }
 
+    private var localPairingCompleted: Bool {
+        if case .completed = localPairingState(code: host.pendingPairingRequest?.code, requestID: host.pendingPairingRequest?.sessionNonceHex) { return true }
+        return false
+    }
+
+    /// True once local pairing has finished and a screen is already on the device.
+    private var appliedScreenReadyToShow: Bool {
+        DeviceOnboardingFinish.revealAppliedScreen(localRoute: onboardingRoute == "local", pairingCompleted: localPairingCompleted, screenApplied: host.runtime.activeRevision != nil)
+    }
+
+    private func finishLocalOnboarding() {
+        let finish = DeviceOnboardingFinish.done(screenApplied: host.runtime.activeRevision != nil, coverPresented: showOnboarding)
+        onboardingRoute = "connected"
+        generalAfterOnboarding = finish.presentSettingsAfterDismiss
+        if finish.dismissCover { showOnboarding = false }
+        if finish.showSettings { showSettings = true }
+    }
+
     private var productionAppIcon: Image? {
         guard let url = Bundle.module.url(forResource: "ScreenpunkAppIcon", withExtension: "png"),
               let image = UIImage(contentsOfFile: url.path) else { return nil }
@@ -277,7 +296,7 @@ public struct DeviceRuntimeRootView: View {
             }, retry: { if host.server != nil { host.cancelPairing(); host.resume() } else { onboardingRoute = "welcome" }; pairingSessionCode = nil }, cancel: {
                 if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"
                 if showOnboarding { showOnboarding = false }
-            }, done: { onboardingRoute = "connected"; if showOnboarding { generalAfterOnboarding = true; showOnboarding = false } else { showSettings = true } })
+            }, done: { finishLocalOnboarding() })
         } else if onboardingRoute == "cloud" {
             DeviceOnboardingCloudView(message: "Cloud sign-in is not available in this version.", cancel: { onboardingRoute = "welcome" })
         } else if host.runtime.isPaired && !showOnboarding {
@@ -376,7 +395,7 @@ public struct DeviceRuntimeRootView: View {
 
     private var localOnboardingActive: Bool {
 #if os(iOS)
-        onboardingRoute == "local"
+        DeviceOnboardingFinish.hidesDashboard(localRoute: onboardingRoute == "local", screenApplied: host.runtime.activeRevision != nil)
 #else
         false
 #endif
@@ -488,6 +507,42 @@ private struct DeviceMenuContainer<Menu: View>: ViewModifier {
     }
 }
 #endif
+
+/// Local onboarding ends on the dashboard once a screen is applied.
+/// Settings remains the landing only when nothing has been deployed yet.
+struct DeviceOnboardingFinish: Equatable {
+    /// Open Settings immediately. Used when onboarding is inline and no screen is applied.
+    var showSettings: Bool
+    /// Close the onboarding cover. Settings, if still wanted, open from its dismiss handler.
+    var dismissCover: Bool
+    /// Done asked for Settings, but the cover has to finish dismissing first.
+    var presentSettingsAfterDismiss: Bool
+
+    static func done(screenApplied: Bool, coverPresented: Bool) -> DeviceOnboardingFinish {
+        if screenApplied {
+            return .init(showSettings: false, dismissCover: coverPresented, presentSettingsAfterDismiss: false)
+        }
+        if coverPresented {
+            return .init(showSettings: false, dismissCover: true, presentSettingsAfterDismiss: true)
+        }
+        return .init(showSettings: true, dismissCover: false, presentSettingsAfterDismiss: false)
+    }
+
+    /// Cover `onDismiss`. A screen that lands while the cover is closing stays on the dashboard.
+    static func settingsOnCoverDismiss(presentSettingsAfterDismiss: Bool, screenApplied: Bool) -> Bool {
+        presentSettingsAfterDismiss && !screenApplied
+    }
+
+    /// The local route covers the dashboard only until a screen is applied.
+    static func hidesDashboard(localRoute: Bool, screenApplied: Bool) -> Bool {
+        localRoute && !screenApplied
+    }
+
+    /// The completed local step should leave once a screen is applied, including while the cover is up.
+    static func revealAppliedScreen(localRoute: Bool, pairingCompleted: Bool, screenApplied: Bool) -> Bool {
+        localRoute && pairingCompleted && screenApplied
+    }
+}
 
 /// Actual root intent delivery state. No SDK/configuration or management authority.
 struct DeviceCloudAccountRequestDelivery {
