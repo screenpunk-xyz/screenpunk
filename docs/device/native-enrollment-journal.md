@@ -1,0 +1,11 @@
+# Native enrollment preparation journal
+
+This internal, unmounted journal retains nonsecret preparation intents and phase assertions in an explicitly supplied, pre-existing Cloud root. Its root identity survives Local reset. It does not write installation history or enrollment evidence, qualify Keychain items, grant remote authority, or activate a production caller.
+
+An immutable attempt binds its exact target, candidate inode and predecessor frame before payload installation. Initial attempts hold the strict preparation codec bytes; later small frames refer to that intent. Independent retained predecessor bindings reject missing or replaced tips after restart. Unknown creation-before-identity-publication artifacts remain preserved and blocked; this orphan limitation must be resolved in the complete production recovery journey.
+
+The journal allows 64 preparations, one unfinished preparation, seven phase frames per preparation, at most 2 MiB reserved per preparation and 128 MiB total. Capacity is reserved before effects. Records are streamed and never pruned. A local receipt qualifies only the journal bytes for the current shared process epoch. Diagnostic reads do not acknowledge durability; restart and uncertain writes require exact latest-tip recommit. Replaying an older attempt cannot qualify a newer tip.
+
+Diagnostic callbacks run outside the mutex and file lock. A compact snapshot contains at most 448 references and the root/tip/epoch binding; one diagnostic is reconstructed at a time. The complete chain is revalidated between callbacks and after the final callback. Read-only reentry is supported. A callback mutation invalidates the outer stream, which throws outcomeUncertain; earlier deliveries remain historical observations, never authority.
+
+Qualification: exact ca56f5d5 plus the three implementation/test files passed 14 focused tests, 301 full Core tests and an iOS 16 arm64 module compile. An earlier full run encountered disk exhaustion in an unrelated package capacity test; its log is retained, and the full suite passed after owned scratch cleanup. Tests cover fault boundaries, inode replacement, restart, exact recommit, capacity and callback reentry/mutation. This is not physical power-loss, hostile same-user mutation, whole-tree rollback or live Keychain qualification.

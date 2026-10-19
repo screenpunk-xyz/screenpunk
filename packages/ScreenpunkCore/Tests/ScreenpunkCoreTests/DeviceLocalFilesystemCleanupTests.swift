@@ -171,6 +171,26 @@ final class DeviceLocalFilesystemCleanupTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent("sentinel")), "old")
         XCTAssertEqual(try String(contentsOf: f.device.appendingPathComponent("sentinel")), "new"); try sentinels(f)
     }
+    func testConfinedTraversalRootReplacementCannotDeleteDetachedOrReplacementHome() throws {
+        let f = try fixture(), moved = f.anchor.appendingPathExtension("detached")
+        addTeardownBlock { try? FileManager.default.removeItem(at: moved) }
+        try Data("original".utf8).write(to: f.device.appendingPathComponent("sentinel"))
+        var replaced = false
+        let cleanup = DeviceLocalFilesystemCleanup(plan: try f.plan(), fixtureTraversalRoot: f.anchor.path) { boundary, path in
+            if boundary == .afterOpen, path == f.device.path, !replaced {
+                replaced = true
+                try FileManager.default.moveItem(at: f.anchor, to: moved)
+                try FileManager.default.createDirectory(at: f.device, withIntermediateDirectories: true)
+                try Data("replacement".utf8).write(to: f.device.appendingPathComponent("sentinel"))
+            }
+        }
+        XCTAssertThrowsError(try cleanup.execute())
+        XCTAssertTrue(replaced)
+        XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent("device/sentinel")), "original")
+        XCTAssertEqual(try String(contentsOf: f.device.appendingPathComponent("sentinel")), "replacement")
+        XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent("management/journal")), "protected")
+        XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent("reset/intent")), "pending")
+    }
     func testReplacementBeforeUnlinkCannotDeleteNewFile() throws {
         let f = try fixture(), path = f.device.appendingPathComponent("file"), moved = f.anchor.appendingPathComponent("moved-file")
         try Data("old".utf8).write(to: path)

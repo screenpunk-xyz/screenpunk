@@ -18,6 +18,7 @@ public struct DeviceRuntimeRootView: View {
     @State private var showOnboarding = false
     @State private var generalAfterOnboarding = false
     @State private var onboardingAfterDismissal = false
+    @State private var cloudAccountDelivery = DeviceCloudAccountRequestDelivery()
     @State private var initialSetupPage: DeviceSetupPage?
     @State private var connectorRevision = UUID()
 #endif
@@ -43,9 +44,11 @@ public struct DeviceRuntimeRootView: View {
 
 #if canImport(Network) && canImport(Security)
     private var onLocalReset: (() -> Void)? = nil
+    private var onCloudAccountRequested: (() -> Void)? = nil
 
-    public init(host: DeviceLANHost, onLocalReset: (() -> Void)? = nil) {
+    public init(host: DeviceLANHost, onLocalReset: (() -> Void)? = nil, onCloudAccountRequested: (() -> Void)? = nil) {
         self.onLocalReset = onLocalReset
+        self.onCloudAccountRequested = onCloudAccountRequested
         _fallback = State(initialValue: host.runtime)
         _host = StateObject(wrappedValue: host)
     }
@@ -131,7 +134,7 @@ public struct DeviceRuntimeRootView: View {
                 .sheet(isPresented: $showSettings) { DeviceLocalSettingsSheet(host: host) }
 #endif
 #if os(iOS)
-                .fullScreenCover(isPresented: $showOnboarding, onDismiss: { if generalAfterOnboarding { generalAfterOnboarding = false; showSettings = true } }) { NavigationStack { productionLanding.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"; showOnboarding = false } } } } }
+                .fullScreenCover(isPresented: $showOnboarding, onDismiss: { if cloudAccountDelivery.onboardingDismissed() { onCloudAccountRequested?() }; if generalAfterOnboarding { generalAfterOnboarding = false; showSettings = true } }) { NavigationStack { productionLanding.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"; showOnboarding = false } } } } }
                 .sheet(isPresented: $showScreens) { NavigationStack { DeviceProductionScreens(host: host, opened: { showScreens = false }).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showScreens = false } } } } }
 #endif
                 .task(id: "\(host.runtime.activeRevision ?? "none"):\(host.genericConnectionGeneration.uuidString)") {
@@ -280,7 +283,17 @@ public struct DeviceRuntimeRootView: View {
         } else if host.runtime.isPaired && !showOnboarding {
             DeviceOnboardingConnectedView(connectionDescription: "Connected to Screenpunk on your Mac", hasScreens: !(host.server?.installedManifests.isEmpty ?? true), screens: { showScreens = true }, settings: { initialSetupPage = .settings; showDeviceMenu = true })
         } else {
-            DeviceOnboardingWelcomeView(appIcon: productionAppIcon, cloud: { onboardingRoute = "cloud" }, local: { pairingSessionCode = nil; onboardingRoute = "local" })
+            DeviceOnboardingWelcomeView(appIcon: productionAppIcon, cloud: requestCloudAccount, local: { pairingSessionCode = nil; onboardingRoute = "local" })
+        }
+    }
+    private func requestCloudAccount() {
+        guard let onCloudAccountRequested else { onboardingRoute = "cloud"; return }
+        onboardingRoute = "welcome"
+        generalAfterOnboarding = false
+        if cloudAccountDelivery.request(onboardingPresented: showOnboarding) {
+            onCloudAccountRequested()
+        } else {
+            showOnboarding = false // Deliver only after actual cover dismissal.
         }
     }
     private func localPairingState(code: String?, requestID: String?) -> DeviceOnboardingLocalState {
@@ -475,3 +488,17 @@ private struct DeviceMenuContainer<Menu: View>: ViewModifier {
     }
 }
 #endif
+
+/// Actual root intent delivery state. No SDK/configuration or management authority.
+struct DeviceCloudAccountRequestDelivery {
+    private(set) var pending = false
+    mutating func request(onboardingPresented: Bool) -> Bool {
+        guard !pending else { return false }
+        if onboardingPresented { pending = true; return false }
+        return true
+    }
+    mutating func onboardingDismissed() -> Bool {
+        guard pending else { return false }
+        pending = false; return true
+    }
+}

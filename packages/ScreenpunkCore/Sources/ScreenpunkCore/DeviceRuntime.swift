@@ -22,7 +22,7 @@ public struct DeviceRuntime: Sendable, Equatable {
         self.advertisement = advertisement
     }
 
-    public var isPaired: Bool { pairing.owner != nil }
+    public var isPaired: Bool { !pairing.approvedControllers.isEmpty }
     public var pairingCode: String? { pairing.session?.expectedCode }
 
     public mutating func advertise(on hub: LoopbackDiscovery) {
@@ -56,7 +56,7 @@ public struct DeviceRuntime: Sendable, Equatable {
         revision: StoredRevision,
         failAt: DeploymentPhase? = nil
     ) throws -> DeploymentRecord {
-        guard pairing.owner != nil else { throw TransferFailure.notPaired }
+        guard isPaired else { throw TransferFailure.notPaired }
         if let last = lastDeployment, last.deploymentId == record.deploymentId {
             return last
         }

@@ -1,4 +1,7 @@
 name: ScreenpunkiOS
+configFiles:
+  Debug: ../../config/apple-team.xcconfig
+  Release: ../../config/apple-team.xcconfig
 options:
   bundleIdPrefix: xyz.screenpunk
   deploymentTarget:

@@ -22,11 +22,7 @@ public struct ScreenpunkProductionReleaseTrust: DistributionReleaseTrust {
 
     public func authenticateRelease(root: URL, manifestBytes: Data,
                                     manifest: DistributionManifest) throws {
-        guard manifest.provenance == "authenticated-release", manifest.authoringKitComplete,
-              Set(manifest.files.filter(\.executable).map(\.path)) == Set(Self.executableIdentifiers.keys),
-              Set(Self.executableIdentifiers.keys).isSubset(of: Set(manifest.files.map(\.path))) else {
-            throw DistributionError.untrustedRelease
-        }
+        let identifiers = try Self.executablePolicy(manifest)
         let path = root.appendingPathComponent(DistributionArchive.authenticationFile)
         let bytes = try Data(contentsOf: path)
         guard let authentication = try? JSONDecoder().decode(DistributionAuthentication.self, from: bytes),
@@ -38,9 +34,26 @@ public struct ScreenpunkProductionReleaseTrust: DistributionReleaseTrust {
               key.isValidSignature(signature, for: DistributionArchive.signatureMessage(manifestBytes)) else {
             throw DistributionError.untrustedRelease
         }
-        for (member, identifier) in Self.executableIdentifiers {
+        for (member, identifier) in identifiers {
             try verifyDeveloperID(root.appendingPathComponent(member), identifier: identifier)
         }
+    }
+
+    static func executablePolicy(_ manifest: DistributionManifest) throws -> [String: String] {
+        // Older authenticated releases remain readable. New validator closures
+        // require both the bundled parser and the separately signed Node image.
+        var identifiers = executableIdentifiers
+        let validator = "Resources/ConnectionValidator/"
+        if manifest.files.contains(where: { $0.path.hasPrefix(validator) }) {
+            guard manifest.files.contains(where: { $0.path == validator + "validate.cjs" }) else { throw DistributionError.untrustedRelease }
+            identifiers[validator + "node"] = "xyz.screenpunk.connection-validator.node"
+        }
+        guard manifest.provenance == "authenticated-release", manifest.authoringKitComplete,
+              Set(manifest.files.filter(\.executable).map(\.path)) == Set(identifiers.keys),
+              Set(identifiers.keys).isSubset(of: Set(manifest.files.map(\.path))) else {
+            throw DistributionError.untrustedRelease
+        }
+        return identifiers
     }
 
     private func verifyDeveloperID(_ executable: URL, identifier: String) throws {

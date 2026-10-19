@@ -13,6 +13,19 @@ import Darwin
         var fired = false
         return .init(root: root, persistenceBoundary: { if $0 == point && !fired { fired = true; throw Injected.failure } })
     }
+    func testPhysicalContainerChildCreationAndSymlinkRefusalKeepTargetUntouched() throws {
+        let base = makeRoot(); try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false)
+        let target = base.appendingPathComponent("target", isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        let alias = base.appendingPathComponent("alias", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+        let writer = ScreenPreferenceAtomicWriter(root: alias.appendingPathComponent("settings"))
+        XCTAssertThrowsError(try writer.withSession { _ = try $0.read() })
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+        let physical = ScreenPreferenceAtomicWriter(root: base.appendingPathComponent("settings"))
+        XCTAssertNoThrow(try physical.withSession { _ = try $0.read() })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: base.appendingPathComponent("settings").path))
+    }
     func testProtectionObservabilityAccommodationIsSimulatorOnly() {
         XCTAssertFalse(ScreenPreferenceAtomicWriter.protectionReadbackMatches(nil, required: "required", simulator: false))
         XCTAssertTrue(ScreenPreferenceAtomicWriter.protectionReadbackMatches(nil, required: "required", simulator: true))

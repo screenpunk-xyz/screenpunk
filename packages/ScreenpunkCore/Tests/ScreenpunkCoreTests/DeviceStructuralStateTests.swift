@@ -66,6 +66,23 @@ final class DeviceStructuralStateTests: XCTestCase {
         state.activeRevision = "contradiction"
         XCTAssertEqual(read(legacy: .bytes(try encode(state)), packages: [package]), .blocked(.invalidState))
     }
+    func testLegacyApprovedControllersRemainStrictPublicEvidence() throws {
+        var state = legacy()
+        state.approvedControllers = [owner, .init(role: .controller, publicKey: Array(repeating: 8, count: 32))]
+        let bytes = try encode(state)
+        #if canImport(CryptoKit)
+        guard case .legacyUnbound(let evidence) = read(legacy: .bytes(bytes), packages: [package]) else { return XCTFail() }
+        XCTAssertEqual(evidence.originalBytes, bytes)
+        XCTAssertEqual(evidence.state.approvedControllers, state.approvedControllers)
+        #else
+        XCTAssertEqual(read(legacy: .bytes(bytes), packages: [package]), .blocked(.digestUnavailable))
+        #endif
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        var controllers = try XCTUnwrap(object["approvedControllers"] as? [[String: Any]])
+        controllers[0]["unknown"] = true; object["approvedControllers"] = controllers
+        XCTAssertEqual(read(legacy: .bytes(try JSONSerialization.data(withJSONObject: object)), packages: [package]), .blocked(.invalidJSON))
+    }
+
     func testBoundIdentitySelectionReferencesAndLimits() throws {
         let valid = snapshot(); XCTAssertNotEqual(valid.entries[0].displayName, valid.entries[0].revision.name); XCTAssertEqual(read(.bytes(try encode(valid)), packages: [package]), .bound(valid))
         var changed = valid; changed.entries.append(changed.entries[0])

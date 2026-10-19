@@ -138,7 +138,7 @@ public struct WorkbenchSession: Sendable, Equatable {
         guard let index = devices.firstIndex(where: { $0.profile.deviceId == deviceId }) else {
             throw TransferFailure.notPaired
         }
-        if devices[index].owner != controllerIdentity {
+        if devices[index].owner != controllerIdentity || !phone.pairing.isApproved(controllerIdentity) {
             throw TransferFailure.notPaired
         }
         if devices[index].reachable == false {

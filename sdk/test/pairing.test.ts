@@ -153,7 +153,6 @@ test("pairing scenarios are shared with Swift and cover every failure class", ()
     "rateLimited",
     "codeMismatch",
     "identityChanged",
-    "secondOwner",
     "invalidIdentity",
     "busy"
   ] as const) {
@@ -203,10 +202,11 @@ test("expiry, rate limit, second owner, and identity change", () => {
   state = beginPairing(emptyPairingState(), transcriptFor(honest.controllerPublicKey), owner, t0);
   state = confirmPairing(state, honest.code, owner, t0);
   assert.deepEqual(state.owner?.publicKey, owner.publicKey);
-  assert.throws(
-    () => beginPairing(state, transcriptFor(mitm.controllerPublicKey), attacker, t0),
-    (err: unknown) => err instanceof PairingError && err.failure === "secondOwner"
-  );
+  state = beginPairing(state, transcriptFor(mitm.controllerPublicKey), attacker, t0);
+  assert.equal(state.approvedControllers?.length, 1);
+  state = confirmPairing(state, matchingCode(transcriptFor(mitm.controllerPublicKey)), attacker, t0);
+  assert.equal(state.approvedControllers?.length, 2);
+  assert.deepEqual(state.owner?.publicKey, owner.publicKey);
 
   state = beginPairing(emptyPairingState(), transcriptFor(honest.controllerPublicKey), owner, t0);
   assert.throws(

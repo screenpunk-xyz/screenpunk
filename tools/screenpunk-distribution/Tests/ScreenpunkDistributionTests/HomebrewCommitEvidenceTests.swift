@@ -78,4 +78,28 @@ final class HomebrewCommitEvidenceTests: XCTestCase {
         try FileManager.default.removeItem(at: f.bin.appendingPathComponent("screenpunk-mcp"))
         XCTAssertThrowsError(try f.evidence.assertReady(stateDirectory: f.directory))
     }
+
+    func testInterruptedUpgradeRollbackNeedsRestoredLinksAndFreshArtifactConfig() throws {
+        let f = try Fixture()
+        try f.config(); try f.receipt(); try f.link("screenpunk"); try f.link("screenpunk-mcp")
+        try f.evidence.prepareInstall(stateDirectory: f.directory)
+        try f.config()
+        XCTAssertNoThrow(try f.evidence.assertReady(stateDirectory: f.directory))
+        // Homebrew has begun replacing links, but has not committed the successor receipt.
+        let successor = f.base.appendingPathComponent("successor/bin/screenpunk")
+        try FileManager.default.createDirectory(at: successor.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try Data("successor".utf8).write(to: successor)
+        try FileManager.default.removeItem(at: f.bin.appendingPathComponent("screenpunk"))
+        try FileManager.default.createSymbolicLink(at: f.bin.appendingPathComponent("screenpunk"),
+                                                 withDestinationURL: successor)
+        XCTAssertThrowsError(try f.evidence.assertReady(stateDirectory: f.directory))
+        // Restoring an older package runs its rearm hook before both artifacts finish.
+        try f.evidence.prepareInstall(stateDirectory: f.directory)
+        try FileManager.default.removeItem(at: f.bin.appendingPathComponent("screenpunk"))
+        try f.link("screenpunk")
+        XCTAssertThrowsError(try f.evidence.assertReady(stateDirectory: f.directory))
+        try f.config()
+        XCTAssertNoThrow(try f.evidence.assertReady(stateDirectory: f.directory))
+    }
 }

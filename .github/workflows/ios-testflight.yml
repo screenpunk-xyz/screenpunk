@@ -11,6 +11,10 @@ on:
         description: Unused numeric build number verified in App Store Connect.
         type: string
         required: true
+      internal_concurrent_candidate:
+        description: Enable concurrent control only in this internal staging TestFlight qualification candidate. Does not assert physical qualification.
+        type: boolean
+        default: false
       upload_to_testflight:
         description: Upload the signed IPA to App Store Connect for TestFlight processing. Never submits an App Store release.
         type: boolean
@@ -27,9 +31,13 @@ jobs:
   apple-precheck:
     name: apple-precheck
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate internal candidate archive policy
+        run: |
+          python3 scripts/ci/test-ios-release-metadata.py
+          python3 scripts/ci/test-ios-candidate.py
       - name: Unsigned Apple tests and compile
         run: ./scripts/ci/apple.sh
 
@@ -42,6 +50,10 @@ jobs:
     env:
       IOS_MARKETING_VERSION: ${{ inputs.ios_marketing_version }}
       IOS_BUILD_NUMBER: ${{ inputs.ios_build_number }}
+      # Internal staging only. Missing configuration fails closed; production
+      # requires a separately reviewed release path.
+      IOS_STAGING_INFO_PLIST_BASE64: ${{ secrets.IOS_STAGING_INFO_PLIST_BASE64 }}
+      IOS_STAGING_INFO_SHA256: ${{ vars.IOS_STAGING_INFO_SHA256 }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       IOS_SIGNING_CERT_P12_BASE64: ${{ secrets.IOS_SIGNING_CERT_P12_BASE64 }}
       IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
@@ -49,6 +61,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      IOS_INTERNAL_CONCURRENT_CANDIDATE: ${{ inputs.internal_concurrent_candidate }}
       UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,7 +73,7 @@ jobs:
       - name: Signed IPA export
         run: .github/workflows/scripts/ios-archive-export.sh
       - name: Upload signed IPA artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: screenpunk-ios-ipa
           path: ${{ runner.temp }}/screenpunk-release/Screenpunk.ipa

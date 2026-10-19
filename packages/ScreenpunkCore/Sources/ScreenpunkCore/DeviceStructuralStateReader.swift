@@ -113,7 +113,7 @@ public enum DeviceStructuralStateReader {
         case .entry: keys = ["entryID","provenance","displayName","revision","packageDirectory"]
         case .revision: keys = ["revision","dashboardId","name","digest","orientation","width","height"]
         case .owner: keys = ["role","publicKey"]
-        case .legacy: keys = ["owner","activeRevision","activeStoredRevision","lastDeployment","screenSet","settings","contentOwner","savedAt"]
+        case .legacy: keys = ["approvedControllers","owner","activeRevision","activeStoredRevision","lastDeployment","screenSet","settings","contentOwner","savedAt"]
         case .set: keys = ["deploymentId","contentDigest","deployedSelectedDashboardId","grantSet","screens","selectedDashboardId"]
         case .installed: keys = ["name","revision","deployment","packageDirectory"]
         case .deployment: keys = ["deploymentId","revision","dashboardId","deviceId","phase","error"]
@@ -129,7 +129,7 @@ public enum DeviceStructuralStateReader {
             let child: Shape?
             switch (type, key) {
             case (.snapshot,"entries"): child = .entry
-            case (.snapshot,"contentOwner"), (.legacy,"owner"), (.legacy,"contentOwner"): child = .owner
+            case (.snapshot,"contentOwner"), (.legacy,"owner"), (.legacy,"contentOwner"), (.legacy,"approvedControllers"): child = .owner
             case (.entry,"revision"), (.installed,"revision"), (.legacy,"activeStoredRevision"): child = .revision
             case (.installed,"deployment"), (.legacy,"lastDeployment"): child = .deployment
             case (.legacy,"screenSet"): child = .set
