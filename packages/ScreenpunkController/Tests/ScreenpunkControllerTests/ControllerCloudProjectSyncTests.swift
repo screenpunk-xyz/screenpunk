@@ -138,15 +138,15 @@ final class ControllerCloudProjectSyncTests: XCTestCase {
         let limits = ControllerCloudSourceLimits.self
         XCTAssertEqual(limits.maximumFiles, 2_000)
         XCTAssertEqual(limits.maximumTotalBytes, 50 * 1024 * 1024)
-        XCTAssertEqual(limits.maximumFileBase64Characters, 69_905_068)
         XCTAssertEqual(limits.maximumFileBytes, 52_428_801)
         XCTAssertEqual(limits.maximumSyncBodyBytes, 71_000_000)
         XCTAssertEqual(limits.base64CharacterCount(1), Data([0]).base64EncodedString().count)
         XCTAssertEqual(limits.base64CharacterCount(2), Data([0, 0]).base64EncodedString().count)
         XCTAssertEqual(limits.base64CharacterCount(3), Data([0, 0, 0]).base64EncodedString().count)
-        XCTAssertEqual(limits.base64CharacterCount(limits.maximumFileBytes), limits.maximumFileBase64Characters)
-        XCTAssertGreaterThan(limits.base64CharacterCount(limits.maximumFileBytes + 1), limits.maximumFileBase64Characters)
-        XCTAssertEqual(limits.base64CharacterCount(limits.maximumTotalBytes), limits.maximumFileBase64Characters)
+        // 50 MiB and one extra byte encode to the same 69,905,068-character length; the next byte does not.
+        XCTAssertEqual(limits.base64CharacterCount(limits.maximumFileBytes), 69_905_068)
+        XCTAssertEqual(limits.base64CharacterCount(limits.maximumTotalBytes), 69_905_068)
+        XCTAssertGreaterThan(limits.base64CharacterCount(limits.maximumFileBytes + 1), 69_905_068)
         XCTAssertTrue(limits.allowsSyncBody(byteCount: limits.maximumSyncBodyBytes))
         XCTAssertFalse(limits.allowsSyncBody(byteCount: limits.maximumSyncBodyBytes + 1))
         XCTAssertEqual(ControllerCloudError.sourceLimitExceeded.errorDescription,

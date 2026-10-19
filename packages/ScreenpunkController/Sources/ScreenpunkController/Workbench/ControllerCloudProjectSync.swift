@@ -9,7 +9,6 @@ import Foundation
 public enum ControllerCloudSourceLimits {
     public static let maximumFiles = 2_000
     public static let maximumTotalBytes = 50 * 1024 * 1024
-    public static let maximumFileBase64Characters = 69_905_068
     public static let maximumFileBytes = 52_428_801
     public static let maximumSyncBodyBytes = 71_000_000
     public static func base64CharacterCount(_ rawBytes: Int) -> Int {
@@ -34,8 +33,7 @@ public struct ControllerCloudSourceSnapshot: Codable, Sendable, Equatable {
         guard files.count <= ControllerCloudSourceLimits.maximumFiles,
               files.values.reduce(0, {$0 + $1.count}) <= ControllerCloudSourceLimits.maximumTotalBytes else { throw ControllerCloudError.sourceLimitExceeded }
         var paths = WorkspacePathCollisionDetector()
-        for (path, data) in files {
-            guard data.count <= ControllerCloudSourceLimits.maximumFileBytes else { throw ControllerCloudError.sourceLimitExceeded }
+        for (path, _) in files {
             guard WorkspaceValidation.member(path), !ControllerCloudSourcePolicy.excludes(path) else { throw ControllerCloudError.invalidSource }
             try paths.insert(path)
         }
