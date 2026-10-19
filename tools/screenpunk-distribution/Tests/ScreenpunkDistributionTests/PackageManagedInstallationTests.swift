@@ -32,16 +32,20 @@ private final class PackageObservation: WorkbenchServiceObservation {
     var healthy = true
     var failStop = false
     var stops = 0
+    var onStop: () -> Void = {}
     func drainAndReportInterruptedJobs() throws -> [String] { [] }
     func healthy(expectedVersion: String) throws -> Bool { healthy }
     func stopAndReportInterruptedJobs() throws -> [String] {
         if failStop { throw DistributionError.unavailable }
-        stops += 1; return ["fixture-job"]
+        stops += 1; onStop(); return ["fixture-job"]
     }
     func compatibleGUIConsumers() throws -> [String] { [] }
 }
-private struct FixtureCommit: PackageCommitChecking {
-    func prepareInstall(stateDirectory: Int32) throws {}
+private final class FixtureCommit: PackageCommitChecking {
+    var preparationError: (any Error)?
+    func prepareInstall(stateDirectory: Int32) throws {
+        if let preparationError { throw preparationError }
+    }
     func assertReady(stateDirectory: Int32) throws {}
 }
 
@@ -52,9 +56,12 @@ final class PackageManagedInstallationTests: XCTestCase {
         let paths: InstallationPaths
         let launchctl = PackageLaunchctl()
         let observation = PackageObservation()
+        let commit = FixtureCommit()
         var preparations = 0
         var preparationError: (any Error)?
         var unmanaged = false
+        var stoppedRemovalError: (any Error)?
+        var stoppedRemovalChecks = 0
         let adapter: LaunchdUserAdapter
         init() throws {
             base = URL(fileURLWithPath: "/private/tmp/sp-package-" + UUID().uuidString)
@@ -92,7 +99,10 @@ final class PackageManagedInstallationTests: XCTestCase {
                 },
                 assertUnmanagedServiceAbsent: { [unowned self] in
                     if self.unmanaged { throw DistributionError.conflict }; return nil
-                }, commit: FixtureCommit())
+                }, assertStoppedRemovalSafe: { [unowned self] in
+                    self.stoppedRemovalChecks += 1
+                    if let error = self.stoppedRemovalError { throw error }
+                }, commit: commit)
         }
     }
 
@@ -178,6 +188,55 @@ final class PackageManagedInstallationTests: XCTestCase {
         XCTAssertThrowsError(try f.installation().rearm())
         f.launchctl.state = .absent
         XCTAssertThrowsError(try f.installation().start())
+    }
+
+    func testInterruptedBootoutCanRetryFromRegisteredIdleJobWithoutAnotherBrokerStop() throws {
+        let f = try Fixture(); let installation = f.installation()
+        try installation.start()
+        f.observation.onStop = { [unowned f] in f.launchctl.state = .registeredWithoutProcess }
+        f.launchctl.failBootout = true
+        XCTAssertThrowsError(try installation.deactivate())
+        XCTAssertEqual(f.launchctl.state, .registeredWithoutProcess)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.paths.launchAgent.path))
+        XCTAssertEqual(f.observation.stops, 1)
+        f.launchctl.failBootout = false
+        XCTAssertEqual(try installation.deactivate(), [])
+        XCTAssertEqual(f.observation.stops, 1, "Retry must use positive idle-job evidence")
+        XCTAssertEqual(f.launchctl.state, .absent)
+        XCTAssertThrowsError(try installation.start())
+        try installation.rearm()
+        try installation.start()
+        XCTAssertEqual(f.launchctl.state, .running)
+    }
+
+    func testStoppedRemovalStillRequiresGUIEvidenceAndDoesNotChangeStartupPolicy() throws {
+        let f = try Fixture(); let installation = f.installation()
+        try installation.start()
+        XCTAssertEqual(f.stoppedRemovalChecks, 0)
+        f.launchctl.state = .registeredWithoutProcess
+        f.stoppedRemovalError = DistributionError.unavailable
+        XCTAssertThrowsError(try installation.deactivate())
+        XCTAssertFalse(f.launchctl.calls.contains { $0.first == "bootout" })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.paths.launchAgent.path))
+        f.stoppedRemovalError = nil
+        XCTAssertEqual(try installation.deactivate(), [])
+        XCTAssertEqual(f.stoppedRemovalChecks, 2)
+        XCTAssertEqual(f.launchctl.state, .absent)
+    }
+
+    func testFailedRollbackRearmRetainsRemovalFenceUntilCommitPreparationSucceeds() throws {
+        let f = try Fixture(); let installation = f.installation()
+        try installation.start(); _ = try installation.deactivate()
+        f.commit.preparationError = DistributionError.insufficientSpace
+        XCTAssertThrowsError(try installation.rearm())
+        XCTAssertThrowsError(try installation.start())
+        XCTAssertEqual(f.launchctl.state, .absent)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.root.path))
+        f.commit.preparationError = nil
+        try installation.rearm()
+        XCTAssertEqual(f.launchctl.state, .absent, "Rearm must not start a process")
+        try installation.start()
+        XCTAssertEqual(f.launchctl.state, .running)
     }
 
     func testFailedFencePublicationLeavesNoPartialMarkerAndCanRetry() throws {

@@ -214,3 +214,24 @@ workflow treats that as failure.
 - Embedding MCP / controller / preview-host in the Mac app bundle
 - Privacy manifests in the app targets
 - Apple processing, TestFlight review, and physical install evidence
+
+### Internal staging concurrent-control candidate
+
+The iOS workflow input `internal_concurrent_candidate` defaults to false. Set it
+explicitly for an internal TestFlight qualification build. It adds the distinct
+`SCREENPUNK_INTERNAL_STAGING_CONCURRENT_CANDIDATE` compile condition and derives a
+candidate marker only after the original protected staging plist SHA and complete
+configuration have passed validation. Archive and IPA validation require the
+marker, recorded compile flag, build mode and exact staging API/project/bundle bindings.
+The candidate export uses `testFlightInternalTestingOnly=true`, so Xcode prevents
+external TestFlight or App Store distribution. The existing
+protected plist secret and its SHA do not change.
+
+The app admits this candidate only with the compile condition, matching marker
+and complete staging native configuration. Sign-in and account settings cannot
+enable it. Ordinary shipping remains disabled unless the separately maintained
+`SCREENPUNK_CONCURRENT_CONTROL_QUALIFIED` condition has qualified. Candidate status
+is permission for internal physical testing; it does not assert that testing has
+passed. This workflow still never submits an App Store release. Native enrollment
+uses existing explicit human authorization and the same bootstrap authority;
+there is no separate enrollment compile gate to bypass or remote enable switch.

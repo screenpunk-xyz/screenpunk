@@ -96,3 +96,31 @@ The Apple adapter returns a receipt only after all cleanup and a final matching 
 Opening validates the exact bundle, scope, roots, retired generations and current completion before atomically replacing both domains. Mixed default/custom bindings are rejected. Failed preparation leaves both domains retired; old objects and replayed capabilities remain unusable. Preferences normalize trusted system aliases consistently before consulting the process-wide gate.
 
 Sixty focused tests and an iOS Simulator build passed for this slice. Production reset/root/UI callers, deterministic preference temporary files, full writer detachment and physical-device qualification remain separate work. Unknown historical preference temporary files remain preserved.
+
+## Durable preference replacement
+
+Preferences now write through the exact reserved `preferences-v1.pending` file under the existing process gate and file lock. Descriptor-relative no-follow access validates roots, lock, archive and temporary file bindings; complete writes are followed by file sync, replacement and directory sync. Existing ancestors are only opened and verified. Newly created directories retain exact setup bindings across in-process failure and synchronize only those children and their parents.
+
+A failed attempt retains its exact encoded bytes and original/installed file identities across store instances. Ordinary access remains blocked until exact recommit; conflicting external changes and retired generations cannot replay it. After restart the archive alone is authoritative, and the reserved scratch file is never promoted. Unknown historical temporary files remain untouched. An explicitly selected v3 cleanup scope includes the reserved scratch name; v2 and the production default remain unchanged.
+
+On iOS, protection is assigned before writing content and verified against the required policy. Simulator builds alone tolerate missing protection readback after successful assignment and unchanged empty-file verification; explicit mismatches still fail. Physical-device builds require an exact readback. This accommodates observed Simulator metadata behavior and does not qualify device encryption.
+
+Validation: 80 focused tests, production iOS Simulator build, and an isolated iOS 26.5 Simulator create/set/get runtime smoke passed. Physical-device protection and actual crash/power-loss qualification remain outstanding. No production reset orchestration or UI caller is added.
+
+## Terminal runtime retirement
+
+Each running host/root now owns a terminal lifetime. Retirement stops host recovery/listening and temporary activation, fences existing Home Assistant, generic and public-read capabilities at operation time, and retires registered WebView coordinators. Navigation, deferred settings acknowledgments, foreground re-entry and late asynchronous runtime construction cannot revive that generation. Root brightness stops and current generic runtime credentials are cleared only from its in-memory store; persistent credential vaults and installed content remain unchanged.
+
+A fresh root must use a new lifetime. Ordinary backgrounding, coordinator stop and management revocation retain their previous behavior. Requests admitted before retirement cannot be undone; late results and local publication are rejected. These primitives do not initiate a reset, change scope defaults or replace the root after cleanup. Production lifecycle orchestration remains the next step.
+
+Validation: full Apple suite executed 320 tests with four existing opt-in skips and zero failures, including nine new lifetime/retirement tests. The iOS Simulator app build passed.
+
+## Production reset lifecycle
+
+Production bootstrap now deliberately selects the v3 cleanup scope. It inspects reset evidence before loading retained content or constructing a management host. A matching pending operation resumes with its original identity; corrupt, inaccessible or mismatched evidence shows an empty blocked state. Earlier v1/v2 scope records are not reinterpreted or migrated. A fresh process observing matching completion performs no cleanup.
+
+The lifecycle retains its exact authority, coordinator and writer bundle through uncertain intent or completion. It retires the host, WebViews and writer domains before qualified cleanup, then requires the cleanup receipt, durable completion and one-use reopening capability before creating a fresh authority, host and view identity. Failure to construct the replacement host retries construction only. Shared bootstrap instances reuse an admitted host; a second reset uses a new coordinator and writer generation. If uncertain evidence already fenced writers but later appears absent or merely completed without the retained capability, this process remains blocked; it cannot reopen those writers on that evidence alone.
+
+The existing non-iOS disconnect action accepts an explicit lifecycle callback and is hidden when none is supplied. The current production entry point is the iOS kiosk: it gains pending-reset recovery, with no new iOS reset-initiation control. The iOS screen disconnect/remove actions retain their separate behavior. Cleanup preserves Cloud authority/history/credentials, TLS, Google TV and ADB records, and unknown historical preference temporary files; it is not a claim of complete device erasure.
+
+Validation uses isolated roots, credential backends and test TLS identities. No reset of personal app data is part of implementation validation. Physical-device protection, power-loss recovery, live providers and accessibility qualification remain release gates.

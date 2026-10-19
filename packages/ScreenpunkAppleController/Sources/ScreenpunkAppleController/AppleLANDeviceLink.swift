@@ -57,6 +57,11 @@ public final class AppleLANDeviceLink: DeviceLink {
     public func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
         try client.deployScreenSet(body)
     }
+    public func relayCloudArchiveChunk(_ body: LANCloudArchiveChunk) throws -> LANCloudArchiveChunkReceipt { try client.relayCloudArchiveChunk(body) }
+    public func relayCloudCommand(_ body: LANCloudRelay) throws -> LANCloudRelayReceipt { try client.relayCloudCommand(body) }
+    public func installUnifiedScreens(_ body: LANUnifiedScreenInstall) throws -> LANActiveQuery { try client.installUnifiedScreens(body) }
+    public func selectUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery { try client.selectUnifiedScreen(body) }
+    public func removeUnifiedScreen(_ body: LANScreenManagementChange) throws -> LANActiveQuery { try client.removeUnifiedScreen(body) }
     public func queryActiveState() throws -> LANActiveQuery { try client.queryActiveState() }
     public func connectionInventory() throws -> DeviceConnectionInventory { try client.connectionInventory() }
     public func updateHomeConnection(_ update: DeviceHomeAssistantUpdate) throws -> DeviceConnectionInventory { try client.updateHomeConnection(update) }

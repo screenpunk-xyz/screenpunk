@@ -157,15 +157,26 @@ final class DeviceStateStoreTests: XCTestCase {
         XCTAssertEqual(relaunched.activeRevision, StoredRevision.offlineFixture.revision)
         XCTAssertEqual(relaunched.lastDeployment?.deploymentId, "dep-1")
 
-        XCTAssertThrowsError(
-            try relaunched.beginPairing(transcript: transcript, expectedCode: "000000", candidateOwner: stranger, clock: clock)
-        ) { error in
-            XCTAssertEqual(error as? PairingFailure, .secondOwner)
-        }
-        XCTAssertNoThrow(
-            try relaunched.beginPairing(transcript: transcript, expectedCode: "833492", candidateOwner: owner, clock: clock),
-            "the same owner may re-pair after a relaunch"
-        )
+        let secondTranscript = PairingTranscript(devicePublicKey: phone.identity.publicKey, controllerPublicKey: stranger.publicKey, sessionNonce: transcript.sessionNonce)
+        try relaunched.beginPairing(transcript: secondTranscript, expectedCode: "000000", candidateOwner: stranger, clock: clock)
+        XCTAssertFalse(relaunched.pairing.isApproved(stranger))
+        try relaunched.confirmPairing(code: "000000", presentedOwner: stranger, clock: clock)
+        XCTAssertEqual(relaunched.pairing.owner, owner)
+        try store.save(DevicePersistedState(runtime: relaunched, activeStoredRevision: StoredRevision.offlineFixture))
+        var twice = makePhone(); twice.restore(try XCTUnwrap(store.load()))
+        XCTAssertEqual(twice.pairing.approvedControllers.count, 2)
+        twice.pairing.revoke(owner)
+        try store.save(DevicePersistedState(runtime: twice, activeStoredRevision: StoredRevision.offlineFixture))
+        var afterRevoke = makePhone(); afterRevoke.restore(try XCTUnwrap(store.load()))
+        XCTAssertFalse(afterRevoke.pairing.isApproved(owner))
+        XCTAssertTrue(afterRevoke.pairing.isApproved(stranger))
+        XCTAssertEqual(afterRevoke.activeRevision, phone.activeRevision)
+        twice.pairing.revoke(stranger)
+        try store.save(DevicePersistedState(runtime: twice, activeStoredRevision: StoredRevision.offlineFixture))
+        afterRevoke.restore(try XCTUnwrap(store.load()))
+        XCTAssertFalse(afterRevoke.isPaired)
+        XCTAssertEqual(afterRevoke.pairing.owner, owner)
+        XCTAssertEqual(afterRevoke.activeRevision, phone.activeRevision)
 
         let replay = try relaunched.receiveDeployment(
             DeploymentRecord(

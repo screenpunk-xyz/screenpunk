@@ -2,6 +2,7 @@ import Foundation
 import ScreenpunkCore
 
 public struct PairingRequestResult: Sendable, Equatable {
+    var sessionID: UUID
     public var deviceId: String
     public var deviceName: String
     public var host: String
@@ -14,6 +15,7 @@ public struct PairingRequestResult: Sendable, Equatable {
 }
 
 public struct PendingPairingSummary: Sendable, Equatable {
+    var sessionID: UUID
     public var deviceId: String
     public var deviceName: String
     public var host: String
@@ -292,6 +294,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
         return pending.values
             .map {
                 PendingPairingSummary(
+                    sessionID: $0.sessionID,
                     deviceId: $0.deviceId,
                     deviceName: $0.deviceName,
                     host: $0.host,
@@ -385,6 +388,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
             if displacedAlias !== link { displacedAlias?.cancel() }
             if displacedCanonical !== link, displacedCanonical !== displacedAlias { displacedCanonical?.cancel() }
             return PairingRequestResult(
+                sessionID: entry.sessionID,
                 deviceId: resolvedId,
                 deviceName: entry.deviceName,
                 host: entry.host,
@@ -404,12 +408,21 @@ public final class DeviceCoordinator: @unchecked Sendable {
     /// Sends `pair.confirm`. The device only answers `ok` after its owner tapped
     /// Confirm on the device screen, so MCP cannot self-approve.
     public func confirmPairing(deviceId: String) throws -> PairedDeviceRecord {
+        try confirmPairing(deviceId: deviceId, expectedSessionID: nil)
+    }
+
+    func confirmPairing(deviceId: String, expectedSessionID: UUID) throws -> PairedDeviceRecord {
+        try confirmPairing(deviceId: deviceId, expectedSessionID: Optional(expectedSessionID))
+    }
+
+    private func confirmPairing(deviceId: String, expectedSessionID: UUID?) throws -> PairedDeviceRecord {
         lock.lock()
         let factory = linkFactory
         let generation = transportGeneration
         let entry = pending[deviceId]
         lock.unlock()
         guard let factory, let entry,
+              expectedSessionID == nil || entry.sessionID == expectedSessionID,
               entry.generation == generation,
               entry.controllerIdentity == factory.controllerIdentity else {
             throw ControllerError.notPaired("no pending pairing for \(deviceId); call request_pairing first")
@@ -483,6 +496,16 @@ public final class DeviceCoordinator: @unchecked Sendable {
         entry?.link.cancel()
     }
 
+    func cancelPending(_ deviceId: String, expectedSessionID: UUID) {
+        lock.lock()
+        let entry: PendingPairing?
+        if pending[deviceId]?.sessionID == expectedSessionID {
+            entry = pending.removeValue(forKey: deviceId)
+        } else { entry = nil }
+        lock.unlock()
+        entry?.link.cancel()
+    }
+
     private func cancelPending(_ deviceId: String, matching entry: PendingPairing) {
         lock.lock()
         let removed: PendingPairing?
@@ -511,12 +534,26 @@ public final class DeviceCoordinator: @unchecked Sendable {
         }
         guard probe else { return record }
         do {
+            let queryIdentity = try requireFactory().controllerIdentity
             let active = try withLink(record) { try $0.queryActiveState() }
             let seen = now()
             return try directory.update(deviceId) { current in
                 current.device.reachable = true
                 current.device.activeRevision = active.revision
                 current.temporaryActivation = active.temporaryActivation
+                if let approved = active.controllerApproved {
+                    let identity: PairingIdentity? = queryIdentity
+                    current.approvedControllerIdentity = approved && identity.map {
+                        active.localControllerPinHex == PeerPin.hex($0.publicKey)
+                    } == true ? identity : nil
+                    current.deniedControllerIdentity = current.approvedControllerIdentity == nil ? identity : nil
+                } else {
+                    current.approvedControllerIdentity = nil; current.deniedControllerIdentity = nil
+                }
+                // Only this pinned, authenticated owner query can establish a cloud association.
+                current.cloudInstallationId = active.cloudInstallationId.flatMap { value in
+                    UUID(uuidString: value)?.uuidString.lowercased() == value ? value : nil
+                }
                 if let screens = active.screens {
                     current.screenSet = screens
                     current.selectedDashboardId = active.selectedDashboardId
@@ -528,6 +565,60 @@ public final class DeviceCoordinator: @unchecked Sendable {
                 current.device.reachable = false
             } ?? record
         }
+    }
+
+    /// Exact-package planning needs a fresh authenticated set and current
+    /// profile. The general status probe intentionally swallows offline
+    /// errors; deployment admission must fail closed instead.
+    public func observeScreenSet(_ deviceId: String) throws -> (DeviceProfile, [LANScreenSetEntry], String?, Date, String) {
+        let value = try observeScreenSetWithGeneration(deviceId)
+        return (value.0, value.1, value.2, value.3, value.4)
+    }
+
+    public func observeScreenSetWithGeneration(_ deviceId: String) throws -> (DeviceProfile, [LANScreenSetEntry], String?, Date, String, LANActiveQuery) {
+        let record = try ownedRecord(deviceId)
+        let observation: (LANHello, LANActiveQuery)
+        do {
+            observation = try withLink(record) { link in
+                let hello = try link.hello()
+                let active = try link.queryActiveState()
+                return (hello, active)
+            }
+        } catch { throw mapTransfer(error) }
+        let (hello, active) = observation
+        // A freshly paired screen-set device has no installed revision yet.
+        // An absent set alongside an existing revision is ambiguous and cannot
+        // be used as an empty-plan observation.
+        let screens = active.screens ?? (active.revision == nil && active.selectedDashboardId == nil ? [] : nil)
+        guard hello.deviceId == deviceId,
+              hello.capabilities?.contains("screen-set-v1") == true,
+              (active.stateGenerationId == nil || hello.capabilities?.contains("unified-local-screen-install-v1") == true),
+              let profile = hello.profile, profile.deviceId == deviceId,
+              let screens, screens.count <= 12,
+              Set(screens.map(\.dashboardId)).count == screens.count,
+              screens.allSatisfy({ !$0.dashboardId.isEmpty && !$0.revision.isEmpty }),
+              (screens.isEmpty && active.selectedDashboardId == nil) ||
+                screens.contains(where: { $0.dashboardId == active.selectedDashboardId }) else {
+            throw ControllerError(code: .unsupportedVersion,
+                detail: "The paired device did not provide an authenticated screen set and profile.")
+        }
+        return (profile, screens, active.selectedDashboardId, now(),
+                hello.name ?? record.displayName ?? profile.name, active)
+    }
+
+    /// Strict authenticated observation for exact-package planning/admission.
+    /// Unlike the compatibility status API, this never converts a failed
+    /// query into a cached offline row that could be mistaken for fresh state.
+    func exactActiveState(deviceId: String) throws -> (PairedDeviceRecord, LANActiveQuery) {
+        let record = try ownedRecord(deviceId)
+        let active = try withLink(record) { try $0.queryActiveState() }
+        guard active.screens != nil || active.revision == nil else {
+            throw ControllerError(code: .unsupportedVersion,
+                detail: "This device cannot report its full installed screen set for exact-package deployment.")
+        }
+        guard let current = directory.get(deviceId), current.device.owner == record.device.owner,
+              current.devicePin == record.devicePin else { throw PairingFailure.identityChanged }
+        return (current, active)
     }
 
     /// Forget on the Mac only. The device keeps its dashboard and pairing until
@@ -554,7 +645,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
         guard let record = directory.get(deviceId) else {
             throw ControllerError.notPaired("unknown device \(deviceId); pair it first")
         }
-        guard record.device.owner == factory.controllerIdentity else {
+        guard record.deniedControllerIdentity != factory.controllerIdentity,
+              (record.device.owner == factory.controllerIdentity || record.approvedControllerIdentity == factory.controllerIdentity) else {
             throw ControllerError.notPaired("device \(deviceId) is owned by a different controller identity")
         }
         if let existing = record.device.deployments.first(where: { $0.deploymentId == deploymentId }) {
@@ -631,7 +723,109 @@ public final class DeviceCoordinator: @unchecked Sendable {
         return hello
     }
 
-    public func deployScreenSet(_ body: LANScreenSetDeployBody) throws -> LANScreenSetReceipt {
+    public func relayCloudArchive(deviceId: String, installationId: String, operationId: String, packageId: String,
+                                  archiveSha256: String, bytes: Data, cancelled: () -> Bool = { false }) throws {
+        let record = try ownedRecord(deviceId)
+        guard !bytes.isEmpty, bytes.count <= 25 * 1024 * 1024, DeploymentDigest.sha256Hex(bytes) == archiveSha256,
+              [installationId, operationId, packageId].allSatisfy({ UUID(uuidString: $0) != nil }) else { throw TransferFailure.validationFailed }
+        let deadline = ProcessInfo.processInfo.systemUptime + 120
+        do {
+            try withLink(record, retryBody: false) { link in
+                let hello = try link.hello(), status = try link.queryActiveState()
+                guard hello.deviceId == deviceId, hello.capabilities?.contains("cloud-archive-relay-v1") == true,
+                      status.controllerApproved == true,
+                      status.cloudInstallationId.flatMap(UUID.init(uuidString:)) == UUID(uuidString: installationId) else { throw TransferFailure.validationFailed }
+                let transfer = UUID().uuidString.lowercased()
+                var offset = 0
+                while offset < bytes.count {
+                    guard !cancelled(), ProcessInfo.processInfo.systemUptime < deadline else { throw TransferFailure.interrupted }
+                    let end = min(bytes.count, offset + 256 * 1024)
+                    let chunk = LANCloudArchiveChunk(transferId: transfer, installationId: installationId, operationId: operationId,
+                        packageId: packageId, archiveSha256: archiveSha256, archiveBytes: bytes.count, offset: offset,
+                        dataBase64: bytes.subdata(in: offset..<end).base64EncodedString(), final: end == bytes.count)
+                    let payload = try LANCodec.encodePayload(chunk)
+                    let envelope = LANEnvelope(requestId: UUID().uuidString.lowercased(), method: LANMethod.cloudArchiveChunk.rawValue, payloadJSON: payload)
+                    try checkTransferSize(try LANCodec.encode(envelope).count, advertised: hello.maxTransferBytes)
+                    let receipt = try link.relayCloudArchiveChunk(chunk)
+                    guard receipt.transferId == transfer, receipt.receivedBytes == end, receipt.complete == chunk.final else { throw TransferFailure.validationFailed }
+                    offset = end
+                }
+            }
+        } catch { throw mapTransfer(error) }
+    }
+
+    public func relayCloudCommand(deviceId: String, body: LANCloudRelay) throws -> LANCloudRelayReceipt {
+        let record = try ownedRecord(deviceId)
+        do {
+            return try withLink(record, retryBody: false) { link in
+                let hello = try link.hello()
+                let status = try link.queryActiveState()
+                guard hello.deviceId == deviceId, hello.capabilities?.contains("cloud-command-relay-v1") == true,
+                      status.controllerApproved == true,
+                      status.cloudInstallationId.flatMap(UUID.init(uuidString:)) == UUID(uuidString: body.installationId),
+                      UUID(uuidString: body.operationId) != nil else {
+                    throw ControllerError.validationFailed(detail: "The paired device did not confirm this cloud installation.")
+                }
+                return try link.relayCloudCommand(body)
+            }
+        } catch { throw mapTransfer(error) }
+    }
+
+    public func installUnifiedScreens(deviceId: String, body: LANUnifiedScreenInstall, preSend: () throws -> Void = {}) throws -> LANActiveQuery {
+        let record = try ownedRecord(deviceId)
+        do {
+            return try withLink(record, retryBody: false) { link in
+                let hello = try link.hello()
+                guard hello.deviceId == deviceId, hello.capabilities?.contains("unified-local-screen-install-v1") == true else {
+                    throw ControllerError(code: .unsupportedVersion, detail: "This device does not support concurrent screen control.")
+                }
+                let payload = try LANCodec.encodePayload(body)
+                let envelope = LANEnvelope(requestId: body.operationId, method: LANMethod.screenInstall.rawValue, payloadJSON: payload)
+                try checkTransferSize(try LANCodec.encode(envelope).count, advertised: hello.maxTransferBytes)
+                try preSend()
+                return try link.installUnifiedScreens(body)
+            }
+        } catch {
+            if error is WorkbenchDeploymentPreSendFailure { throw error }
+            throw mapTransfer(error)
+        }
+    }
+
+    /// Apply an explicit reviewed common-inventory change. A stale baseline is
+    /// returned by the device as needs review; it is never fetched and rebased.
+    public func selectUnifiedScreen(deviceId: String, change: LANScreenManagementChange) throws -> LANActiveQuery {
+        try applyUnifiedScreenChange(deviceId: deviceId, change: change, removal: false)
+    }
+    public func removeUnifiedScreen(deviceId: String, change: LANScreenManagementChange) throws -> LANActiveQuery {
+        try applyUnifiedScreenChange(deviceId: deviceId, change: change, removal: true)
+    }
+    private func applyUnifiedScreenChange(deviceId: String, change: LANScreenManagementChange, removal: Bool) throws -> LANActiveQuery {
+        let record = try ownedRecord(deviceId)
+        let status: LANActiveQuery
+        do {
+            status = try withLink(record, retryBody: false) { link in
+                let hello = try link.hello()
+                guard hello.deviceId == deviceId, hello.capabilities?.contains("unified-local-screen-control-v1") == true else {
+                    throw ControllerError(code: .unsupportedVersion, detail: "This device does not support concurrent screen control.")
+                }
+                return try removal ? link.removeUnifiedScreen(change) : link.selectUnifiedScreen(change)
+            }
+        } catch { throw mapTransfer(error) }
+        guard status.controllerApproved == true,
+              status.stateGenerationId.flatMap(UUID.init(uuidString:)) == UUID(uuidString: change.operationId),
+              let screens = status.screens,
+              removal ? !screens.contains(where: { $0.dashboardId == change.dashboardId }) : status.selectedDashboardId == change.dashboardId else {
+            throw ControllerError.validationFailed(detail: "The device returned an invalid screen command receipt. Refresh its status before applying again.")
+        }
+        try directory.update(record.id) { current in
+            current.screenSet = screens; current.selectedDashboardId = status.selectedDashboardId
+            current.device.reachable = true; current.lastSeenAt = now()
+        }
+        return status
+    }
+
+    public func deployScreenSet(_ body: LANScreenSetDeployBody,
+                                preSend: () throws -> Void = {}) throws -> LANScreenSetReceipt {
         let record = try ownedRecord(body.deviceId)
         try body.validate()
         let behaviors = try body.screens.compactMap { screen -> DeviceBehavior? in
@@ -651,8 +845,16 @@ public final class DeviceCoordinator: @unchecked Sendable {
         let envelope = LANEnvelope(requestId: UUID().uuidString, method: LANMethod.deploySet.rawValue, payloadJSON: encoded)
         try checkTransferSize(try LANCodec.encode(envelope).count, advertised: hello.maxTransferBytes)
         let receipt: LANScreenSetReceipt
-        do { receipt = try withLink(record) { try $0.deployScreenSet(body) } }
+        // A lost reply can follow device acceptance. A second send on a new
+        // cached-link replacement would exceed one admitted operation.
+        do {
+            receipt = try withLink(record, retryBody: false) { link in
+                try preSend()
+                return try link.deployScreenSet(body)
+            }
+        }
         catch {
+            if error is WorkbenchDeploymentPreSendFailure { throw error }
             if (error as? TransferFailure) == .targetMismatch, body.screens.count == 1 {
                 var failed = body.screens[0].deployment.deployment
                 failed.phase = .failed; failed.error = TransferFailure.targetMismatch.rawValue
@@ -724,7 +926,9 @@ public final class DeviceCoordinator: @unchecked Sendable {
     public func provisionConnections(deviceId: String, configuration: ConnectionProvisioning) throws -> ConnectionProvisioningReceipt {
         let record = try ownedRecord(deviceId)
         try configuration.validate()
-        let receipt = try withLink(record) { try $0.provisionConnections(configuration) }
+        // A disconnected reply does not prove whether the device installed the
+        // grant. Never replay a potentially accepted provisioning request.
+        let receipt = try withLink(record, retryBody: false) { try $0.provisionConnections(configuration) }
         guard receipt.installed, receipt.deviceId == record.id,
               receipt.dashboardId == configuration.dashboardId, receipt.revision == configuration.revision,
               receipt.provisioningId == configuration.provisioningId else {
@@ -736,7 +940,10 @@ public final class DeviceCoordinator: @unchecked Sendable {
     public func provisionHomeAssistant(deviceId: String, configuration: HomeAssistantProvisioning) throws -> HomeAssistantProvisioningReceipt {
         let record = try ownedRecord(deviceId)
         try configuration.validate()
-        let receipt = try withLink(record) { try $0.provisionHomeAssistant(configuration) }
+        // A lost reply can follow device acceptance. This setup attempt is
+        // already durably marked unknown; a transport reconnect must not send
+        // the credential a second time.
+        let receipt = try withLink(record, retryBody: false) { try $0.provisionHomeAssistant(configuration) }
         guard receipt.installed, receipt.deviceId == record.id,
               receipt.dashboardId == configuration.dashboardId, receipt.revision == configuration.revision,
               receipt.connectionId == configuration.connectionId, receipt.provisioningId == configuration.provisioningId else {
@@ -779,13 +986,17 @@ public final class DeviceCoordinator: @unchecked Sendable {
         guard !snapshot.revision.isEmpty, snapshot.revision != update.expectedRevision, snapshot.value == update.value else {
             throw DeviceSettingsFailure.invalidSettings
         }
-        _ = try directory.update(deviceId) { $0.settingsSnapshot = snapshot }
+        _ = try directory.update(deviceId) {
+            $0.settingsSnapshot = snapshot
+            $0.displayName = snapshot.value.displayName
+        }
         return snapshot
     }
 
     private func ownedRecord(_ deviceId: String) throws -> PairedDeviceRecord {
         let factory = try requireFactory()
-        guard let record = directory.get(deviceId), record.device.owner == factory.controllerIdentity else {
+        guard let record = directory.get(deviceId), record.deniedControllerIdentity != factory.controllerIdentity,
+              (record.device.owner == factory.controllerIdentity || record.approvedControllerIdentity == factory.controllerIdentity) else {
             throw ControllerError.notPaired("Pair this device before managing its connections.")
         }
         return record
@@ -845,7 +1056,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
         }
     }
 
-    private func withLink<T>(_ record: PairedDeviceRecord, _ body: (DeviceLink) throws -> T) throws -> T {
+    private func withLink<T>(_ record: PairedDeviceRecord, retryBody: Bool = true,
+                             _ body: (DeviceLink) throws -> T) throws -> T {
         let transport = try requireTransport()
         let factory = transport.factory
         lock.lock()
@@ -866,6 +1078,7 @@ public final class DeviceCoordinator: @unchecked Sendable {
                 lock.lock()
                 if links[record.id]?.link === cached.link { links[record.id] = nil }
                 lock.unlock()
+                if !retryBody { throw error }
             }
         }
         guard let port = UInt16(exactly: record.port), port > 0 else {
@@ -953,6 +1166,8 @@ public final class DeviceCoordinator: @unchecked Sendable {
                 return .notPaired(
                     "second_owner: the device already belongs to another Mac. On the device, hold two fingers for five seconds to open the device menu, then choose Disconnect and confirm."
                 )
+            case .controllerLimit:
+                return .notPaired("controller_limit: the device has reached its approved controller limit; remove an approved controller from the device before pairing another")
             case .identityChanged:
                 return .notPaired("identity_changed: the device presented a different identity than the one pinned; forget_device and pair again only if you replaced the device")
             case .codeMismatch:

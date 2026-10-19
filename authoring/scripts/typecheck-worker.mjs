@@ -1,3 +1,4 @@
+import {validateConnectionDeclarations} from './connection-declarations.mjs';
 import path from 'node:path';import {readInventory} from './captured-store.mjs';
 import {workerJob,trustedBytes,sendPacket,failWorker} from './runtime.mjs';
 const start=performance.now(),cpu=process.cpuUsage();
@@ -38,6 +39,8 @@ const {default:ts}=await import(job.kit+'/node_modules/typescript/lib/typescript
   }
   const diagnostics = ts.getPreEmitDiagnostics(program);
   if (diagnostics.length) throw Error(ts.formatDiagnostics(diagnostics.slice(0, 20), { getCanonicalFileName: f => f, getCurrentDirectory: () => source, getNewLine: () => '\n' }).slice(0, 16000));
+
+  validateConnectionDeclarations(ts, program, program.getSourceFiles().filter(f => f.fileName.startsWith(source + path.sep)), JSON.parse(host.readFile(path.join(source, 'screen.json')) ?? '{"connections":[]}'));
 
 await sendPacket({type:'result',audit:{elapsedMs:performance.now()-start,cpu:process.cpuUsage(cpu),maxRSSKiB:process.resourceUsage().maxRSS,...inventory.audit()}});
 if(process.connected)process.disconnect();

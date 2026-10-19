@@ -20,6 +20,23 @@ final class CloudNativeWorkspaceSetupTests: XCTestCase {
         try .init(requestId: operationID, workspaceName: workspace, locationName: location)
     }
 
+    func testReceiptTimestampBoundedWithoutFormatterOnLinuxAndApple() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("first-workspace-created")) as? [String: Any])
+        let long = "2026-10-02T18:00:00." + String(repeating: "1", count: 220) + "Z"
+        for timestamp in [long, "2026-10-02t18:00:00.123456z", "2000-02-29T00:00:00-00:00", "2026-10-02T19:00:00.123456+01:00"] {
+            object["createdAt"] = timestamp
+            let receipt = try JSONDecoder().decode(CloudNativeWorkspaceSetupReceipt.self, from: JSONSerialization.data(withJSONObject: object))
+            XCTAssertEqual(receipt.createdAt, timestamp)
+        }
+        for timestamp in ["2026-10-02T18:00:00." + String(repeating: "1", count: 236) + "Z",
+                          "2026-10-02T18:00:00." + String(repeating: "1", count: 4096) + "Z",
+                          "2026-02-30T00:00:00Z", "1900-02-29T00:00:00Z", "0000-01-01T00:00:00Z",
+                          "2026-10-02T00:00:60Z", "2026-10-02T00:00:00+24:00", "2026-10-02T00:00:00+00:60",
+                          "2026-10-02T00:00:00.１Z", "2026-10-02T00:00:00Z\n"] {
+            object["createdAt"] = timestamp
+            XCTAssertThrowsError(try JSONDecoder().decode(CloudNativeWorkspaceSetupReceipt.self, from: JSONSerialization.data(withJSONObject: object)))
+        }
+    }
     func testAllEightAcceptedFixturesDecodeAndReceiptsRoundTrip() throws {
         let cases = try fixtures()
         XCTAssertEqual(cases.count, 8)

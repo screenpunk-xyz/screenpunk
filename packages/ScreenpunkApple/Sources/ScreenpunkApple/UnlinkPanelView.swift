@@ -9,15 +9,17 @@ public struct UnlinkPanelView: View {
     @State private var confirmingDisconnect = false
     public var onUnlink: () -> Void
     public var onDismiss: () -> Void
+    public var allowUnlink: Bool
     public var screens: [LANScreenSetEntry]
     public var selectedDashboardId: String?
     public var onSelect: (String) -> Void
     public var onSettings: (() -> Void)?
 
     public init(onUnlink: @escaping () -> Void, onDismiss: @escaping () -> Void,
-                screens: [LANScreenSetEntry] = [], selectedDashboardId: String? = nil,
+                allowUnlink: Bool = true, screens: [LANScreenSetEntry] = [], selectedDashboardId: String? = nil,
                 onSettings: (() -> Void)? = nil,
                 onSelect: @escaping (String) -> Void = { _ in }) {
+        self.allowUnlink = allowUnlink
         self.onUnlink = onUnlink; self.onDismiss = onDismiss
         self.onSettings = onSettings
         self.screens = screens; self.selectedDashboardId = selectedDashboardId; self.onSelect = onSelect
@@ -31,8 +33,8 @@ public struct UnlinkPanelView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text(confirmingDisconnect ? "Disconnect this device?" : "Device menu")
                     .font(.title3.bold())
-                if confirmingDisconnect {
-                    Text("This removes all deployed screens, saved screen preferences, pairing, and saved connection credentials from this device.")
+                if confirmingDisconnect && allowUnlink {
+                    Text("This removes deployed screens, saved screen preferences, pairing, and saved Home Assistant, Calendar, and generic connection credentials. Google TV, ADB, and Cloud installation records remain on this device.")
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 12) {
                         Button("Cancel") { confirmingDisconnect = false }
@@ -71,9 +73,9 @@ public struct UnlinkPanelView: View {
                         Divider()
                     }
                     HStack(spacing: 12) {
-                        Button("Disconnect…") { confirmingDisconnect = true }
+                        if allowUnlink { Button("Disconnect…") { confirmingDisconnect = true }
                             .buttonStyle(UnlinkActionButtonStyle(fill: DeviceMenuColors.secondaryButton,
-                                label: DeviceMenuColors.destructive))
+                                label: DeviceMenuColors.destructive)) }
                         Button("Close", action: onDismiss)
                             .buttonStyle(UnlinkActionButtonStyle(fill: DeviceMenuColors.primaryButton,
                                 label: .white))

@@ -3,6 +3,21 @@ import XCTest
 @testable import ScreenpunkApple
 
 final class DeviceLocalResetAuthorityTests: XCTestCase {
+    func testScopeCanonicalOutputAndDigestRemainExactWithMissingOwnedDescendants() throws {
+        let home = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let device = home.appendingPathComponent("device"), preferences = home.appendingPathComponent("preferences"), management = home.appendingPathComponent("management"), reset = home.appendingPathComponent("reset")
+        let scope = try DeviceLocalResetScope(deviceRoot: device, preferencesRoot: preferences, managementDirectory: management, resetDirectory: reset, credentialItems: [])
+        XCTAssertEqual(scope.deviceRoot.path, device.path)
+        let object: [String: Any] = ["version": 1, "device": device.path, "preferences": preferences.path, "management": management.path, "reset": reset.path, "items": []]
+        let originalBytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        XCTAssertEqual(scope.digest, PeerPin.hex(PeerPin.sha256(originalBytes)))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: device.path))
+        let target = home.appendingPathComponent("target"); try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: device, withDestinationURL: target)
+        XCTAssertThrowsError(try scope.validateCurrentPaths())
+    }
     private func authority(_ reset: ResetEvidenceFixture) -> DeviceManagementAuthority {
         .init(journal: ResetManagementFixture(), credentials: .init(backend: ResetCredentialFixture(), random: { Data() }), reset: reset)
     }
@@ -41,6 +56,8 @@ final class DeviceLocalResetAuthorityTests: XCTestCase {
             XCTAssertThrowsError(try owner.beginLocalReset(lease, record: pending))
             XCTAssertNil(try owner.refresh()); XCTAssertFalse(owner.resetRenderingAllowed())
             XCTAssertThrowsError(try owner.withLocalAuthority(lease) {})
+            XCTAssertEqual(try owner.resetRecoverySnapshot(), .uncertain(pending))
+            XCTAssertThrowsError(try reset.load())
             try owner.recommitResetAttempt()
             XCTAssertEqual(reset.methods, ["save", "save"])
             XCTAssertEqual(reset.record, pending)
@@ -62,6 +79,40 @@ final class DeviceLocalResetAuthorityTests: XCTestCase {
         try owner.recommitResetAttempt()
         XCTAssertEqual(reset.methods, ["begin", "begin", "save", "save"])
         XCTAssertThrowsError(try context.validate())
+        XCTAssertNotNil(try owner.refresh())
+    }
+    func testRepeatedUncertainRecommitsRetainExactAttemptAndKeepAdmissionBlocked() throws {
+        let reset = ResetEvidenceFixture(), owner = authority(reset)
+        let lease = try XCTUnwrap(owner.refresh()), pending = try reset.pending()
+        reset.failNextWrite = true
+        XCTAssertThrowsError(try owner.beginLocalReset(lease, record: pending))
+        XCTAssertEqual(try owner.resetRecoverySnapshot(), .uncertain(pending))
+        reset.failNextWrite = true
+        XCTAssertThrowsError(try owner.recommitResetAttempt())
+        XCTAssertEqual(try owner.resetRecoverySnapshot(), .uncertain(pending))
+        XCTAssertThrowsError(try reset.load())
+        XCTAssertNil(try owner.refresh()); XCTAssertFalse(owner.resetRenderingAllowed())
+        XCTAssertThrowsError(try owner.withLocalAuthority(lease) {})
+        XCTAssertThrowsError(try owner.beginLocalReset(lease, record: reset.pending()))
+        XCTAssertThrowsError(try owner.completeLocalReset(expected: pending))
+        XCTAssertEqual(reset.methods, ["save", "save"])
+        try owner.recommitResetAttempt()
+        XCTAssertEqual(try owner.resetRecoverySnapshot(), .pending(pending))
+
+        let completed = try pending.completed()
+        reset.failNextWrite = true; reset.replaceBeforeFailure = true
+        XCTAssertThrowsError(try owner.completeLocalReset(expected: pending))
+        XCTAssertEqual(try owner.resetRecoverySnapshot(), .uncertain(completed))
+        reset.failNextWrite = true
+        XCTAssertThrowsError(try owner.recommitResetAttempt())
+        XCTAssertEqual(try owner.resetRecoverySnapshot(), .uncertain(completed))
+        XCTAssertThrowsError(try reset.load())
+        XCTAssertNil(try owner.refresh()); XCTAssertFalse(owner.resetRenderingAllowed())
+        XCTAssertThrowsError(try owner.withLocalAuthority(lease) {})
+        try owner.recommitResetAttempt()
+        XCTAssertEqual(reset.methods, Array(repeating: "save", count: 6))
+        XCTAssertEqual(try owner.resetRecoverySnapshot(), .completed(completed))
+        XCTAssertThrowsError(try owner.withLocalAuthority(lease) {})
         XCTAssertNotNil(try owner.refresh())
     }
     func testRestartPendingCanCompleteOnlyExactConfiguredBinding() throws {
@@ -107,12 +158,16 @@ final class DeviceLocalResetAuthorityTests: XCTestCase {
             let lease = try XCTUnwrap(owner.refresh()), pending = try DeviceLocalResetRecord(resetID: UUID(), scopeDigest: scope.digest)
             XCTAssertThrowsError(try owner.beginLocalReset(lease, record: pending))
             XCTAssertNil(try owner.refresh()); XCTAssertFalse(owner.resetRenderingAllowed())
+            XCTAssertEqual(try owner.resetRecoverySnapshot(), .uncertain(pending))
+            XCTAssertThrowsError(try DeviceLocalResetStore(directory: directory).load())
             fault.enabled = false
             try owner.recommitResetAttempt()
             XCTAssertEqual(try store.load(), pending)
             fault.enabled = true
             XCTAssertThrowsError(try owner.completeLocalReset(expected: pending))
             XCTAssertNil(try owner.refresh()); XCTAssertFalse(owner.resetRenderingAllowed())
+            XCTAssertEqual(try owner.resetRecoverySnapshot(), .uncertain(try pending.completed()))
+            XCTAssertThrowsError(try DeviceLocalResetStore(directory: directory).load())
             fault.enabled = false
             try owner.recommitResetAttempt()
             XCTAssertEqual(try store.load(), try pending.completed())

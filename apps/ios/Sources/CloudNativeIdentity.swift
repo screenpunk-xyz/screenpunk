@@ -1,4 +1,5 @@
 import AuthenticationServices
+import Combine
 import CryptoKit
 import FirebaseCore
 import FirebaseAuth
@@ -9,12 +10,23 @@ import UIKit
 /// App-only adapter; it is not constructed by the current onboarding UI.
 /// Firebase configuration and interactive provider flows require an explicit caller.
 @MainActor
-final class CloudNativeIdentity {
+final class CloudNativeIdentity: ObservableObject {
+    enum SignOutState: Equatable { case idle, waiting, failed, succeeded }
+    @Published private(set) var signOutState: SignOutState = .idle
+    private var signOutIntent: UUID?
+    private var signOutWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
     private var auth: Auth?
     private var configuration: CloudNativeConfiguration?
     private var generation = UUID()
-    private var flowInProgress = false
-    private var interactiveUserID: String?
+    private struct Flow { let provider: CloudNativeSignInProvider; let generation: UUID; let cancellation = CloudFlowCancellation(); var callbackInFlight = false; var callbackAccepted = false }
+    private var activeFlow: Flow?
+    private var flowInProgress: Bool { activeFlow != nil }
+    private(set) var interactiveUserID: String?
+    private let drivers: CloudIdentityTestDrivers?
+
+    init() { drivers = nil }
+    /// Internal isolated seam: no SDK initialization, UI or network is needed by tests.
+    init(testDrivers: CloudIdentityTestDrivers) { drivers = testDrivers }
     private var appleFlow: CloudAppleAuthorization?
 
     /// Bind an API client to this human context. Discard in-flight responses after revocation.
@@ -31,62 +43,114 @@ final class CloudNativeIdentity {
     }
 
     func signInWithGoogle(presenting controller: UIViewController) async throws {
-        guard !flowInProgress else { throw CloudNativeIdentityError.flowInProgress }
-        let (configuration, auth) = try configure()
-        generation = UUID()
-        interactiveUserID = nil
-        flowInProgress = true
-        let flowGeneration = generation
-        defer { flowInProgress = false }
-        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: configuration.googleClientID)
+        try checkEntry()
+        let configuration: CloudNativeConfiguration
+        let exchange: (CloudProviderCredential) async throws -> String
+        if let drivers {
+            configuration = try drivers.configure()
+            self.configuration = configuration
+            exchange = drivers.exchange
+        } else {
+            let configured = try configure()
+            configuration = configured.0
+            exchange = { try await configured.1.signIn(with: $0.firebaseCredential()).user.uid }
+        }
+        let flow = beginFlow(.google)
+        defer { finishFlow(flow.generation) }
         do {
-            // Always interactive. restorePreviousSignIn is not proof of a recent human sign-in.
-            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: controller)
-            try validateFlow(flowGeneration)
-            guard let token = result.user.idToken?.tokenString else { throw CloudNativeIdentityError.invalidCredential }
-            let credential = GoogleAuthProvider.credential(withIDToken: token, accessToken: result.user.accessToken.tokenString)
-            let firebaseResult = try await auth.signIn(with: credential)
-            try validateFlow(flowGeneration)
-            interactiveUserID = firebaseResult.user.uid
-        } catch {
-            if error is CancellationError || (error as? CloudNativeIdentityError) == .cancelled { throw CloudNativeIdentityError.cancelled }
-            let error = error as NSError
-            if error.domain == kGIDSignInErrorDomain && error.code == GIDSignInError.canceled.rawValue {
-                throw CloudNativeIdentityError.cancelled
+            try await withFlowCancellation(flow) {
+            try validateFlow(flow.generation)
+            let credential: CloudProviderCredential
+            if let drivers { credential = try await drivers.google(controller) }
+            else {
+                GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: configuration.googleClientID)
+                let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: controller)
+                try validateFlow(flow.generation)
+                guard let token = result.user.idToken?.tokenString else { throw CloudNativeIdentityError.invalidCredential }
+                credential = .google(idToken: token, accessToken: result.user.accessToken.tokenString)
             }
-            throw CloudNativeIdentityError.providerFailed
+            try validateFlow(flow.generation)
+            let uid = try await exchange(credential)
+            try validateFlow(flow.generation)
+            interactiveUserID = uid
+            }
+        } catch {
+            if (error as NSError).domain == kGIDSignInErrorDomain && (error as NSError).code == GIDSignInError.canceled.rawValue { throw CloudNativeIdentityError.cancelled }
+            throw mappedError(error)
         }
     }
 
     func signInWithApple(presentationAnchor: ASPresentationAnchor) async throws {
-        guard !flowInProgress else { throw CloudNativeIdentityError.flowInProgress }
-        let (_, auth) = try configure()
-        generation = UUID()
-        interactiveUserID = nil
-        flowInProgress = true
-        let flowGeneration = generation
-        defer { flowInProgress = false; appleFlow = nil }
-        let flow = try CloudAppleAuthorization(anchor: presentationAnchor)
-        appleFlow = flow
-        let result = try await flow.authorize()
-        try validateFlow(flowGeneration)
-        let credential = OAuthProvider.appleCredential(withIDToken: result.token, rawNonce: flow.rawNonce, fullName: result.fullName)
+        try checkEntry()
+        let exchange: (CloudProviderCredential) async throws -> String
+        if let drivers { _ = try drivers.configure(); exchange = drivers.exchange }
+        else {
+            let configured = try configure()
+            exchange = { try await configured.1.signIn(with: $0.firebaseCredential()).user.uid }
+        }
+        let flow = beginFlow(.apple)
+        defer { finishFlow(flow.generation) }
         do {
-            let firebaseResult = try await auth.signIn(with: credential)
-            try validateFlow(flowGeneration)
-            interactiveUserID = firebaseResult.user.uid
+            try await withFlowCancellation(flow) {
+            try validateFlow(flow.generation)
+            let credential: CloudProviderCredential
+            if let drivers { credential = try await drivers.apple(presentationAnchor) }
+            else {
+                let authorization = try CloudAppleAuthorization(anchor: presentationAnchor)
+                appleFlow = authorization
+                let result = try await authorization.authorize()
+                credential = .apple(idToken: result.token, rawNonce: authorization.rawNonce, fullName: result.fullName)
+            }
+            try validateFlow(flow.generation)
+            let uid = try await exchange(credential)
+            try validateFlow(flow.generation)
+            interactiveUserID = uid
+            }
         } catch { throw mappedError(error) }
+    }
+
+    private func checkEntry() throws {
+        guard !Task.isCancelled else { throw CloudNativeIdentityError.cancelled }
+        guard !flowInProgress, signOutState != .waiting, signOutState != .failed else { throw CloudNativeIdentityError.flowInProgress }
+    }
+    private func beginFlow(_ provider: CloudNativeSignInProvider) -> Flow {
+        signOutIntent = nil; signOutState = .idle
+        generation = UUID(); interactiveUserID = nil
+        let flow = Flow(provider: provider, generation: generation)
+        activeFlow = flow
+        return flow
     }
 
     /// Revokes this context immediately. SDK presentation may complete later; its result is rejected.
     func cancelActiveFlow() {
+        activeFlow?.cancellation.revoke()
         generation = UUID()
         interactiveUserID = nil
         appleFlow?.cancel()
+        drivers?.cancel()
+    }
+
+    private func withFlowCancellation(_ flow: Flow, operation: () async throws -> Void) async throws {
+        try await withTaskCancellationHandler(operation: operation, onCancel: {
+            // This synchronized bit closes callback admission immediately, even before actor delivery.
+            flow.cancellation.revoke()
+            Task { @MainActor [weak self] in self?.scheduleCancellation(expected: flow.generation) }
+        })
+    }
+
+    private func scheduleCancellation(expected: UUID) {
+        if let delivery = drivers?.cancellationDelivery {
+            delivery { [weak self] in self?.deliverCancellation(expected: expected) }
+        } else { deliverCancellation(expected: expected) }
+    }
+
+    private func deliverCancellation(expected: UUID) {
+        guard activeFlow?.generation == expected, generation == expected else { return }
+        cancelActiveFlow()
     }
 
     private func validateFlow(_ expected: UUID) throws {
-        guard !Task.isCancelled, generation == expected else { throw CloudNativeIdentityError.cancelled }
+        guard !Task.isCancelled, generation == expected, activeFlow?.cancellation.isRevoked == false else { throw CloudNativeIdentityError.cancelled }
     }
 
     private func mappedError(_ error: Error) -> CloudNativeIdentityError {
@@ -95,17 +159,80 @@ final class CloudNativeIdentity {
 
     /// Called by the app only for a whitelisted dedicated Cloud callback.
     func handleGoogleCallback(_ url: URL) -> Bool {
-        guard flowInProgress, let configuration, configuration.acceptsGoogleCallback(url) else { return false }
-        return GIDSignIn.sharedInstance.handle(url)
+        guard let flow = activeFlow, flow.provider == .google, flow.generation == generation, !flow.cancellation.isRevoked,
+              !flow.callbackInFlight, !flow.callbackAccepted,
+              let configuration, configuration.acceptsGoogleCallback(url) else { return false }
+        activeFlow?.callbackInFlight = true
+        defer {
+            if activeFlow?.generation == flow.generation { activeFlow?.callbackInFlight = false }
+        }
+        let accepted = drivers?.callback(url) ?? GIDSignIn.sharedInstance.handle(url)
+        guard activeFlow?.generation == flow.generation, generation == flow.generation,
+              !flow.cancellation.isRevoked else { return false }
+        if accepted { activeFlow?.callbackAccepted = true }
+        return accepted
     }
 
-    /// Explicit human sign-out affects provider sessions only; installed screens are untouched.
-    func signOut() throws {
-        guard !flowInProgress else { throw CloudNativeIdentityError.flowInProgress }
-        generation = UUID()
-        interactiveUserID = nil
-        try auth?.signOut()
-        GIDSignIn.sharedInstance.signOut()
+    /// Explicit human intent is retained in this process, independently of waiter cancellation.
+    /// No restart durability is implied. A blocked SDK await remains waiting, never timed out as success.
+    func requestSignOut() async throws {
+        if signOutState == .succeeded { return }
+        if signOutState == .failed { throw CloudNativeIdentityError.providerFailed }
+        if let intent = signOutIntent { try await waitForSignOut(expected: intent); return }
+        let intent = UUID()
+        signOutIntent = intent
+        signOutState = .waiting
+        cancelActiveFlow()
+        if !flowInProgress { clearSDKs(expected: intent) }
+        try await waitForSignOut(expected: intent)
+    }
+
+    func retrySignOut() async throws {
+        guard signOutState == .failed, let intent = signOutIntent else {
+            try await requestSignOut(); return
+        }
+        signOutState = .waiting
+        if !flowInProgress { clearSDKs(expected: intent) }
+        try await waitForSignOut(expected: intent)
+    }
+
+    private func waitForSignOut(expected: UUID) async throws {
+        guard signOutIntent == expected else { throw CloudNativeIdentityError.cancelled }
+        switch signOutState {
+        case .succeeded: return
+        case .failed: throw CloudNativeIdentityError.providerFailed
+        case .waiting:
+            try await withCheckedThrowingContinuation { signOutWaiters.append((expected, $0)) }
+        case .idle: throw CloudNativeIdentityError.cancelled
+        }
+    }
+
+    private func finishFlow(_ expected: UUID) {
+        guard activeFlow?.generation == expected else { return }
+        activeFlow = nil; appleFlow = nil
+        if signOutState == .waiting, let intent = signOutIntent { clearSDKs(expected: intent) }
+    }
+
+    private func clearSDKs(expected: UUID) {
+        guard signOutIntent == expected, signOutState == .waiting, !flowInProgress else { return }
+        var failed = false
+        do {
+            if let drivers { try drivers.firebaseSignOut() }
+            else { try auth?.signOut() }
+        } catch { failed = true }
+        // Always attempt Google clearing even if Firebase clearing failed.
+        do {
+            if let drivers { try drivers.googleSignOut() }
+            else if configuration != nil { GIDSignIn.sharedInstance.signOut() }
+        } catch { failed = true }
+        guard signOutIntent == expected else { return }
+        let waiters = signOutWaiters.filter { $0.0 == expected }
+        signOutWaiters.removeAll { $0.0 == expected }
+        signOutState = failed ? .failed : .succeeded
+        for (_, waiter) in waiters {
+            if failed { waiter.resume(throwing: CloudNativeIdentityError.providerFailed) }
+            else { waiter.resume() }
+        }
     }
 
     private func configure() throws -> (CloudNativeConfiguration, Auth) {
@@ -141,12 +268,21 @@ private struct CloudSessionTokenProvider: CloudNativeTokenProvider {
 }
 
 @MainActor
-private final class CloudAppleAuthorization: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+final class CloudAppleAuthorization: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
     struct Result { let token: String; let fullName: PersonNameComponents? }
     let rawNonce: String
     private let anchor: ASPresentationAnchor
     private var continuation: CheckedContinuation<Result, Error>?
     private var controller: ASAuthorizationController?
+    private var finished = false
+    private var started = false
+    private var testPerform: ((CloudAppleAuthorization) -> Void)?
+    private var testCancel: (() -> Void)?
+
+    init(testPerform: @escaping (CloudAppleAuthorization) -> Void, testCancel: @escaping () -> Void) {
+        rawNonce = "isolated-test-nonce"; anchor = UIWindow()
+        self.testPerform = testPerform; self.testCancel = testCancel
+    }
 
     init(anchor: ASPresentationAnchor) throws {
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -155,9 +291,13 @@ private final class CloudAppleAuthorization: NSObject, ASAuthorizationController
         self.anchor = anchor
     }
     func authorize() async throws -> Result {
-        try await withTaskCancellationHandler {
+        guard !Task.isCancelled, !finished, !started else { throw CloudNativeIdentityError.cancelled }
+        started = true
+        return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+            guard !Task.isCancelled, !finished else { continuation.resume(throwing: CloudNativeIdentityError.cancelled); return }
             self.continuation = continuation
+            if let testPerform { testPerform(self); return }
             let request = ASAuthorizationAppleIDProvider().createRequest()
             request.requestedScopes = [.fullName, .email]
             request.nonce = SHA256.hash(data: Data(rawNonce.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -170,8 +310,12 @@ private final class CloudAppleAuthorization: NSObject, ASAuthorizationController
         } onCancel: { Task { @MainActor in self.cancel() } }
     }
     func cancel() {
-        controller?.cancel()
+        guard !finished else { return }
+        // Finish first: controller.cancel may synchronously invoke the delegate.
+        let controller = controller
         finish(.failure(CloudNativeIdentityError.cancelled))
+        controller?.cancel()
+        testCancel?()
     }
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor { anchor }
     func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
@@ -185,9 +329,44 @@ private final class CloudAppleAuthorization: NSObject, ASAuthorizationController
         finish(.failure((error as? ASAuthorizationError)?.code == .canceled ? CloudNativeIdentityError.cancelled : CloudNativeIdentityError.providerFailed))
     }
     private func finish(_ result: Swift.Result<Result, Error>) {
+        guard !finished else { return }
+        finished = true
         let continuation = continuation
         self.continuation = nil
         controller = nil
         continuation?.resume(with: result)
     }
+}
+
+/// Internal provider seam; credentials never leave this adapter module.
+@MainActor
+struct CloudIdentityTestDrivers {
+    let configure: () throws -> CloudNativeConfiguration
+    let google: (UIViewController) async throws -> CloudProviderCredential
+    let apple: (ASPresentationAnchor) async throws -> CloudProviderCredential
+    let exchange: (CloudProviderCredential) async throws -> String
+    let callback: (URL) -> Bool
+    let cancel: () -> Void
+    var cancellationDelivery: ((@escaping () -> Void) -> Void)? = nil
+    var firebaseSignOut: () throws -> Void = {}
+    var googleSignOut: () throws -> Void = {}
+}
+
+enum CloudProviderCredential {
+    case google(idToken: String, accessToken: String)
+    case apple(idToken: String, rawNonce: String, fullName: PersonNameComponents?)
+    fileprivate func firebaseCredential() -> AuthCredential {
+        switch self {
+        case let .google(token, access): return GoogleAuthProvider.credential(withIDToken: token, accessToken: access)
+        case let .apple(token, nonce, name): return OAuthProvider.appleCredential(withIDToken: token, rawNonce: nonce, fullName: name)
+        }
+    }
+}
+
+/// Task cancellation can arrive off actor; only this bit crosses that boundary.
+private final class CloudFlowCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var revoked = false
+    var isRevoked: Bool { lock.lock(); defer { lock.unlock() }; return revoked }
+    func revoke() { lock.lock(); defer { lock.unlock() }; revoked = true }
 }

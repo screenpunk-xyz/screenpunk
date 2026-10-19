@@ -368,11 +368,20 @@ final class ScreenSetTests: XCTestCase {
         XCTAssertEqual(restored.settingsSnapshot, settings)
         XCTAssertEqual(restored.temporaryActivationScope()?.owner, scope.owner)
         var reassigned = try XCTUnwrap(store.load())
-        reassigned.owner = PairingIdentityFactory.make(role: .controller, bytes: [UInt8](repeating: 0x91, count: 32))
+        let newController = PairingIdentityFactory.make(role: .controller, bytes: [UInt8](repeating: 0x91, count: 32))
+        reassigned.owner = newController
+        reassigned.approvedControllers = [newController]
         try store.save(reassigned)
         let newManager = try DeviceLANServer(management: testManagementContext(), runtime: runtime, identity: device, store: store, homeAssistantVault: vault)
-        XCTAssertNil(newManager.temporaryActivationScope(), "A new manager never inherits old content capabilities")
+        XCTAssertTrue(newManager.runtime.pairing.isApproved(newController))
+        XCTAssertFalse(newManager.runtime.pairing.isApproved(owner.pairingIdentity))
+        XCTAssertEqual(contentScope(newManager.temporaryActivationScope()), contentScope(restored.temporaryActivationScope()),
+            "Management approval preserves retained content's original installer and exact grant binding")
+        XCTAssertEqual(store.load()?.contentOwner, owner.pairingIdentity)
+        XCTAssertThrowsError(try vault.record(owner: PeerPin.hex(newController.publicKey), revision: scope.revision, grantSet: scope.grantSet),
+            "The new controller has no capability under its own identity")
         reassigned.owner = nil
+        reassigned.approvedControllers = []
         try store.save(reassigned)
         try restored.removeScreen("first")
         XCTAssertEqual(restored.screenSet?.selectedDashboardId, "second")

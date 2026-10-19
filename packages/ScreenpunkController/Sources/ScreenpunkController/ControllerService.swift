@@ -115,7 +115,15 @@ public final class ControllerService: @unchecked Sendable {
             return DashboardFileInput(path: path, text: item["text"]?.string, base64: item["base64"]?.string)
         }
         let target = try parseTarget(object["target"])
-        let connections = try parseConnections(object["connections"])
+        let connections: [ManifestConnection]
+        if object["connections"] == nil, let id = object["dashboardId"]?.string,
+           let base = object["baseRevision"]?.string {
+            // An appearance-only package edit must not implicitly erase provider
+            // discovery. Explicit [] remains the deliberate removal operation.
+            connections = try store.getRevision(dashboardId: id, revision: base).manifest.connections
+        } else {
+            connections = try parseConnections(object["connections"])
+        }
         guard let name = object["name"]?.string, name.isEmpty == false else {
             throw ControllerError.validationFailed(detail: "name required")
         }
@@ -142,6 +150,7 @@ public final class ControllerService: @unchecked Sendable {
     public func validateDashboard(dashboardId: String, revision: String?) throws -> DashboardManifest {
         let record = try store.getRevision(dashboardId: dashboardId, revision: revision)
         try PackageValidator.validate(record.manifest)
+        try PackageWebContentValidation.requireCompatible(record.files)
         return record.manifest
     }
 
@@ -154,6 +163,7 @@ public final class ControllerService: @unchecked Sendable {
         _ = ensureHelper()
         let record = try store.getRevision(dashboardId: dashboardId, revision: revision)
         try PackageValidator.validate(record.manifest)
+        try PackageWebContentValidation.requireCompatible(record.files)
         guard let renderer else {
             throw ControllerError.snapshotUnavailable(reason: "helper_not_found")
         }
@@ -293,6 +303,7 @@ public final class ControllerService: @unchecked Sendable {
         // Prepare every package before obtaining credentials or sending a mutation.
         let packages = try records.enumerated().map { index, record -> LANDeployBody in
             try PackageValidator.validate(record.manifest)
+            try PackageWebContentValidation.requireCompatible(record.files)
             let revision = try storedRevision(for: record.manifest)
             return LANDeployBody(deployment: DeploymentRecord(deploymentId: records.count == 1 ? id : "\(id)-\(index)",
                 revision: revision.revision, dashboardId: revision.dashboardId, deviceId: deviceId, phase: .queued),

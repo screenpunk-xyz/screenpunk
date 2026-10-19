@@ -13,6 +13,7 @@ public final class PackageManagedInstallation {
     private let allowLocalTest: Bool
     private let prepare: (URL, DistributionManifest) throws -> Void
     private let assertUnmanagedServiceAbsent: () throws -> AnyObject?
+    private let assertStoppedRemovalSafe: () throws -> Void
     private let commit: any PackageCommitChecking
     var beforeFencePublication: () throws -> Void = {}
     public init(root: URL, paths: InstallationPaths, service: LaunchdUserAdapter,
@@ -20,11 +21,13 @@ public final class PackageManagedInstallation {
                 allowLocalTest: Bool = false,
                 prepare: @escaping (URL, DistributionManifest) throws -> Void,
                 assertUnmanagedServiceAbsent: @escaping () throws -> AnyObject?,
+                assertStoppedRemovalSafe: @escaping () throws -> Void,
                 commit: any PackageCommitChecking) {
         self.root = root; self.paths = paths; self.service = service
         self.trust = releaseTrust; self.allowLocalTest = allowLocalTest
         self.prepare = prepare
         self.assertUnmanagedServiceAbsent = assertUnmanagedServiceAbsent
+        self.assertStoppedRemovalSafe = assertStoppedRemovalSafe
         self.commit = commit
     }
 
@@ -67,7 +70,8 @@ public final class PackageManagedInstallation {
             guard state != .unknown else { throw DistributionError.conflict }
             let lease = state == .running ? nil : try assertUnmanagedServiceAbsent()
             let interrupted = try withExtendedLifetime(lease) {
-                try service.recoverFailedActivation(plist: paths.launchAgent)
+                if state != .running { try assertStoppedRemovalSafe() }
+                return try service.recoverFailedActivation(plist: paths.launchAgent)
             }
             try writeRemovalFence(directory)
             return interrupted

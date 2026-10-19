@@ -18,6 +18,7 @@ public struct DeviceRuntimeRootView: View {
     @State private var showOnboarding = false
     @State private var generalAfterOnboarding = false
     @State private var onboardingAfterDismissal = false
+    @State private var cloudAccountDelivery = DeviceCloudAccountRequestDelivery()
     @State private var initialSetupPage: DeviceSetupPage?
     @State private var connectorRevision = UUID()
 #endif
@@ -27,6 +28,8 @@ public struct DeviceRuntimeRootView: View {
     @State private var brightnessSettingsRevision: String?
     @State private var genericConnections: ConnectionRuntime?
     @State private var genericRuntimeID = UUID()
+    @State private var brightnessRetirement: UUID?
+    @State private var genericRetirement: UUID?
 #if canImport(Network) && canImport(Security)
     @StateObject private var host: DeviceLANHost
 #endif
@@ -40,7 +43,12 @@ public struct DeviceRuntimeRootView: View {
     }
 
 #if canImport(Network) && canImport(Security)
-    public init(host: DeviceLANHost) {
+    private var onLocalReset: (() -> Void)? = nil
+    private var onCloudAccountRequested: (() -> Void)? = nil
+
+    public init(host: DeviceLANHost, onLocalReset: (() -> Void)? = nil, onCloudAccountRequested: (() -> Void)? = nil) {
+        self.onLocalReset = onLocalReset
+        self.onCloudAccountRequested = onCloudAccountRequested
         _fallback = State(initialValue: host.runtime)
         _host = StateObject(wrappedValue: host)
     }
@@ -86,7 +94,12 @@ public struct DeviceRuntimeRootView: View {
         Group {
 #if canImport(Network) && canImport(Security)
             lanBody
-                .onAppear { host.start(); host.setForeground(scenePhase == .active); applyBrightness() }
+                .environment(\.deviceRuntimeLifetime, host.lifetime)
+                .onAppear {
+                    guard !host.lifetime.isRetired else { return }
+                    if brightnessRetirement == nil { brightnessRetirement = host.lifetime.register { [weak brightness] in brightness?.stop() } }
+                    host.start(); host.setForeground(scenePhase == .active); applyBrightness()
+                }
                 .onChange(of: host.settingsSnapshot?.revision) { _ in applyBrightness() }
                 .onChange(of: host.runtime.isPaired) { _ in applyBrightness() }
                 .onChange(of: scenePhase) { phase in
@@ -95,15 +108,19 @@ public struct DeviceRuntimeRootView: View {
                     applyBrightness()
                 }
                 .onReceive(brightness.$isApplied) { _ in
-                    Task { @MainActor in acknowledgeSettings() }
+                    Task { @MainActor in guard !host.lifetime.isRetired else { return }; acknowledgeSettings() }
                 }
-                .onDisappear { brightness.stop(); host.setForeground(false) }
+                .onDisappear {
+                    brightness.stop(); host.setForeground(false)
+                    host.lifetime.unregister(brightnessRetirement); brightnessRetirement = nil
+                }
 #if os(iOS)
                 .modifier(DeviceMenuContainer(isPresented: $showDeviceMenu, onDismiss: presentQueuedOnboarding) {
                     DeviceSetupMenu(host: host, initialPage: initialSetupPage, onConnectionsChanged: { connectorRevision = UUID() }, onConnect: queueOnboarding)
                         .onDisappear { initialSetupPage = nil; connectorRevision = UUID() }
                 })
                 .onAppear {
+                    guard !host.lifetime.isRetired else { return }
                     // Existing paired devices adopt the simplified capability model without re-pairing.
                     var basic = GoogleTVConfiguration.load()
                     if basic.pin.count == 32 { basic.automaticScreenAccess = true; try? basic.save() }
@@ -117,18 +134,24 @@ public struct DeviceRuntimeRootView: View {
                 .sheet(isPresented: $showSettings) { DeviceLocalSettingsSheet(host: host) }
 #endif
 #if os(iOS)
-                .fullScreenCover(isPresented: $showOnboarding, onDismiss: { if generalAfterOnboarding { generalAfterOnboarding = false; showSettings = true } }) { NavigationStack { productionLanding.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"; showOnboarding = false } } } } }
+                .fullScreenCover(isPresented: $showOnboarding, onDismiss: { if cloudAccountDelivery.onboardingDismissed() { onCloudAccountRequested?() }; if generalAfterOnboarding { generalAfterOnboarding = false; showSettings = true } }) { NavigationStack { productionLanding.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { if host.server != nil { host.cancelPairing() }; pairingSessionCode = nil; onboardingRoute = "welcome"; showOnboarding = false } } } } }
                 .sheet(isPresented: $showScreens) { NavigationStack { DeviceProductionScreens(host: host, opened: { showScreens = false }).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showScreens = false } } } } }
 #endif
                 .task(id: "\(host.runtime.activeRevision ?? "none"):\(host.genericConnectionGeneration.uuidString)") {
+                    guard !host.lifetime.isRetired else { return }
+                    host.lifetime.unregister(genericRetirement); genericRetirement = nil
                     if let genericConnections { try? await genericConnections.clearCredentials() }
+                    guard !host.lifetime.isRetired, !Task.isCancelled else { return }
                     genericConnections = nil
                     genericRuntimeID = UUID()
                     guard let server = host.server else { return }
-                    let runtime = try? await server.makeGenericConnectionRuntime()
-                    guard !Task.isCancelled else {
+                    let runtime = try? await host.lifetime.accept(operation: { try await server.makeGenericConnectionRuntime() }, discard: { try? await $0.clearCredentials() })
+                    guard !host.lifetime.isRetired, !Task.isCancelled else {
                         if let runtime { try? await runtime.clearCredentials() }
                         return
+                    }
+                    if let runtime {
+                        genericRetirement = host.lifetime.register { Task { try? await runtime.clearCredentials() } }
                     }
                     genericConnections = runtime
                     genericRuntimeID = UUID()
@@ -177,8 +200,8 @@ public struct DeviceRuntimeRootView: View {
 #if !os(iOS)
         .overlay {
             if showDeviceMenu {
-                UnlinkPanelView(onUnlink: { showDeviceMenu = false; host.unlink() },
-                    onDismiss: { showDeviceMenu = false }, screens: host.screenSet?.screens.map(\.entry) ?? [],
+                UnlinkPanelView(onUnlink: { showDeviceMenu = false; onLocalReset?() },
+                    onDismiss: { showDeviceMenu = false }, allowUnlink: onLocalReset != nil, screens: host.screenSet?.screens.map(\.entry) ?? [],
                     selectedDashboardId: host.screenSet?.selectedDashboardId,
                     onSettings: { showDeviceMenu = false; showSettings = true }) { dashboardId in
                         host.selectScreen(dashboardId)
@@ -260,7 +283,17 @@ public struct DeviceRuntimeRootView: View {
         } else if host.runtime.isPaired && !showOnboarding {
             DeviceOnboardingConnectedView(connectionDescription: "Connected to Screenpunk on your Mac", hasScreens: !(host.server?.installedManifests.isEmpty ?? true), screens: { showScreens = true }, settings: { initialSetupPage = .settings; showDeviceMenu = true })
         } else {
-            DeviceOnboardingWelcomeView(appIcon: productionAppIcon, cloud: { onboardingRoute = "cloud" }, local: { pairingSessionCode = nil; onboardingRoute = "local" })
+            DeviceOnboardingWelcomeView(appIcon: productionAppIcon, cloud: requestCloudAccount, local: { pairingSessionCode = nil; onboardingRoute = "local" })
+        }
+    }
+    private func requestCloudAccount() {
+        guard let onCloudAccountRequested else { onboardingRoute = "cloud"; return }
+        onboardingRoute = "welcome"
+        generalAfterOnboarding = false
+        if cloudAccountDelivery.request(onboardingPresented: showOnboarding) {
+            onCloudAccountRequested()
+        } else {
+            showOnboarding = false // Deliver only after actual cover dismissal.
         }
     }
     private func localPairingState(code: String?, requestID: String?) -> DeviceOnboardingLocalState {
@@ -361,7 +394,7 @@ public struct DeviceRuntimeRootView: View {
 #if canImport(Network) && canImport(Security)
         let revision = host.settingsSnapshot?.revision
         return { accepted in
-            guard revision == host.settingsSnapshot?.revision else { return }
+            guard !host.lifetime.isRetired, revision == host.settingsSnapshot?.revision else { return }
             renderedSettingsRevision = accepted ? revision : nil
             acknowledgeSettings()
         }
@@ -372,6 +405,7 @@ public struct DeviceRuntimeRootView: View {
 
 #if canImport(Network) && canImport(Security)
     private func applyBrightness() {
+        guard !host.lifetime.isRetired else { brightness.stop(); return }
         brightness.setActive(scenePhase == .active && host.runtime.isPaired)
         brightness.update(settings: currentSettings.brightness)
         brightnessSettingsRevision = host.settingsSnapshot?.revision
@@ -379,7 +413,7 @@ public struct DeviceRuntimeRootView: View {
     }
 
     private func acknowledgeSettings() {
-        guard let snapshot = host.settingsSnapshot else { return }
+        guard !host.lifetime.isRetired, let snapshot = host.settingsSnapshot else { return }
         let rendererAccepted = host.runtime.activeRevision == nil || renderedSettingsRevision == snapshot.revision
         if scenePhase == .active && brightness.isApplied && brightnessSettingsRevision == snapshot.revision && rendererAccepted {
             host.markSettingsApplied(revision: snapshot.revision)
@@ -454,3 +488,17 @@ private struct DeviceMenuContainer<Menu: View>: ViewModifier {
     }
 }
 #endif
+
+/// Actual root intent delivery state. No SDK/configuration or management authority.
+struct DeviceCloudAccountRequestDelivery {
+    private(set) var pending = false
+    mutating func request(onboardingPresented: Bool) -> Bool {
+        guard !pending else { return false }
+        if onboardingPresented { pending = true; return false }
+        return true
+    }
+    mutating func onboardingDismissed() -> Bool {
+        guard pending else { return false }
+        pending = false; return true
+    }
+}

@@ -265,9 +265,9 @@ public final class LaunchdUserAdapter: InstallationServiceLifecycle {
         try verifyRegisteredService()
         return logPath()
     }
-    /// Idle exit belongs to the service process: KeepAlive=false permits exit
-    /// after its own drained idle timeout; launchd does not invent that policy.
-    public func idlePolicy() -> String { "Service exits after its own drained idle timeout; launchd KeepAlive is false." }
+    /// KeepAlive=false permits a stopped service to remain registered. This
+    /// adapter does not claim a service idle timer that is not installed.
+    public func idlePolicy() -> String { "Service starts on demand and remains running until stopped; launchd KeepAlive is false." }
 
     public func stopAndUnregister(plist: URL) throws -> [String] {
         let expected = try ownedPlist(serviceExecutable: serviceExecutable, plist: plist)
