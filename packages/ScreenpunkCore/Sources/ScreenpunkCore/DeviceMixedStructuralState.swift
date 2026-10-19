@@ -18,6 +18,7 @@ struct DeviceMixedStructuralState: Equatable, Sendable {
         case retainedLocal(Local)
         case cloud(DeviceNativeStructuralEntry, Grant)
         var entryID: UUID { switch self { case .retainedLocal(let local): local.entry.entryID; case .cloud(let entry, _): entry.entryID } }
+        var manifestDigest: String { switch self { case .retainedLocal(let local): local.entry.revision.digest; case .cloud(let entry, _): entry.package.manifestDigest.text } }
         var dashboardID: String { switch self { case .retainedLocal(let local): local.entry.revision.dashboardId; case .cloud(let entry, _): entry.package.dashboardID.uuidString.lowercased() } }
     }
     struct LogoutIntent: Codable, Equatable, Sendable {

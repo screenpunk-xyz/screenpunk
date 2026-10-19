@@ -11,9 +11,9 @@ final class DeviceMixedIncomingCloudArchiveTests:XCTestCase {
     private func hash(_ bytes:Data)->String {SHA256.hash(data:bytes).map{String(format:"%02x",$0)}.joined()}
     private func encode<T:Encodable>(_ value:T)throws->Data {let e=JSONEncoder();e.outputFormatting=[.sortedKeys,.withoutEscapingSlashes];return try e.encode(value)}
     private struct Fixture {let files:[(String,Data)],expected:DevicePackageExpectation,manifest:Data}
-    private func fixture()throws->Fixture {
+    private func fixture(connections: [ManifestConnection] = [])throws->Fixture {
         let html=Data("<html><body>actual bounded ZIP fixture</body></html>".utf8)
-        var manifest=DashboardManifest(schemaVersion:1,dashboardId:UUID().uuidString.lowercased(),name:"ZIP fixture",revision:UUID().uuidString.lowercased(),entrypoint:"index.html",sdkVersion:"1",target:.init(profileId:"profile",width:390,height:844,scale:3,orientation:"portrait"),connections:[],files:[.init(path:"index.html",bytes:html.count,sha256:hash(html))])
+        var manifest=DashboardManifest(schemaVersion:1,dashboardId:UUID().uuidString.lowercased(),name:"ZIP fixture",revision:UUID().uuidString.lowercased(),entrypoint:"index.html",sdkVersion:"1",target:.init(profileId:"profile",width:390,height:844,scale:3,orientation:"portrait"),connections:connections,files:[.init(path:"index.html",bytes:html.count,sha256:hash(html))])
         manifest.digest=hash(try encode(manifest));let raw=try encode(manifest)
         let revision=StoredRevision(revision:manifest.revision,dashboardId:manifest.dashboardId,name:manifest.name,digest:manifest.digest!,orientation:.portrait,width:390,height:844)
         return .init(files:[("manifest.json",raw),("index.html",html)],expected:.init(revision:revision,target:.init(deviceId:"fixture",name:"Fixture"),profileID:"profile"),manifest:raw)
@@ -98,6 +98,49 @@ final class DeviceMixedIncomingCloudArchiveTests:XCTestCase {
         XCTAssertEqual(grant.identity.rootID, grantRoot)
         var corrupt = archive; corrupt[30 + "manifest.json".utf8.count] ^= 1
         XCTAssertThrowsError(try prepare(corrupt))
+    }
+    func testCloudHomeAssistantDeclarationPreparesWithoutImportingAnyCredentials() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DeviceMixedInventoryStore(root: root, rootID: UUID()); try store.initializeExplicit()
+        let owner = DeviceNativeInstallationContentOwner(installationID: UUID(), accountID: UUID(), locationID: nil, transitionID: UUID())
+        let state = try DeviceMixedStructuralState.validating(generationID: UUID(), installationOwner: owner, entries: [], configuredEntryID: nil)
+        let capture = try DeviceMixedInventoryQualificationHarness.scope(store) {
+            try store.commitExact(operationID: UUID(), previous: nil, candidate: state, admissionEnabled: true, permit: $0).0
+        }
+        var home = ManifestConnection(alias: "home", required: true)
+        home.operations = [.init(name: "getStates", kind: "http", maxAgeSeconds: 10)]
+        home.serviceCalls = [.init(domain: "light", service: "turn_on", entityIds: ["light.fixture"])]
+        let fixture = try fixture(connections: [home]), archive = try zip(fixture.files), descriptor = try descriptor(archive, fixture)
+        let id = UUID(), plan = Data("genuine reviewed cloud package".utf8), grantRoot = UUID(), packageRoot = UUID()
+        let set = try DeviceResultingSetCandidate.validating(entries: [.validating(entryID: id, provenance: .cloud(descriptor))], configuredEntryID: id)
+        let association: [String: Any] = ["schemaVersion": 1, "operationId": UUID().uuidString.lowercased(), "planId": UUID().uuidString.lowercased(),
+            "installationId": owner.installationID.uuidString.lowercased(), "accountId": owner.accountID.uuidString.lowercased(), "locationId": NSNull(),
+            "transitionId": owner.transitionID.uuidString.lowercased(), "planDigest": try DeviceNativeDeliveryAttachmentCodec.hash(plan), "planByteLength": plan.count]
+        let header = try JSONSerialization.data(withJSONObject: association).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let wire: [String: Any] = ["packageProfile": DeviceDeliveryPackageCandidate.profile, "publicationId": descriptor.publicationID.uuidString.lowercased(),
+            "projectId": descriptor.projectID.uuidString.lowercased(), "packageId": descriptor.packageID.uuidString.lowercased(), "dashboardId": descriptor.dashboardID.uuidString.lowercased(),
+            "revision": descriptor.revision.uuidString.lowercased(), "manifestDigest": descriptor.manifestDigest.text, "manifestSha256": descriptor.manifestSHA256.text,
+            "archiveSha256": descriptor.archiveSHA256.text, "compressedBytes": descriptor.compressedBytes, "expandedBytes": descriptor.expandedBytes, "archiveEntries": descriptor.archiveEntries]
+        var command = association; command["sequence"] = "2"; command["executionExpiresAt"] = "2026-10-10T15:00:00Z"
+        command["expectedInstalledSetGenerationId"] = state.generationID.uuidString.lowercased(); command["desiredSetGenerationId"] = UUID().uuidString.lowercased()
+        command["resultingSet"] = ["schemaVersion": 1, "entries": [["entryId": id.uuidString.lowercased(), "provenance": ["kind": "cloud", "package": wire]]], "configuredEntryId": id.uuidString.lowercased()]
+        command["resultingSetDigest"] = try DeviceDeliveryCandidateCodec.resultingSetDigest(set)
+        let bytes = try JSONSerialization.data(withJSONObject: command), operation = UUID()
+        func prepare(_ archive: Data) throws -> DeviceMixedPreparedCloudCommand {
+            try .prepare(capture: capture, command: bytes, associationHeader: header, rawPlan: plan,
+                nativeOperationID: UUID(), journalRootID: UUID(), packageRootID: packageRoot, grantRootID: grantRoot,
+                grantOperationID: UUID(), grantRevisionID: UUID(), archives: [.init(entryID: id, preparationOperationID: operation,
+                    archiveBytes: archive, profileID: "profile", revisionName: fixture.expected.revision.name, target: fixture.expected.target)])
+        }
+        let prepared = try prepare(archive)
+        XCTAssertTrue(prepared.grantInput.credentials.isEmpty)
+        XCTAssertNil(prepared.grantInput.entries.first?.homeAssistant)
+        XCTAssertNil(prepared.grantInput.entries.first?.generic)
+        // Preparation is not activation and must leave the installed baseline intact.
+        let unchanged = try DeviceMixedInventoryQualificationHarness.scope(store) { try XCTUnwrap(store.captureCurrentExact(permit: $0)) }
+        XCTAssertEqual(unchanged.snapshot, capture.snapshot)
     }
     #endif
 }

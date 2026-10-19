@@ -3016,6 +3016,19 @@ final class NativeEnrollmentSceneControllerTests: XCTestCase {
         XCTAssertNil(unknown.detail)
         XCTAssertFalse(unknown.message(installationEnrolled: false).contains("private-credential-or-path"))
     }
+    func testCloudPackageRejectionDoesNotRecommendReconnectingOrResetting() {
+        let unsupported = NativeEnrollmentFailureDiagnostic(stage: .screenDelivery,
+            error: NativeDeliveryExecutionError.unsupportedCapabilities)
+        let message = unsupported.message(installationEnrolled: true, originalRetention: .retained)
+        XCTAssertTrue(message.contains("Cloud delivery"))
+        XCTAssertTrue(message.contains("new deployment"))
+        XCTAssertFalse(message.contains("Tap Retry connection"))
+        XCTAssertFalse(message.contains("storage needs attention"))
+        let mismatch = NativeEnrollmentFailureDiagnostic(stage: .screenDelivery,
+            error: DevicePackageQualificationError.targetMismatch)
+        XCTAssertEqual(mismatch.detail, "packageCompatibility/targetMismatch")
+        XCTAssertTrue(mismatch.message(installationEnrolled: true).contains("device profile"))
+    }
     func testCustomerFailureCopyUsesExistingRetryActionAndTruthfulSaveStatus() {
         let failures: [Error] = [
             NSError(domain: "unknown-private-error", code: 1),

@@ -315,6 +315,7 @@ struct CloudDeviceSettingsView: View {
             retry: { enrollment.retryCloudConnection(bootstrap: bootstrap) },
             logOut: { Task { await enrollment.disconnectCloudDevice(lifecycle: lifecycle) } },
             reset: { Task { await enrollment.factoryReset(lifecycle: lifecycle) } },
+            localConnections: enrollment.cloudLocalConnectionInstallationID.map { AnyView(DeviceCloudHomeAssistantSettings(installationID: $0, manifests: enrollment.displayCloudInstalledManifests)) },
             localControllers: enrollment.commonHost.map { AnyView(CloudLocalControllerSettings(host: $0)) })
     }
 }
@@ -333,6 +334,7 @@ struct CloudDeviceSettingsContent: View {
     let retry: () -> Void
     let logOut: () -> Void
     let reset: () -> Void
+    var localConnections: AnyView? = nil
     var localControllers: AnyView? = nil
     @State private var confirmLogOut = false
     @State private var confirmReset = false
@@ -386,6 +388,7 @@ struct CloudDeviceSettingsContent: View {
             } footer: {
                 Text("Log out disconnects this device from Screenpunk Cloud. Local controller pairings, local screens, and your Cloud account are kept.")
             }
+            if let localConnections { localConnections }
             if let localControllers { localControllers }
             Section {
                 Button("Reset this device", role: .destructive) { confirmReset = true }

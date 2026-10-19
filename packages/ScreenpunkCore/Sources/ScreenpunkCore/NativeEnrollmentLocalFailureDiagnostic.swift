@@ -2,7 +2,7 @@ import Foundation
 
 /// Fixed diagnostic categories only; no filesystem, credential, or authority evidence.
 @_spi(NativeInstallation) public enum NativeEnrollmentLocalFailureCategory: String, Equatable, Sendable {
-    case packageStore, grantStore, structuralStore, provisioningStore, nativeJournal, nativePromotion
+    case packageArchive, packageCompatibility, packageStore, grantStore, structuralStore, provisioningStore, nativeJournal, nativePromotion
     case mixedInventory, resourceGate, commandFence, operationalTransport
     case deliveryExecution, managedRender, structuralCodec, screenService
 }
@@ -15,6 +15,9 @@ import Foundation
     case association, unsupportedCapabilities, phase, unavailableDispatchCapability, invalidContent
     case emptySelection, invalidJSON, duplicateKey, invalidSchema, offline
     case quotaExhausted, disconnected, unavailable
+    case invalidManifest, invalidExpectation, invalidPath, duplicatePath, assetMismatch
+    case hashMismatch, digestMismatch, identityMismatch, targetMismatch
+    case descriptorMismatch, invalidZIP, integrity, unsupportedPlatform, manifestMismatch
 }
 @_spi(NativeInstallation) public struct NativeEnrollmentLocalFailureDiagnostic: Equatable, Sendable {
     public let domain: NativeEnrollmentLocalFailureCategory
@@ -24,6 +27,33 @@ import Foundation
     }
     /// Classify exact Core error types without descriptions, associated values or fallback inference.
     public static func classify(_ error: any Error) -> Self? {
+        if let value = error as? DeviceNativeArchiveQualificationError {
+            switch value {
+            case .sizeLimit: return .init(.packageArchive, .sizeLimit)
+            case .descriptorMismatch: return .init(.packageArchive, .descriptorMismatch)
+            case .invalidZIP: return .init(.packageArchive, .invalidZIP)
+            case .invalidPath: return .init(.packageArchive, .invalidPath)
+            case .duplicatePath: return .init(.packageArchive, .duplicatePath)
+            case .integrity: return .init(.packageArchive, .integrity)
+            case .unsupportedPlatform: return .init(.packageArchive, .unsupportedPlatform)
+            case .manifestMismatch: return .init(.packageArchive, .manifestMismatch)
+            }
+        }
+        if let value = error as? DevicePackageQualificationError {
+            switch value {
+            case .sizeLimit: return .init(.packageCompatibility, .sizeLimit)
+            case .invalidManifest: return .init(.packageCompatibility, .invalidManifest)
+            case .invalidExpectation: return .init(.packageCompatibility, .invalidExpectation)
+            case .invalidPath: return .init(.packageCompatibility, .invalidPath)
+            case .duplicatePath: return .init(.packageCompatibility, .duplicatePath)
+            case .assetMismatch: return .init(.packageCompatibility, .assetMismatch)
+            case .hashMismatch: return .init(.packageCompatibility, .hashMismatch)
+            case .digestMismatch: return .init(.packageCompatibility, .digestMismatch)
+            case .identityMismatch: return .init(.packageCompatibility, .identityMismatch)
+            case .targetMismatch: return .init(.packageCompatibility, .targetMismatch)
+            case .digestUnavailable: return .init(.packageCompatibility, .digestUnavailable)
+            }
+        }
         if let value = error as? DevicePackagePreparationError {
             switch value {
             case .invalidMetadata: return .init(.packageStore, .invalidRecord)

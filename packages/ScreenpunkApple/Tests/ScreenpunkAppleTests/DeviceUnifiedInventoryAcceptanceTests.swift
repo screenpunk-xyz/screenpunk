@@ -56,6 +56,68 @@ final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
         XCTAssertEqual(try reopened.validatedAssociation().generationID, localGeneration)
     }
 
+    func testCloudDeclarationsMountAndUseOnlyExplicitLocalHomeApproval() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let before = try fixture.common.automationSourceExact().capture.snapshot
+        var home = ManifestConnection(alias: "home", required: true)
+        home.operations = [.init(name: "getStates", kind: "http", maxAgeSeconds: 10)]
+        home.serviceCalls = [.init(domain: "light", service: "turn_on", entityIds: ["light.fixture"])]
+        let delivery = try UnifiedArchiveComposition.make(fixture: fixture, changedPublication: false, connections: [home])
+        fixture.http.delivery = delivery.value
+        fixture.http.unavailableDeliveryPackageIDs = [delivery.retainedPackageID]
+        let pathStart = fixture.http.deliveryPaths.count
+        let command = try await NativeDeliveryCommandHTTPObservation.collect(installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        let plan = try await command.fetchPlan(current: fixture.current, origin: fixture.http.origin,
+            nativeOperationID: UUID(), configuration: fixture.http.configuration)
+        _ = try plan.acceptUnified(session: fixture.common, current: fixture.current)
+        let archives = try await plan.fetchArchives(current: fixture.current, origin: fixture.http.origin,
+            target: delivery.value.archive.target, profileID: "Fixture", revisionName: "Fixture", configuration: fixture.http.configuration)
+        try archives.prepareUnified(session: fixture.common, current: fixture.current,
+            packageRootID: UUID(), grantOperationID: UUID(), grantRevisionID: UUID())
+        let packagePaths = Array(fixture.http.deliveryPaths.dropFirst(pathStart)).filter { $0.contains("/delivery/package/") }
+        XCTAssertEqual(packagePaths.map { URL(fileURLWithPath: $0).lastPathComponent }, [delivery.incomingPackageID])
+        XCTAssertFalse(packagePaths.contains { $0.hasSuffix("/" + delivery.retainedPackageID) })
+        let activation = try fixture.common.retainCloudActivationRequest(requestID: UUID(), current: fixture.current)
+        let authorization = try await NativeDeliveryActivationHTTPObservation.collect(body: activation, installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        try fixture.common.retainCloudAuthorization(requestBody: activation, observation: authorization)
+        _ = try fixture.common.dispatchCloudAndRetainActivatedOutcome(current: fixture.current)
+        let after = try fixture.common.automationSourceExact().capture.snapshot
+        XCTAssertEqual(after.entries.count, 2)
+        XCTAssertEqual(after.entries.first { $0.entryID == delivery.retainedEntryID }, before.entries.first { $0.entryID == delivery.retainedEntryID },
+            "Retention preserves the complete existing package, grant and resource identities")
+        XCTAssertEqual(after.configuredEntryID, delivery.incomingEntryID)
+        XCTAssertNotEqual(after.generationID, before.generationID)
+        let approvals = DeviceCloudHomeAssistantStore(store: MemoryCredentialStore())
+        let http = CloudHomeHTTP()
+        let runtime = try await fixture.common.makeManagedRuntime(operationID: UUID(), http: http,
+            webSocket: URLSessionWebSocketTransport(), resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock(),
+            cloudHomeAssistant: { try approvals.configuration(installationID: $0, manifest: $1) })
+        do { _ = try await runtime.request(alias: "home", operation: "getStates", parameters: [:]); XCTFail("Unmounted content cannot execute") } catch { }
+        XCTAssertEqual(http.requests, 0)
+        try fixture.common.confirmMountedLocalContent(runtime.content)
+        do { _ = try await runtime.request(alias: "home", operation: "getStates", parameters: [:]); XCTFail("Declaration is not approval") } catch { }
+        XCTAssertEqual(http.requests, 0)
+        try approvals.approve(installationID: fixture.activation.installationId, manifest: runtime.manifest,
+            origin: "http://192.168.1.40", token: "synthetic-token", allowInsecureHTTP: true)
+        _ = try await runtime.request(alias: "home", operation: "getStates", parameters: [:])
+        _ = try await runtime.request(alias: "home", operation: "callService", parameters: ["call": #"{"domain":"light","service":"turn_on","target":{"entity_id":"light.fixture"},"serviceData":{}}"#])
+        XCTAssertEqual(http.requests, 2)
+        do { _ = try await runtime.request(alias: "home", operation: "callService", parameters: ["call": #"{"domain":"light","service":"turn_on","target":{"entity_id":"light.other"},"serviceData":{}}"#]); XCTFail("Undeclared entity") } catch { }
+        XCTAssertEqual(http.requests, 2)
+        try approvals.revoke(installationID: fixture.activation.installationId)
+        do { _ = try await runtime.request(alias: "home", operation: "getStates", parameters: [:]); XCTFail("Revoked grant") } catch { }
+        XCTAssertEqual(http.requests, 2)
+        await runtime.cancel()
+        let reopened = try fixture.authority.restoreUnifiedInventorySession(context: fixture.context, commonRootID: fixture.commonID, native: fixture.execution)
+        let restored = try await reopened.makeManagedRuntime(operationID: UUID(), http: http,
+            webSocket: URLSessionWebSocketTransport(), resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock())
+        XCTAssertEqual(restored.manifest.connections, [home])
+        XCTAssertEqual(restored.content.entryID, runtime.content.entryID)
+    }
+
     func testUnifiedArchiveCollectionReusesExactRetainedCloudAndFetchesOnlyNewPackage() async throws {
         let fixture = try await GenuineUnifiedInventoryFixture.make()
         defer { fixture.close() }
@@ -324,11 +386,11 @@ private enum UnifiedArchiveComposition {
         let provenance = try XCTUnwrap(entry["provenance"] as? [String: Any])
         return try XCTUnwrap((provenance["package"] as? [String: Any])?["packageId"] as? String)
     }
-    static func make(fixture: GenuineUnifiedInventoryFixture, changedPublication: Bool) throws -> Delivery {
+    static func make(fixture: GenuineUnifiedInventoryFixture, changedPublication: Bool, connections: [ManifestConnection] = []) throws -> Delivery {
         let original = try XCTUnwrap(fixture.http.delivery)
         let state = try fixture.common.validatedAssociation()
         let next = try AuthorityStaticDeliveryFixture.make(state: ["installationId": fixture.activation.installationId.uuidString.lowercased(),
-            "transitionId": fixture.activation.transitionId.uuidString.lowercased(), "generationId": state.generationID.uuidString.lowercased()], activation: fixture.activation)
+            "transitionId": fixture.activation.transitionId.uuidString.lowercased(), "generationId": state.generationID.uuidString.lowercased()], activation: fixture.activation, connections: connections)
         var retained = try XCTUnwrap(entries(in: original.command).first)
         let retainedID = try XCTUnwrap(UUID(uuidString: XCTUnwrap(retained["entryId"] as? String)))
         let retainedPackage = try packageID(in: original.command)
@@ -369,5 +431,16 @@ private final class OutcomeReplayLocalOwner: NativeUnifiedLocalInventoryOwner {
         try authority.performFixedUnifiedLocalDispatch(command: command, peerPinHex: peerPinHex, checkpoint: checkpoint) {
             try command.performDuringFixedOwner()
         }
+    }
+}
+
+private final class CloudHomeHTTP: HTTPTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var requests: Int { lock.lock(); defer { lock.unlock() }; return count }
+    private func record() { lock.lock(); count += 1; lock.unlock() }
+    func send(_ request: AuthorizedHTTPRequest) async throws -> HTTPTransportResponse {
+        record()
+        return .init(status: 200, body: Data("[]".utf8), headers: [:])
     }
 }

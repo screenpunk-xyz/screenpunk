@@ -28,6 +28,7 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
 @MainActor final class NativeEnrollmentSceneController: ObservableObject {
     enum State: Equatable { case idle, enrolling, needsAttention, screenDeliveryNeedsAttention, currentInstallation }
     enum CloudConnectionState: Equatable { case notConnected, connecting, connected, needsAttention }
+    var cloudLocalConnectionInstallationID: UUID? { original?.result?.activation.installationId }
     var cloudConnectionIdentity: UUID? { cloudDisconnected ? nil : (original?.intent ?? retainedIntent)?.enrollmentID }
     /// Device connection is independent of the optional human account session.
     var cloudConnectionState: CloudConnectionState {
@@ -55,6 +56,7 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
     private struct DisplayInventoryProjection {
         let owner: DisplayInventoryOwner, epoch: UUID, generationID: UUID
         let inventory: CloudScreenInventory
+        let cloudManifestDigests: Set<String>
         let manifests: [DashboardManifest]
         let hasManifests: Bool
     }
@@ -104,6 +106,9 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
         guard displayScreenInventory != nil else { return [] }
         return displayInventoryProjection?.manifests ?? []
     }
+    var displayCloudInstalledManifests: [DashboardManifest] {
+        displayInstalledManifests.filter { displayInventoryProjection?.cloudManifestDigests.contains($0.digest ?? "") == true }
+    }
     var hasPendingDisplayMetadataCaptureForTesting: Bool { displayMetadataTask != nil }
     /// Unavailable qualification is distinct from a genuinely qualified empty set.
     func installedCloudScreens() throws -> CloudScreenInventory {
@@ -131,7 +136,8 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
             return
         }
         displayInventoryProjection = .init(owner: owner, epoch: displayInventoryEpoch,
-            generationID: association.generationID, inventory: inventory, manifests: manifests ?? [], hasManifests: manifests != nil)
+            generationID: association.generationID, inventory: inventory,
+            cloudManifestDigests: Set(association.entries.filter { $0.provenance == "cloud" }.map(\.manifestDigest)), manifests: manifests ?? [], hasManifests: manifests != nil)
         if manifests == nil { captureDisplayMetadata(session: session, owner: owner, association: association) }
     }
     /// Metadata refresh is controlled by qualified transitions, never view layout.
@@ -1221,6 +1227,7 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
     private func finishDetachedCleanup(_ unified: DeviceUnifiedInventorySession,
         lifecycle: CloudHumanSessionLifecycle?) async throws {
         var association = try unified.detachedAssociation()
+        try DeviceCloudHomeAssistantStore.shared.revoke(installationID: association.metadata.retiredInstallationID)
         cloudLogoutCleanupPending = !association.metadata.cleanupCompleted
         if cloudLogoutCleanupPending {
             let proof = try cloudCleanup(association, association.credentialRetirement().namespaceURL)
@@ -2136,10 +2143,11 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
             do {
                 let runtime = try await unified.lastSuccessfulManagedRuntime(operationID: operationID,
                     http: URLSessionHTTPTransport(), webSocket: URLSessionWebSocketTransport(),
-                    resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock())
+                    resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock(),
+                    cloudHomeAssistant: { try DeviceCloudHomeAssistantStore.shared.configuration(installationID: $0, manifest: $1) })
                 preparedRuntime = runtime; selected = runtime.content
             } catch DeviceManagedRenderFailure.invalidContent {
-                // The guarded historical issuer admits Local runtimes only.
+                // Fall back only when no managed historical presentation is available.
                 // Preserve the real failure if no such fallback is available.
                 try installCommonHost(original, context: context, unified: unified); return
             }
@@ -2451,17 +2459,11 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
         guard let selected = association.entries.first(where: { $0.entryID == association.configuredEntryID }) else {
             throw DeviceManagedRenderFailure.emptySelection
         }
-        if selected.provenance == "cloud" {
-            // Cloud packages use the qualified static projection. Private managed
-            // runtimes require a retained local grant graph.
-            let content = try unified.selectedContent(operationID: operationID)
-            preparedRuntime = nil
-            return content
-        }
-        guard selected.provenance == "retainedLocal" else { throw DeviceManagedRenderFailure.invalidContent }
+        guard ["cloud", "retainedLocal"].contains(selected.provenance) else { throw DeviceManagedRenderFailure.invalidContent }
         let runtime = try await unified.makeManagedRuntime(operationID: operationID,
             http: URLSessionHTTPTransport(), webSocket: URLSessionWebSocketTransport(),
-            resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock())
+            resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock(),
+            cloudHomeAssistant: { try DeviceCloudHomeAssistantStore.shared.configuration(installationID: $0, manifest: $1) })
         preparedRuntime = runtime
         return runtime.content
     }
@@ -3008,6 +3010,14 @@ struct NativeEnrollmentFailureDiagnostic: Equatable {
         else { category = .localState }
     }
     func message(installationEnrolled: Bool, originalRetention: NativeEnrollmentRequestRetention = .uncertain) -> String {
+        if stage == .screenDelivery, let localDiagnostic {
+            if localDiagnostic.reason == .unsupportedCapabilities {
+                return "This screen uses connections or features that Cloud delivery on this device does not support. Your setup and existing screens are retained. Reconnecting cannot retry a completed failed delivery. Use a supported screen, then review and confirm a new deployment."
+            }
+            if localDiagnostic.domain == .packageArchive || localDiagnostic.domain == .packageCompatibility {
+                return "The screen package could not be verified for this device. Your setup and existing screens are retained. Check the screen’s device profile and package, then review and confirm a new deployment."
+            }
+        }
         switch category {
         case .busy: return "The original connection operation is already running. Wait for it to finish."
         case .resetInProgress: return "A device reset is still running. Wait for it to finish before connecting."

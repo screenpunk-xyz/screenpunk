@@ -40,7 +40,7 @@ final class DeviceMixedPreparedCloudCommand: GrantSecretRedacted {
             guard case .cloud(let cloud, let grant) = entry, grant.identity == grantIdentity,
                 grant.preparationOperationID == grantOperationID,
                 let package = packages.first(where: { $0.reference == cloud.preparedPackage }),
-                package.package.manifest.connections.isEmpty, consumed.insert(entry.entryID).inserted,
+                consumed.insert(entry.entryID).inserted,
                 cloud.package.manifestDigest.text == package.package.revision.digest else { throw NativeDeliveryExecutionError.association }
             inputs.append(.supplied(entryID: entry.entryID, operationID: package.reference.preparationOperationID, package: package.package))
             grantEntries.append(.init(entryID: entry.entryID, revision: package.package.revision, generic: nil, homeAssistant: nil, publicReads: nil, credentialReferences: []))
@@ -89,7 +89,6 @@ final class DeviceMixedPreparedCloudCommand: GrantSecretRedacted {
                     digest: descriptor.manifestDigest.text, orientation: supplied.target.orientation,
                     width: supplied.target.width, height: supplied.target.height), target: supplied.target, profileID: supplied.profileID)
                 let package = try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(supplied.archiveBytes, descriptor: descriptor, expected: expected).package
-                guard package.manifest.connections.isEmpty else { throw NativeDeliveryExecutionError.unsupportedCapabilities }
                 let reference = try PackagePreparationCodec.expectedReference(.init(operationID: supplied.preparationOperationID,
                     package: package), rootID: packageRootID)
                 inputs.append(.supplied(entryID: desired.entryID, operationID: supplied.preparationOperationID, package: package))

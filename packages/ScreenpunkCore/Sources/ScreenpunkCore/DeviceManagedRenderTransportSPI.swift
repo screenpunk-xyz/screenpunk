@@ -17,11 +17,13 @@ import Foundation
 @_spi(ManagedRender) public final class DeviceManagedStaticContent:@unchecked Sendable {
     public let operationID:UUID,generationID:UUID,entryID:UUID
     public let displayName:String,entrypoint:String,revision:String
+    public let manifest: DashboardManifest
     public let assets:[DeviceManagedRenderAsset]
     private let validate:()throws->Void
     fileprivate init(operationID:UUID,generationID:UUID,entryID:UUID,displayName:String,
                      package:QualifiedDevicePackage,validate:@escaping ()throws->Void){
         self.operationID=operationID;self.generationID=generationID;self.entryID=entryID
+        self.manifest = package.manifest
         self.displayName=displayName;entrypoint=package.manifest.entrypoint;revision=package.revision.revision
         assets=[.init("manifest.json",package.originalManifestBytes)]+package.files.map{.init($0.path,$0.bytes)}
         self.validate=validate

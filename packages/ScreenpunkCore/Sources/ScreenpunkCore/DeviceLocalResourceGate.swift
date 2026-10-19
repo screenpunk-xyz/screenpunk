@@ -3338,8 +3338,7 @@ final class DeviceMixedResourceResolver {
                     presentation.snapshot.generationID == content.generationID,
                     presentation.snapshot.configuredEntryID == entryID, content.entryID == entryID,
                     let entry = presentation.snapshot.entries.first(where: { $0.entryID == entryID }),
-                    qualified.contains(entry), case .retainedLocal(let retained) = entry,
-                    retained.entry.revision.digest == manifestDigest else { throw DeviceStructuralStoreError.conflict }
+                    qualified.contains(entry), entry.manifestDigest == manifestDigest else { throw DeviceStructuralStoreError.conflict }
                 guard let mounted = try store.mountedExact(permit: permit),
                     mounted.generationID == presentation.snapshot.generationID,
                     mounted.entryID == entryID, mounted.manifestDigest == manifestDigest else {
@@ -3384,7 +3383,7 @@ final class DeviceMixedResourceResolver {
         guard let result else { throw DeviceLocalResourceGateFailure.invalidScope }; return result
     }
     func selectedStaticContentExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
-        current: DeviceMixedInventoryStore.Capture, operationID: UUID, historicalMounted: Bool = false) throws -> DeviceManagedStaticContent {
+        current: DeviceMixedInventoryStore.Capture, operationID: UUID, historicalMounted: Bool = false, runtime: Bool = false) throws -> DeviceManagedStaticContent {
         var selectedPackage: QualifiedDevicePackage?, selectedName: String?, selectedID: UUID?
         try withScope(binding: original.local, inventory: store) { permit in
             let qualified = try qualifiedLocalEntries(original.local, permit: permit)
@@ -3422,8 +3421,9 @@ final class DeviceMixedResourceResolver {
             }
         }
         guard let package = selectedPackage, let name = selectedName, let id = selectedID else { throw DeviceManagedRenderFailure.invalidContent }
-        let content = try DeviceManagedRenderProjection.make(package: package, operationID: operationID,
-            generationID: current.snapshot.generationID, entryID: id, displayName: name, validate: { [self] in
+        let project = runtime ? DeviceManagedRenderProjection.makeRuntime : DeviceManagedRenderProjection.make
+        let content = try project(package, operationID,
+            current.snapshot.generationID, id, name, { [self] in
                 try verifyCurrentOrMountedResourcesExact(original, store: store, presentation: current)
             })
         try content.verifyResources(); return content

@@ -87,6 +87,12 @@ final class NativeEnrollmentLocalFailureDiagnosticTests: XCTestCase {
         checkStatic(NativeScreenServiceFailure.disconnected, "screenService/disconnected")
         checkStatic(NativeScreenServiceFailure.unavailable, "screenService/unavailable")
     }
+    func testPackageRejectionKeepsAUsefulFixedDiagnostic() {
+        check(DevicePackageQualificationError.targetMismatch, .packageCompatibility, .targetMismatch)
+        check(DevicePackageQualificationError.digestMismatch, .packageCompatibility, .digestMismatch)
+        check(DeviceNativeArchiveQualificationError.integrity, .packageArchive, .integrity)
+        check(DeviceNativeArchiveQualificationError.invalidZIP, .packageArchive, .invalidZIP)
+    }
     func testUnknownDescriptionsAndAssociatedContextRemainUnobserved() {
         struct DescribedFailure: Error, CustomStringConvertible, LocalizedError {
             var description: String { XCTFail("Classification must not inspect an arbitrary Error description"); return "synthetic-secret" }
