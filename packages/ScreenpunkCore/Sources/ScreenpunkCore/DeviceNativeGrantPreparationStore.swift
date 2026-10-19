@@ -880,9 +880,9 @@ final class DeviceNativeGrantPreparationStore {
         let value: RootBinding = try strictDecode(binding.bytes, limit: 32768)
         let proof: Genesis = try strictDecode(genesis.bytes, limit: 32768)
         guard value.schemaVersion == 3, value.domain.utf8.elementsEqual("nativePrivateAttempt3".utf8),
-              value.rootID == rootID, value.rootPath.utf8.elementsEqual(root.path.utf8),
+              value.rootID == rootID, DeviceFilesystemTraversal.recordedPath(value.rootPath, matchesCurrentPath: root.path),
               value.protectedPaths.count == protectedPaths.count,
-              zip(value.protectedPaths, protectedPaths).allSatisfy({ $0.utf8.elementsEqual($1.utf8) }),
+              DeviceFilesystemTraversal.recordedPaths(value.protectedPaths, matchCurrentPaths: protectedPaths),
               value.root == context.rootID, value.lock == context.lockID, value.operations == context.operationsID,
               value.selfID == binding.id, value.genesisID == genesis.id,
               proof.schemaVersion == 3, proof.selfID == genesis.id, proof.binding == binding else {
@@ -929,10 +929,10 @@ final class DeviceNativeGrantPreparationStore {
             if let existing = bindingFinal ?? bindingStage, !existing.bytes.isEmpty {
                 let value: RootBinding = try strictDecode(existing.bytes, limit: 32768)
                 guard value.schemaVersion == 3, value.domain == "nativePrivateAttempt3", value.rootID == rootID,
-                      value.rootPath.utf8.elementsEqual(root.path.utf8), value.root == context.rootID,
+                      DeviceFilesystemTraversal.recordedPath(value.rootPath, matchesCurrentPath: root.path), value.root == context.rootID,
                       value.lock == context.lockID, value.operations == context.operationsID,
                       value.selfID == existing.id, value.protectedPaths.count == protectedPaths.count,
-                      zip(value.protectedPaths, protectedPaths).allSatisfy({ $0.utf8.elementsEqual($1.utf8) }),
+                      DeviceFilesystemTraversal.recordedPaths(value.protectedPaths, matchCurrentPaths: protectedPaths),
                       let proof = genesisFinal ?? genesisStage, proof.id == value.genesisID else {
                     throw DeviceNativeGrantPreparationError.unsafeBinding
                 }

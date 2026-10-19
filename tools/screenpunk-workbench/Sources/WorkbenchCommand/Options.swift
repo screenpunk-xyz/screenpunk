@@ -70,7 +70,7 @@ struct Options {
                                             "--source-version", "--revision", "--generation", "--out", "--to", "--external",
                                             "--catalog-entry", "--kit-version", "--inventory",
                                             "--include-external", "--allow-incomplete", "--scope", "--required",
-                                            "--watch"].contains(word) {
+                                            "--watch", "--create-local-workspace"].contains(word) {
                     throw usage("Unknown option. Use screenpunk help.")
                 }
                 result.words.append(word)

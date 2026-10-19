@@ -479,6 +479,16 @@ final class CommandTests: XCTestCase {
             ["workbench-owner.lock"])
     }
 
+    func testCooperatingOwnerRequiresSignedProtocolTeamAndRole() {
+        XCTAssertTrue(WorkbenchLegacyOwnerGate.acceptsCooperatingCode(identifier: "xyz.screenpunk.macos", team: "77KASWDGM6", protocolVersion: "workbench-owner-lock-v1", gui: true))
+        XCTAssertTrue(WorkbenchLegacyOwnerGate.acceptsCooperatingCode(identifier: "xyz.screenpunk.workbench.tool", team: "77KASWDGM6", protocolVersion: "workbench-owner-lock-v1", gui: false))
+        for marker in [nil, "", "legacy", "workbench-owner-lock-v2"] as [String?] {
+            XCTAssertFalse(WorkbenchLegacyOwnerGate.acceptsCooperatingCode(identifier: "xyz.screenpunk.macos", team: "77KASWDGM6", protocolVersion: marker, gui: true))
+        }
+        XCTAssertFalse(WorkbenchLegacyOwnerGate.acceptsCooperatingCode(identifier: "xyz.screenpunk.macos", team: "other-team", protocolVersion: "workbench-owner-lock-v1", gui: true))
+        XCTAssertFalse(WorkbenchLegacyOwnerGate.acceptsCooperatingCode(identifier: "xyz.screenpunk.macos", team: "77KASWDGM6", protocolVersion: "workbench-owner-lock-v1", gui: false))
+        XCTAssertFalse(WorkbenchLegacyOwnerGate.acceptsCooperatingCode(identifier: "legacy", team: "77KASWDGM6", protocolVersion: "workbench-owner-lock-v1", gui: true))
+    }
     func testKnownLegacyWritersAreDistinguishedFromWorkbenchAdapter() {
         XCTAssertTrue(WorkbenchLegacyOwnerGate.isKnownLegacyWriter(path: "/Applications/Screenpunk.app/Contents/MacOS/Screenpunk"))
         XCTAssertTrue(WorkbenchLegacyOwnerGate.isKnownLegacyWriter(path: "/repo/tools/screenpunk-mcp/.build/screenpunk-mcp"))

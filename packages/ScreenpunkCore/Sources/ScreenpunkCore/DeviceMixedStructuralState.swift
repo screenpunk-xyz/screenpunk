@@ -20,19 +20,51 @@ struct DeviceMixedStructuralState: Equatable, Sendable {
         var entryID: UUID { switch self { case .retainedLocal(let local): local.entry.entryID; case .cloud(let entry, _): entry.entryID } }
         var dashboardID: String { switch self { case .retainedLocal(let local): local.entry.revision.dashboardId; case .cloud(let entry, _): entry.package.dashboardID.uuidString.lowercased() } }
     }
+    struct LogoutIntent: Codable, Equatable, Sendable {
+        let detachOperationID: UUID, detachGenerationID: UUID
+        let retirementMetadata: Data
+    }
+    struct Detachment: Codable, Equatable, Sendable {
+        let revokedAt: String
+        let retirementMetadata: Data
+        var cleanupCompleted: Bool = false
+    }
+    let legacyLocalRoots: [DeviceMixedInventoryStore.LocalSourceRoot]?
+    let cloudObservationEpoch: UUID?
+    let logoutIntent: LogoutIntent?
+    let detachment: Detachment?
     let generationID: UUID
     let installationOwner: DeviceNativeInstallationContentOwner
     let entries: [Entry]
     let configuredEntryID: UUID?
-    private init(generationID: UUID, installationOwner: DeviceNativeInstallationContentOwner, entries: [Entry], configuredEntryID: UUID?) {
+    private init(generationID: UUID, installationOwner: DeviceNativeInstallationContentOwner, entries: [Entry], configuredEntryID: UUID?, detachment: Detachment?, logoutIntent: LogoutIntent?, legacyLocalRoots: [DeviceMixedInventoryStore.LocalSourceRoot]?, cloudObservationEpoch: UUID?) {
+        self.legacyLocalRoots = legacyLocalRoots; self.cloudObservationEpoch = cloudObservationEpoch
+        self.logoutIntent = logoutIntent
+        self.detachment = detachment
         self.generationID = generationID; self.installationOwner = installationOwner
         self.entries = entries; self.configuredEntryID = configuredEntryID
     }
     static func validating(generationID: UUID, installationOwner: DeviceNativeInstallationContentOwner,
-        entries: [Entry], configuredEntryID: UUID?) throws -> Self {
+        entries: [Entry], configuredEntryID: UUID?, detachment: Detachment? = nil, logoutIntent: LogoutIntent? = nil, legacyLocalRoots: [DeviceMixedInventoryStore.LocalSourceRoot]? = nil, cloudObservationEpoch: UUID? = nil) throws -> Self {
         guard entries.count <= 12, Set(entries.map(\.entryID)).count == entries.count,
               Set(entries.map { Data($0.dashboardID.utf8) }).count == entries.count,
               entries.isEmpty ? configuredEntryID == nil : configuredEntryID.map({ id in entries.contains { $0.entryID == id } }) == true else { throw DeviceNativeStructuralFailure.invalidSchema }
+        if let roots = legacyLocalRoots {
+            guard roots.isEmpty || roots.count == 4, Set(roots.map(\.rootID)).count == roots.count,
+                Set(roots.map { Data($0.path.utf8) }).count == roots.count,
+                roots.allSatisfy({ $0.path.hasPrefix("/") && $0.path.utf8.count <= 4096 && !$0.path.utf8.contains(0) }) else { throw DeviceNativeStructuralFailure.invalidSchema }
+        }
+        guard cloudObservationEpoch == nil || cloudObservationEpoch == installationOwner.installationID else { throw DeviceNativeStructuralFailure.invalidSchema }
+        guard detachment == nil || logoutIntent == nil else { throw DeviceNativeStructuralFailure.invalidSchema }
+        if let logoutIntent {
+            guard logoutIntent.detachGenerationID != generationID, !logoutIntent.retirementMetadata.isEmpty,
+                logoutIntent.retirementMetadata.count <= 65536 else { throw DeviceNativeStructuralFailure.invalidSchema }
+        }
+        if let detachment {
+            guard !detachment.retirementMetadata.isEmpty, detachment.retirementMetadata.count <= 65536,
+                !detachment.revokedAt.isEmpty, detachment.revokedAt.utf8.count <= 128,
+                entries.allSatisfy({ if case .retainedLocal = $0 { return true }; return false }) else { throw DeviceNativeStructuralFailure.invalidSchema }
+        }
         for entry in entries {
             if case .retainedLocal(let local) = entry {
                 guard local.owner.role == .controller, local.owner.isWellFormed,
@@ -45,7 +77,7 @@ struct DeviceMixedStructuralState: Equatable, Sendable {
                 _ = try DeviceDeliveryCandidateHash.validating(local.entry.revision.digest)
             }
         }
-        return .init(generationID: generationID, installationOwner: installationOwner, entries: entries, configuredEntryID: configuredEntryID)
+        return .init(generationID: generationID, installationOwner: installationOwner, entries: entries, configuredEntryID: configuredEntryID, detachment: detachment, logoutIntent: logoutIntent, legacyLocalRoots: legacyLocalRoots, cloudObservationEpoch: cloudObservationEpoch)
     }
 }
 
@@ -73,6 +105,10 @@ enum DeviceMixedStructuralStateCodec {
     private struct Frame: Codable {
         let schemaVersion: Int
         let nativeOwnerState: Data
+        var detachment: DeviceMixedStructuralState.Detachment? = nil
+        var logoutIntent: DeviceMixedStructuralState.LogoutIntent? = nil
+        var legacyLocalRoots: [DeviceMixedInventoryStore.LocalSourceRoot]? = nil
+        var cloudObservationEpoch: UUID? = nil
         let entries: [Entry]
         let configuredEntryID: UUID?
     }
@@ -90,15 +126,15 @@ enum DeviceMixedStructuralStateCodec {
                 return .init(kind: "cloud", local: nil, cloudState: try DeviceNativeStructuralStateCodec.encode(single), cloudGrant: grant)
             }
         }
-        return try DeviceLocalCompleteSetBounds.encode(Frame(schemaVersion: 3,
-            nativeOwnerState: DeviceNativeStructuralStateCodec.encode(owner), entries: entries,
+        return try DeviceLocalCompleteSetBounds.encode(Frame(schemaVersion: state.detachment == nil && state.logoutIntent == nil && state.legacyLocalRoots == nil && state.cloudObservationEpoch == nil ? 3 : 4,
+            nativeOwnerState: DeviceNativeStructuralStateCodec.encode(owner), detachment: state.detachment, logoutIntent: state.logoutIntent, legacyLocalRoots: state.legacyLocalRoots, cloudObservationEpoch: state.cloudObservationEpoch, entries: entries,
             configuredEntryID: state.configuredEntryID), maximum: maximumBytes)
     }
     static func decode(_ bytes: Data) throws -> DeviceMixedStructuralState {
         let object = try StructuralStoreCodec.object(bytes, limit: maximumBytes)
         guard let rawEntries = object["entries"] as? [Any], rawEntries.count <= 12 else { throw DeviceNativeStructuralFailure.capacity }
         let frame = try JSONDecoder().decode(Frame.self, from: bytes)
-        guard frame.schemaVersion == 3, frame.nativeOwnerState.count <= DeviceNativeStructuralStateCodec.maximumBytes else { throw DeviceNativeStructuralFailure.invalidSchema }
+        guard (frame.schemaVersion == 3 && frame.detachment == nil && frame.logoutIntent == nil && frame.legacyLocalRoots == nil && frame.cloudObservationEpoch == nil || frame.schemaVersion == 4 && (frame.detachment != nil || frame.logoutIntent != nil || frame.legacyLocalRoots != nil || frame.cloudObservationEpoch != nil)), frame.nativeOwnerState.count <= DeviceNativeStructuralStateCodec.maximumBytes else { throw DeviceNativeStructuralFailure.invalidSchema }
         let owner = try DeviceNativeStructuralStateCodec.decode(frame.nativeOwnerState)
         guard owner.entries.isEmpty, owner.configuredEntryID == nil,
               try DeviceNativeStructuralStateCodec.encode(owner) == frame.nativeOwnerState else { throw DeviceNativeStructuralFailure.invalidSchema }
@@ -118,7 +154,7 @@ enum DeviceMixedStructuralStateCodec {
             }
         }
         let state = try DeviceMixedStructuralState.validating(generationID: owner.generationID,
-            installationOwner: owner.owner, entries: entries, configuredEntryID: frame.configuredEntryID)
+            installationOwner: owner.owner, entries: entries, configuredEntryID: frame.configuredEntryID, detachment: frame.detachment, logoutIntent: frame.logoutIntent, legacyLocalRoots: frame.legacyLocalRoots, cloudObservationEpoch: frame.cloudObservationEpoch)
         guard try encode(state) == bytes else { throw DeviceNativeStructuralFailure.invalidSchema }
         return state
     }

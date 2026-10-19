@@ -64,6 +64,8 @@ targets:
         product: FirebaseCore
       - package: Firebase
         product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseDatabase
       - package: GoogleSignIn
         product: GoogleSignIn
       - sdk: WebKit.framework

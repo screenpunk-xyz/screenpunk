@@ -18,6 +18,7 @@ final class PublicReadControllerTests: XCTestCase {
         XCTAssertThrowsError(try service.approvePublicConnections(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision, approved: false))
         let approved = try service.approvePublicConnections(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision, approved: true, aliases: ["jsonData"])
         XCTAssertEqual(approved.connections.map(\.alias), ["jsonData"])
+        XCTAssertEqual(try ControllerService.loadApprovedPublicConnections(record.manifest, root: root), approved)
         _ = try service.previewDashboard(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision)
         XCTAssertEqual(recorder.request?.nativePublicReads, approved)
         XCTAssertNil(recorder.request?.nativeHomeAssistant)
@@ -27,6 +28,7 @@ final class PublicReadControllerTests: XCTestCase {
         XCTAssertEqual(try reopened.approvedPublicConnections(record.manifest), approved)
         var changed = record.manifest; changed.revision = UUID().uuidString
         XCTAssertThrowsError(try reopened.approvedPublicConnections(changed))
+        XCTAssertThrowsError(try ControllerService.loadApprovedPublicConnections(changed, root: root))
         let all = try service.approvePublicConnections(dashboardId: record.manifest.dashboardId, revision: record.manifest.revision, approved: true, aliases: ["rasterData"])
         XCTAssertEqual(all.connections.count, 2)
         XCTAssertTrue(all.requiresDynamicPaths)
@@ -35,6 +37,7 @@ final class PublicReadControllerTests: XCTestCase {
         var widened = record.manifest
         widened.connections[1].publicHTTP?.operations[0].parameters["filename"]?.pathSegment?.maxLength = 256
         XCTAssertThrowsError(try service.approvedPublicConnections(widened))
+        XCTAssertThrowsError(try ControllerService.loadApprovedPublicConnections(widened, root: root))
         let inspect = try XCTUnwrap(JSONSerialization.jsonObject(with: service.inspectPublicConnections(dashboardId: record.manifest.dashboardId, revision: nil)) as? [String: Any])
         XCTAssertEqual(inspect["approved"] as? Bool, true)
     }

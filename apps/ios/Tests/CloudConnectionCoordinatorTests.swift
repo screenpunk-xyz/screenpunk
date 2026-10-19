@@ -4,6 +4,7 @@ import ScreenpunkCore
 
 @MainActor
 final class CloudConnectionCoordinatorTests: XCTestCase {
+
     private let accountID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
     private var identity: Data { Data(#"{"user":{"id":"22222222-2222-4222-8222-222222222222","displayName":"Fixture person","email":null},"signInProvider":"google.com","authTime":"2026-10-02T16:00:00Z","tokenExpiresAt":"2026-10-02T17:00:00Z"}"#.utf8) }
     private var empty: Data { Data(#"{"items":[],"nextCursor":null}"#.utf8) }

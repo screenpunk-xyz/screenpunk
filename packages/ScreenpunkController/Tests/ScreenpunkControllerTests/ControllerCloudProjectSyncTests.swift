@@ -1,23 +1,42 @@
 import XCTest
 @testable import ScreenpunkController
 #if os(macOS)
-private actor CloudLocalFixture: ControllerCloudProjectLocal {
+private actor CloudLocalFixture: ControllerCloudProjectLocalMetadata {
     var snapshot: ControllerCloudSourceSnapshot
     var writes = 0
     init(_ snapshot: ControllerCloudSourceSnapshot) { self.snapshot = snapshot }
-    func read(projectId: String) -> ControllerCloudSourceSnapshot { snapshot }
+    var readCount = 0
+    var heldRead: Int?
+    var readEntered: (@Sendable () -> Void)?
+    var readContinuation: CheckedContinuation<Void, Never>?
+    func revision(projectId: String) -> String { snapshot.revision }
+    func pauseAfterReads(_ count: Int, entered: @escaping @Sendable () -> Void) { heldRead = readCount + count; readEntered = entered }
+    func releaseRead() { readContinuation?.resume(); readContinuation = nil }
+    func read(projectId: String) async -> ControllerCloudSourceSnapshot {
+        readCount += 1
+        if readCount == heldRead { await withCheckedContinuation { readContinuation = $0; readEntered?() } }
+        return snapshot
+    }
     func change(_ value: ControllerCloudSourceSnapshot) { snapshot = value }
     func replace(projectId: String, expectedRevision: String, snapshot: ControllerCloudSourceSnapshot) throws {
         guard self.snapshot.revision == expectedRevision else { throw ControllerCloudError.conflict }
         self.snapshot = snapshot; writes += 1
     }
 }
-private actor CloudRemoteFixture: ControllerCloudProjectRemote {
+private actor CloudRemoteFixture: ControllerCloudProjectRemoteMetadata {
     var snapshot: ControllerCloudSourceSnapshot?
     var keys = [String:ControllerCloudSourceSnapshot]()
     var loseReply = false
     var writes = 0
     init(_ snapshot: ControllerCloudSourceSnapshot?) { self.snapshot = snapshot }
+    var headEntered: (@Sendable () -> Void)?
+    var headContinuation: CheckedContinuation<Void, Never>?
+    func pauseNextHead(_ entered: @escaping @Sendable () -> Void) { headEntered = entered }
+    func releaseHead() { headContinuation?.resume(); headContinuation = nil }
+    func head(workspaceId: String, projectId: String) async -> ControllerCloudRemoteHead {
+        if let entered = headEntered { headEntered = nil; await withCheckedContinuation { headContinuation = $0; entered() } }
+        return snapshot.map { .present($0.revision) } ?? .deleted
+    }
     func read(workspaceId: String, projectId: String) -> ControllerCloudSourceSnapshot? { snapshot }
     func change(_ value: ControllerCloudSourceSnapshot?) { snapshot = value }
     func loseNextReply() { loseReply = true }
@@ -41,6 +60,50 @@ final class ControllerCloudProjectSyncTests: XCTestCase {
     private func linked(_ sync:ControllerCloudProjectSync) async throws {
         try await sync.link(accountId:"account",workspaceId:"workspace",localProjectId:"project",cloudProjectId:"remote")
         _ = try await sync.sync(accountId:"account",localProjectId:"project")
+    }
+    private final class Consent: @unchecked Sendable {
+        let lock = NSLock(); var enabled = true
+        func revoke() { lock.lock(); enabled = false; lock.unlock() }
+        func check() throws { lock.lock(); defer { lock.unlock() }; if !enabled { throw CancellationError() } }
+    }
+    func testLateFinalLocalReadsDoNotAcknowledgeAfterConsentRevocation() async throws {
+        for upload in [true, false] {
+            let (root, local, remote, sync) = try setup(); defer { try? FileManager.default.removeItem(at: root) }
+            try await linked(sync)
+            if upload { await local.change(source("local1", "outgoing")) } else { await remote.change(source("remote1", "incoming")) }
+            let entered = expectation(description: "held final local read"), consent = Consent()
+            await local.pauseAfterReads(upload ? 2 : 3) { entered.fulfill() }
+            let task = Task {
+                try await ControllerCloudAutomaticSyncAuthorization.$check.withValue({ try consent.check() }) {
+                    try await sync.sync(accountId: "account", localProjectId: "project")
+                }
+            }
+            await fulfillment(of: [entered], timeout: 2)
+            let before = try Data(contentsOf: root.appendingPathComponent("project.json"))
+            consent.revoke(); await local.releaseRead()
+            do { _ = try await task.value; XCTFail("late success acknowledged") } catch is CancellationError { }
+            XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("project.json")), before)
+            let resumed = try await sync.sync(accountId: "account", localProjectId: "project")
+            XCTAssertEqual(resumed.status, .synced)
+            let writes = await remote.writes
+            XCTAssertEqual(writes, upload ? 1 : 0, "resumption reuses the original pending transfer")
+        }
+    }
+    func testHeldMetadataHeadCannotReturnSuccessAfterConsentRevocation() async throws {
+        let (root, _, remote, sync) = try setup(); defer { try? FileManager.default.removeItem(at: root) }
+        try await linked(sync)
+        let entered = expectation(description: "held metadata head"), consent = Consent()
+        await remote.pauseNextHead { entered.fulfill() }
+        let task = Task {
+            try await ControllerCloudAutomaticSyncAuthorization.$check.withValue({ try consent.check() }) {
+                try await sync.sync(accountId: "account", localProjectId: "project")
+            }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        let before = try Data(contentsOf: root.appendingPathComponent("project.json"))
+        consent.revoke(); await remote.releaseHead()
+        do { _ = try await task.value; XCTFail("stale metadata admission returned success") } catch is CancellationError { }
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("project.json")), before)
     }
     func testNewProjectLookupDoesNotTreatCorruptExistingBindingAsUnbound() async throws {
         let (root, _, _, sync) = try setup(); defer { try? FileManager.default.removeItem(at: root) }
@@ -70,6 +133,10 @@ final class ControllerCloudProjectSyncTests: XCTestCase {
         try await linked(sync); await local.change(source("local1","mine")); await remote.change(source("remote1","theirs"))
         let conflicted = try await sync.sync(accountId:"account",localProjectId:"project"); XCTAssertEqual(conflicted.status,.conflict)
         let before = await local.read(projectId:"project"); XCTAssertEqual(before.files,source("x","mine").files)
+        let retained = try Data(contentsOf: root.appendingPathComponent("project.json"))
+        try await sync.remoteEligibility(accountId: "account", workspaceId: "workspace", cloudProjectIds: ["remote"], admitted: false)
+        try await sync.remoteEligibility(accountId: "account", workspaceId: "workspace", cloudProjectIds: ["remote"], admitted: true)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("project.json")), retained, "remove/readmission must preserve an unresolved conflict byte-for-byte")
         _ = try await sync.resolve(accountId:"account",localProjectId:"project",choice:.remote)
         let after = await local.read(projectId:"project"); XCTAssertEqual(after.files,source("x","theirs").files)
     }

@@ -34,6 +34,7 @@ struct WorkbenchSourceKitPin: Codable, Equatable {
 public final class WorkbenchContainedAuthoring {
     private let workspace: WorkspaceStore
     var cloudCreationScope: ControllerCloudCreationScope?
+    var cloudImportIdentity: (String, String)?
     private let localReadTimeout: TimeInterval
     private let checkpoint: ((WorkbenchTransactionCheckpoint) throws -> Void)?
     public init(workspace: WorkspaceStore, localReadTimeout: TimeInterval = 15) {
@@ -216,10 +217,14 @@ public final class WorkbenchContainedAuthoring {
               imported.keys.allSatisfy({ WorkspaceValidation.member($0) &&
                   !WorkspaceFiles.fixedSourceExcludes($0) }) else { throw WorkspaceError.invalidSchema }
         let overview = try requireCurrent()
-        let relative = try relativeDestination ?? workspace.nextContainedDestination(named: name)
+        if let identity = cloudImportIdentity, let existing = overview.catalog.projects.first(where: { $0.projectId == identity.0 }) {
+            guard existing.dashboardId == identity.1 else { throw WorkspaceError.conflict }
+            return try get(existing.projectId)
+        }
+        let relative = try cloudImportIdentity.map { "Screens/Cloud-" + $0.0 } ?? relativeDestination ?? workspace.nextContainedDestination(named: name)
         try WorkspaceProjectLocation.contained(relative).validate()
-        let project = WorkspaceProject(projectId: UUID().uuidString.lowercased(),
-            dashboardId: UUID().uuidString.lowercased(), name: name,
+        let project = WorkspaceProject(projectId: cloudImportIdentity?.0 ?? UUID().uuidString.lowercased(),
+            dashboardId: cloudImportIdentity?.1 ?? UUID().uuidString.lowercased(), name: name,
             location: .contained(relative))
         let descriptor = WorkspaceProjectDocument(schemaVersion: 1,
             projectId: project.projectId, dashboardId: project.dashboardId,
@@ -238,8 +243,11 @@ public final class WorkbenchContainedAuthoring {
         let screens = try root.directory(["Screens"]); defer { close(screens) }
         let folder = String(relative.split(separator: "/").last!)
         let parts = ["Screens", folder]
-        guard mkdirat(screens, folder, 0o700) == 0 else {
-            throw errno == EEXIST ? WorkspaceError.conflict : WorkspaceError.unavailable
+        if mkdirat(screens, folder, 0o700) != 0 {
+            guard let identity = cloudImportIdentity, errno == EEXIST else { throw errno == EEXIST ? WorkspaceError.conflict : WorkspaceError.unavailable }
+            let recovered = try openContained(at: overview.path + "/" + relative)
+            guard recovered.project.projectId == identity.0, recovered.project.dashboardId == identity.1 else { throw WorkspaceError.conflict }
+            return recovered
         }
         let created = try root.directory(parts); defer { close(created) }
         var createdInfo = stat()
@@ -306,7 +314,10 @@ public final class WorkbenchContainedAuthoring {
         guard projected[descriptor.entry] != nil, let config = projected["screen.json"],
               (try? JSONSerialization.jsonObject(with: config)) is [String: Any] else { throw WorkspaceError.invalidSchema }
         let nextVersion = try WorkbenchSourceHasher.hash(projected)
-        guard nextVersion != expectedSourceVersion else { return try get(projectId) }
+        guard nextVersion != expectedSourceVersion else {
+            try retainSourceVersion(projectId, expectedSourceVersion: expectedSourceVersion)
+            return try get(projectId)
+        }
         try commitSource(project: project, before: currentFiles, after: projected,
                          expected: overview, register: false, root: WorkspaceFiles(path: overview.path))
         let result = try readAfterSourceCommit(projectId,
@@ -440,6 +451,20 @@ public final class WorkbenchContainedAuthoring {
             if descriptor.projectId == projectId { result.append(value) }
         }
         return result
+    }
+
+    /// Retain editor-written source before a build refers to it. The existing source
+    /// transaction checks every current byte and publishes history without changing it.
+    func retainSourceVersion(_ projectId: String, expectedSourceVersion: String) throws {
+        let (overview, project, files) = try capture(projectId)
+        guard try WorkbenchSourceHasher.hash(files) == expectedSourceVersion else {
+            throw WorkbenchBuildConflict.sourceVersion
+        }
+        let root = try WorkspaceFiles(path: overview.path)
+        if try existingSnapshotBytes(project: project, version: expectedSourceVersion,
+                                     files: files, root: root) != nil { return }
+        try commitSource(project: project, before: files, after: files,
+                         expected: overview, register: false, root: root)
     }
 
     func commitSource(project: WorkspaceProject, before: [String: Data],

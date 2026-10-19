@@ -107,7 +107,9 @@ final class DeviceGrantPreparationStore {
         let schemaVersion: Int; let rootID: UUID; let rootPath: String; let protectedPaths: [String]
         let rootIdentity: GrantDiskIdentity; let lockIdentity: GrantDiskIdentity; let operationsIdentity: GrantDiskIdentity
     }
-    private struct Context { let root: Int32; let lock: Int32; let operations: Int32; let binding: Binding }
+    private struct Context { let root: Int32; let lock: Int32; let operations: Int32; let binding: Binding
+        let liveRoot: GrantDiskIdentity; let liveLock: GrantDiskIdentity; let liveOperations: GrantDiskIdentity
+    }
     private struct Entry {
         let record: GrantPreparationRecord; let final: Node?; let staged: Node?
         let terminal: Node?; let terminalStage: Node?; let terminalBinding: GrantTerminalBinding?
@@ -115,9 +117,14 @@ final class DeviceGrantPreparationStore {
         var complete: Bool { terminal != nil && confirmation != nil }
     }
     private struct Inventory { let entries: [Entry]; let items: [String: DeviceGrantCredentialItem]; let hasStages: Bool; let head: Node?; var tip: Entry? { entries.last } }
+    /// Exact recorded locator for provenance-preserving mixed inventory metadata.
+    /// This grants no path, read, mutation, or credential authority.
+    var mixedInventorySourceRoot: (root: URL, rootID: UUID) { (root, rootID) }
     private let root: URL; private let rootID: UUID; private let scope: DevicePackageProtectedScope
     private let backend: any DeviceGrantCredentialBackend
     private let boundary: (Boundary) throws -> Void
+    private let contextFactory: (URL, Int32) throws -> DevicePersistedFilesystemContext
+    private var filesystemContext: DevicePersistedFilesystemContext?
     private let mutex = NSLock()
     private var bindingQualified = false
     private var setupRoot: GrantDiskIdentity?, setupLock: GrantDiskIdentity?, setupOperations: GrantDiskIdentity?
@@ -129,8 +136,9 @@ final class DeviceGrantPreparationStore {
     private var boundTerminalQualification:DeviceBoundGrantTerminalTransition?
     private static let gateLock = NSLock(); private static var epochs: [String: UInt64] = [:]
     private var service: String { GrantPreparationCodec.service(rootID) }
-    init(root: URL, rootID: UUID, protectedScope: DevicePackageProtectedScope, backend: any DeviceGrantCredentialBackend, boundary: @escaping (Boundary) throws -> Void = { _ in }) {
-        self.root = root; self.rootID = rootID; scope = protectedScope; self.backend = backend; self.boundary = boundary
+    init(root: URL, rootID: UUID, protectedScope: DevicePackageProtectedScope, backend: any DeviceGrantCredentialBackend, contextFactory: @escaping (URL, Int32) throws -> DevicePersistedFilesystemContext = { try .capture(currentRoot: $0, heldRoot: $1) },
+        boundary: @escaping (Boundary) throws -> Void = { _ in }) {
+        self.root = root; self.rootID = rootID; scope = protectedScope; self.backend = backend; self.boundary = boundary; self.contextFactory = contextFactory
     }
     private func epoch(invalidate: Bool = false) -> UInt64 {
         Self.gateLock.lock(); defer { Self.gateLock.unlock() }
@@ -178,7 +186,7 @@ final class DeviceGrantPreparationStore {
             }
             let record = GrantPreparationRecord(rootID:rootID,operationID:request.operationID,revisionID:request.input.identity.revisionID,
                 ordinal:state.entries.count+1,publicMetadata:request.qualified.publicMetadataBytes,privateAttemptBytes:attempted.count,
-                previousHead:state.head.map { .init(bytes:$0.bytes,identity:$0.identity) },credentials:bindings)
+                previousHead:state.tip?.headBinding?.candidate,credentials:bindings)
             try reserve(record,state:state)
             let attemptEpoch = epoch(invalidate:true); qualification = nil; liveAttempts[request.operationID] = attempted
             try replace(context,parent:context.operations,name:name(request.operationID),bytes:GrantPreparationCodec.encode(record),expected:nil,kind:.intent)
@@ -223,7 +231,7 @@ final class DeviceGrantPreparationStore {
                   try readFile(c.root,"head.json.pending",limit:4096) == nil else{throw DeviceGrantPreparationError.repairRequired}
             let old=Inventory(entries:Array(state.entries.dropLast()),items:state.items,hasStages:false,head:state.head)
             guard old.entries.allSatisfy({$0.complete && $0.staged == nil && $0.terminalStage == nil}),old.tip?.terminal != nil,
-                  pending.record.previousHead == state.head.map({.init(bytes:$0.bytes,identity:$0.identity)}) else{throw DeviceGrantPreparationError.conflict}
+                  pending.record.previousHead == old.tip?.headBinding?.candidate else{throw DeviceGrantPreparationError.conflict}
             return (old,pending)
         }
         guard !state.hasStages,state.entries.allSatisfy(\.complete) else{throw DeviceGrantPreparationError.repairRequired}
@@ -264,7 +272,7 @@ final class DeviceGrantPreparationStore {
             return .init(revisionID:secret.revisionID,byteCount:secret.bytes.count,item:nil)
         }
         let record=GrantPreparationRecord(rootID:rootID,operationID:request.operationID,revisionID:request.input.identity.revisionID,ordinal:state.entries.count+1,
-            publicMetadata:request.qualified.publicMetadataBytes,privateAttemptBytes:bytes.count,previousHead:state.head.map{.init(bytes:$0.bytes,identity:$0.identity)},credentials:credentials)
+            publicMetadata:request.qualified.publicMetadataBytes,privateAttemptBytes:bytes.count,previousHead:state.tip?.headBinding?.candidate,credentials:credentials)
         try reserve(record,state:state);return record
     }
     func preflightSuccessorExact(_ original:SuccessorPredecessor,request:DeviceGrantPreparationRequest,plan:DeviceValidatedProvisioningPlan,
@@ -327,7 +335,7 @@ final class DeviceGrantPreparationStore {
             }
             record = .init(rootID:rootID,operationID:request.operationID,revisionID:request.input.identity.revisionID,ordinal:state.entries.count+1,
                            publicMetadata:request.qualified.publicMetadataBytes,privateAttemptBytes:bytes.count,
-                           previousHead:state.head.map{.init(bytes:$0.bytes,identity:$0.identity)},credentials:credentials)
+                           previousHead:state.tip?.headBinding?.candidate,credentials:credentials)
             try reserve(record,state:state)
         }
         // Invalid/stale/input/capacity checks precede changing qualification. Capture the ORIGINAL
@@ -592,7 +600,8 @@ final class DeviceGrantPreparationStore {
             guard now(false,base+suffix+".pending") == nil else{throw DeviceGrantPreparationError.conflict}
         }
         if let prepared=old(true,"head.json.pending") {guard now(true,"head.json") == prepared else{throw DeviceGrantPreparationError.conflict}}
-        else if let installed=old(true,"head.json"),installed != original.previousHead {
+        else if let installed=old(true,"head.json"),
+            !matchesDurableNode(original.previousHead.map { Node(identity:$0.identity,bytes:$0.bytes) }, Node(identity:installed.identity,bytes:installed.bytes)) {
             guard now(true,"head.json") == installed else{throw DeviceGrantPreparationError.conflict}
         }
         guard now(true,"head.json.pending") == nil else{throw DeviceGrantPreparationError.conflict}
@@ -954,7 +963,7 @@ final class DeviceGrantPreparationStore {
         let bytes = try GrantPreparationCodec.encode(record)
         if let final = try readFile(context.operations,base+".terminal",limit:GrantPreparationCodec.recordLimit) {
             guard let binding = try readFile(context.operations,base+".binding",limit:4096),
-                  try GrantPreparationCodec.decodeTerminal(binding.bytes).terminalIdentity == final.identity, final.bytes == bytes else { throw DeviceGrantPreparationError.conflict }
+                  matchesDurable(try GrantPreparationCodec.decodeTerminal(binding.bytes).terminalIdentity, final.identity), final.bytes == bytes else { throw DeviceGrantPreparationError.conflict }
             try syncExisting(context.operations,base+".terminal",expected:final)
             try boundary(.afterFileSync(.terminal)); try sync(context.operations); try boundary(.afterDirectorySync(.terminal)); try check(context)
             return final
@@ -971,10 +980,16 @@ final class DeviceGrantPreparationStore {
             staged = try readFile(context.operations,stagedName,limit:GrantPreparationCodec.recordLimit)
         }
         guard let staged, staged.bytes == bytes else { throw DeviceGrantPreparationError.conflict }
-        if let binding = existingBinding { guard try GrantPreparationCodec.decodeTerminal(binding.bytes).terminalIdentity == staged.identity else { throw DeviceGrantPreparationError.conflict }; try syncExisting(context.operations,base+".binding",expected:binding) }
+        if let binding = existingBinding { guard matchesDurable(try GrantPreparationCodec.decodeTerminal(binding.bytes).terminalIdentity, staged.identity) else { throw DeviceGrantPreparationError.conflict }; try syncExisting(context.operations,base+".binding",expected:binding) }
         else {
-            if let pending = try readFile(context.operations,base+".binding.pending",limit:4096) { guard try GrantPreparationCodec.decodeTerminal(pending.bytes).terminalIdentity == staged.identity else { throw DeviceGrantPreparationError.conflict } } else { guard terminalStages[id] == staged.identity else { throw DeviceGrantPreparationError.repairRequired } }
-            let binding = GrantTerminalBinding(schemaVersion:1,operationID:id,terminalIdentity:staged.identity)
+            let binding: GrantTerminalBinding
+            if let pending = try readFile(context.operations,base+".binding.pending",limit:4096) {
+                binding = try GrantPreparationCodec.decodeTerminal(pending.bytes)
+                guard binding.operationID == id, matchesDurable(binding.terminalIdentity, staged.identity) else { throw DeviceGrantPreparationError.conflict }
+            } else {
+                guard terminalStages[id] == staged.identity else { throw DeviceGrantPreparationError.repairRequired }
+                binding = GrantTerminalBinding(schemaVersion:1,operationID:id,terminalIdentity:staged.identity)
+            }
             try replace(context,parent:context.operations,name:base+".binding",bytes:GrantPreparationCodec.encode(binding,limit:4096),expected:nil,kind:.terminalBinding)
         }
         try boundary(.beforeReplace(.terminal)); try check(context)
@@ -1014,7 +1029,10 @@ final class DeviceGrantPreparationStore {
     private func name(_ id: UUID) -> String { id.uuidString.lowercased()+".json" }
     private func commitHead(_ context: Context, record: GrantPreparationRecord, terminal: Node) throws {
         let base = record.operationID.uuidString.lowercased()
-        let bytes = try GrantPreparationCodec.encode(GrantHead(schemaVersion:1,rootID:rootID,operationID:record.operationID,ordinal:record.ordinal,terminalIdentity:terminal.identity),limit:4096)
+        guard let terminalBindingNode = try readFile(context.operations, base+".binding", limit:4096) else { throw DeviceGrantPreparationError.conflict }
+        let terminalBinding = try GrantPreparationCodec.decodeTerminal(terminalBindingNode.bytes)
+        guard terminalBinding.operationID == record.operationID, matchesDurable(terminalBinding.terminalIdentity, terminal.identity) else { throw DeviceGrantPreparationError.conflict }
+        let bytes = try GrantPreparationCodec.encode(GrantHead(schemaVersion:1,rootID:rootID,operationID:record.operationID,ordinal:record.ordinal,terminalIdentity:terminalBinding.terminalIdentity),limit:4096)
         let old = record.previousHead.map { Node(identity:$0.identity,bytes:$0.bytes) }
         let bindingName = base+".head-binding", confirmationName = base+".confirmed"
         var head = try readFile(context.root,"head.json",limit:4096)
@@ -1023,12 +1041,12 @@ final class DeviceGrantPreparationStore {
         var binding = try (bindingNode ?? pendingBinding).map { try GrantPreparationCodec.decodeHeadBinding($0.bytes) }
         if let binding {
             let candidate = Node(identity:binding.candidate.identity,bytes:binding.candidate.bytes)
-            guard binding.operationID == record.operationID, candidate.bytes == bytes, head == old || head == candidate else { throw DeviceGrantPreparationError.conflict }
+            guard binding.operationID == record.operationID, candidate.bytes == bytes, matchesDurableNode(old, head) || matchesDurableNode(candidate, head) else { throw DeviceGrantPreparationError.conflict }
             if bindingNode == nil {
                 try replace(context,parent:context.operations,name:bindingName,bytes:GrantPreparationCodec.encode(binding,limit:8192),expected:nil,kind:.headBinding)
             } else { try syncExisting(context.operations,bindingName,expected:bindingNode!); try sync(context.operations) }
         } else {
-            guard head == old else { throw DeviceGrantPreparationError.conflict }
+            guard matchesDurableNode(old, head) else { throw DeviceGrantPreparationError.conflict }
             var staged = try readFile(context.root,"head.json.pending",limit:4096)
             if staged == nil {
                 let fd = openat(context.root,"head.json.pending",O_CREAT|O_EXCL|O_RDWR|O_NOFOLLOW|O_NONBLOCK,0o600)
@@ -1042,14 +1060,20 @@ final class DeviceGrantPreparationStore {
             try replace(context,parent:context.operations,name:bindingName,bytes:GrantPreparationCodec.encode(binding!,limit:8192),expected:nil,kind:.headBinding)
         }
         let candidate = Node(identity:binding!.candidate.identity,bytes:bytes)
-        if head != candidate {
-            guard head == old, try readFile(context.root,"head.json.pending",limit:4096) == candidate else { throw DeviceGrantPreparationError.conflict }
+        if !matchesDurableNode(candidate, head) {
+            guard matchesDurableNode(old, head), let liveCandidate = try readFile(context.root,"head.json.pending",limit:4096),
+                matchesDurableNode(candidate, liveCandidate) else { throw DeviceGrantPreparationError.conflict }
+            let liveOld = head
             try boundary(.beforeReplace(.head)); try check(context)
-            guard try readFile(context.root,"head.json",limit:4096) == old else { throw DeviceGrantPreparationError.conflict }
+            guard try readFile(context.root,"head.json",limit:4096) == liveOld,
+                try readFile(context.root,"head.json.pending",limit:4096) == liveCandidate else { throw DeviceGrantPreparationError.conflict }
             guard renameat(context.root,"head.json.pending",context.root,"head.json") == 0 else { throw failure() }
-            try boundary(.afterReplace(.head)); head = candidate
+            try boundary(.afterReplace(.head))
+            guard try readFile(context.root,"head.json",limit:4096) == liveCandidate else { throw DeviceGrantPreparationError.conflict }
+            head = liveCandidate
         }
-        try syncExisting(context.root,"head.json",expected:candidate); try sync(context.root); try boundary(.afterDirectorySync(.head)); try check(context)
+        guard let liveHead = head, matchesDurableNode(candidate, liveHead) else { throw DeviceGrantPreparationError.conflict }
+        try syncExisting(context.root,"head.json",expected:liveHead); try sync(context.root); try boundary(.afterDirectorySync(.head)); try check(context)
         let confirmation = GrantHeadConfirmation(schemaVersion:1,operationID:record.operationID,headIdentity:candidate.identity)
         let confirmationBytes = try GrantPreparationCodec.encode(confirmation,limit:4096)
         if let existing = try readFile(context.operations,confirmationName,limit:4096) {
@@ -1058,7 +1082,7 @@ final class DeviceGrantPreparationStore {
         } else {
             try replace(context,parent:context.operations,name:confirmationName,bytes:confirmationBytes,expected:nil,kind:.confirmation)
         }
-        guard try readFile(context.root,"head.json",limit:4096) == candidate else { throw DeviceGrantPreparationError.conflict }
+        guard try readFile(context.root,"head.json",limit:4096) == liveHead else { throw DeviceGrantPreparationError.conflict }
     }
     private func inventory(_ context: Context) throws -> Inventory {
         let rootNames = try names(context.root,maximum:16)
@@ -1089,18 +1113,19 @@ final class DeviceGrantPreparationStore {
             let terminalBinding = try metadata(".binding",limit:4096).map { try GrantPreparationCodec.decodeTerminal($0.bytes) }
             if let bound = terminalBinding { guard bound.operationID == id else { throw DeviceGrantPreparationError.conflict } }
             if let terminal {
-                guard terminalBinding?.terminalIdentity == terminal.identity, terminal.bytes == effective.bytes,
+                guard matchesDurable(terminalBinding?.terminalIdentity, terminal.identity), terminal.bytes == effective.bytes,
                       record.privateAttempt != nil, record.credentials.allSatisfy({$0.item != nil}), terminalStage == nil else { throw DeviceGrantPreparationError.conflict }
             } else if let terminalStage {
                 guard terminalStage.bytes == effective.bytes,
-                      terminalBinding?.terminalIdentity == terminalStage.identity || (terminalBinding == nil && terminalStages[id] == terminalStage.identity) else { throw DeviceGrantPreparationError.repairRequired }
+                      matchesDurable(terminalBinding?.terminalIdentity, terminalStage.identity) || (terminalBinding == nil && terminalStages[id] == terminalStage.identity) else { throw DeviceGrantPreparationError.repairRequired }
             } else if terminalBinding != nil { throw DeviceGrantPreparationError.conflict }
             let headBinding = try metadata(".head-binding",limit:8192).map { try GrantPreparationCodec.decodeHeadBinding($0.bytes) }
             let confirmation = try metadata(".confirmed",limit:4096).map { try GrantPreparationCodec.decodeConfirmation($0.bytes) }
             if let bound = headBinding {
                 let head = try GrantPreparationCodec.decodeHead(bound.candidate.bytes)
-                guard let terminal, bound.operationID == id, head.rootID == rootID, head.operationID == id,
-                      head.ordinal == record.ordinal, head.terminalIdentity == terminal.identity else { throw DeviceGrantPreparationError.conflict }
+                guard let terminal, let terminalBinding, bound.operationID == id, head.rootID == rootID, head.operationID == id,
+                      head.ordinal == record.ordinal, head.terminalIdentity == terminalBinding.terminalIdentity,
+                      matchesDurable(head.terminalIdentity, terminal.identity) else { throw DeviceGrantPreparationError.conflict }
             }
             if let confirmation { guard let headBinding, confirmation.operationID == id, confirmation.headIdentity == headBinding.candidate.identity else { throw DeviceGrantPreparationError.conflict } }
             if let item=record.privateAttempt {
@@ -1135,13 +1160,13 @@ final class DeviceGrantPreparationStore {
         if let latest = entries.last {
             let old = latest.record.previousHead.map { Node(identity:$0.identity,bytes:$0.bytes) }
             let candidate = latest.headBinding.map { Node(identity:$0.candidate.identity,bytes:$0.candidate.bytes) }
-            if latest.confirmation != nil { guard let candidate, head == candidate, headStage == nil else { throw DeviceGrantPreparationError.conflict } }
+            if latest.confirmation != nil { guard let candidate, matchesDurableNode(candidate, head), headStage == nil else { throw DeviceGrantPreparationError.conflict } }
             else {
-                guard head == old || (candidate != nil && head == candidate) else { throw DeviceGrantPreparationError.conflict }
+                guard matchesDurableNode(old, head) || (candidate != nil && matchesDurableNode(candidate, head)) else { throw DeviceGrantPreparationError.conflict }
                 if let headStage {
-                    guard candidate == headStage || (candidate == nil && headStages[latest.record.operationID] == headStage.identity) else { throw DeviceGrantPreparationError.repairRequired }
+                    guard matchesDurableNode(candidate, headStage) || (candidate == nil && headStages[latest.record.operationID] == headStage.identity) else { throw DeviceGrantPreparationError.repairRequired }
                     hasStages = true
-                } else if candidate != nil && head != candidate { throw DeviceGrantPreparationError.conflict }
+                } else if candidate != nil && !matchesDurableNode(candidate, head) { throw DeviceGrantPreparationError.conflict }
             }
         } else { guard head == nil, headStage == nil else { throw DeviceGrantPreparationError.conflict } }
         var expected: [String:DeviceGrantCredentialItem] = [:], planned: [String:Int] = [:]
@@ -1223,6 +1248,11 @@ final class DeviceGrantPreparationStore {
     private func diskContext<T>(create: Bool, releasePermit: DeviceLocalResourcePermit? = nil, _ operation: (Context) throws -> T) throws -> T {
         let paths = try protectedPaths()
         let rootFD = try absoluteDirectory(root.path); defer { close(rootFD) }
+        let filesystem: DevicePersistedFilesystemContext
+        do { filesystem = try contextFactory(root, rootFD) }
+        catch { throw DeviceGrantPreparationError.unsafeBinding }
+        let previousFilesystem = filesystemContext; filesystemContext = filesystem
+        defer { filesystemContext = previousFilesystem }
         let rootIdentity = try identity(rootFD, directory: true)
         let bindingExists = try readFile(rootFD, "root-binding.json", limit: GrantPreparationCodec.recordLimit) != nil
         if create && !bindingExists {
@@ -1254,33 +1284,60 @@ final class DeviceGrantPreparationStore {
             if let expected = setupOperations { guard expected == opsIdentity else { throw DeviceGrantPreparationError.conflict } }
             setupOperations = opsIdentity
         }
-        let binding = Binding(schemaVersion: 1, rootID: rootID, rootPath: root.path, protectedPaths: paths,
+        var binding = Binding(schemaVersion: 1, rootID: rootID, rootPath: root.path, protectedPaths: paths,
             rootIdentity: rootIdentity, lockIdentity: lockIdentity, operationsIdentity: opsIdentity)
-        let context = Context(root: rootFD, lock: lock, operations: ops, binding: binding)
         if !create || bindingExists {
-            guard let existing = try readFile(rootFD, "root-binding.json", limit: GrantPreparationCodec.recordLimit), existing.bytes == (try GrantPreparationCodec.encode(binding)) else { throw DeviceGrantPreparationError.unsafeBinding }
+            guard let existing = try readFile(rootFD, "root-binding.json", limit: GrantPreparationCodec.recordLimit) else { throw DeviceGrantPreparationError.unsafeBinding }
+            let retained = try JSONDecoder().decode(Binding.self, from: existing.bytes)
+            guard try GrantPreparationCodec.encode(retained) == existing.bytes,
+                retained.schemaVersion == binding.schemaVersion, retained.rootID == binding.rootID,
+                (retained.rootIdentity.device == retained.lockIdentity.device) == (binding.rootIdentity.device == binding.lockIdentity.device),
+                (retained.rootIdentity.device == retained.operationsIdentity.device) == (binding.rootIdentity.device == binding.operationsIdentity.device),
+                (retained.lockIdentity.device == retained.operationsIdentity.device) == (binding.lockIdentity.device == binding.operationsIdentity.device),
+                matchesDurable(retained.rootIdentity, binding.rootIdentity), matchesDurable(retained.lockIdentity, binding.lockIdentity),
+                matchesDurable(retained.operationsIdentity, binding.operationsIdentity),
+                filesystem.matchesRecordedRootPath(retained.rootPath),
+                filesystem.recordedPaths(retained.protectedPaths, matchCurrentPaths: paths) else { throw DeviceGrantPreparationError.unsafeBinding }
+            binding = retained // Keep exact recorded bytes for every subsequent receipt/checkpoint.
         }
+        let context = Context(root: rootFD, lock: lock, operations: ops, binding: binding,
+            liveRoot: rootIdentity, liveLock: lockIdentity, liveOperations: opsIdentity)
         try check(context, allowMissingBinding: create && !bindingExists)
         return try operation(context)
     }
     private func check(_ context: Context, allowMissingBinding: Bool = false) throws {
-        guard try protectedPaths() == context.binding.protectedPaths else { throw DeviceGrantPreparationError.unsafeBinding }
+        guard let filesystemContext,
+              filesystemContext.recordedPaths(context.binding.protectedPaths, matchCurrentPaths: try protectedPaths()) else { throw DeviceGrantPreparationError.unsafeBinding }
         let fd = try absoluteDirectory(root.path); defer { close(fd) }
-        guard try identity(fd, directory: true) == context.binding.rootIdentity,
-              try identity(context.root, directory: true) == context.binding.rootIdentity,
-              try identity(context.lock, directory: false) == context.binding.lockIdentity,
-              try directoryIdentity(context.root, "operations") == context.binding.operationsIdentity else { throw DeviceGrantPreparationError.unsafeBinding }
-        guard let lock = try readFile(context.root, "preparation.lock", limit: 0), lock.identity == context.binding.lockIdentity else { throw DeviceGrantPreparationError.unsafeBinding }
+        guard try identity(fd, directory: true) == context.liveRoot,
+              try identity(context.root, directory: true) == context.liveRoot,
+              try identity(context.lock, directory: false) == context.liveLock,
+              try directoryIdentity(context.root, "operations") == context.liveOperations else { throw DeviceGrantPreparationError.unsafeBinding }
+        guard let lock = try readFile(context.root, "preparation.lock", limit: 0), lock.identity == context.liveLock else { throw DeviceGrantPreparationError.unsafeBinding }
         if let binding = try readFile(context.root, "root-binding.json", limit: GrantPreparationCodec.recordLimit) {
             guard binding.bytes == (try GrantPreparationCodec.encode(context.binding)) else { throw DeviceGrantPreparationError.unsafeBinding }
         } else if !allowMissingBinding { throw DeviceGrantPreparationError.unsafeBinding }
+    }
+    /// Only decoded durable metadata may use this comparison. Live observations stay raw/exact.
+    private func matchesDurable(_ recorded: GrantDiskIdentity?, _ observed: GrantDiskIdentity?) -> Bool {
+        guard let recorded, let observed else { return recorded == nil && observed == nil }
+        guard let filesystemContext else { return recorded == observed }
+        return filesystemContext.matchesDurableIdentity(recordedDevice: recorded.device, recordedInode: recorded.inode,
+            observedDevice: observed.device, observedInode: observed.inode)
+    }
+    private func matchesDurableNode(_ recorded: Node?, _ observed: Node?) -> Bool {
+        guard let recorded, let observed else { return recorded == nil && observed == nil }
+        return recorded.bytes == observed.bytes && matchesDurable(recorded.identity, observed.identity)
     }
     private func absoluteDirectory(_ path: String, allowMissing: Bool = false) throws -> Int32 {
         let parts = path.split(separator: "/")
         guard path.hasPrefix("/"), path.utf8.count <= 4096, parts.count <= 64,
               !parts.contains(where: { $0 == "." || $0 == ".." }), !path.contains("//") else { throw DeviceGrantPreparationError.unsafeBinding }
         let traversal: DeviceFilesystemTraversal
-        do { traversal = try .plan(for: path) } catch { throw DeviceGrantPreparationError.unsafeBinding }
+        do {
+            if let filesystemContext { traversal = try filesystemContext.planCurrentPath(path) }
+            else { traversal = try .plan(for: path) }
+        } catch { throw DeviceGrantPreparationError.unsafeBinding }
         var fd = open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard fd >= 0 else { throw failure() }
         for part in traversal.components {
@@ -1297,7 +1354,9 @@ final class DeviceGrantPreparationStore {
     private func identity(_ fd: Int32, directory: Bool) throws -> GrantDiskIdentity {
         var info = stat(); guard fstat(fd, &info) == 0 else { throw failure() }
         guard (info.st_mode & mode_t(S_IFMT)) == mode_t(directory ? S_IFDIR : S_IFREG), directory || info.st_nlink == 1 else { throw DeviceGrantPreparationError.unsafeBinding }
-        return .init(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino))
+        let result = GrantDiskIdentity(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino))
+        guard filesystemContext?.acceptsCurrentDevice(result.device) != false else { throw DeviceGrantPreparationError.unsafeBinding }
+        return result
     }
     private func names(_ fd: Int32, maximum: Int) throws -> [String] {
         let duplicate = dup(fd); guard duplicate >= 0 else { throw failure() }

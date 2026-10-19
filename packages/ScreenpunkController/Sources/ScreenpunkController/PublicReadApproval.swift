@@ -51,9 +51,17 @@ extension ControllerService {
         return prepared
     }
     public func approvedPublicConnections(_ manifest: DashboardManifest) throws -> PublicReadProvisioning? {
+        try Self.loadApprovedPublicConnections(manifest, root: store.root)
+    }
+    /// Read existing exact-revision approval without starting a second controller
+    /// or granting any new provider access from a broker-backed preview.
+    public static func loadApprovedPublicConnections(_ manifest: DashboardManifest, root: URL) throws -> PublicReadProvisioning? {
+        try PackageValidator.validate(manifest)
         let expected = try PublicReadProvisioning(manifest: manifest)
         guard !expected.connections.isEmpty else { return nil }
-        let url = try publicApprovalURL(manifest)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let hash = PeerPin.hex(PeerPin.sha256(try encoder.encode(expected)))
+        let url = root.appendingPathComponent("public-read-approvals").appendingPathComponent(hash + ".json")
         guard let data = try? Data(contentsOf: url), let approved = try? JSONDecoder().decode(PublicReadProvisioning.self, from: data), approved.dashboardId == expected.dashboardId, approved.revision == expected.revision,
               approved.connections.allSatisfy({ expected.connections.contains($0) }) else {
             throw ControllerError.permissionRequired("Approve public HTTPS declarations for revision \(manifest.revision) using approve_public_connections or the Mac preview approval control.")

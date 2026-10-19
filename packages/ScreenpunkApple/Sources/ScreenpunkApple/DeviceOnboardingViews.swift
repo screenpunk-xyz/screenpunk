@@ -144,18 +144,23 @@ public struct DeviceOnboardingLocalView: View {
 }
 
 public struct DeviceOnboardingConnectedView: View {
+    private let title: String
+    private let emptyMessage: String?
     private let connectionDescription: String
     private let hasScreens: Bool
     private let screens: () -> Void
     private let settings: () -> Void
-    public init(connectionDescription: String, hasScreens: Bool = false, screens: @escaping () -> Void, settings: @escaping () -> Void) {
+    public init(connectionDescription: String, hasScreens: Bool = false, screens: @escaping () -> Void, settings: @escaping () -> Void,
+                title: String = "Connected", emptyMessage: String? = nil) {
+        self.title = title; self.emptyMessage = emptyMessage
         self.connectionDescription = connectionDescription; self.hasScreens = hasScreens; self.screens = screens; self.settings = settings
     }
     public var body: some View {
         DeviceOnboardingLayout {
-            Text("Connected").font(.largeTitle.bold())
+            Text(title).font(.largeTitle.bold())
             Text(connectionDescription).font(.title3).foregroundStyle(.secondary)
-            if !hasScreens { Text("Keep Screenpunk open to receive your first screen.").foregroundStyle(.secondary) }
+            if let emptyMessage { Text(emptyMessage).foregroundStyle(.secondary) }
+            else if !hasScreens { Text("Keep Screenpunk open to receive your first screen.").foregroundStyle(.secondary) }
             Button("Your screens", action: screens).buttonStyle(.borderedProminent).controlSize(.large)
             Button("Settings", action: settings).frame(minHeight: 44)
         }

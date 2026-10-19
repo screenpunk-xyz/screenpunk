@@ -60,6 +60,70 @@ final class WorkspaceLegacyMigrationTests: XCTestCase {
         return (base, old, workspace, projectId, dashboardId, revision, html)
     }
 
+    func testBrokerOwnerLockIsExcludedWithoutBlockingLegacyMigration() throws {
+        let (base, old, workspace, _, _, _, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let lock = old.appendingPathComponent("workbench-owner.lock")
+        try Data("owner lock".utf8).write(to: lock)
+        let migration = WorkspaceLegacyMigration(workspace: workspace)
+        let plan = try migration.inspectLegacy(at: old.path)
+        XCTAssertTrue(plan.summary.unsupportedPortablePaths.isEmpty)
+        let destination = base.appendingPathComponent("new")
+        _ = try migration.apply(plan, to: destination.path, gate: TestMigrationGate(allowed: true))
+        XCTAssertEqual(try Data(contentsOf: lock), Data("owner lock".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent("workbench-owner.lock").path))
+    }
+
+    func testLargeLibraryRecoveryThroughBrokerPreservesSourceAndSelectsWorkspace() throws {
+        let (base, old, workspace, _, dashboardId, revision, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let original = old.appendingPathComponent("dashboards/\(dashboardId)/revisions/\(revision)")
+        let html = Data(repeating: 65, count: 70_000)
+        var sourceManifest = try JSONDecoder().decode(DashboardManifest.self,
+            from: Data(contentsOf: original.appendingPathComponent("manifest.json")))
+        sourceManifest.files = [ManifestFile(path: "index.html", bytes: html.count,
+            sha256: DeploymentDigest.sha256Hex(html))]
+        sourceManifest.digest = try DeploymentDigest.digest(for: sourceManifest)
+        let originalManifest = try JSONEncoder().encode(sourceManifest)
+        try originalManifest.write(to: original.appendingPathComponent("manifest.json"))
+        try html.write(to: original.appendingPathComponent("index.html"))
+        let head = ["name": "Legacy", "draftRevision": revision, "updatedAt": "2026-10-17T12:00:00Z"]
+        try JSONSerialization.data(withJSONObject: head).write(to:
+            old.appendingPathComponent("dashboards/\(dashboardId)/head.json"))
+        for _ in 0..<130 {
+            var manifest = try JSONDecoder().decode(DashboardManifest.self, from: originalManifest)
+            manifest.revision = UUID().uuidString.lowercased()
+            manifest.digest = try DeploymentDigest.digest(for: manifest)
+            let target = original.deletingLastPathComponent().appendingPathComponent(manifest.revision)
+            try FileManager.default.copyItem(at: original, to: target)
+            try JSONEncoder().encode(manifest).write(to: target.appendingPathComponent("manifest.json"))
+        }
+        let controller = try ControllerService.bootstrap(root: old, deviceDirectoryURL: base.appendingPathComponent("devices.json"), rendererFactory: { nil })
+        let environment = try WorkbenchBrokerEnvironment(runtimeDirectory: base.appendingPathComponent("runtime"))
+        let server = WorkbenchBrokerServer(environment: environment,
+            domain: WorkbenchBrokerDomain(controller: controller, workspace: workspace, mutationGate: {}))
+        try server.start(); defer { server.stop() }
+        let client = WorkbenchBrokerClient(environment: environment, credentialScope: .localReview)
+        try client.connect(); defer { client.close() }
+        let destination = base.appendingPathComponent("recovered").path
+        let recovered = try WorkbenchLegacyWorkspaceRecovery.recover(client: client,
+            source: old.path, destination: destination)
+        XCTAssertEqual(recovered.path, destination)
+        let visible = try client.listWorkspacePackages(in: recovered)
+        XCTAssertEqual(visible.map(\.revision), [revision])
+        XCTAssertEqual(try WorkbenchPortablePackages(workspace: workspace).list().count, 131)
+        let first = try client.workspacePackageFile(dashboardId: dashboardId, revision: revision,
+            path: "index.html", offset: 0, in: recovered)
+        let second = try client.workspacePackageFile(dashboardId: dashboardId, revision: revision,
+            path: "index.html", offset: first.bytes.count, in: recovered)
+        XCTAssertEqual(first.bytes.count, 64 * 1024)
+        XCTAssertEqual(first.bytes + second.bytes, html)
+        XCTAssertEqual(try Data(contentsOf: original.appendingPathComponent("manifest.json")), originalManifest)
+        XCTAssertThrowsError(try WorkbenchLegacyWorkspaceRecovery.recover(client: client,
+            source: old.path, destination: base.appendingPathComponent("second").path))
+        XCTAssertEqual(try workspace.current()?.path, destination)
+    }
+
     func testCopiesAndVerifiesBeforeSelectingNewWorkspace() throws {
         let (base, old, workspace, projectId, dashboardId, revision, html) = try fixture()
         defer { try? FileManager.default.removeItem(at: base) }

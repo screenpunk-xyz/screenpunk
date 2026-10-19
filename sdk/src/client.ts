@@ -76,7 +76,8 @@ export interface DashboardClient {
     request(
       alias: string,
       operation: string,
-      parameters?: Record<string, unknown>
+      parameters?: Record<string, unknown>,
+      options?: { signal?: AbortSignal }
     ): Promise<ConnectionResult>;
     subscribe(
       alias: string,
@@ -341,9 +342,25 @@ export function createDashboardClient(options: ClientOptions = {}): DashboardCli
         if (count > 1) rasterURLs.set(resourceURL, count - 1); else rasterURLs.delete(resourceURL);
         fire("connections.release", { parameters: { resourceURL } });
       },
-      async request(alias, operation, parameters = {}) {
-        const response = await sendRequest("connections.request", { alias, operation, parameters });
-        return { value: response.value, stale: response.stale === true };
+      async request(alias, operation, parameters = {}, options = {}) {
+        const signal = options.signal;
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const id = nowId();
+        const abort = () => {
+          const waiter = pending.get(id);
+          if (!waiter) return;
+          pending.delete(id);
+          clearTimeout(waiter.timer);
+          waiter.reject(new DOMException("Aborted", "AbortError"));
+          try { fire("connections.cancel", { parameters: { requestId: id } }); } catch { /* Cancellation still rejects if transport is already closed. */ }
+        };
+        signal?.addEventListener("abort", abort, { once: true });
+        try {
+          const response = await sendRequest("connections.request", { alias, operation, parameters, id });
+          return { value: response.value, stale: response.stale === true };
+        } finally {
+          signal?.removeEventListener("abort", abort);
+        }
       },
       subscribe(alias, operation, parameters, listener) {
         const key = subscriptionKey(alias, operation, parameters);

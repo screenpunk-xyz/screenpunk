@@ -2,9 +2,9 @@ import Foundation
 import Darwin
 import ScreenpunkCore
 
-/// Only the final system-derived Application Support directory may be created. The
-/// owner serializes this operation before namespace inspection; no managed files,
-/// recursive parents, identifiers or migration are created here.
+/// Prepares the system-derived Application Support anchor and its fixed default
+/// device-store parent under the owner. No managed files, recursive parents,
+/// identifiers or migration are created here.
 public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
     enum Failure: Error, Equatable { case invalidLocation, changedNode, uncertain, io(Int32) }
     enum Boundary: Equatable { case beforeCreate, afterCreate, beforeChildSync, afterChildSync, beforeParentSync, afterParentSync }
@@ -132,6 +132,27 @@ public final class DeviceProductionSupportAnchorSetup: @unchecked Sendable {
             if case .idle = state { state = .blocked }
             throw error
         }
+    }
+    /// The default device store is the fixed shared parent of Local and Cloud
+    /// command intents. Preparing it creates no pairing, state, or journal.
+    func prepareDefaultDeviceStateRoot() throws {
+        // Overrides retain their existing caller-owned directory semantics.
+        if let override = ProcessInfo.processInfo.environment["SCREENPUNK_DEVICE_HOME"], !override.isEmpty { return }
+        guard case .ready(let binding) = state else { throw Failure.uncertain }
+        try validateOrBlock(binding)
+        let name = "xyz.screenpunk.device"
+        var named = stat()
+        if fstatat(binding.child, name, &named, AT_SYMLINK_NOFOLLOW) != 0 {
+            guard errno == ENOENT else { throw Failure.io(errno) }
+            guard mkdirat(binding.child, name, 0o700) == 0 else { throw Failure.io(errno) }
+        }
+        let descriptor = try openDirectory(binding.child, name: name)
+        defer { close(descriptor) }
+        let held = try identity(descriptor)
+        guard fsync(descriptor) == 0, fsync(binding.child) == 0 else { throw Failure.io(errno) }
+        try validateOrBlock(binding)
+        guard fstatat(binding.child, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+            Identity(named) == held, try identity(descriptor) == held else { throw Failure.changedNode }
     }
     private func synchronize(_ binding: Binding) throws {
         try validateOrBlock(binding)

@@ -27,6 +27,20 @@ final class WorkbenchCloudCLITests: XCTestCase {
         XCTAssertThrowsError(try WorkbenchCloudCLI.sourceKindForNewProject(project,
             descriptor: JSONSerialization.data(withJSONObject: document)))
     }
+    func testScreenSyncSetupKeepsCloudDestinationSeparateFromLocalWorkspace() throws {
+        let parsed = try Options.parse(["cloud", "sync", "enable", "cloud-space", "--workspace", "/tmp/local"], environment: [:])
+        XCTAssertEqual(parsed.workspace, "/tmp/local")
+        XCTAssertEqual(try WorkbenchCloudCLI.parse(parsed.words), .syncEnable("cloud-space", nil))
+        let bootstrap = try Options.parse(["cloud", "sync", "enable", "cloud-space", "--create-local-workspace", "/tmp/new"], environment: [:])
+        XCTAssertEqual(try WorkbenchCloudCLI.parse(bootstrap.words), .syncEnable("cloud-space", "/tmp/new"))
+        XCTAssertEqual(try WorkbenchCloudCLI.parse(["cloud", "sync", "disable"]), .syncDisable)
+        XCTAssertEqual(try WorkbenchCloudCLI.parse(["cloud", "sync", "status"]), .syncStatus)
+        XCTAssertEqual(try WorkbenchCloudCLI.parse(["cloud", "screens"]), .projects)
+        XCTAssertThrowsError(try WorkbenchCloudCLI.parse(["cloud", "sync", "enable"]))
+        XCTAssertThrowsError(try WorkbenchCloudCLI.parse(["cloud", "sync", "enable", "space", "--create-local-workspace", "relative"]))
+        XCTAssertThrowsError(try WorkbenchCloudCLI.parse(["cloud", "sync", "disable", "unexpected"]))
+    }
+
     func testCloudRoutesHaveExplicitSeparateSourceAndDeploymentActions() throws {
         XCTAssertEqual(try WorkbenchCloudCLI.parse(["cloud","link","local","remote"]),.link("local","remote"))
         XCTAssertEqual(try WorkbenchCloudCLI.parse(["cloud","sync","local"]),.sync("local"))

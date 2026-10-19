@@ -26,9 +26,10 @@ final class CloudHumanSession {
     static func make(lease: CloudHumanSessionBroker.Lease, googlePresentation: @escaping () throws -> UIViewController,
                      applePresentation: @escaping () throws -> ASPresentationAnchor,
                      transport: any HTTPTransport,
-                     journal: (any CloudWorkspaceSetupJournal)? = nil) throws -> CloudHumanSession {
+                     journal: (any CloudWorkspaceSetupJournal)? = nil,
+                     loadConfiguration: () throws -> CloudNativeConfiguration = { try .load() }) throws -> CloudHumanSession {
         try lease.checkConstruction()
-        let configuration = try CloudNativeConfiguration.load()
+        let configuration = try loadConfiguration()
         let identity = CloudNativeIdentity()
         let coordinator = CloudConnectionCoordinator(authenticate: { provider in
             try lease.checkHumanAction()
@@ -91,6 +92,7 @@ final class CloudHumanSessionLifecycle: ObservableObject {
         return broker.state == .vacant ? .available : .occupiedElsewhere
     }
     private let broker: CloudHumanSessionBroker
+    private let loadConfiguration: () throws -> CloudNativeConfiguration
     private let owner = UUID()
     private var originalRevocationObservers: [UUID: () -> Void] = [:]
     @discardableResult func observeOriginalRevocation(_ action: @escaping () -> Void) -> UUID {
@@ -106,9 +108,11 @@ final class CloudHumanSessionLifecycle: ObservableObject {
     private var observation: AnyCancellable?
     private var retirement: CloudSceneRetirement?
     var coordinator: CloudConnectionCoordinator? { retired ? nil : lease.flatMap { broker.session(for: $0)?.coordinator } }
-    init(broker: CloudHumanSessionBroker? = nil) {
+    init(broker: CloudHumanSessionBroker? = nil,
+         loadConfiguration: @escaping () throws -> CloudNativeConfiguration = { try .load() }) {
         let resolved = broker ?? .shared
         self.broker = resolved
+        self.loadConfiguration = loadConfiguration
         observation = resolved.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
     }
     /// Internal fake-only seam. Production installation reserves before invoking its factory.
@@ -125,7 +129,8 @@ final class CloudHumanSessionLifecycle: ObservableObject {
             if let testFactory { return try testFactory(presentation) }
             return try CloudHumanSession.make(lease: lease,
                 googlePresentation: { try presentation.resolve().controller },
-                applePresentation: { try presentation.resolve().window }, transport: CloudNativeURLSessionTransport())
+                applePresentation: { try presentation.resolve().window }, transport: CloudNativeURLSessionTransport(),
+                loadConfiguration: loadConfiguration)
         }
     }
     func enrollmentSelection(accountID: UUID, locationID: UUID?) throws -> CloudEnrollmentSelection {
@@ -172,7 +177,11 @@ private final class CloudSceneRetirement: Sendable {
     let broker: CloudHumanSessionBroker
     let lease: CloudHumanSessionBroker.Lease
     init(broker: CloudHumanSessionBroker, lease: CloudHumanSessionBroker.Lease) { self.broker = broker; self.lease = lease }
-    deinit { Task { @MainActor [broker, lease] in _ = broker.retire(lease) } }
+    deinit {
+        Task { @MainActor [broker, lease] in
+                _ = broker.retire(lease)
+        }
+    }
 }
 
 /// Genuine selected response IDs, never caller-created identity or admission evidence.

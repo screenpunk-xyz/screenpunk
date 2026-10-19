@@ -137,12 +137,22 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
 
     @MainActor func testUnconfiguredExplicitFactoryFailsBeforePresentation() {
         var presentations = 0
-        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
+        let broker = CloudHumanSessionBroker()
+        var validations = 0
+        let lifecycle = CloudHumanSessionLifecycle(broker: broker, loadConfiguration: {
+            validations += 1
+            XCTAssertEqual(broker.state, .reserving)
+            return try CloudNativeConfiguration.load(info: [:], bundleID: "xyz.screenpunk.unconfigured-fixture")
+        })
         let presentation = CloudProviderPresentation(testResolve: { presentations += 1; return .init(controller: UIViewController(), window: UIWindow()) })
         XCTAssertThrowsError(try lifecycle.installExplicit(presentation: presentation)) { error in
             XCTAssertEqual(error as? CloudNativeIdentityError, .notConfigured)
         }
+        XCTAssertEqual(validations, 1)
         XCTAssertEqual(presentations, 0)
+        XCTAssertNil(lifecycle.coordinator)
+        XCTAssertEqual(broker.state, .vacant)
+        XCTAssertEqual(lifecycle.accountEntryState, .available)
     }
 
     @MainActor func testOnePairRetainedAndCallbacksUseItsCurrentAdmission() throws {
@@ -178,6 +188,68 @@ final class CloudHumanSessionLifecycleTests: XCTestCase {
         XCTAssertEqual(context.pendingRequest, "immutable-pending-fixture")
     }
 
+    @MainActor func testInactiveOAuthReturnContinuesFromNativeSignInToAccountDiscovery() async throws {
+        let held = expectation(description: "Native sign-in response held after provider authentication")
+        let transport = LifecycleOAuthReturnTransport(held: held), journal = LifecycleJournal()
+        var providerCalls = 0, cancellations = 0
+        let coordinator = CloudConnectionCoordinator(authenticate: { provider in
+            XCTAssertEqual(provider, .google); providerCalls += 1; return LifecycleTokens()
+        }, cancelIdentityFlow: { cancellations += 1 }, signOutIdentity: {},
+            makeClient: { try CloudNativeClient(baseURL: URL(string: "https://fixture.invalid")!, tokenProvider: $0, transport: transport) }, journal: journal)
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
+        try lifecycle.install(CloudHumanSession(testCoordinator: coordinator, testCallback: { _ in false }))
+        let operation = try XCTUnwrap(coordinator.signIn(provider: .google))
+        await fulfillment(of: [held], timeout: 2)
+        let before = cancellations
+        lifecycle.scenePhaseChanged(.inactive) // Provider cover is not actual background.
+        lifecycle.scenePhaseChanged(.active)
+        XCTAssertEqual(cancellations, before)
+        XCTAssertTrue(lifecycle.coordinator === coordinator)
+        XCTAssertTrue(coordinator.isWorking)
+        await transport.releaseSignIn()
+        await operation.value
+        let paths = await transport.paths
+        XCTAssertEqual(paths, ["/v1/native/sign-in", "/v1/native/accounts"])
+        XCTAssertEqual(providerCalls, 1)
+        XCTAssertNotNil(coordinator.humanIdentity)
+        XCTAssertTrue(coordinator.canCreateFirstWorkspace)
+        XCTAssertFalse(coordinator.isWorking)
+        XCTAssertNil(coordinator.failure)
+        XCTAssertNil(journal.attempt)
+        XCTAssertEqual(lifecycle.accountEntryState, .ownedHere)
+    }
+    @MainActor func testTrueBackgroundRejectsLateNativeSignInAndRequiresExplicitRetry() async throws {
+        let held = expectation(description: "Native sign-in response held before account discovery")
+        let transport = LifecycleOAuthReturnTransport(held: held), journal = LifecycleJournal()
+        var cancellations = 0
+        let coordinator = CloudConnectionCoordinator(authenticate: { _ in LifecycleTokens() },
+            cancelIdentityFlow: { cancellations += 1 }, signOutIdentity: {},
+            makeClient: { try CloudNativeClient(baseURL: URL(string: "https://fixture.invalid")!, tokenProvider: $0, transport: transport) }, journal: journal)
+        let lifecycle = CloudHumanSessionLifecycle(broker: CloudHumanSessionBroker())
+        try lifecycle.install(CloudHumanSession(testCoordinator: coordinator, testCallback: { _ in false }))
+        let operation = try XCTUnwrap(coordinator.signIn(provider: .google))
+        await fulfillment(of: [held], timeout: 2)
+        let before = cancellations
+        lifecycle.scenePhaseChanged(.background)
+        XCTAssertEqual(cancellations, before + 1)
+        XCTAssertNil(coordinator.humanIdentity)
+        XCTAssertFalse(coordinator.isWorking)
+        await transport.releaseSignIn()
+        await operation.value
+        lifecycle.scenePhaseChanged(.active)
+        let cancelledPaths = await transport.paths
+        XCTAssertEqual(cancelledPaths, ["/v1/native/sign-in"])
+        XCTAssertNil(coordinator.humanIdentity)
+        XCTAssertNil(coordinator.failure)
+        XCTAssertNil(journal.attempt)
+        XCTAssertTrue(lifecycle.coordinator === coordinator)
+        // Foreground does not replay authentication; only a new human action may.
+        await coordinator.signIn(provider: .google)?.value
+        let retriedPaths = await transport.paths
+        XCTAssertEqual(retriedPaths, ["/v1/native/sign-in", "/v1/native/sign-in", "/v1/native/accounts"])
+        XCTAssertNotNil(coordinator.humanIdentity)
+        XCTAssertTrue(coordinator.canCreateFirstWorkspace)
+    }
     @MainActor func testRealCoordinatorRevokedOnceWithoutLosingPendingOperation() async throws {
         let journal = LifecycleJournal(), transport = LifecycleTransport()
         var cancellations = 0
@@ -319,4 +391,36 @@ private final class LifecycleClearGate {
     private(set) var entered = false
     func wait() async { entered = true; await withCheckedContinuation { continuation = $0 } }
     func release() { let saved = continuation; continuation = nil; saved?.resume() }
+}
+
+/// Holds only the first synthetic sign-in response. Explicit release is sticky,
+/// so even a bounded arrival timeout cannot strand a later-started test task.
+private actor LifecycleOAuthReturnTransport: HTTPTransport {
+    private let held: XCTestExpectation
+    private var firstSignIn = true
+    private var released = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var paths: [String] = []
+    init(held: XCTestExpectation) { self.held = held }
+    func send(_ request: AuthorizedHTTPRequest) async throws -> HTTPTransportResponse {
+        paths.append(request.url.path)
+        if request.url.path == "/v1/native/sign-in" {
+            if firstSignIn {
+                firstSignIn = false
+                if !released {
+                    await withCheckedContinuation { continuation in
+                        self.continuation = continuation
+                        held.fulfill()
+                    }
+                } else { held.fulfill() }
+            }
+            return .init(status: 200, body: Data(#"{"user":{"id":"22222222-2222-4222-8222-222222222222","displayName":"Fixture","email":null},"signInProvider":"google.com","authTime":"2026-10-02T16:00:00Z","tokenExpiresAt":"2026-10-02T17:00:00Z"}"#.utf8))
+        }
+        guard request.url.path == "/v1/native/accounts" else { throw CloudNativeFailure.invalidResponse }
+        return .init(status: 200, body: Data(#"{"items":[],"nextCursor":null}"#.utf8))
+    }
+    func releaseSignIn() {
+        released = true
+        let saved = continuation; continuation = nil; saved?.resume()
+    }
 }

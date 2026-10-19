@@ -104,6 +104,40 @@ final class DeviceGrantKeychainBackendTests: XCTestCase {
             XCTAssertThrowsError(try backend.read(account:name,maximumBytes:8192)); XCTAssertEqual(api.items.count,1); XCTAssertEqual(api.adds.count,1)
         }
     }
+    func testPhysicalNumericZeroNonsyncQualifiesInventoryAndExactPrivateReadWithoutAdd() throws {
+        let (api,backend,name) = try fixture(), original = api.items[name]!
+        let zero = NSNumber(value: 0)
+        XCTAssertEqual(CFGetTypeID(zero), CFNumberGetTypeID())
+        api.items[name]![kSecAttrSynchronizable as String] = zero
+        var count = 0
+        try backend.inventory(maximum:1) { observation in
+            count += 1; XCTAssertEqual(observation.account,name)
+            XCTAssertEqual(observation.persistentReference,original[kSecValuePersistentRef as String] as? Data)
+        }
+        XCTAssertEqual(count,1)
+        let read = try XCTUnwrap(backend.read(account:name,maximumBytes:8192))
+        XCTAssertEqual(read.observation.account,name); XCTAssertEqual(read.observation.byteCount,13)
+        XCTAssertEqual(api.adds.count,1); XCTAssertEqual(api.items.count,1)
+        XCTAssertEqual(api.items[name]![kSecValueData as String] as? Data, original[kSecValueData as String] as? Data)
+        // Numeric-zero compatibility cannot turn duplicate Add into adoption.
+        let calls = api.adds.count
+        XCTAssertThrowsError(try backend.add(account:name,bytes:Data([1])))
+        XCTAssertEqual(api.adds.count,calls); XCTAssertEqual(api.items.count,1)
+    }
+    func testGrantNonsyncRejectsTrueNonzeroAndUnexpectedTypesWithoutAdoption() throws {
+        let rejected: [Any] = [kCFBooleanTrue as Any, NSNumber(value:1), NSNumber(value:-1),
+            NSNumber(value:0.5), NSNumber(value:Double.leastNonzeroMagnitude),
+            NSNumber(value:Double.nan), NSNumber(value:Double.infinity), "0", "false", Data([0])]
+        for sync in rejected {
+            let (api,backend,name) = try fixture()
+            api.items[name]![kSecAttrSynchronizable as String] = sync
+            var visited = false
+            XCTAssertThrowsError(try backend.inventory(maximum:1) { _ in visited = true })
+            XCTAssertFalse(visited)
+            XCTAssertThrowsError(try backend.read(account:name,maximumBytes:8192))
+            XCTAssertEqual(api.adds.count,1); XCTAssertEqual(api.items.count,1)
+        }
+    }
     func testBoundsRejectBeforeEffectsAndReturnedArraySentinel() throws {
         let api = API(), backend = DeviceGrantKeychainBackend(rootID:root,api:api)
         for name in [account().uppercased(), account()+"\0", "other.00000000-0000-0000-0000-000000000002"] {

@@ -92,7 +92,7 @@ private struct LegacyHeadRecord {
     let bytes: Data
     let draftRevision: String
 }
-private struct MigrationPortableRecord: Codable {
+struct MigrationPortableRecord: Codable {
     let schemaVersion: Int
     let migrationId: String
     let projectIds: [String]
@@ -367,7 +367,7 @@ final class WorkspaceLegacyMigration {
         }
         unsupported += try unlisted(source, [], allowed: ["authoring", "dashboards", "attachments",
             "portable-settings.json", "toolchain-requirements.json", "kits", "devices",
-            "operations", "runtime", ".screenpunk.lock", "authoring.lock", "lock",
+            "operations", "runtime", ".screenpunk.lock", "authoring.lock", "workbench-owner.lock", "lock",
             "device-packages", "devices.json", "devices.json.lock", "public-read-approvals", "agents"],
             budget: budget, members: &members)
         guard !projects.isEmpty || !packages.isEmpty else { throw WorkspaceError.unavailable }

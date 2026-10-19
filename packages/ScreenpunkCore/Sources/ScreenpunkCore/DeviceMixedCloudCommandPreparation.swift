@@ -106,7 +106,8 @@ final class DeviceMixedPreparedCloudCommand: GrantSecretRedacted {
         let qualified = try DeviceNativeGrantRevisionQualifier.qualify(input, expectedEntries: expectations)
         let candidate = try DeviceMixedStructuralState.validating(generationID: delivery.desiredGenerationID,
             installationOwner: capture.snapshot.installationOwner, entries: entries,
-            configuredEntryID: delivery.resultingSet.configuredEntryID)
+            configuredEntryID: delivery.resultingSet.configuredEntryID,
+            legacyLocalRoots: capture.snapshot.legacyLocalRoots, cloudObservationEpoch: capture.snapshot.cloudObservationEpoch)
         _ = try DeviceMixedStructuralStateCodec.encode(candidate)
         return .init(capture: capture, delivery: delivery, candidate: candidate, packageInputs: inputs,
             grantInput: input, qualifiedGrant: qualified, grantOperationID: grantOperationID)

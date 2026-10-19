@@ -196,6 +196,68 @@ enum DeviceLegacyInventoryMigration {
     }
     public var customMirror: Mirror { Mirror(self, children: [] as [(String, Any)]) }
 }
+/// Nonsecret committed-state discovery only; never an authority capability.
+@_spi(NativeInstallation) public struct DeviceDetachedLocalInventoryMetadata {
+    public let commonRootID: UUID, generationID: UUID, retiredInstallationID: UUID
+    public let revokedAt: String
+    public let cleanupCompleted: Bool
+    fileprivate let retiredOwner: DeviceNativeInstallationContentOwner
+    public var retiredTransitionID: UUID { retiredOwner.transitionID }
+}
+@_spi(NativeInstallation) public struct DeviceUnifiedLocalSourceMetadata {
+    public let legacyLocalRoots: [DeviceUnifiedLocalSourceAssociation.Root]
+    public let incomingLocal: [DeviceUnifiedLocalSourceAssociation]
+}
+@_spi(NativeInstallation) public struct DevicePendingCloudDetachMetadata {
+    public let commonRootID: UUID, generationID: UUID, installationID: UUID
+    public let detachOperationID: UUID, detachGenerationID: UUID
+}
+/// Sealed by full local-resource and committed-CAS verification.
+@_spi(NativeInstallation) public final class DeviceDetachedLocalInventoryAssociation {
+    public let metadata: DeviceDetachedLocalInventoryMetadata
+    private let validate: () throws -> Void
+    private let owner: DeviceNativeInstallationContentOwner
+    private let retirementMetadata: Data
+    private let validateScope: (URL) throws -> Void
+    fileprivate init(metadata: DeviceDetachedLocalInventoryMetadata, owner: DeviceNativeInstallationContentOwner,
+        retirementMetadata: Data, validate: @escaping () throws -> Void, validateScope: @escaping (URL) throws -> Void) {
+        self.metadata = metadata; self.owner = owner; self.retirementMetadata = retirementMetadata; self.validate = validate; self.validateScope = validateScope
+    }
+    public func validateCurrent() throws { try validate() }
+    public func validateCloudCleanupScope(namespace: URL) throws {
+        let retirement = try credentialRetirement()
+        guard namespace == (try retirement.namespaceURL) else { throw DeviceStructuralStoreError.conflict }
+        try validateScope(namespace); try validateCurrent()
+    }
+    public func credentialRetirement() throws -> NativeCloudCredentialRetirement {
+        try validateCurrent()
+        return try NativeCloudCredentialRetirement.restoreConfirmed(metadata: retirementMetadata, owner: owner)
+    }
+}
+/// Serializes synchronous work from Scene, LAN and fixed-transport executors.
+/// Thread-local resource ownership must be idle before waiting, preventing a
+/// nested resource callback from holding resources needed by the current owner.
+/// True synchronous recursion still rejects immediately, as before.
+private final class DeviceUnifiedInventoryOperationGate {
+    private let condition = NSCondition()
+    private var owner: ObjectIdentifier?
+    func begin() throws {
+        try DeviceLocalResourceRegistry.requireIdle()
+        let caller = ObjectIdentifier(Thread.current)
+        condition.lock(); defer { condition.unlock() }
+        guard owner != caller else { throw DeviceLocalResourceGateFailure.reentrant }
+        while owner != nil { condition.wait() }
+        owner = caller
+    }
+    func unlock() {
+        let caller = ObjectIdentifier(Thread.current)
+        condition.lock()
+        precondition(owner == caller)
+        owner = nil
+        condition.broadcast()
+        condition.unlock()
+    }
+}
 @_spi(NativeInstallation) public final class DeviceUnifiedInventorySession {
     /// Authority-owned staging must be promoted by exact inode before any session opens.
     public static func prepareOwnedRootForPromotion(stagingRoot: URL, finalRoot: URL, rootID: UUID) throws {
@@ -212,14 +274,18 @@ enum DeviceLegacyInventoryMigration {
     private var reportingRejections: [UUID: (DeviceNativeDeliveryCommandBinding, NativeDeliveryDurableBody)] = [:]
     private var acceptedCloud: DeviceNativeDeliveryCommandBinding?
     private var cloudWork: CloudWork?
-    private let operationMutex = NSLock()
+    private let operationMutex = DeviceUnifiedInventoryOperationGate()
     private func beginOperation() throws {
-        guard operationMutex.try() else { throw DeviceLocalResourceGateFailure.reentrant }
+        try operationMutex.begin()
     }
     private let migration: DeviceLegacyMigrationSession?
-    private let retainedLocalPreparations: [DeviceIncomingLocalPreparation]
+    private var retainedLocalPreparations: [DeviceIncomingLocalPreparation]
     private let automaticOwnerFactory: ((UUID) throws -> any NativeUnifiedAutomationOwner)?
-    private let native: NativeDeliveryExecutionSession
+    private let attachedNative: NativeDeliveryExecutionSession?
+    private var native: NativeDeliveryExecutionSession { get throws {
+        guard let attachedNative, capture?.snapshot.detachment == nil, capture?.snapshot.logoutIntent == nil else { throw NativeDeliveryExecutionError.unavailableDispatchCapability }
+        return attachedNative
+    } }
     private let store: DeviceMixedInventoryStore
     private var resolver: DeviceMixedResourceResolver?
     private var original: DeviceMixedResolvedResources?
@@ -236,8 +302,126 @@ enum DeviceLegacyInventoryMigration {
         validateMutation: @escaping () throws -> Void = { throw NativeDeliveryExecutionError.unavailableDispatchCapability },
         automationOwner: ((UUID) throws -> any NativeUnifiedAutomationOwner)? = nil) {
         automaticOwnerFactory = automationOwner
-        migration = local; retainedLocalPreparations = incomingLocal; self.native = native; self.validateOriginal = validateOriginal; self.validateMutation = validateMutation
+        migration = local; retainedLocalPreparations = incomingLocal; self.attachedNative = native; self.validateOriginal = validateOriginal; self.validateMutation = validateMutation
         store = .init(root: commonRoot, rootID: commonRootID)
+    }
+    private init(detachedLocal local: DeviceLegacyMigrationSession?, incomingLocal: [DeviceIncomingLocalPreparation],
+        commonRoot: URL, commonRootID: UUID, validateOriginal: @escaping () throws -> Void,
+        validateMutation: @escaping () throws -> Void) {
+        migration = local; retainedLocalPreparations = incomingLocal; attachedNative = nil
+        self.validateOriginal = validateOriginal; self.validateMutation = validateMutation; automaticOwnerFactory = nil
+        store = .init(root: commonRoot, rootID: commonRootID)
+    }
+    public static func recommitPendingCloudAttachment(commonRoot: URL, commonRootID: UUID,
+        validateOriginal: () throws -> Void) throws {
+        try validateOriginal()
+        try DeviceMixedInventoryStore(root: commonRoot, rootID: commonRootID).recommitPendingCloudAttachmentExact()
+        try validateOriginal()
+    }
+    public static func peekLocalSourceMetadata(commonRoot: URL, commonRootID: UUID) throws -> DeviceUnifiedLocalSourceMetadata {
+        let store = DeviceMixedInventoryStore(root: commonRoot, rootID: commonRootID)
+        guard let current = try store.readCurrent() else { throw DeviceStructuralStoreError.conflict }
+        let roots = current.snapshot.legacyLocalRoots ?? []
+        let incoming = try store.retainedLocalSourcesExact()
+        return .init(legacyLocalRoots: try roots.map { .init(rootID: $0.rootID, path: try DeviceFilesystemTraversal.currentPath(forRecordedPath: $0.path)) },
+            incomingLocal: try incoming.map { frame in .init(operationID: frame.operationID,
+                roots: try frame.roots.map { .init(rootID: $0.rootID, path: try DeviceFilesystemTraversal.currentPath(forRecordedPath: $0.path)) }) })
+    }
+    public static func peekPendingCloudDetachMetadata(commonRoot: URL, commonRootID: UUID) throws -> DevicePendingCloudDetachMetadata? {
+        guard let capture = try DeviceMixedInventoryStore(root: commonRoot, rootID: commonRootID).readCurrent(),
+            let pending = capture.snapshot.logoutIntent else { return nil }
+        return .init(commonRootID: commonRootID, generationID: capture.snapshot.generationID,
+            installationID: capture.snapshot.installationOwner.installationID,
+            detachOperationID: pending.detachOperationID, detachGenerationID: pending.detachGenerationID)
+    }
+    public func beginCloudDetach(retirement: NativeCloudCredentialRetirement, operationID: UUID, generationID: UUID,
+        detachOperationID: UUID, detachGenerationID: UUID) throws -> DevicePendingCloudDetachMetadata {
+        try beginOperation(); defer { operationMutex.unlock() }; try validateOriginal()
+        guard let resolver, let original, let capture, capture.snapshot.detachment == nil else { throw DeviceStructuralStoreError.conflict }
+        if let pending = capture.snapshot.logoutIntent {
+            guard pending.retirementMetadata == retirement.canonicalMetadata, pending.detachOperationID == detachOperationID,
+                pending.detachGenerationID == detachGenerationID else { throw DeviceStructuralStoreError.conflict }
+        } else {
+            self.capture = try resolver.beginCloudDetachExact(original, store: store, previous: capture, retirement: retirement,
+                operationID: operationID, generationID: generationID, detachOperationID: detachOperationID, detachGenerationID: detachGenerationID)
+        }
+        guard let capture = self.capture, let pending = capture.snapshot.logoutIntent else { throw DeviceStructuralStoreError.conflict }
+        return .init(commonRootID: store.rootID, generationID: capture.snapshot.generationID,
+            installationID: capture.snapshot.installationOwner.installationID,
+            detachOperationID: pending.detachOperationID, detachGenerationID: pending.detachGenerationID)
+    }
+    public static func peekDetachedMetadata(commonRoot: URL, commonRootID: UUID) throws -> DeviceDetachedLocalInventoryMetadata? {
+        guard let capture = try DeviceMixedInventoryStore(root: commonRoot, rootID: commonRootID).readCurrent(),
+            let detached = capture.snapshot.detachment else { return nil }
+        return .init(commonRootID: commonRootID, generationID: capture.snapshot.generationID,
+            retiredInstallationID: capture.snapshot.installationOwner.installationID, revokedAt: detached.revokedAt, cleanupCompleted: detached.cleanupCompleted, retiredOwner: capture.snapshot.installationOwner)
+    }
+    public static func restoreDetached(local: DeviceLegacyMigrationSession? = nil,
+        incomingLocal: [DeviceIncomingLocalPreparation] = [], commonRoot: URL, commonRootID: UUID,
+        validateOriginal: @escaping () throws -> Void, validateMutation: @escaping () throws -> Void) throws -> DeviceUnifiedInventorySession {
+        try validateOriginal()
+        let session = DeviceUnifiedInventorySession(detachedLocal: local, incomingLocal: incomingLocal,
+            commonRoot: commonRoot, commonRootID: commonRootID, validateOriginal: validateOriginal, validateMutation: validateMutation)
+        let binding = local?.binding
+        guard local == nil || binding != nil, let current = try session.store.readCurrent(),
+            current.snapshot.detachment != nil else { throw DeviceStructuralStoreError.conflict }
+        let localGate = local.map { DeviceLocalResourceGate(packageStore: $0.packages, grantStore: $0.grants, structuralStore: $0.structural) }
+        let result = try DeviceMixedResourceResolver.detached(local: localGate, binding: binding,
+            incoming: incomingLocal.map(\.resources), store: session.store, capture: current)
+        try validateOriginal(); session.resolver = result.0; session.original = result.1; session.capture = current
+        return session
+    }
+    public func detachedAssociation() throws -> DeviceDetachedLocalInventoryAssociation {
+        try beginOperation(); defer { operationMutex.unlock() }; try validateOriginal()
+        guard let capture, let detached = capture.snapshot.detachment, let resolver, let original else { throw DeviceStructuralStoreError.conflict }
+        try resolver.verifyCurrentInventoryResourcesExact(original, store: store, current: capture)
+        let metadata = DeviceDetachedLocalInventoryMetadata(commonRootID: store.rootID, generationID: capture.snapshot.generationID,
+            retiredInstallationID: capture.snapshot.installationOwner.installationID, revokedAt: detached.revokedAt, cleanupCompleted: detached.cleanupCompleted, retiredOwner: capture.snapshot.installationOwner)
+        return .init(metadata: metadata, owner: capture.snapshot.installationOwner,
+            retirementMetadata: detached.retirementMetadata, validate: { [self] in
+            try validateOriginal()
+            try resolver.verifyCurrentInventoryResourcesExact(original, store: store, current: capture)
+        }, validateScope: { [self] namespace in
+            try validateOriginal()
+            try resolver.validateCloudCleanupScope(original, store: store, current: capture, namespace: namespace)
+        })
+    }
+    public func finishCloudDetachCleanup(receipt: NativeConfirmedCloudCleanup, operationID: UUID, generationID: UUID) throws {
+        try beginOperation(); defer { operationMutex.unlock() }; try validateOriginal()
+        guard let resolver, let original, let capture else { throw DeviceStructuralStoreError.conflict }
+        self.capture = try resolver.finishCloudCleanupExact(original, store: store, previous: capture, receipt: receipt,
+            operationID: operationID, generationID: generationID)
+        mountedPresentation = nil
+    }
+    public func detachCloud(revocation: NativeConfirmedCloudRevocation, operationID: UUID, generationID: UUID,
+        validateDetached: @escaping () throws -> Void, validateMutation: @escaping () throws -> Void) throws -> DeviceUnifiedInventorySession {
+        try beginOperation(); defer { operationMutex.unlock() }; try validateOriginal()
+        guard let resolver, let original, let capture, capture.snapshot.detachment == nil else { throw DeviceStructuralStoreError.conflict }
+        _ = try resolver.detachCloudExact(original, store: store, previous: capture, revocation: revocation,
+            operationID: operationID, generationID: generationID)
+        return try Self.restoreDetached(local: migration, incomingLocal: retainedLocalPreparations,
+            commonRoot: store.root, commonRootID: store.rootID, validateOriginal: validateDetached, validateMutation: validateMutation)
+    }
+    public func reattachCloud(native: NativeDeliveryExecutionSession, current: NativeCurrentInstallationDispatch,
+        operationID: UUID, generationID: UUID, validateAttached: @escaping () throws -> Void,
+        validateMutation: @escaping () throws -> Void,
+        automationOwner: ((UUID) throws -> any NativeUnifiedAutomationOwner)? = nil) throws -> DeviceUnifiedInventorySession {
+        try beginOperation(); defer { operationMutex.unlock() }; try validateOriginal(); try validateAttached()
+        guard let oldOriginal = original, let capture, capture.snapshot.detachment?.cleanupCompleted == true else { throw DeviceStructuralStoreError.conflict }
+        let (coordinator, source) = try native.mixedInventorySourceExact(current: current)
+        let gate = migration.map { DeviceLocalResourceGate(packageStore: $0.packages, grantStore: $0.grants, structuralStore: $0.structural) }
+        let resolver = DeviceMixedResourceResolver(local: gate, native: coordinator)
+        try resolver.restoreIncomingLocalResourcesExact(store: store, sources: retainedLocalPreparations.map(\.resources))
+        let result = try resolver.attachCloudExact(oldOriginal, store: store, previous: capture, source: source,
+            operationID: operationID, generationID: generationID)
+        try validateAttached()
+        let session = DeviceUnifiedInventorySession(local: migration, incomingLocal: retainedLocalPreparations, native: native,
+            commonRoot: store.root, commonRootID: store.rootID, validateOriginal: validateAttached, validateMutation: validateMutation,
+            automationOwner: automationOwner)
+        // Captures are tied to the exact issuer, so restore through the new store.
+        guard let reopened = try session.store.readCurrent(), reopened.bytes == result.0.bytes else { throw DeviceStructuralStoreError.conflict }
+        session.resolver = resolver; session.original = result.1; session.capture = reopened
+        return session
     }
     public func qualifiedResetResourcesExact() throws -> DeviceOwnedInstallationResetResources {
         try validateOriginal()
@@ -277,7 +461,7 @@ enum DeviceLegacyInventoryMigration {
         let resolver = DeviceMixedResourceResolver(local: localGate, native: coordinator)
         let original = try resolver.resolveInitialMigrationExact(local: binding, native: source, generationID: restored.snapshot.generationID)
         try resolver.restoreIncomingLocalResourcesExact(store: store, sources: retainedLocalPreparations.map(\.resources))
-        try resolver.restoreIncomingCloudResourcesExact(store: store)
+        try resolver.restoreIncomingCloudResourcesExact(store: store, installationOwner: source.state.owner)
         try resolver.verifyCurrentInventoryResourcesExact(original, store: store, current: restored)
         try validateOriginal()
         self.resolver = resolver; self.original = original; capture = restored
@@ -295,7 +479,7 @@ enum DeviceLegacyInventoryMigration {
         let resolver = DeviceMixedResourceResolver(local: localGate, native: coordinator)
         let original = try resolver.resolveInitialMigrationExact(local: binding, native: source, generationID: restored.snapshot.generationID)
         try resolver.restoreIncomingLocalResourcesExact(store: store, sources: retainedLocalPreparations.map(\.resources))
-        try resolver.restoreIncomingCloudResourcesExact(store: store)
+        try resolver.restoreIncomingCloudResourcesExact(store: store, installationOwner: source.state.owner)
         try resolver.verifyCurrentInventoryResourcesExact(original, store: store, current: restored)
         try validateOriginal()
         self.resolver = resolver; self.original = original; capture = restored
@@ -306,14 +490,30 @@ enum DeviceLegacyInventoryMigration {
         try validateOriginal()
         let frames = try store.retainedLocalSourcesExact()
         try validateOriginal()
-        return frames.map { frame in .init(operationID: frame.operationID,
-            roots: frame.roots.map { .init(rootID: $0.rootID, path: $0.path) }) }
+        return try frames.map { frame in .init(operationID: frame.operationID,
+            roots: try frame.roots.map { .init(rootID: $0.rootID, path: try DeviceFilesystemTraversal.currentPath(forRecordedPath: $0.path)) }) }
     }
     public func validatedAssociation() throws -> DeviceUnifiedInventoryAssociation {
         try beginOperation(); defer { operationMutex.unlock() }
         try validateOriginal()
         guard let resolver, let original, let capture else { throw DeviceStructuralStoreError.conflict }
         try resolver.verifyCurrentInventoryResourcesExact(original, store: store, current: capture)
+        let association = displayAssociation(capture)
+        try validateOriginal()
+        return association
+    }
+    /// Nonsecret display metadata for every installed entry, in association order.
+    /// This value authorizes no runtime, grant, effect, or setup completion.
+    public func validatedDisplayMetadata() throws -> (association: DeviceUnifiedInventoryAssociation, manifests: [DashboardManifest]) {
+        try beginOperation(); defer { operationMutex.unlock() }
+        try validateOriginal()
+        guard let resolver, let original, let capture else { throw DeviceStructuralStoreError.conflict }
+        let manifests = try resolver.displayManifestsExact(original, store: store, current: capture)
+        let association = displayAssociation(capture)
+        try validateOriginal()
+        return (association, manifests)
+    }
+    private func displayAssociation(_ capture: DeviceMixedInventoryStore.Capture) -> DeviceUnifiedInventoryAssociation {
         let entries = capture.snapshot.entries.map { entry -> DeviceUnifiedInventoryAssociation.Entry in
             switch entry {
             case .retainedLocal(let local): return .init(entryID: entry.entryID, dashboardID: entry.dashboardID,
@@ -324,7 +524,6 @@ enum DeviceLegacyInventoryMigration {
                 manifestDigest: cloud.package.manifestDigest.text, provenance: "cloud")
             }
         }
-        try validateOriginal()
         return .init(commonRootID: store.rootID, installationID: capture.snapshot.installationOwner.installationID,
             generationID: capture.snapshot.generationID, entries: entries, configuredEntryID: capture.snapshot.configuredEntryID)
     }
@@ -435,6 +634,13 @@ enum DeviceLegacyInventoryMigration {
             current: capture, authenticatedCloudGenerationID: authenticatedGenerationID)
         try validateOriginal(); return observation
     }
+    public func ensureCurrentCloudObservation() throws {
+        try beginOperation(); defer { operationMutex.unlock() }
+        try validateOriginal()
+        guard let resolver, let original, let capture else { throw DeviceStructuralStoreError.conflict }
+        try resolver.ensureCurrentCloudObservationExact(original, store: store, current: capture)
+        try validateOriginal()
+    }
     func nextCloudObservation() throws -> DeviceMixedInventoryStore.CloudObservation? {
         try beginOperation(); defer { operationMutex.unlock() }
         try validateOriginal()
@@ -482,6 +688,27 @@ enum DeviceLegacyInventoryMigration {
         try resolver.retainMountedContentExact(original, store: store, current: capture, content: content)
         try validateOriginal()
         confirmedPresentation = content
+    }
+    /// A fixed synchronous check consumes the exact issued source and confirmed object.
+    /// Authority callbacks run outside the ordered graph scope; no witness escapes.
+    func verifyActiveRuntimePresentationExact(_ content: DeviceManagedStaticContent,
+        resolver expectedResolver: DeviceMixedResourceResolver, original expectedOriginal: DeviceMixedResolvedResources,
+        store expectedStore: DeviceMixedInventoryStore, presentation: DeviceMixedInventoryStore.Capture,
+        entryID: UUID, manifestDigest: String) throws {
+        try Task.checkCancellation()
+        try beginOperation(); defer { operationMutex.unlock() }
+        try Task.checkCancellation()
+        try validateOriginal()
+        guard resolver === expectedResolver, original === expectedOriginal, store === expectedStore,
+            let capture else { throw DeviceStructuralStoreError.conflict }
+        try Task.checkCancellation()
+        try expectedResolver.verifyActiveRuntimePresentationExact(expectedOriginal, store: store,
+            current: capture, presentation: presentation, content: content, entryID: entryID, manifestDigest: manifestDigest)
+        // Preserve mount eligibility failure before exact-object disagreement.
+        // This read-only check cannot publish or authorize an unconfirmed object.
+        guard confirmedPresentation === content else { throw DeviceStructuralStoreError.conflict }
+        try validateOriginal()
+        try Task.checkCancellation()
     }
     func verifyRuntimePresentationMountedExact(_ content: DeviceManagedStaticContent) throws {
         try beginOperation(); defer { operationMutex.unlock() }
@@ -569,7 +796,7 @@ enum DeviceLegacyInventoryMigration {
         if !FileManager.default.fileExists(atPath: incomingRoot.path) {
             try FileManager.default.createDirectory(at: incomingRoot, withIntermediateDirectories: false)
         }
-        let packages = resolver.makeIncomingPackageStore(root: incomingRoot, rootID: packageRootID)
+        let packages = try resolver.makeIncomingPackageStore(root: incomingRoot, rootID: packageRootID)
         try packages.initializeExplicit()
         let incoming = try resolver.prepareIncomingCloudResourcesExact(original, store: store, command: prepared, packages: packages)
         try native.validateUnifiedInventoryAssociation(current: current); try validateOriginal()
@@ -722,10 +949,16 @@ enum DeviceLegacyInventoryMigration {
     public func restorePendingCloudOutcome(current: NativeCurrentInstallationDispatch) throws -> NativeDeliveryDurableBody? {
         try beginOperation(); defer { operationMutex.unlock() }
         try validateOriginal()
-        guard cloudWork == nil, let resolver, let original, let capture else { throw NativeDeliveryExecutionError.phase }
+        guard let resolver, let original, let capture else { throw NativeDeliveryExecutionError.phase }
         try resolver.verifyCurrentInventoryResourcesExact(original, store: store, current: capture)
+        if let work = cloudWork {
+            guard let outcome = work.outcome else { throw NativeDeliveryExecutionError.phase }
+            guard work.incoming.command.candidate == capture.snapshot else { throw DeviceStructuralStoreError.conflict }
+            return outcome
+        }
         guard let record = try store.pendingIncomingOutcomesExact().first else { return nil }
         let incoming = try resolver.restoredIncomingCloudExact(operationID: record.operationID)
+        guard incoming.command.candidate == capture.snapshot else { throw DeviceStructuralStoreError.conflict }
         var object = try JSONSerialization.jsonObject(with: record.request) as! [String: Any]
         let requestID = try DeviceNativeDeliveryAttachmentCodec.uuid(object["activationRequestId"])
         _ = try DeviceNativeDeliveryHTTPCodec.observe(record.request, kind: .activationRequest,
@@ -770,6 +1003,9 @@ enum DeviceLegacyInventoryMigration {
         let result = try command.dispatch()
         try validateOriginal()
         self.capture = try command.unwrap(result); mountedPresentation = nil
+        if !retainedLocalPreparations.contains(where: { $0.resources.operationID == preparation.resources.operationID }) {
+            retainedLocalPreparations.append(preparation)
+        }
     }
     public func selectOrRemove(operationID: UUID, generationID: UUID, retainedEntryIDs: [UUID], selected: UUID?,
         owner: any NativeUnifiedLocalInventoryOwner) throws {

@@ -474,7 +474,7 @@ public enum WorkbenchCommand {
                         try WorkbenchCloudCLI.linkCreatedIfConnected(project, client: client,
                             machineRoot: runtime.appendingPathComponent("machine"), environment: environment)
                     } catch {
-                        presentation.diagnostic("Local project created. Cloud backup needs attention: \(error). Inspect cloud status; source is retained.")
+                        presentation.diagnostic("Screen created locally. Cloud backup needs attention: \(error). Inspect cloud status; source is retained.")
                     }
                 }
                 if longWorkspaceMutation {
@@ -1153,7 +1153,9 @@ public enum WorkbenchCommand {
              .serviceBusy, .remoteOutcomeUnknown, .publicationOutcomeUnknown: status = 7
         case .unavailable, .disconnected: status = 9
         case .workspaceExists, .workspaceConflict, .workspaceIncomplete, .invalidWorkspacePath, .migrationRequired,
-             .buildSourceConflict, .buildHeadConflict: status = 6
+             .buildSourceConflict, .buildHeadConflict, .buildNotFound,
+             .buildConfigurationInvalid, .buildPackageInvalid, .deploymentPackageInvalid,
+             .deploymentTargetMismatch, .deploymentIdentityInvalid, .deploymentPreflightUnavailable: status = 6
         }
         let publicCode: String
         switch error.code {
@@ -1161,6 +1163,13 @@ public enum WorkbenchCommand {
         case .workspaceConflict: publicCode = "workspace_conflict"
         case .buildSourceConflict: publicCode = "build_source_conflict"
         case .buildHeadConflict: publicCode = "build_head_conflict"
+        case .buildNotFound: publicCode = "build_not_found"
+        case .buildConfigurationInvalid: publicCode = "build_configuration_invalid"
+        case .buildPackageInvalid: publicCode = "build_package_invalid"
+        case .deploymentPreflightUnavailable: publicCode = "deployment_preflight_unavailable"
+        case .deploymentPackageInvalid: publicCode = "deployment_package_invalid"
+        case .deploymentTargetMismatch: publicCode = "deployment_target_mismatch"
+        case .deploymentIdentityInvalid: publicCode = "deployment_identity_invalid"
         case .workspaceIncomplete: publicCode = "workspace_incomplete"
         case .invalidWorkspacePath: publicCode = "invalid_workspace_path"
         case .migrationRequired: publicCode = "migration_required"
@@ -1172,7 +1181,15 @@ public enum WorkbenchCommand {
         default: publicCode = error.code.rawValue
         }
         let actions: [String]
-        if error.code == .toolchainTrustUnavailable {
+        if error.code == .buildNotFound {
+            actions = ["Inspect the current source version, then build without a base revision."]
+        } else if error.code == .buildConfigurationInvalid || error.code == .buildPackageInvalid {
+            actions = ["Correct the Screen source, inspect its new source version and current build head, then build with those inputs."]
+        } else if [.deploymentPackageInvalid, .deploymentTargetMismatch, .deploymentIdentityInvalid, .deploymentPreflightUnavailable].contains(error.code) {
+            actions = ["Keep the existing Screen ID. Inspect the current source/build and device, correct the reported incompatibility, then prepare and review a new deployment."]
+        } else if error.code == .remoteOutcomeUnknown {
+            actions = ["Look up the original plan, inspect and reconcile its operation, and read the current device screen set. Do not blindly resend or create a replacement deployment."]
+        } else if error.code == .toolchainTrustUnavailable {
             actions = ["Install only through an authenticated release catalog and verified publisher. Keep the current source and kit pins unchanged."]
         } else if error.code == .publicationOutcomeUnknown {
             actions = ["Inspect the exact project, workspace, destination or device state before any retry. Do not replay the mutation solely because the reply failed."]
@@ -1235,7 +1252,11 @@ public enum WorkbenchCommand {
         screenpunk — Mac workbench CLI (\(version))
         Commands:
           cloud login|logout|status          Connect the controller account using your browser
-          cloud workspace select ID|projects
+          cloud sync enable CLOUD_WORKSPACE_ID [--create-local-workspace ABS_PATH]
+                                             Enable automatic Screen syncing with this workspace
+          cloud sync disable|status         Stop syncing or inspect its status
+          cloud screens                     List cloud Screens
+          cloud workspace select ID         Compatibility: select a cloud workspace
           cloud link LOCAL_ID CLOUD_ID|sync LOCAL_ID|unlink LOCAL_ID
           cloud resolve LOCAL_ID local|remote
           cloud restore CLOUD_ID NAME|create NAME html|react

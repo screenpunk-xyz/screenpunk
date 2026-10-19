@@ -43,8 +43,8 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
         self.generic = generic; self.validate = validate; self.validateActive = validateActive
         home = seed.homeAssistant.map { UnifiedHomeRuntime(configuration: $0, http: http, webSocket: webSocket, resolver: resolver, validate: validateActive) }
     }
-    public func verifyResources() throws { try content.verifyResources(); try validate() }
-    public func verifyActive() throws { try verifyResources(); try validateActive(); try Task.checkCancellation() }
+    public func verifyResources() throws { try content.verifyResources() }
+    public func verifyActive() throws { try Task.checkCancellation(); try validateActive(); try Task.checkCancellation() }
     public func request(alias: String, operation: String, parameters: [String: String], readOnly: Bool = false) async throws -> ConnectionHTTPResult {
         try verifyActive()
         let result: ConnectionHTTPResult
@@ -99,11 +99,9 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
         try source.validate()
         let presentation = UnifiedRuntimePresentationBinding()
         let activeValidate: () throws -> Void = {
-            try source.validate()
-            guard let mounted = try session.mountedAssociation(), mounted.generationID == source.capture.snapshot.generationID,
-                mounted.entryID == local.entryID, mounted.manifestDigest == local.package.revision.digest else { throw ConnectionFailure.permissionRequired }
-            try session.verifyRuntimePresentationMountedExact(presentation.requireContent())
-            try source.validate()
+            try session.verifyActiveRuntimePresentationExact(presentation.requireContent(),
+                resolver: source.resolver, original: source.original, store: source.store,
+                presentation: source.capture, entryID: local.entryID, manifestDigest: local.package.revision.digest)
         }
         let generic = seed.hasGeneric ? try await local.gate.makeGenericRuntimeExact(binding: local.binding, entryID: local.entryID,
             admission: CommonRuntimeAdmission(validate: source.validate), http: UnifiedRuntimeHTTP(delegate: http, validate: activeValidate),

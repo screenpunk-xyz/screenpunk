@@ -1,25 +1,34 @@
 #if os(iOS)
 import SwiftUI
 import UIKit
+import Combine
 import ScreenpunkCore
 
-enum DeviceSetupPage: Hashable { case settings, general, googleTV, googleCalendar, display, screens, guided }
+enum DeviceSetupPage: Hashable { case settings, general, cloud, googleTV, googleCalendar, display, screens, guided }
 
 @MainActor
 struct DeviceConnectorCatalog {
     let manifests: [DashboardManifest]
+    private let basic: GoogleTVConfiguration
+    private let developer: GoogleTVADBConfiguration
+    init(manifests: [DashboardManifest], basic: GoogleTVConfiguration = .load(), developer: GoogleTVADBConfiguration = .load()) {
+        self.manifests = manifests; self.basic = basic; self.developer = developer
+    }
+    static func sourceManifests(managed: [DashboardManifest]?, legacy: () -> [DashboardManifest]) -> [DashboardManifest] {
+        if let managed { return managed }; return legacy()
+    }
     var usesTV: Bool { manifests.contains { $0.connections.contains { $0.alias == "googleTV" } } }
     var usesCalendar: Bool { manifests.contains { $0.connections.contains { ["googleCalendar", "google-calendar"].contains($0.alias) } } }
     var showsCalendar: Bool { usesCalendar || !((try? GoogleCalendarDeviceService.shared.snapshot().accounts.isEmpty) ?? true) }
-    var showsTV: Bool { usesTV || !GoogleTVConfiguration.load().host.isEmpty || !GoogleTVADBConfiguration.load().host.isEmpty }
+    var showsTV: Bool { usesTV || !basic.host.isEmpty || !developer.host.isEmpty }
     func missing(for dashboardID: String?) -> DeviceSetupPage? {
         guard let manifest = manifests.first(where: { $0.dashboardId == dashboardID }) else { return nil }
         for connection in manifest.connections where connection.required {
             if connection.alias == "googleTV" {
                 let operations = connection.operations?.map(\.name) ?? []
-                let basic = operations.isEmpty || operations.contains(where: { !["launchChannel", "togglePower"].contains($0) })
-                let developer = operations.contains("launchChannel") || operations.contains("togglePower")
-                if (basic && GoogleTVConfiguration.load().pin.count != 32) || (developer && GoogleTVADBConfiguration.load().serverPin.count != 32) { return .googleTV }
+                let needsBasic = operations.isEmpty || operations.contains(where: { !["launchChannel", "togglePower"].contains($0) })
+                let needsDeveloper = operations.contains("launchChannel") || operations.contains("togglePower")
+                if (needsBasic && basic.pin.count != 32) || (needsDeveloper && developer.serverPin.count != 32) { return .googleTV }
             }
             if ["googleCalendar", "google-calendar"].contains(connection.alias), !GoogleCalendarDeviceService.shared.isReady(dashboard: manifest.dashboardId) { return .googleCalendar }
         }
@@ -29,10 +38,14 @@ struct DeviceConnectorCatalog {
 
 @MainActor
 struct DeviceSetupMenu: View {
-    @ObservedObject var host: DeviceLANHost
+    let host: DeviceLANHost?
     let initialPage: DeviceSetupPage?
     let onConnectionsChanged: () -> Void
     var onConnect: () -> Void = {}
+    var cloud: DeviceCloudMenuContent? = nil
+    var onUserNavigation: () -> Void = {}
+    var availableSize: CGSize? = nil
+    @State private var hostRevision = UUID()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var settingsOpen = false
@@ -44,10 +57,17 @@ struct DeviceSetupMenu: View {
     @State private var connectionsRevision = UUID()
     @AppStorage("guidedAccessSetupConfirmed") private var guidedConfirmed = false
     private let clock = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
-    private var catalog: DeviceConnectorCatalog { .init(manifests: host.server?.installedManifests ?? []) }
+    // Managed displays supply a qualified immutable snapshot. An unavailable/empty
+    // snapshot must never reacquire the resource graph while SwiftUI lays out.
+    private var catalog: DeviceConnectorCatalog {
+        .init(manifests: DeviceConnectorCatalog.sourceManifests(managed: cloud?.installedManifests,
+            legacy: { host?.server?.installedManifests ?? [] }))
+    }
     private var wide: Bool { settingsOpen && windowSize.width >= 1000 }
-    private var screens: [LANScreenSetEntry] { host.screenSet?.screens.map(\.entry) ?? [] }
-    private var currentName: String { screens.first { $0.dashboardId == host.screenSet?.selectedDashboardId }?.name ?? "No screens installed" }
+    private var screens: [LANScreenSetEntry] { host?.screenSet?.screens.map(\.entry) ?? [] }
+    private var currentName: String { cloud?.screenSummary ?? screens.first { $0.dashboardId == host?.screenSet?.selectedDashboardId }?.name ?? "No screens installed" }
+    private var screenCount: Int? { if let cloud { return cloud.screenCount }; return screens.count }
+    private var hostUpdates: AnyPublisher<Void, Never> { host?.objectWillChange.eraseToAnyPublisher() ?? Empty<Void, Never>().eraseToAnyPublisher() }
     private var compact: Bool { !settingsOpen && path.isEmpty }
     private var preferredWidth: CGFloat { wide ? min(1100, windowSize.width - 80) : min(580, windowSize.width - 32) }
     private var preferredHeight: CGFloat {
@@ -55,6 +75,7 @@ struct DeviceSetupMenu: View {
         return compact ? min(headerHeight + rowsHeight + 56, available) : available
     }
     var body: some View {
+        let _ = hostRevision
         ZStack {
             if wide { split.transition(.identity) }
             else if settingsOpen { settingsStack.transition(.identity) }
@@ -68,17 +89,31 @@ struct DeviceSetupMenu: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.55), value: settingsOpen)
         .onAppear {
             updateSize()
-            if let initialPage { settingsOpen = true; selection = initialPage == .settings ? .general : initialPage; if initialPage != .settings { path = [initialPage] } }
-            else { selection = catalog.showsTV ? .googleTV : catalog.showsCalendar ? .googleCalendar : .general }
+            if let initialPage { settingsOpen = true; selection = initialPage == .settings ? (cloud == nil ? .general : .cloud) : initialPage; if initialPage != .settings { path = [initialPage] } }
+            else { selection = cloud != nil ? .cloud : catalog.showsTV ? .googleTV : catalog.showsCalendar ? .googleCalendar : .general }
         }
         .onReceive(clock) { _ in updateSize() }
+        .onReceive(hostUpdates) { _ in hostRevision = UUID() }
+        .onChange(of: availableSize) { _ in updateSize() }
+        .onChange(of: settingsOpen) { opened in if opened { onUserNavigation() } }
+        .onChange(of: path) { _ in onUserNavigation() }
+        .onChange(of: selection) { _ in if settingsOpen { onUserNavigation() } }
         .tint(.blue)
     }
     private func updateSize() {
+        if let availableSize { windowSize = availableSize; return }
         guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive }), let window = scene.windows.first(where: \.isKeyWindow) else { return }
         windowSize = CGSize(width: window.bounds.width, height: window.bounds.height - window.safeAreaInsets.top - window.safeAreaInsets.bottom)
     }
-    private var close: some View { Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 17, weight: .regular)).foregroundStyle(Color.primary) }.tint(.primary).accessibilityLabel("Close") }
+    @ViewBuilder private var close: some View {
+        if #available(iOS 26, *) { closeButton.buttonStyle(.glass).buttonBorderShape(.circle) }
+        else { closeButton.buttonStyle(.plain) }
+    }
+    private var closeButton: some View {
+        Button { dismiss() } label: {
+            Image(systemName: "xmark").font(.system(size: 17, weight: .regular)).foregroundStyle(Color.primary).frame(width: 44, height: 44)
+        }.tint(.primary).accessibilityLabel("Close").accessibilityIdentifier("device.menu.close")
+    }
     @ViewBuilder private func detailClose(_ page: DeviceSetupPage) -> some View {
         if #available(iOS 18, *) { close }
         else if page != .display { close }
@@ -90,7 +125,7 @@ struct DeviceSetupMenu: View {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Welcome to Screenpunk").font(.title.bold()).fixedSize(horizontal: false, vertical: true)
-                        Text(host.settingsSnapshot?.value.displayName ?? host.runtime.profile.name).font(.subheadline).foregroundStyle(.secondary)
+                        Text(cloud?.deviceName ?? host?.settingsSnapshot?.value.displayName ?? host?.runtime.profile.name ?? "Screenpunk").font(.subheadline).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                     if let image = UIImage(named: "Screenpunk76x76") ?? UIImage(named: "AppIcon") {
@@ -103,12 +138,12 @@ struct DeviceSetupMenu: View {
                     VStack(spacing: 22) {
                         row("Come back anytime", subtitle: "Hold two fingers on the screen for five seconds to open this menu.", icon: "hand.tap", disclosure: false)
                         NavigationLink(value: DeviceSetupPage.guided) { row("Lock Screenpunk on screen", subtitle: "Guided Access · Kiosk mode", icon: "lock.display", disclosure: true) }.buttonStyle(.plain)
-                        if screens.count > 1 {
-                            NavigationLink(value: DeviceSetupPage.screens) { row("Current screen", subtitle: currentName, icon: "rectangle", disclosure: true, detail: "\(screens.count) screens") }.buttonStyle(.plain)
+                        if (screenCount ?? 0) > 1 {
+                            NavigationLink(value: DeviceSetupPage.screens) { row("Current screen", subtitle: currentName, icon: "rectangle", disclosure: true, detail: "\(screenCount ?? 0) screens") }.buttonStyle(.plain)
                         } else { row("Current screen", subtitle: currentName, icon: "rectangle", disclosure: false) }
                     }.padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 28)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
-                }
+                }.modifier(DeviceMenuScrollBounce())
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -129,11 +164,12 @@ struct DeviceSetupMenu: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("This device") {
-                    Label("General", systemImage: "gearshape").tag(DeviceSetupPage.general)
+                    if host != nil { Label(cloud == nil ? "General" : "Display and behavior", systemImage: "gearshape").tag(DeviceSetupPage.general) }
                     Label("Your screens", systemImage: "rectangle.on.rectangle").tag(DeviceSetupPage.screens)
                 }
-                if catalog.showsTV || catalog.showsCalendar {
+                if cloud != nil || catalog.showsTV || catalog.showsCalendar {
                     Section("Connections") {
+                        if cloud != nil { Label("Screenpunk Cloud", systemImage: "cloud").tag(DeviceSetupPage.cloud) }
                         if catalog.showsTV { Label("Google TV", systemImage: "tv").tag(DeviceSetupPage.googleTV) }
                         if catalog.showsCalendar { Label("Google Calendar", systemImage: "calendar").tag(DeviceSetupPage.googleCalendar) }
                     }
@@ -153,11 +189,20 @@ struct DeviceSetupMenu: View {
     private var settingsList: some View {
         Form {
             Section("This device") {
-                NavigationLink(value: DeviceSetupPage.general) { Label("General", systemImage: "gearshape") }
+                if host != nil { NavigationLink(value: DeviceSetupPage.general) { Label(cloud == nil ? "General" : "Display and behavior", systemImage: "gearshape") } }
                 NavigationLink(value: DeviceSetupPage.screens) { Label("Your screens", systemImage: "rectangle.on.rectangle") }
             }
-            if catalog.showsTV || catalog.showsCalendar {
+            if cloud != nil || catalog.showsTV || catalog.showsCalendar {
                 Section("Connections") {
+                    if let cloud {
+                        NavigationLink(value: DeviceSetupPage.cloud) {
+                            Label { VStack(alignment: .leading, spacing: 4) {
+                                Text("Screenpunk Cloud")
+                                Text(cloud.connectionDescription).font(.subheadline).foregroundStyle(.secondary)
+                            } } icon: { Image(systemName: "cloud").foregroundStyle(.blue) }
+                        }.accessibilityLabel("Screenpunk Cloud").accessibilityValue(cloud.connectionDescription)
+                            .accessibilityIdentifier("device.menu.cloudSettings")
+                    }
                     if catalog.showsTV { NavigationLink(value: DeviceSetupPage.googleTV) {
                         Label { VStack(alignment: .leading, spacing: 4) { Text("Google TV"); Text(catalog.usesTV ? "TV connection and pairing" : "Not used by any screen").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "tv").foregroundStyle(.blue) }
                     } }
@@ -174,8 +219,16 @@ struct DeviceSetupMenu: View {
         case .settings: settingsList
         case .googleTV: DeviceGoogleTVSettings { connectionsRevision = UUID(); onConnectionsChanged() }
         case .googleCalendar: DeviceGoogleCalendarSettings(manifests: catalog.manifests) { connectionsRevision = UUID(); onConnectionsChanged() }
-        case .general, .display: DeviceProductionGeneral(host: host, connect: { dismiss(); onConnect() })
-        case .screens: DeviceProductionScreens(host: host, opened: { dismiss() })
+        case .cloud: if let cloud { cloud.settings }
+        case .general, .display:
+            if let host {
+                if cloud != nil { DeviceLocalSettingsSheet(host: host, embedded: true) }
+                else { DeviceProductionGeneral(host: host, connect: { dismiss(); onConnect() }) }
+            }
+            else if let cloud { cloud.settings }
+        case .screens:
+            if let cloud { cloud.screens }
+            else if let host { DeviceProductionScreens(host: host, opened: { dismiss() }) }
         case .guided: ScrollView { VStack(alignment: .leading, spacing: 24) {
             Text("Guided Access keeps this iPad in Screenpunk and helps prevent accidental exits.").foregroundStyle(.secondary)
             instruction("1. Turn it on", "Open Settings → Accessibility → Guided Access. Turn it on and set a passcode under Passcode Settings. Set Display Auto-Lock to Never if available.")
@@ -186,7 +239,7 @@ struct DeviceSetupMenu: View {
         }
     }
     private func title(_ page: DeviceSetupPage) -> String {
-        switch page { case .settings: return "Settings"; case .general: return "General"; case .googleTV: return "Google TV"; case .googleCalendar: return "Google Calendar"; case .display: return "Display and behavior"; case .screens: return "Your screens"; case .guided: return "Lock Screenpunk on screen" }
+        switch page { case .settings: return "Settings"; case .general: return cloud == nil ? "General" : "Display and behavior"; case .cloud: return "Screenpunk Cloud"; case .googleTV: return "Google TV"; case .googleCalendar: return "Google Calendar"; case .display: return "Display and behavior"; case .screens: return "Your screens"; case .guided: return "Lock Screenpunk on screen" }
     }
     private func instruction(_ title: String, _ text: String) -> some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.headline); Text(text).foregroundStyle(.secondary) } }
     private func row(_ title: String, subtitle: String, icon: String, disclosure: Bool, detail: String? = nil) -> some View {
@@ -231,6 +284,12 @@ private struct DeviceMenuSidebarToolbar: ViewModifier {
         } else {
             content
         }
+    }
+}
+private struct DeviceMenuScrollBounce: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 16.4, *) { content.scrollBounceBehavior(.basedOnSize) }
+        else { content }
     }
 }
 #endif

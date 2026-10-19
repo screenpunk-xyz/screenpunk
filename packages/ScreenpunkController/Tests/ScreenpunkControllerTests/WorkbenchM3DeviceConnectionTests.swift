@@ -592,6 +592,35 @@ final class WorkbenchM3DeviceConnectionTests: XCTestCase {
         XCTAssertEqual(try fixture.connections.inspect(bindingId: id).grantGeneration, 2)
     }
 
+    func testSocketRenamePreservesFractionalBrightnessSettings() throws {
+        let fixture = try Fixture(); defer { fixture.cleanup() }
+        try fixture.pair()
+        let controller = ControllerService(store: try DashboardPackageStore(
+            root: fixture.root.appendingPathComponent("legacy")),
+            devices: fixture.coordinator, rendererFactory: { nil })
+        let environment = try WorkbenchBrokerEnvironment(runtimeDirectory:
+            fixture.root.appendingPathComponent("runtime"))
+        let domain = WorkbenchBrokerDomain(controller: controller, workspace: fixture.workspace,
+            native: nil, machineAuthorityPath: fixture.root.appendingPathComponent("authority").path,
+            secrets: fixture.secrets, mutationGate: {}, connectionNow: { fixture.clock.date })
+        let server = WorkbenchBrokerServer(environment: environment, domain: domain)
+        try server.start(); defer { server.stop() }
+        let client = WorkbenchBrokerClient(environment: environment)
+        try client.connect(); defer { client.close() }
+        let direct = try domain.performDevice(.settingsGet("m3-device"))
+        XCTAssertEqual(direct.settings?.value.brightness.fixedLevel, 0.5)
+        let before = try client.deviceSettings("m3-device")
+        XCTAssertEqual(before.value.brightness.fixedLevel, 0.5)
+        let after = try WorkbenchDeviceNameForwarder.rename(port: client,
+            deviceId: "m3-device", rawName: "  Renamed iPad  ")
+        var expected = before.value
+        expected.displayName = "Renamed iPad"
+        XCTAssertEqual(after.value, expected)
+        XCTAssertNotEqual(after.revision, before.revision)
+        XCTAssertEqual(try client.deviceSettings("m3-device"), after)
+        XCTAssertThrowsError(try WorkbenchWireJSON.object(Data("{\"value\":0.5}".utf8)))
+    }
+
     func testPublicSocketScopeUpdateRequiresReviewAndPreservesOldBinding() throws {
         let fixture = try Fixture(); defer { fixture.cleanup() }
         try fixture.pair()

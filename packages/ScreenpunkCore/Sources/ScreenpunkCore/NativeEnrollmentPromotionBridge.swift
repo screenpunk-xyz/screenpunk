@@ -24,6 +24,16 @@ enum NativeEnrollmentPhysicalDirectory {
         try require(url, traversalRoot: URL(fileURLWithPath: "/", isDirectory: true))
         #endif
     }
+    /// Read compatibility for binding metadata only. Caller directories still
+    /// require exact physical spelling/no-follow validation. Only the OS home
+    /// spelling maps to its physical home; no caller symlink is resolved here.
+    static func bindingPathMatches(_ recorded: String, physicalPath: String) -> Bool {
+        DeviceFilesystemTraversal.recordedPath(recorded, matchesCurrentPath: physicalPath)
+    }
+    static func mappedBindingPathMatches(_ traversal: DeviceFilesystemTraversal, physicalPath: String) -> Bool {
+        let mapped = traversal.rootPath + (traversal.components.isEmpty ? "" : "/" + traversal.components.joined(separator: "/"))
+        return mapped.utf8.elementsEqual(physicalPath.utf8)
+    }
     /// Internal synthetic-container seam; production derives its root only from the OS.
     static func require(_ url: URL, traversalRoot rootURL: URL) throws {
         let path = url.path, rootPath = rootURL.path
@@ -665,6 +675,40 @@ final class NativeEnrollmentPromotionBridge {
         try owner.validateOperationalOrigin(root)
         return NativeOperationalStatusRequest(request, installation: self, activation: activation)
     }
+    public func captureCloudCredentialRetirement(native session: NativeDeliveryExecutionSession) throws -> NativeCloudCredentialRetirement {
+        let activation = try handle.journal.acceptedOriginalActivation(handle.original)
+        try requireDurableActivationAssociation(activation)
+        let owner = DeviceNativeInstallationContentOwner(installationID: activation.installationId,
+            accountID: activation.accountId, locationID: activation.locationId, transitionID: activation.transitionId)
+        let native = try session.qualifiedResetResourcesExact()
+        guard native.installationID == activation.installationId else { throw NativeEnrollmentPromotionError.conflict }
+        let namespace = evidence.namespaceURL
+        guard native.roots.allSatisfy({ $0.path.hasPrefix(namespace.path + "/") }),
+            let stores = nativeStores else { throw NativeEnrollmentPromotionError.blocked }
+        let scope = try NativeCloudCredentialRetirement.Namespace.capture(namespace)
+        let service = DeviceGrantCredentialNamespace(rootID: try stores.grants.resourceGateDescriptor.rootID).service
+        let credentials = try handle.qualifiedResetCredentialsExact() + native.credentials
+        return try NativeCloudCredentialRetirement(owner: owner, credentials: credentials, namespace: scope,
+            grantService: service, validate: { [self] in try requireDurableActivationAssociation(activation) })
+    }
+    /// Explicit device logout uses its own original installation credential, never OAuth.
+    public func makeSelfRevocationRequest(origin: URL, activation: NativeActivationReceipt) throws -> NativeInstallationRevocationRequest {
+        let root = try Self.validatedOrigin(origin)
+        guard let owner = originalEnrollmentOwner else { throw NativeEnrollmentPromotionError.blocked }
+        try owner.validateOperationalOrigin(root)
+        try validateActivation(activation); try requireDurableActivationAssociation(activation)
+        guard try inspector.inspect() == evidence else { throw NativeEnrollmentPromotionError.blocked }
+        let material = try handle.verifiedMaterial()
+        guard try inspector.inspect() == evidence else { throw NativeEnrollmentPromotionError.blocked }
+        var request = URLRequest(url: root.appendingPathComponent("v1/native/installations/revoke"))
+        request.httpMethod = "POST"; request.httpShouldHandleCookies = false; request.httpBody = Data("{}".utf8)
+        let bearer = material.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        request.setValue("Bearer spni1_" + bearer, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try owner.validateOperationalOrigin(root)
+        return NativeInstallationRevocationRequest(request: request, installation: self, activation: activation)
+    }
     /// Fixed paid-service route, callable only under a current presentation
     /// lease. Neither credentials nor arbitrary request headers leave this type.
     public func makeScreenServiceRequest(origin: URL, current: NativeCurrentInstallationDispatch,
@@ -1024,6 +1068,7 @@ private struct NativeFirstOwnerTokens: CloudNativeTokenProvider {
     private let stage: NativeEnrollmentStageBridge
     private let pair: NativeEnrollmentPairedEvidenceStore
     private let promotion: NativeEnrollmentPromotionBridge
+    private let credentialAdapter: NativeEnrollmentStorageAdapter
     private let stageID = UUID(), stageOwnershipID = UUID(), promotionID = UUID(), finalOwnershipID = UUID()
     private let intentID = UUID()
     private let driverLock = NSLock()
@@ -1047,7 +1092,7 @@ private struct NativeFirstOwnerTokens: CloudNativeTokenProvider {
         let inspector = try DeviceManagedNamespaceInspector.fixture(existingPhysicalAnchor: namespace.deletingLastPathComponent())
         guard try inspector.inspect().classification == .managedPresent else { throw NativeEnrollmentPromotionError.blocked }
         let adapter = NativeEnrollmentStorageAdapter(storage, owner: owner)
-        self.namespace = namespace; self.proposal = proposal; self.owner = owner
+        self.namespace = namespace; self.proposal = proposal; self.owner = owner; credentialAdapter = adapter
         journal = .init(root: journalRoot, cloudRootID: cloudRootID, excludedLocalResetRoot: excludedLocalResetRoot)
         stage = .init(journal: journal, backend: adapter); pair = .init(journal: journal)
         promotion = .init(journal: journal, backend: adapter)
@@ -1074,10 +1119,42 @@ private struct NativeFirstOwnerTokens: CloudNativeTokenProvider {
         try await enroll(origin: origin, tokenProvider: tokenProvider, activationRequestID: activationRequestID,
             associationAttemptID: associationAttemptID, stores: stores, configuration: nil)
     }
+    /// Resume only the caller's retained immutable first-device proposal under
+    /// its current platform owner. A genuinely empty journal and empty credential
+    /// inventory are the sole exception for preparation that stopped before intent
+    /// publication. Nonempty, corrupt and orphan journals keep strict replay rules.
+    public func resumeRetainedOriginal(origin: URL, tokenProvider: any CloudNativeTokenProvider,
+        activationRequestID: UUID, associationAttemptID: UUID, stores: NativeFirstManagedStores) async throws -> NativeOperationalEnrollmentResult {
+        try await resumeRetainedOriginal(origin: origin, tokenProvider: tokenProvider, activationRequestID: activationRequestID,
+            associationAttemptID: associationAttemptID, stores: stores, configuration: nil)
+    }
+    func resumeRetainedOriginal(origin: URL, tokenProvider: any CloudNativeTokenProvider,
+        activationRequestID: UUID, associationAttemptID: UUID, stores: NativeFirstManagedStores,
+        configuration: URLSessionConfiguration?) async throws -> NativeOperationalEnrollmentResult {
+        let empty = try fixedStep {
+            guard try journal.isExactlyEmptyFirstNativeRoot() else { return false }
+            guard try credentialAdapter.enumerateRaw(limit: 193).isEmpty else { throw NativeEnrollmentPromotionError.blocked }
+            guard try journal.isExactlyEmptyFirstNativeRoot() else { throw NativeEnrollmentPromotionError.blocked }
+            return true
+        }
+        if empty {
+            return try await enroll(origin: origin, tokenProvider: tokenProvider, activationRequestID: activationRequestID,
+                associationAttemptID: associationAttemptID, stores: stores, configuration: configuration)
+        }
+        return try await resumeRecorded(origin: origin, tokenProvider: tokenProvider,
+            activationRequestID: activationRequestID, associationAttemptID: associationAttemptID, stores: stores, configuration: configuration)
+    }
     /// Resume the exact recorded first-device intent after restart. Durable
     /// stage/final owners are requalified; unbound credential Adds fail closed.
     public func resumeRecorded(origin: URL, tokenProvider: any CloudNativeTokenProvider,
         activationRequestID: UUID, associationAttemptID: UUID, stores: NativeFirstManagedStores) async throws -> NativeOperationalEnrollmentResult {
+        try await resumeRecorded(origin: origin, tokenProvider: tokenProvider, activationRequestID: activationRequestID,
+            associationAttemptID: associationAttemptID, stores: stores, configuration: nil)
+    }
+    // Internal synthetic transport seam; public production entry retains its fixed session configuration.
+    func resumeRecorded(origin: URL, tokenProvider: any CloudNativeTokenProvider,
+        activationRequestID: UUID, associationAttemptID: UUID, stores: NativeFirstManagedStores,
+        configuration: URLSessionConfiguration?) async throws -> NativeOperationalEnrollmentResult {
         var phase: NativeEnrollmentPreparation.Phase?
         try fixedStep {
             _ = try journal.recommitRecordedLatestTip()
@@ -1114,9 +1191,9 @@ private struct NativeFirstOwnerTokens: CloudNativeTokenProvider {
         }
         guard let original = promotionOriginal else { throw NativeEnrollmentPromotionError.blocked }
         try await fixedNetworkStep { try await promotion.prepareOriginalActivation(original, origin: origin, tokenProvider: tokens,
-            activationRequestID: activationRequestID, associationAttemptID: associationAttemptID) }
+            activationRequestID: activationRequestID, associationAttemptID: associationAttemptID, configuration: configuration) }
         _ = try fixedStep { try promotion.continueExact(original) }
-        let handle = try await fixedNetworkStep { try await promotion.activateOriginal(original, origin: origin, tokenProvider: tokens) }
+        let handle = try await fixedNetworkStep { try await promotion.activateOriginal(original, origin: origin, tokenProvider: tokens, configuration: configuration) }
         let activation = try fixedStep { try journal.acceptedOriginalActivation(original.checkpoint) }
         try fixedStep { try stores.initializeGenuineEmptyContent(activation: activation) }
         let installation = try fixedStep { try handle.bindNativeManagedRoots(namespace: namespace, stores: stores) }
@@ -1130,7 +1207,7 @@ private struct NativeFirstOwnerTokens: CloudNativeTokenProvider {
         try beginDriver(); defer { endDriver() }
         let handle = try fixedStep { try promotion.recoverCompleted(preparationID: proposal.preparationId) }
         let activation = try fixedStep { try journal.acceptedOriginalActivation(handle.original) }
-        try fixedStep { try stores.initializeRootsExact() }
+        try fixedStep { try stores.requalifyRetainedRootsExact() }
         try fixedStep { stores.genesis = try stores.structural.restoreNativeGenesisExplicit() }
         let installation = try fixedStep { try handle.bindNativeManagedRoots(namespace: namespace, stores: stores) }
         installation.originalEnrollmentOwner = owner
@@ -1221,12 +1298,25 @@ private struct NativeFirstOwnerTokens: CloudNativeTokenProvider {
         grants = .init(root: roots[1], rootID: ids.grant, protectedPaths: scope.roots,
             backend: try DeviceGrantCredentialTransportBackend(rootID: ids.grant, transport: grantTransport))
         structural = .init(root: roots[2], rootID: ids.structural)
-        provisioning = .init(root: roots[3], rootID: ids.provisioning, protectedRoots: scope.roots)
+        provisioning = .init(root: roots[3], rootID: ids.provisioning,
+            protectedRoots: Self.provisioningProtection(scope))
         contentGeneration = ids.contentGenesis
     }
-    fileprivate func initializeRootsExact() throws {
+    static func provisioningProtection(_ scope: DevicePackageProtectedScope) -> [URL] {
+        // Older app scopes intentionally protect the entire Local state tree in
+        // both legacy roles. Preserve package/grant durable binding bytes; omit
+        // only this redundant exact alias for provisioning's unique path list.
+        guard scope.legacyStateRoot.path.utf8.elementsEqual(scope.legacyArchiveRoot.path.utf8) else { return scope.roots }
+        var roots = scope.roots; roots.remove(at: 1); return roots
+    }
+    func initializeRootsExact() throws {
         try packages.initializeExplicit(); try grants.initializeExplicit()
         try structural.initializeExplicit(); try provisioning.initializeExplicit()
+    }
+    fileprivate func requalifyRetainedRootsExact() throws {
+        try packages.initializeExplicit(); try grants.initializeExplicit(); try provisioning.initializeExplicit()
+        // Native structural restoration validates its recorded binding and full
+        // genesis below. Ordinary initialization deliberately refuses native state.
     }
     fileprivate func initializeGenuineEmptyContent(activation: NativeActivationReceipt) throws {
         let bytes = try nativeEnrollmentBytes(activation)
@@ -1504,6 +1594,14 @@ private enum NativeFixedDeliveryCollector {
     public func requireOriginal(body: NativeDeliveryDurableBody, installation: NativeOperationalInstallation) throws {
         guard self.installation === installation, self.body.matchesOriginalBody(body) else { throw NativeDeliveryExecutionError.association }
     }
+    /// Exact generation acknowledged by this sealed state response, never a
+    /// caller-selected synchronization baseline.
+    public func acceptedGenerationID(body: NativeDeliveryDurableBody, installation: NativeOperationalInstallation) throws -> UUID {
+        try requireOriginal(body: body, installation: installation)
+        let object = try DeviceNativeDeliveryAttachmentCodec.object(body.bytes, limit: 16384,
+            keys: ["schemaVersion", "installationId", "transitionId", "generationId", "entries", "configuredEntryId"])
+        return try DeviceNativeDeliveryAttachmentCodec.uuid(object["generationId"])
+    }
 }
 
 @_spi(NativeInstallation) public final class NativeDeliveryCommandHTTPObservation: @unchecked Sendable {
@@ -1567,6 +1665,7 @@ private enum NativeFixedDeliveryCollector {
     private let preparationIDs: [UUID: UUID]
     private let relayLock = NSLock()
     private var relayedArchives: [UUID: Data] = [:]
+    private var unifiedRetainedCloudEntryIDs: Set<UUID>?
     fileprivate init(installation: NativeOperationalInstallation, binding: DeviceNativeDeliveryCommandBinding, header: String) throws {
         self.installation = installation; self.binding = binding; self.header = header
         preparationIDs = try Dictionary(uniqueKeysWithValues: binding.resultingSet.entries.map { entry in
@@ -1607,7 +1706,23 @@ private enum NativeFixedDeliveryCollector {
         try current.validateInstallationExact(installation: installation)
         let accepted = try session.acceptCloudCommandExact(current: current, command: binding.commandBytes,
             associationHeader: header, rawPlan: binding.planBytes, nativeOperationID: binding.nativeOperationID)
+        // This internal accessor verifies the current inventory/resources; it
+        // does not create an automation owner or grant selection authority.
+        let source = try session.automationSourceExact()
+        guard source.capture.snapshot.generationID == binding.expectedGenerationID else { throw NativeDeliveryExecutionError.association }
+        try source.validate()
+        let retained = Set(binding.resultingSet.entries.compactMap { desired -> UUID? in
+            guard case .cloud(let descriptor) = desired.provenance,
+                let existing = source.capture.snapshot.entries.first(where: { $0.entryID == desired.entryID }),
+                case .cloud(let entry, _) = existing, entry.package == descriptor else { return nil }
+            return desired.entryID
+        })
         try current.validateInstallationExact(installation: installation)
+        relayLock.lock()
+        let matches = unifiedRetainedCloudEntryIDs == nil || unifiedRetainedCloudEntryIDs == retained
+        if matches { unifiedRetainedCloudEntryIDs = retained }
+        relayLock.unlock()
+        guard matches else { throw NativeDeliveryExecutionError.association }
         return accepted
     }
     public func fetchArchives(current: NativeCurrentInstallationDispatch, origin: URL,
@@ -1617,8 +1732,10 @@ private enum NativeFixedDeliveryCollector {
     func fetchArchives(current: NativeCurrentInstallationDispatch, origin: URL,
         target: DeviceProfile, profileID: String, revisionName: String, configuration: URLSessionConfiguration?) async throws -> NativeDeliveryArchiveHTTPObservation {
         var archives: [NativeDeliveryArchiveInput] = []
+        relayLock.lock(); let retainedCloud = unifiedRetainedCloudEntryIDs ?? []; relayLock.unlock()
         for entry in binding.resultingSet.entries {
             if case .retainedLocal = entry.provenance { continue }
+            if retainedCloud.contains(entry.entryID) { continue }
             guard case .cloud(let descriptor) = entry.provenance, let preparationID = preparationIDs[entry.entryID] else { throw NativeDeliveryExecutionError.association }
             let path = "v1/native/installations/delivery/package/" + binding.association.operationID.uuidString.lowercased() + "/" + descriptor.packageID.uuidString.lowercased()
             let bytes: Data
@@ -1855,7 +1972,11 @@ private extension NativeCurrentInstallationDispatch {
     private let observation: NativeUnifiedBlankMount
     fileprivate init(transport: NativeScreenServiceRequest, observation: NativeUnifiedBlankMount) { self.transport = transport; self.observation = observation }
     public var customMirror: Mirror { Mirror(self, children: [] as [(String, Any)]) }
-    public func performFixedTransport() async throws { let bytes = try await transport.performFixedTransport(); try observation.validateReceipt(bytes) }
+    public func performFixedTransport() async throws { try await performFixedTransport(configuration: .ephemeral) }
+    func performFixedTransport(configuration: URLSessionConfiguration) async throws {
+        let bytes = try await transport.performFixedTransport(configuration: configuration)
+        try observation.validateReceipt(bytes)
+    }
 }
 extension NativeOperationalInstallation {
     @_spi(NativeInstallation) public func makeMountedEmptyObservationRequest(origin: URL, current: NativeCurrentInstallationDispatch,
@@ -1877,5 +1998,300 @@ extension NativeOperationalInstallation {
         let fixed = NativeScreenServiceRequest(request: request, origin: root, path: path, installation: self,
             activation: activation, current: current, validateResources: { _ = try observation.validatedBody(); try current.validateInstallationExact(installation: self) })
         return NativeMountedEmptyObservationRequest(transport: fixed, observation: observation)
+    }
+}
+
+
+/// Successful fixed-route self-revocation, bound to the original installation.
+/// A parsed receipt or a human sign-out cannot manufacture this authority.
+@_spi(NativeInstallation) public final class NativeConfirmedCloudRevocation: @unchecked Sendable, CustomReflectable {
+    public let installationID: UUID
+    public let revokedAt: String
+    let installationOwner: DeviceNativeInstallationContentOwner
+    private let installation: NativeOperationalInstallation
+    private let activation: NativeActivationReceipt
+    fileprivate init(installation: NativeOperationalInstallation, activation: NativeActivationReceipt, revokedAt: String) {
+        self.installation = installation; self.activation = activation
+        installationID = activation.installationId; self.revokedAt = revokedAt
+        installationOwner = .init(installationID: activation.installationId, accountID: activation.accountId,
+            locationID: activation.locationId, transitionID: activation.transitionId)
+    }
+    public func requireInstallation(_ expected: NativeOperationalInstallation) throws {
+        guard expected === installation else { throw NativeEnrollmentPromotionError.conflict }
+        try installation.requireDurableActivationAssociation(activation)
+    }
+    func validateInstallationOwner(_ expected: DeviceNativeInstallationContentOwner) throws {
+        guard expected == installationOwner else { throw NativeEnrollmentPromotionError.conflict }
+        try installation.requireDurableActivationAssociation(activation)
+    }
+    public var customMirror: Mirror { Mirror(self, children: [] as [(String, Any)]) }
+}
+
+@_spi(NativeInstallation) public final class NativeInstallationRevocationRequest: @unchecked Sendable, CustomReflectable {
+    private let request: URLRequest
+    private let installation: NativeOperationalInstallation
+    private let activation: NativeActivationReceipt
+    fileprivate init(request: URLRequest, installation: NativeOperationalInstallation, activation: NativeActivationReceipt) {
+        self.request = request; self.installation = installation; self.activation = activation
+    }
+    private func requireOrigin(_ origin: URL) throws {
+        let root = try NativeOperationalInstallation.validatedOrigin(origin)
+        guard let owner = installation.originalEnrollmentOwner, let url = request.url,
+            url.scheme == root.scheme, url.host == root.host, url.port == root.port,
+            url.path == "/v1/native/installations/revoke", request.httpMethod == "POST", request.httpBody == Data("{}".utf8) else {
+            throw NativeEnrollmentPromotionError.blocked
+        }
+        try owner.validateOperationalOrigin(root)
+        try installation.requireDurableActivationAssociation(activation)
+    }
+    public func performFixedTransport(origin: URL) async throws -> NativeConfirmedCloudRevocation {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil; configuration.urlCache = nil
+        configuration.httpShouldSetCookies = false; configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return try await performFixedTransport(origin: origin, configuration: configuration)
+    }
+    func performFixedTransport(origin: URL, configuration: URLSessionConfiguration) async throws -> NativeConfirmedCloudRevocation {
+        try Task.checkCancellation(); try requireOrigin(origin)
+        let driver = NativeOperationalStatusRequest.Driver(origin: origin, path: "/v1/native/installations/revoke", byteLimit: 1024)
+        let session = URLSession(configuration: configuration, delegate: driver, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let bytes = try await withTaskCancellationHandler { try await driver.run(request, session: session) }
+            onCancel: { driver.cancel() }
+        try Task.checkCancellation(); try requireOrigin(origin)
+        let revokedAt = try Self.decodeReceipt(bytes, installationID: activation.installationId)
+        let revoked = try nativeEnrollmentTime(revokedAt), activated = try nativeEnrollmentTime(activation.activatedAt)
+        // The bounded parser normalizes offsets and removes fractional trailing
+        // zeroes; compare its exact integer/fraction components without Date/Double.
+        guard revoked.seconds > activated.seconds || (revoked.seconds == activated.seconds &&
+            !revoked.fraction.utf8.lexicographicallyPrecedes(activated.fraction.utf8)) else { throw NativeEnrollmentPromotionError.blocked }
+        return NativeConfirmedCloudRevocation(installation: installation, activation: activation, revokedAt: revokedAt)
+    }
+    static func decodeReceipt(_ bytes: Data, installationID: UUID) throws -> String {
+        let value = try StructuralStoreCodec.object(bytes, limit: 1024)
+        try StructuralStoreCodec.keys(value, required: ["installationId", "revokedAt"])
+        guard let id = value["installationId"] as? String, UUID(uuidString: id) == installationID,
+            let revokedAt = value["revokedAt"] as? String else { throw NativeEnrollmentPromotionError.blocked }
+        _ = try nativeEnrollmentTime(revokedAt)
+        return revokedAt
+    }
+    public var customMirror: Mirror { Mirror(self, children: [] as [(String, Any)]) }
+}
+
+
+/// Exact nonsecret retirement inventory, minted while both original credentials
+/// are owned. Restoring it requires a validated committed mixed detach record.
+@_spi(NativeInstallation) public final class NativeCloudCredentialRetirement: @unchecked Sendable, CustomReflectable {
+    public struct Namespace: Codable, Equatable, Sendable {
+        public let path: String
+        public let device: UInt64, inode: UInt64, parentDevice: UInt64, parentInode: UInt64
+        static func capture(_ namespace: URL) throws -> Self {
+            try NativeEnrollmentPhysicalDirectory.require(namespace)
+            let parent = open(namespace.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard parent >= 0 else { throw NativeEnrollmentPromotionError.blocked }; defer { close(parent) }
+            let node = openat(parent, namespace.lastPathComponent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard node >= 0 else { throw NativeEnrollmentPromotionError.blocked }; defer { close(node) }
+            var p = stat(), n = stat(), named = stat()
+            guard fstat(parent, &p) == 0, fstat(node, &n) == 0,
+                fstatat(parent, namespace.lastPathComponent, &named, AT_SYMLINK_NOFOLLOW) == 0,
+                named.st_mode & S_IFMT == S_IFDIR, n.st_dev == named.st_dev, n.st_ino == named.st_ino else { throw NativeEnrollmentPromotionError.blocked }
+            return .init(path: namespace.path, device: UInt64(n.st_dev), inode: UInt64(n.st_ino),
+                parentDevice: UInt64(p.st_dev), parentInode: UInt64(p.st_ino))
+        }
+    }
+    private struct Record: Codable {
+        let schemaVersion: Int
+        let namespace: Namespace
+        let grantService: String
+        let installationID: UUID, accountID: UUID, transitionID: UUID
+        let locationID: UUID?
+        let credentials: [DeviceOwnedInstallationResetResources.Credential]
+    }
+    public let installationID: UUID
+    public let credentials: [DeviceOwnedInstallationResetResources.Credential]
+    public let namespace: Namespace
+    public var namespaceURL: URL { get throws { URL(fileURLWithPath: try DeviceFilesystemTraversal.currentPath(forRecordedPath: namespace.path), isDirectory: true) } }
+    private let grantService: String
+    let canonicalMetadata: Data
+    private let owner: DeviceNativeInstallationContentOwner
+    private let validate: (() throws -> Void)?
+    fileprivate init(owner: DeviceNativeInstallationContentOwner,
+        credentials: [DeviceOwnedInstallationResetResources.Credential], namespace: Namespace,
+        grantService: String, validate: (() throws -> Void)?) throws {
+        self.owner = owner; self.validate = validate; installationID = owner.installationID
+        self.namespace = namespace; self.grantService = grantService
+        self.credentials = credentials.sorted { $0.service < $1.service }
+        let record = Record(schemaVersion: 1, namespace: namespace, grantService: grantService, installationID: owner.installationID, accountID: owner.accountID,
+            transitionID: owner.transitionID, locationID: owner.locationID, credentials: self.credentials)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        canonicalMetadata = try encoder.encode(record)
+        try Self.validateRecord(record)
+        guard canonicalMetadata.count <= 65536 else { throw NativeEnrollmentPromotionError.blocked }
+    }
+    func validateInstallationOwner(_ expected: DeviceNativeInstallationContentOwner) throws {
+        guard owner == expected else { throw NativeEnrollmentPromotionError.conflict }
+        try validate?()
+    }
+    static func restoreConfirmed(metadata: Data, owner: DeviceNativeInstallationContentOwner) throws -> NativeCloudCredentialRetirement {
+        guard metadata.count <= 65536 else { throw NativeEnrollmentPromotionError.blocked }
+        let record = try JSONDecoder().decode(Record.self, from: metadata)
+        try validateRecord(record)
+        guard record.installationID == owner.installationID, record.accountID == owner.accountID,
+            record.locationID == owner.locationID, record.transitionID == owner.transitionID else { throw NativeEnrollmentPromotionError.conflict }
+        let restored = try NativeCloudCredentialRetirement(owner: owner, credentials: record.credentials, namespace: record.namespace,
+            grantService: record.grantService, validate: nil)
+        guard restored.canonicalMetadata == metadata else { throw NativeEnrollmentPromotionError.blocked }
+        return restored
+    }
+    private static func validateRecord(_ record: Record) throws {
+        let native = record.credentials.filter { $0.service == NativeEnrollmentStageEnvelope.service || $0.service == NativeEnrollmentStageEnvelope.finalService }
+        guard record.schemaVersion == 1, record.credentials.count <= 256, native.count == 2,
+            Set(native.map(\.service)) == [NativeEnrollmentStageEnvelope.service, NativeEnrollmentStageEnvelope.finalService],
+            Set(record.credentials.map(\.persistentReference)).count == record.credentials.count,
+            Set(record.credentials.map { $0.service + "\0" + $0.account }).count == record.credentials.count,
+            record.namespace.path.utf8.count <= 4096, record.namespace.path.hasSuffix("/" + DeviceNativeManagedRootLocator.namespaceName),
+            record.namespace.inode != 0, record.namespace.parentInode != 0,
+            record.grantService.hasPrefix("xyz.screenpunk.") else { throw NativeEnrollmentPromotionError.blocked }
+        for item in record.credentials {
+            guard item.service == NativeEnrollmentStageEnvelope.finalService || item.service == NativeEnrollmentStageEnvelope.service || item.service == record.grantService,
+                !item.account.isEmpty, item.account.utf8.count <= 4096, !item.account.utf8.contains(0),
+                (1...4096).contains(item.persistentReference.count), (1...131072).contains(item.byteCount),
+                item.valueSHA256.count == 64, item.valueSHA256.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { throw NativeEnrollmentPromotionError.blocked }
+            if item.service == NativeEnrollmentStageEnvelope.finalService { guard item.byteCount == 48 else { throw NativeEnrollmentPromotionError.blocked } }
+        }
+    }
+    public func confirmCleanup(namespace expected: URL, probe: any NativeCloudCredentialAbsenceProbe) throws -> NativeConfirmedCloudCleanup {
+        guard DeviceFilesystemTraversal.recordedPath(namespace.path, matchesCurrentPath: expected.path) else { throw NativeEnrollmentPromotionError.blocked }
+        let verify = { [self] in
+            try NativeEnrollmentPhysicalDirectory.require(expected.deletingLastPathComponent())
+            let parent = open(expected.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard parent >= 0 else { throw NativeEnrollmentPromotionError.blocked }; defer { close(parent) }
+            var p = stat(), n = stat()
+            guard fstat(parent, &p) == 0, UInt64(p.st_dev) == self.namespace.parentDevice,
+                UInt64(p.st_ino) == self.namespace.parentInode,
+                fstatat(parent, expected.lastPathComponent, &n, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT else { throw NativeEnrollmentPromotionError.blocked }
+            for item in self.credentials { try probe.requireAbsent(item) }
+            guard fstatat(parent, expected.lastPathComponent, &n, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT else { throw NativeEnrollmentPromotionError.blocked }
+        }
+        try verify()
+        return NativeConfirmedCloudCleanup(metadata: canonicalMetadata, owner: owner, validate: verify)
+    }
+    public var customMirror: Mirror { Mirror(self, children: [] as [(String, Any)]) }
+}
+
+
+/// The platform supplies only exact status-only credential absence checks.
+@_spi(NativeInstallation) public protocol NativeCloudCredentialAbsenceProbe: AnyObject, Sendable {
+    func requireAbsent(_ credential: DeviceOwnedInstallationResetResources.Credential) throws
+}
+/// Sealed local completion of the exact confirmed-detach retirement scope.
+@_spi(NativeInstallation) public final class NativeConfirmedCloudCleanup: @unchecked Sendable {
+    let canonicalRetirementMetadata: Data
+    private let owner: DeviceNativeInstallationContentOwner
+    private let validate: () throws -> Void
+    fileprivate init(metadata: Data, owner: DeviceNativeInstallationContentOwner, validate: @escaping () throws -> Void) {
+        canonicalRetirementMetadata = metadata; self.owner = owner; self.validate = validate
+    }
+    func validateInstallationOwner(_ expected: DeviceNativeInstallationContentOwner) throws {
+        guard owner == expected else { throw NativeEnrollmentPromotionError.conflict }
+        try validateCurrent()
+    }
+    func validateCurrent() throws { try validate() }
+}
+
+
+/// Installation-scoped notification credentials. These authorize wake/presence only;
+/// every delivery still requires the existing authenticated status/command path.
+@_spi(NativeInstallation) public final class NativeInstallationRealtimeSession: @unchecked Sendable, CustomReflectable {
+    public let databaseURL: URL
+    public let projectID: String, appID: String, senderID: String, apiKey: String, customToken: String, firebaseUID: String
+    public let installationID: UUID, transitionID: UUID, credentialGenerationID: UUID
+    public let wakePath: String, presencePath: String, cursor: String
+    public let reconciliationMaxSeconds: Int
+    public let presenceConnectionID: UUID
+    public let presenceSlots: [String]
+    public var customMirror: Mirror { Mirror(self, children: [] as [(String, Any)]) }
+    private init(databaseURL: URL, projectID: String, appID: String, senderID: String, apiKey: String, customToken: String, firebaseUID: String,
+        installationID: UUID, transitionID: UUID, credentialGenerationID: UUID,
+        wakePath: String, presencePath: String, cursor: String, presenceConnectionID: UUID, presenceSlots: [String]) {
+        self.databaseURL = databaseURL; self.projectID = projectID; self.appID = appID; self.senderID = senderID
+        self.apiKey = apiKey; self.customToken = customToken; self.firebaseUID = firebaseUID
+        self.installationID = installationID; self.transitionID = transitionID; self.credentialGenerationID = credentialGenerationID
+        self.wakePath = wakePath; self.presencePath = presencePath; self.cursor = cursor; reconciliationMaxSeconds = 21600
+        self.presenceConnectionID = presenceConnectionID; self.presenceSlots = presenceSlots
+    }
+    static func decode(_ bytes: Data, activation: NativeActivationReceipt) throws -> NativeInstallationRealtimeSession {
+        let object = try StructuralStoreCodec.object(bytes, limit: 32768)
+        try StructuralStoreCodec.keys(object, required: ["schemaVersion", "transport", "firebase", "customToken", "firebaseUID",
+            "installationId", "accountId", "transitionId", "credentialGenerationId", "wakePath", "presencePath", "cursor", "credentialExpiresAtMs", "reconciliationMaxSeconds", "presenceConnectionId", "presenceSlots"])
+        guard let firebase = object["firebase"] as? [String: Any] else { throw NativeEnrollmentPromotionError.blocked }
+        try StructuralStoreCodec.keys(firebase, required: ["projectId", "databaseURL", "apiKey", "appId", "messagingSenderId"])
+        func text(_ source: [String: Any], _ name: String, limit: Int) throws -> String {
+            guard let value = source[name] as? String, !value.isEmpty, value.utf8.count <= limit,
+                !value.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw NativeEnrollmentPromotionError.blocked }
+            return value
+        }
+        let id = activation.installationId.uuidString.lowercased(), generation = activation.initialGeneration.generationId.uuidString.lowercased()
+        let databaseText = try text(firebase, "databaseURL", limit: 2048)
+        let schema = try DeviceNativeDeliveryAttachmentCodec.integer(object["schemaVersion"], maximum: 1)
+        let maximum = try DeviceNativeDeliveryAttachmentCodec.integer(object["reconciliationMaxSeconds"], maximum: 21600)
+        let expiry = try nativeEnrollmentTime(activation.initialGeneration.expiresAt)
+        guard expiry.seconds >= 0, let fractionalMilliseconds = Int64((expiry.fraction + "000").prefix(3)) else { throw NativeEnrollmentPromotionError.blocked }
+        let expiryMilliseconds = expiry.seconds * 1000 + fractionalMilliseconds
+        let returnedExpiry = try DeviceNativeDeliveryAttachmentCodec.integer(object["credentialExpiresAtMs"], maximum: 9007199254740991)
+        guard let connectionID = UUID(uuidString: try text(object, "presenceConnectionId", limit: 36)),
+            let slots = object["presenceSlots"] as? [String], slots == (0..<8).map(String.init),
+            schema == 1, maximum == 21600, returnedExpiry == UInt64(expiryMilliseconds),
+            object["transport"] as? String == "firebase-rtdb",
+            UUID(uuidString: try text(object, "installationId", limit: 36)) == activation.installationId,
+            UUID(uuidString: try text(object, "accountId", limit: 36)) == activation.accountId,
+            UUID(uuidString: try text(object, "transitionId", limit: 36)) == activation.transitionId,
+            UUID(uuidString: try text(object, "credentialGenerationId", limit: 36)) == activation.initialGeneration.generationId,
+            try text(object, "firebaseUID", limit: 128) == "spni:" + id + ":" + generation,
+            let database = URL(string: databaseText), database.scheme == "https", let host = database.host,
+            (host.hasSuffix(".firebaseio.com") || host.hasSuffix(".firebasedatabase.app")),
+            database.user == nil, database.password == nil, database.port == nil, database.query == nil, database.fragment == nil,
+            database.path.isEmpty || database.path == "/",
+            try text(object, "wakePath", limit: 256) == "v1/installations/" + id + "/wake",
+            try text(object, "presencePath", limit: 256) == "v1/installations/" + id + "/presence"
+        else { throw NativeEnrollmentPromotionError.blocked }
+        let cursor = try text(object, "cursor", limit: 20)
+        guard cursor.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }), cursor == "0" || !cursor.hasPrefix("0") else { throw NativeEnrollmentPromotionError.blocked }
+        return try .init(databaseURL: database, projectID: text(firebase, "projectId", limit: 128), appID: text(firebase, "appId", limit: 256),
+            senderID: text(firebase, "messagingSenderId", limit: 128), apiKey: text(firebase, "apiKey", limit: 512), customToken: text(object, "customToken", limit: 16384),
+            firebaseUID: text(object, "firebaseUID", limit: 128), installationID: activation.installationId, transitionID: activation.transitionId,
+            credentialGenerationID: activation.initialGeneration.generationId, wakePath: text(object, "wakePath", limit: 256),
+            presencePath: text(object, "presencePath", limit: 256), cursor: cursor, presenceConnectionID: connectionID, presenceSlots: slots)
+    }
+}
+
+@_spi(NativeInstallation) public final class NativeInstallationRealtimeRequest: @unchecked Sendable, CustomReflectable {
+    private let transport: NativeScreenServiceRequest
+    private let activation: NativeActivationReceipt
+    fileprivate init(transport: NativeScreenServiceRequest, activation: NativeActivationReceipt) { self.transport = transport; self.activation = activation }
+    public var customMirror: Mirror { Mirror(self, children: [] as [(String, Any)]) }
+    public func performFixedTransport() async throws -> NativeInstallationRealtimeSession {
+        try await performFixedTransport(configuration: .ephemeral)
+    }
+    func performFixedTransport(configuration: URLSessionConfiguration) async throws -> NativeInstallationRealtimeSession {
+        try NativeInstallationRealtimeSession.decode(await transport.performFixedTransport(configuration: configuration), activation: activation)
+    }
+}
+
+extension NativeOperationalInstallation {
+    @_spi(NativeInstallation) public func makeRealtimeSessionRequest(origin: URL, current: NativeCurrentInstallationDispatch) throws -> NativeInstallationRealtimeRequest {
+        try current.validateInstallationExact(installation: self)
+        guard let owner = originalEnrollmentOwner else { throw NativeEnrollmentPromotionError.blocked }
+        let root = try Self.validatedOrigin(origin); try owner.validateOperationalOrigin(root)
+        let activation = try handle.journal.acceptedOriginalActivation(handle.original)
+        try requireDurableActivationAssociation(activation)
+        let material = try handle.verifiedMaterial()
+        let path = "/v1/native/installations/realtime/session"
+        var request = URLRequest(url: root.appendingPathComponent(String(path.dropFirst())))
+        request.httpMethod = "POST"; request.httpShouldHandleCookies = false
+        let bearer = material.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        request.setValue("Bearer spni1_" + bearer, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let transport = NativeScreenServiceRequest(request: request, origin: root, path: path, installation: self, activation: activation, current: current)
+        return NativeInstallationRealtimeRequest(transport: transport, activation: activation)
     }
 }

@@ -41,7 +41,45 @@ final class DeviceStructuralStore {
         let directory: Identity; let lock: Identity; let operations: Identity
     }
     private struct Node: Equatable { let identity: Identity; let bytes: Data }
-    private struct Context { let root: Int32; let lock: Int32; let operations: Int32; let binding: Binding; let requiresBinding: Bool }
+    private final class DurableLinks { var identities: [(recorded: Identity, observed: Identity)] = [] }
+    private struct Context {
+        let root: Int32; let lock: Int32; let operations: Int32
+        let binding: Binding; let requiresBinding: Bool
+        let currentDirectory: Identity; let currentLock: Identity; let currentOperations: Identity
+        let filesystem: DevicePersistedFilesystemContext; let links: DurableLinks; let originalBindingNode: Node?
+    }
+    private let contextFactory: (URL, Int32) throws -> DevicePersistedFilesystemContext
+    private var activeFilesystemContext: DevicePersistedFilesystemContext?
+    /// Only decoded durable-to-physical links use this policy. The registry also
+    /// rejects contradictory historical references to one observed inode.
+    private func durable(_ c: Context, _ recorded: Identity, _ observed: Identity) -> Bool {
+        guard c.filesystem.matchesDurableIdentity(recordedDevice: recorded.device, recordedInode: recorded.inode,
+            observedDevice: observed.device, observedInode: observed.inode) else { return false }
+        if let prior = c.links.identities.first(where: { $0.observed == observed }) { return prior.recorded == recorded }
+        c.links.identities.append((recorded, observed)); return true
+    }
+    private func durable(_ c: Context, _ recorded: Identity?, _ observed: Identity?) -> Bool {
+        guard let recorded else { return observed == nil }; guard let observed else { return false }
+        return durable(c, recorded, observed)
+    }
+    private func durable(_ c: Context, _ recorded: Node, _ observed: Node) -> Bool {
+        recorded.bytes == observed.bytes && durable(c, recorded.identity, observed.identity)
+    }
+    private func admittedEffectIdentity(_ c: Context, _ recorded: Identity, _ observed: Identity) -> Bool {
+        recorded == observed || c.links.identities.contains(where: { $0.recorded == recorded && $0.observed == observed })
+    }
+    /// Explicit protocol view for serialization/proof comparison, NEVER a read
+    /// result, checkpoint, synchronization expectation or replacement fence.
+    private func protocolNode(_ c: Context, _ observed: Node) -> Node {
+        let recorded = c.links.identities.first(where: { $0.observed == observed.identity })?.recorded ?? observed.identity
+        return Node(identity: recorded, bytes: observed.bytes)
+    }
+    private func snapshotDevices(_ recorded: [Identity], _ observed: [Identity]) -> Bool {
+        guard recorded.count == observed.count else { return false }
+        return recorded.indices.allSatisfy { i in recorded.indices.allSatisfy { j in
+            (recorded[i].device == recorded[j].device) == (observed[i].device == observed[j].device)
+        } }
+    }
     let root: URL
     let rootID: UUID
     private let mutex = NSLock()
@@ -50,9 +88,16 @@ final class DeviceStructuralStore {
     private let stagingIdentityProbe: (Int32, StagingIdentitySite) throws -> Void
     private let envelopeName = "structural-envelope.json"
     init(root: URL, rootID: UUID, stagingIdentityProbe: @escaping (Int32, StagingIdentitySite) throws -> Void = { _, _ in },
+         contextFactory: @escaping (URL, Int32) throws -> DevicePersistedFilesystemContext = { try .capture(currentRoot: $0, heldRoot: $1) },
          boundary: @escaping (Boundary) throws -> Void = { _ in }) {
-        self.root = root.standardizedFileURL; self.rootID = rootID; self.boundary = boundary
+        #if os(iOS)
+        self.root = root
+        #else
+        self.root = root.standardizedFileURL
+        #endif
+        self.rootID = rootID; self.boundary = boundary
         self.stagingIdentityProbe = stagingIdentityProbe
+        self.contextFactory = contextFactory
     }
 
     /// Root already exists; its UUID and every content identity/selection are caller chosen.
@@ -97,7 +142,7 @@ final class DeviceStructuralStore {
             }
             guard inventory.records.filter({ $0.phase == .terminal }).count < 128 else { throw DeviceStructuralStoreError.capacity }
             guard !inventory.records.contains(where: { $0.phase != .terminal }), inventory.current?.bytes == record.expectedOld else { throw DeviceStructuralStoreError.conflict }
-            try replace(context, parent: context.operations, name: filename(record.operationID), bytes: StructuralStoreCodec.encode(record.binding(baseline: inventory.current?.identity)), expected: nil, kind: .intent)
+            try replace(context, parent: context.operations, name: filename(record.operationID), bytes: StructuralStoreCodec.encode(record.binding(baseline: inventory.current.map { protocolNode(context, $0).identity })), expected: nil, kind: .intent)
     }
     /// Diagnostic only. Even exact terminal bytes need synchronization before a receipt is returned.
     func recover(operationID: UUID) throws -> Recovery { try recoverRead(operationID:operationID,resourcePermit:nil) }
@@ -215,7 +260,7 @@ final class DeviceStructuralStore {
               !(try names(context.operations)).contains(where:{$0.hasSuffix(".pending")}) else { throw DeviceStructuralStoreError.conflict }
         let state=try inventory(context)
         guard state.records.allSatisfy({$0.phase == .terminal}),let current=state.current,
-              let tip=state.records.first(where:{$0.candidate == current.bytes && $0.candidateIdentity == current.identity}),
+              let tip=state.records.first(where:{$0.candidate == current.bytes && durable(context, $0.candidateIdentity, current.identity)}),
               let proof=try readFile(context.operations,filename(tip.operationID),limit:StructuralStoreCodec.operationLimit),
               try StructuralStoreCodec.record(proof.bytes) == tip,
               let binding=try readFile(context.root,"root-binding.json",limit:8192) else { throw DeviceStructuralStoreError.conflict }
@@ -245,7 +290,7 @@ final class DeviceStructuralStore {
                 if retained.phase == .terminal {
                     guard state.records.allSatisfy({ $0.phase == .terminal }),
                           state.current?.bytes == retained.candidate,
-                          state.current?.identity == retained.candidateIdentity else { throw DeviceStructuralStoreError.conflict }
+                          durable(context, retained.candidateIdentity, state.current?.identity) else { throw DeviceStructuralStoreError.conflict }
                 }
             } else {
                 try requireQualifiedBaseline(context,state:state,expectedOld:record.expectedOld)
@@ -309,7 +354,7 @@ final class DeviceStructuralStore {
             try replace(context, parent: context.operations, name: recordName, bytes: StructuralStoreCodec.encode(record), expected: prior, kind: .intent)
         }
         let state = try inventory(context)
-        if state.current?.identity == record.candidateIdentity {
+        if durable(context, record.candidateIdentity, state.current?.identity) {
             guard let current = state.current else { throw DeviceStructuralStoreError.conflict }
             try syncExisting(context.root, envelopeName, expected: current); try boundary(.afterFileSync(.envelope)); try sync(context.root)
         } else {
@@ -327,7 +372,7 @@ final class DeviceStructuralStore {
     private func installCandidate(_ context: Context, record: DeviceStructuralOperationRecord, expected: Node?) throws {
         let temporary = envelopeName + ".pending"
         guard let staged = try readFile(context.root, temporary, limit: StructuralStoreCodec.envelopeLimit),
-              staged.identity == record.candidateIdentity, staged.bytes == record.candidate else { throw DeviceStructuralStoreError.conflict }
+              durable(context, record.candidateIdentity, staged.identity), staged.bytes == record.candidate else { throw DeviceStructuralStoreError.conflict }
         try syncExisting(context.root, temporary, expected: staged)
         try boundary(.beforeReplace(.envelope)); try check(context)
         guard try readFile(context.root, envelopeName, limit: StructuralStoreCodec.envelopeLimit) == expected,
@@ -396,8 +441,8 @@ final class DeviceStructuralStore {
         if let pending = records.first(where: { $0.phase != .terminal }) {
             guard !generations.contains(try StructuralStoreCodec.envelope(pending.candidate).snapshot.generationID),
                   pending.expectedOld == tip, pending.baselineIdentity == tipIdentity,
-                  (current?.bytes == tip && current?.identity == tipIdentity) || (pending.candidateIdentity != nil && current?.bytes == pending.candidate && current?.identity == pending.candidateIdentity) else { throw DeviceStructuralStoreError.conflict }
-        } else { guard current?.bytes == tip, current?.identity == tipIdentity else { throw DeviceStructuralStoreError.conflict } }
+                  (current?.bytes == tip && durable(context, tipIdentity, current?.identity)) || (pending.candidateIdentity != nil && current?.bytes == pending.candidate && durable(context, pending.candidateIdentity, current?.identity)) else { throw DeviceStructuralStoreError.conflict }
+        } else { guard current?.bytes == tip, durable(context, tipIdentity, current?.identity) else { throw DeviceStructuralStoreError.conflict } }
         try check(context)
         return (records, current)
     }
@@ -420,6 +465,18 @@ final class DeviceStructuralStore {
     }
     private func requireNoNativeGenesis(_ fd:Int32)throws {
         guard !(try names(fd)).contains(where:{Self.nativeGenesisNames.contains($0) || $0.hasSuffix(".stage") && Self.nativeGenesisNames.contains(String($0.dropLast(6)))}) else{throw DeviceStructuralStoreError.conflict}
+    }
+    private func durable(_ c: Context, _ recorded: NativeNode, _ observed: NativeNode) -> Bool {
+        recorded.bytes == observed.bytes && durable(c, recorded.identity, observed.identity)
+    }
+    private func protocolNode(_ c: Context, _ observed: NativeNode) -> NativeNode {
+        let raw = protocolNode(c, Node(identity: observed.identity, bytes: observed.bytes))
+        return NativeNode(identity: raw.identity, bytes: raw.bytes)
+    }
+    private func durableMarker(_ c: Context, _ recorded: DeviceNativeStructuralMarker?, _ observed: NativeNode) throws -> Bool {
+        guard let recorded else { return false }
+        let raw = try nativeMarker(observed)
+        return recorded.byteCount == raw.byteCount && recorded.digest == raw.digest && durable(c, recorded.identity, observed.identity)
     }
     private func nativeGenesisInventory(_ c:Context)throws->[String:NativeNode] {
         let base:Set<String>=["structural.lock","operations","root-binding.json"]
@@ -458,20 +515,23 @@ final class DeviceStructuralStore {
     }
     private func nativeFill(_ c:Context,_ name:String,_ node:NativeNode,_ kind:Kind)throws {
         let fd=openat(c.root,name+".stage",O_RDWR|O_NOFOLLOW|O_NONBLOCK);guard fd >= 0 else{throw failure()};defer{close(fd)}
-        guard try identity(fd,directory:false) == node.identity,ftruncate(fd,0) == 0 else{throw DeviceStructuralStoreError.conflict}
+        let observed=try readFile(c.root,name+".stage",limit:32768)
+        guard let observed,admittedEffectIdentity(c,node.identity,observed.identity),try identity(fd,directory:false) == observed.identity,ftruncate(fd,0) == 0 else{throw DeviceStructuralStoreError.conflict}
         try node.bytes.withUnsafeBytes {b in var offset=0;while offset < b.count {let n=write(fd,b.baseAddress!.advanced(by:offset),b.count-offset);if n < 0 && errno == EINTR{continue};guard n > 0 else{throw failure()};offset+=n}}
         try boundary(.afterWrite(kind));try sync(fd);try boundary(.afterFileSync(kind))
-        guard try readFile(c.root,name+".stage",limit:32768) == Node(identity:node.identity,bytes:node.bytes) else{throw DeviceStructuralStoreError.conflict}
+        guard try readFile(c.root,name+".stage",limit:32768) == Node(identity:observed.identity,bytes:node.bytes) else{throw DeviceStructuralStoreError.conflict}
     }
     private func nativePromote(_ c:Context,_ name:String,_ node:NativeNode,_ kind:Kind)throws {
+        let recorded=Node(identity:node.identity,bytes:node.bytes)
         if let existing=try readFile(c.root,name,limit:32768) {
-            guard existing == Node(identity:node.identity,bytes:node.bytes),try readFile(c.root,name+".stage",limit:32768) == nil else{throw DeviceStructuralStoreError.conflict}
+            guard recorded.bytes == existing.bytes,admittedEffectIdentity(c,recorded.identity,existing.identity),try readFile(c.root,name+".stage",limit:32768) == nil else{throw DeviceStructuralStoreError.conflict}
             try syncExisting(c.root,name,expected:existing);try boundary(.afterFileSync(kind))
         } else {
-            let expected=Node(identity:node.identity,bytes:node.bytes)
-            guard try readFile(c.root,name+".stage",limit:32768) == expected else{throw DeviceStructuralStoreError.conflict}
-            try syncExisting(c.root,name+".stage",expected:expected);try boundary(.afterFileSync(kind));try boundary(.beforeReplace(kind));try check(c)
+            guard let observed=try readFile(c.root,name+".stage",limit:32768),recorded.bytes == observed.bytes,admittedEffectIdentity(c,recorded.identity,observed.identity) else{throw DeviceStructuralStoreError.conflict}
+            try syncExisting(c.root,name+".stage",expected:observed);try boundary(.afterFileSync(kind));try boundary(.beforeReplace(kind));try check(c)
+            guard try readFile(c.root,name+".stage",limit:32768) == observed,try readFile(c.root,name,limit:32768) == nil else{throw DeviceStructuralStoreError.conflict}
             guard renameat(c.root,name+".stage",c.root,name) == 0 else{throw failure()};try boundary(.afterReplace(kind))
+            guard try readFile(c.root,name,limit:32768) == observed else{throw DeviceStructuralStoreError.conflict}
         }
         try sync(c.root);try boundary(.afterDirectorySync(kind));try check(c)
     }
@@ -483,11 +543,11 @@ final class DeviceStructuralStore {
         let b=try nativeGenesisDecode(NativeGenesisBinding.self,binding.bytes,fields:["schemaVersion","selfID","intent","stateID","confirmationID"])
         let f=try nativeGenesisDecode(NativeGenesisConfirmation.self,proof.bytes,fields:["schemaVersion","selfID","binding","stateID","stateDigest"],limit:32768)
         let parsed=try DeviceNativeStructuralStateCodec.decode(state.bytes)
-        guard i.schemaVersion == 1,b.schemaVersion == 1,f.schemaVersion == 1,i.rootID == rootID,i.selfID == intent.identity,
-              i.binding == NativeNode(identity:rootBinding.identity,bytes:rootBinding.bytes),b.selfID == binding.identity,b.intent == intent,b.stateID == state.identity,b.confirmationID == proof.identity,
-              f.selfID == proof.identity,f.binding == binding,f.stateID == state.identity,try DeviceNativeDeliveryAttachmentCodec.hash(state.bytes).utf8.elementsEqual(f.stateDigest.utf8),
+        guard i.schemaVersion == 1,b.schemaVersion == 1,f.schemaVersion == 1,i.rootID == rootID,durable(c,i.selfID,intent.identity),
+              durable(c,i.binding,NativeNode(identity:rootBinding.identity,bytes:rootBinding.bytes)),durable(c,b.selfID,binding.identity),b.intent == protocolNode(c,intent),durable(c,b.stateID,state.identity),durable(c,b.confirmationID,proof.identity),
+              f.selfID == b.confirmationID,durable(c,f.selfID,proof.identity),f.binding == protocolNode(c,binding),f.stateID == b.stateID,try DeviceNativeDeliveryAttachmentCodec.hash(state.bytes).utf8.elementsEqual(f.stateDigest.utf8),
               state.bytes == i.stateBytes,parsed.entries.isEmpty,parsed.configuredEntryID == nil,try DeviceNativeStructuralStateCodec.encode(parsed) == state.bytes else{throw DeviceStructuralStoreError.conflict}
-        var original=nodes;original["root-binding.json"]=i.binding;return(parsed,original)
+        var original=nodes;original["root-binding.json"] = NativeNode(identity:rootBinding.identity,bytes:rootBinding.bytes);return(parsed,original)
     }
     /// Requalifies the exact recorded genesis after process restart. Existing command
     /// history is retained and checked reciprocally; this does not acknowledge its
@@ -539,11 +599,11 @@ final class DeviceStructuralStore {
             let nodes=try nativeGenesisInventory(c)
             if let input=nativeGenesisInput {guard input == bytes else{throw DeviceStructuralStoreError.conflict}}
             guard let rootBinding=try readFile(c.root,"root-binding.json",limit:8192) else{throw DeviceStructuralStoreError.unsafeBinding}
-            let originalBinding=NativeNode(identity:rootBinding.identity,bytes:rootBinding.bytes)
+            var originalBinding=NativeNode(identity:rootBinding.identity,bytes:rootBinding.bytes)
             var intent:NativeNode
             if let n=nodes["native-genesis.intent"],!n.bytes.isEmpty {
                 let i=try nativeGenesisDecode(NativeGenesisIntent.self,n.bytes,fields:["schemaVersion","rootID","selfID","binding","stateBytes"])
-                guard i.schemaVersion == 1,i.rootID == rootID,i.selfID == n.identity,i.binding == originalBinding,i.stateBytes == bytes else{throw DeviceStructuralStoreError.conflict};intent=n
+                guard i.schemaVersion == 1,i.rootID == rootID,durable(c,i.selfID,n.identity),durable(c,i.binding,originalBinding),i.stateBytes == bytes else{throw DeviceStructuralStoreError.conflict};intent=n;originalBinding=i.binding
             } else {
                 guard nodes.isEmpty || nativeGenesisInput == bytes,nodes.allSatisfy({nativeGenesisLive[$0.key+".stage"] == $0.value.identity && $0.value.bytes.isEmpty}) else{throw DeviceStructuralStoreError.conflict}
                 intent=NativeNode(identity:Identity(device:0,inode:0),bytes:Data())
@@ -552,8 +612,8 @@ final class DeviceStructuralStore {
             var reciprocal:NativeGenesisBinding?
             if let n=nodes["native-genesis.binding"],!n.bytes.isEmpty {
                 let b=try nativeGenesisDecode(NativeGenesisBinding.self,n.bytes,fields:["schemaVersion","selfID","intent","stateID","confirmationID"])
-                guard b.schemaVersion == 1,b.selfID == n.identity,b.intent == intent,nodes["native-genesis.json"]?.identity == b.stateID,nodes["native-genesis.confirm"]?.identity == b.confirmationID else{throw DeviceStructuralStoreError.conflict};reciprocal=b
-                let expectedProof=try nativeGenesisEncode(NativeGenesisConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:nodes["native-genesis.binding"]!,stateID:b.stateID,stateDigest:DeviceNativeDeliveryAttachmentCodec.hash(bytes)),limit:32768)
+                guard b.schemaVersion == 1,durable(c,b.selfID,n.identity),b.intent == protocolNode(c,intent),durable(c,b.stateID,nodes["native-genesis.json"]?.identity),durable(c,b.confirmationID,nodes["native-genesis.confirm"]?.identity) else{throw DeviceStructuralStoreError.conflict};reciprocal=b
+                let expectedProof=try nativeGenesisEncode(NativeGenesisConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:protocolNode(c,nodes["native-genesis.binding"]!),stateID:b.stateID,stateDigest:DeviceNativeDeliveryAttachmentCodec.hash(bytes)),limit:32768)
                 for key in ["native-genesis.json","native-genesis.confirm"] {guard let n=nodes[key],n.bytes.isEmpty || key == "native-genesis.json" && n.bytes == bytes || key == "native-genesis.confirm" && n.bytes == expectedProof else{throw DeviceStructuralStoreError.conflict}}
             } else {
                 for (key,node) in nodes where key != "native-genesis.intent" {guard nativeGenesisInput == bytes,nativeGenesisLive[key+".stage"] == node.identity,node.bytes.isEmpty else{throw DeviceStructuralStoreError.conflict}}
@@ -569,13 +629,13 @@ final class DeviceStructuralStore {
             if let b=reciprocal {binding=nodes["native-genesis.binding"]!;_ = b}
             else {
                 let stateID=try nativeAllocate(c,"native-genesis.json",.nativeGenesis),proofID=try nativeAllocate(c,"native-genesis.confirm",.nativeGenesisConfirmation),bindingID=try nativeAllocate(c,"native-genesis.binding",.nativeGenesisBinding)
-                binding=NativeNode(identity:bindingID,bytes:try nativeGenesisEncode(NativeGenesisBinding(schemaVersion:1,selfID:bindingID,intent:intent,stateID:stateID,confirmationID:proofID)))
+                binding=NativeNode(identity:bindingID,bytes:try nativeGenesisEncode(NativeGenesisBinding(schemaVersion:1,selfID:bindingID,intent:protocolNode(c,intent),stateID:stateID,confirmationID:proofID)))
                 try nativeFill(c,"native-genesis.binding",binding,.nativeGenesisBinding)
             }
             try nativePromote(c,"native-genesis.binding",binding,.nativeGenesisBinding)
             let b=try nativeGenesisDecode(NativeGenesisBinding.self,binding.bytes,fields:["schemaVersion","selfID","intent","stateID","confirmationID"])
             let data=NativeNode(identity:b.stateID,bytes:bytes)
-            let proof=NativeNode(identity:b.confirmationID,bytes:try nativeGenesisEncode(NativeGenesisConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:binding,stateID:b.stateID,stateDigest:DeviceNativeDeliveryAttachmentCodec.hash(bytes)),limit:32768))
+            let proof=NativeNode(identity:b.confirmationID,bytes:try nativeGenesisEncode(NativeGenesisConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:protocolNode(c,binding),stateID:b.stateID,stateDigest:DeviceNativeDeliveryAttachmentCodec.hash(bytes)),limit:32768))
             for (name,n,kind) in [("native-genesis.json",data,Kind.nativeGenesis),("native-genesis.confirm",proof,Kind.nativeGenesisConfirmation)] {
                 if try readFile(c.root,name,limit:32768) == nil {try nativeFill(c,name,n,kind)}
                 try nativePromote(c,name,n,kind)
@@ -672,11 +732,11 @@ final class DeviceStructuralStore {
         var method:DeviceNativeStructuralMethod?,binding:DeviceNativeStructuralPreparedBinding?
         if let m=nodes["method"],!m.bytes.isEmpty {
             let parsed=try DeviceNativeStructuralCommandCodec.method(m.bytes)
-            guard parsed.rootID == rootID,parsed.operationID == operation,parsed.selfID == m.identity,
+            guard parsed.rootID == rootID,parsed.operationID == operation,durable(c,parsed.selfID,m.identity),
                   parsed.genesisStateBytes == (try DeviceNativeStructuralStateCodec.encode(old.0)),
                   candidate.map({$0 == parsed.candidate}) ?? true,assertions.map({$0 == parsed.resourceAssertions}) ?? true,
                   intent.map({$0 == parsed.intent}) ?? true,outcome.map({$0 == parsed.outcome}) ?? true else {throw DeviceStructuralStoreError.conflict}
-            for (name,node) in old.1 {guard try nativeMarker(node) == parsed.original[name] else {throw DeviceStructuralStoreError.conflict}}
+            for (name,node) in old.1 {guard try durableMarker(c,parsed.original[name],node) else {throw DeviceStructuralStoreError.conflict}}
             method=parsed
         } else if !nodes.isEmpty {
             let n=nativeDispatchNames(operation)
@@ -685,12 +745,12 @@ final class DeviceStructuralStore {
         if let b=nodes["binding"],!b.bytes.isEmpty {
             guard let m=nodes["method"],method != nil else {throw DeviceStructuralStoreError.conflict}
             let parsed=try DeviceNativeStructuralCommandCodec.binding(b.bytes)
-            guard parsed.rootID == rootID,parsed.operationID == operation,parsed.selfID == b.identity,
-                  parsed.method == (try nativeMarker(m)),parsed.candidateID != parsed.terminalID,
-                  nodes["current"]?.identity == parsed.candidateID,nodes["terminal"]?.identity == parsed.terminalID else {throw DeviceStructuralStoreError.conflict}
+            guard parsed.rootID == rootID,parsed.operationID == operation,durable(c,parsed.selfID,b.identity),
+                  parsed.method == (try nativeMarker(protocolNode(c,m))),parsed.candidateID != parsed.terminalID,
+                  durable(c,parsed.candidateID,nodes["current"]?.identity),durable(c,parsed.terminalID,nodes["terminal"]?.identity) else {throw DeviceStructuralStoreError.conflict}
             binding=parsed
             guard let m=method else {throw DeviceStructuralStoreError.conflict}
-            let expectedProof=try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralTerminalProof(schemaVersion:2,rootID:rootID,operationID:operation,selfID:parsed.terminalID,binding:try nativeMarker(b),candidate:try nativeMarker(.init(identity:parsed.candidateID,bytes:m.candidate))),limit:32768)
+            let expectedProof=try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralTerminalProof(schemaVersion:2,rootID:rootID,operationID:operation,selfID:parsed.terminalID,binding:try nativeMarker(protocolNode(c,b)),candidate:try nativeMarker(.init(identity:parsed.candidateID,bytes:m.candidate))),limit:32768)
             for (key,expected) in [("current",m.candidate),("terminal",expectedProof)] {
                 guard let node=nodes[key],node.bytes == expected || node.bytes.isEmpty else {throw DeviceStructuralStoreError.conflict}
                 if key == "current",!node.bytes.isEmpty {_ = try DeviceNativeStructuralCommandCodec.envelope(node.bytes)}
@@ -715,28 +775,29 @@ final class DeviceStructuralStore {
         try boundary(.afterCreate(kind));return id
     }
     private func nativeDispatchFill(_ c:Context,parent:Int32,name:String,node:NativeNode,kind:Kind) throws {
-        guard let existing=try readFile(parent,name+".stage",limit:DeviceNativeStructuralCommandCodec.methodLimit),existing.identity == node.identity,
+        guard let existing=try readFile(parent,name+".stage",limit:DeviceNativeStructuralCommandCodec.methodLimit),admittedEffectIdentity(c,node.identity,existing.identity),
               existing.bytes.isEmpty || existing.bytes == node.bytes else {throw DeviceStructuralStoreError.conflict}
         let fd=openat(parent,name+".stage",O_RDWR|O_NOFOLLOW|O_NONBLOCK);guard fd >= 0 else {throw failure()};defer{close(fd)}
-        guard try identity(fd,directory:false) == node.identity else {throw DeviceStructuralStoreError.conflict}
+        guard try identity(fd,directory:false) == existing.identity else {throw DeviceStructuralStoreError.conflict}
         guard ftruncate(fd,0) == 0 else {throw failure()};try writeAll(fd,node.bytes);try boundary(.afterWrite(kind));try sync(fd);try boundary(.afterFileSync(kind));try check(c)
     }
     private func nativeDispatchPromote(_ c:Context,parent:Int32,name:String,node:NativeNode,kind:Kind) throws {
-        let expected=Node(identity:node.identity,bytes:node.bytes)
-        if let final=try readFile(parent,name,limit:DeviceNativeStructuralCommandCodec.methodLimit) {
-            guard final == expected,try readFile(parent,name+".stage",limit:DeviceNativeStructuralCommandCodec.methodLimit) == nil else {throw DeviceStructuralStoreError.conflict}
+        let final=try readFile(parent,name,limit:DeviceNativeStructuralCommandCodec.methodLimit)
+        guard let observed=try final ?? readFile(parent,name+".stage",limit:DeviceNativeStructuralCommandCodec.methodLimit),
+              observed.bytes == node.bytes,admittedEffectIdentity(c,node.identity,observed.identity) else{throw DeviceStructuralStoreError.conflict}
+        if final != nil {
+            guard try readFile(parent,name+".stage",limit:DeviceNativeStructuralCommandCodec.methodLimit) == nil else{throw DeviceStructuralStoreError.conflict}
         } else {
-            guard try readFile(parent,name+".stage",limit:DeviceNativeStructuralCommandCodec.methodLimit) == expected else {throw DeviceStructuralStoreError.conflict}
-            try syncExisting(parent,name+".stage",expected:expected);try boundary(.beforeReplace(kind));try check(c)
-            guard try readFile(parent,name+".stage",limit:DeviceNativeStructuralCommandCodec.methodLimit) == expected,
-                  try readFile(parent,name,limit:DeviceNativeStructuralCommandCodec.methodLimit) == nil else {throw DeviceStructuralStoreError.conflict}
-            guard renameat(parent,name+".stage",parent,name) == 0 else {throw failure()};try boundary(.afterReplace(kind))
+            try syncExisting(parent,name+".stage",expected:observed);try boundary(.beforeReplace(kind));try check(c)
+            guard try readFile(parent,name+".stage",limit:DeviceNativeStructuralCommandCodec.methodLimit) == observed,
+                  try readFile(parent,name,limit:DeviceNativeStructuralCommandCodec.methodLimit) == nil else{throw DeviceStructuralStoreError.conflict}
+            guard renameat(parent,name+".stage",parent,name) == 0 else{throw failure()};try boundary(.afterReplace(kind))
         }
-        try syncExisting(parent,name,expected:expected);try boundary(.afterFileSync(kind));try sync(parent);try boundary(.afterDirectorySync(kind));try check(c)
+        try syncExisting(parent,name,expected:observed);try boundary(.afterFileSync(kind));try sync(parent);try boundary(.afterDirectorySync(kind));try check(c)
     }
     private func nativeDispatchReservation(_ c:Context,operation:UUID,candidate:Data,assertions:Data,intent:Data,outcome:Data,original:[String:NativeNode]) throws -> [String:Int] {
         let id=Identity(device:UInt64.max,inode:UInt64.max);var markers:[String:DeviceNativeStructuralMarker]=[:]
-        for (name,node) in original {markers[name]=try nativeMarker(node)}
+        for (name,node) in original {markers[name]=try nativeMarker(protocolNode(c,node))}
         let method=try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralMethod(schemaVersion:2,rootID:rootID,operationID:operation,selfID:id,genesisStateBytes:original["native-genesis.json"]!.bytes,original:markers,candidate:candidate,resourceAssertions:assertions,intent:intent,outcome:outcome),limit:DeviceNativeStructuralCommandCodec.methodLimit)
         let b=try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralPreparedBinding(schemaVersion:2,rootID:rootID,operationID:operation,selfID:id,method:try nativeMarker(.init(identity:id,bytes:method)),candidateID:id,terminalID:id),limit:32768)
         let t=try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralTerminalProof(schemaVersion:2,rootID:rootID,operationID:operation,selfID:id,binding:try nativeMarker(.init(identity:id,bytes:b)),candidate:try nativeMarker(.init(identity:id,bytes:candidate))),limit:32768)
@@ -777,7 +838,7 @@ final class DeviceStructuralStore {
         if let m=state.nodes["method"],!m.bytes.isEmpty {method=m}
         else {
             let id=try nativeDispatchAllocate(c,parent:c.operations,name:n.method,kind:.nativeCommandIntent)
-            var markers:[String:DeviceNativeStructuralMarker]=[:];for (name,node) in state.original {markers[name]=try nativeMarker(node)}
+            var markers:[String:DeviceNativeStructuralMarker]=[:];for (name,node) in state.original {markers[name]=try nativeMarker(protocolNode(c,node))}
             method = .init(identity:id,bytes:try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralMethod(schemaVersion:2,rootID:rootID,operationID:envelope.operationID,selfID:id,genesisStateBytes:baseline.stateBytes,original:markers,candidate:candidate,resourceAssertions:assertions,intent:intent,outcome:outcome),limit:DeviceNativeStructuralCommandCodec.methodLimit))
             try nativeDispatchFill(c,parent:c.operations,name:n.method,node:method,kind:.nativeCommandIntent)
         }
@@ -786,18 +847,19 @@ final class DeviceStructuralStore {
         if let b=state.nodes["binding"],!b.bytes.isEmpty {binding=b}
         else {
             let currentID=try nativeDispatchAllocate(c,parent:c.root,name:"native-current.json",kind:.nativeCommandCurrent),proofID=try nativeDispatchAllocate(c,parent:c.operations,name:n.terminal,kind:.nativeCommandTerminal),id=try nativeDispatchAllocate(c,parent:c.operations,name:n.binding,kind:.nativeCommandBinding)
-            binding = .init(identity:id,bytes:try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralPreparedBinding(schemaVersion:2,rootID:rootID,operationID:envelope.operationID,selfID:id,method:try nativeMarker(method),candidateID:currentID,terminalID:proofID),limit:32768))
+            binding = .init(identity:id,bytes:try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralPreparedBinding(schemaVersion:2,rootID:rootID,operationID:envelope.operationID,selfID:id,method:try nativeMarker(protocolNode(c,method)),candidateID:currentID,terminalID:proofID),limit:32768))
             try nativeDispatchFill(c,parent:c.operations,name:n.binding,node:binding,kind:.nativeCommandBinding)
         }
         try nativeDispatchPromote(c,parent:c.operations,name:n.binding,node:binding,kind:.nativeCommandBinding)
         let b=try DeviceNativeStructuralCommandCodec.binding(binding.bytes),current=NativeNode(identity:b.candidateID,bytes:candidate)
         if try readFile(c.root,"native-current.json",limit:131072) == nil {try nativeDispatchFill(c,parent:c.root,name:"native-current.json",node:current,kind:.nativeCommandCurrent)}
         try nativeDispatchPromote(c,parent:c.root,name:"native-current.json",node:current,kind:.nativeCommandCurrent)
-        let proof=NativeNode(identity:b.terminalID,bytes:try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralTerminalProof(schemaVersion:2,rootID:rootID,operationID:envelope.operationID,selfID:b.terminalID,binding:try nativeMarker(binding),candidate:try nativeMarker(current)),limit:32768))
+        let proof=NativeNode(identity:b.terminalID,bytes:try DeviceNativeStructuralCommandCodec.encode(DeviceNativeStructuralTerminalProof(schemaVersion:2,rootID:rootID,operationID:envelope.operationID,selfID:b.terminalID,binding:try nativeMarker(protocolNode(c,binding)),candidate:try nativeMarker(protocolNode(c,current))),limit:32768))
         if try readFile(c.operations,n.terminal,limit:32768) == nil {try nativeDispatchFill(c,parent:c.operations,name:n.terminal,node:proof,kind:.nativeCommandTerminal)}
         try nativeDispatchPromote(c,parent:c.operations,name:n.terminal,node:proof,kind:.nativeCommandTerminal)
         let final=try nativeDispatchPreflight(c,operation:envelope.operationID,candidate:candidate,assertions:assertions,intent:intent,outcome:outcome)
-        guard final.original == state.original,final.nodes["current"] == current,final.nodes["terminal"] == proof,epoch() == attemptEpoch else {throw DeviceStructuralStoreError.conflict}
+        guard final.original == state.original,let installedCurrent=final.nodes["current"],let installedProof=final.nodes["terminal"],
+              durable(c,current,installedCurrent),durable(c,proof,installedProof),epoch() == attemptEpoch else {throw DeviceStructuralStoreError.conflict}
         let capture=NativeCommandCapture(ObjectIdentifier(self),rootID,attemptEpoch,envelope.operationID,candidate,state.original,final.nodes)
         nativeCommandPending=capture;return capture
     }
@@ -906,10 +968,15 @@ final class DeviceStructuralStore {
         return try diskContext(create:create,allowNative:allowNative,operation)
     }
     private func diskContext<T>(create: Bool, allowNative: Bool = true, releasePermit: DeviceLocalResourcePermit? = nil, _ operation: (Context) throws -> T) throws -> T {
-        guard root.path.utf8.count <= 4096, root.resolvingSymlinksInPath().path == root.path else { throw DeviceStructuralStoreError.unsafeBinding }
+        try requirePhysicalRoot()
         let rootFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
         guard rootFD >= 0 else { throw failure() }; defer { close(rootFD) }
         if !allowNative { try requireNoNativeGenesis(rootFD) }
+        let filesystem: DevicePersistedFilesystemContext
+        do { filesystem = try contextFactory(root, rootFD) }
+        catch { throw DeviceStructuralStoreError.unsafeBinding }
+        let previousFilesystemContext = activeFilesystemContext
+        activeFilesystemContext = filesystem; defer { activeFilesystemContext = previousFilesystemContext }
         let rootIdentity = try identity(rootFD, directory: true)
         let lockFD = openat(rootFD, "structural.lock", O_RDWR | O_NOFOLLOW | O_NONBLOCK | (create ? O_CREAT : 0), 0o600)
         guard lockFD >= 0 else { throw failure() }; defer { close(lockFD) }
@@ -921,9 +988,26 @@ final class DeviceStructuralStore {
         }
         let operationsFD = openat(rootFD, "operations", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
         guard operationsFD >= 0 else { throw failure() }; defer { close(operationsFD) }
-        let binding = Binding(schemaVersion: 1, rootID: rootID, canonicalPath: root.path,
-                              directory: rootIdentity, lock: lockIdentity, operations: try identity(operationsFD, directory: true))
-        let context = Context(root: rootFD, lock: lockFD, operations: operationsFD, binding: binding, requiresBinding: !create)
+        let operationsIdentity = try identity(operationsFD, directory: true)
+        var binding = Binding(schemaVersion: 1, rootID: rootID, canonicalPath: root.path,
+                              directory: rootIdentity, lock: lockIdentity, operations: operationsIdentity)
+        let originalBindingNode = try readFile(rootFD, "root-binding.json", limit: 8192)
+        if let persisted = originalBindingNode {
+            let retained = try decodeBinding(persisted.bytes)
+            guard retained.schemaVersion == binding.schemaVersion, retained.rootID == binding.rootID,
+                filesystem.matchesDurableIdentity(recordedDevice: retained.directory.device, recordedInode: retained.directory.inode, observedDevice: rootIdentity.device, observedInode: rootIdentity.inode),
+                filesystem.matchesDurableIdentity(recordedDevice: retained.lock.device, recordedInode: retained.lock.inode, observedDevice: lockIdentity.device, observedInode: lockIdentity.inode),
+                filesystem.matchesDurableIdentity(recordedDevice: retained.operations.device, recordedInode: retained.operations.inode, observedDevice: operationsIdentity.device, observedInode: operationsIdentity.inode),
+                snapshotDevices([retained.directory, retained.lock, retained.operations], [rootIdentity, lockIdentity, operationsIdentity]),
+                filesystem.matchesRecordedRootPath(retained.canonicalPath) else {
+                throw DeviceStructuralStoreError.unsafeBinding
+            }
+            // Keep the original recorded spelling for exact binding equality;
+            // compatibility never rewrites durable bytes or changes an inode/ID.
+            binding = retained
+        }
+        let context = Context(root: rootFD, lock: lockFD, operations: operationsFD, binding: binding, requiresBinding: !create,
+            currentDirectory: rootIdentity, currentLock: lockIdentity, currentOperations: operationsIdentity, filesystem: filesystem, links: DurableLinks(), originalBindingNode: originalBindingNode)
         if !create {
             guard let persisted = try readFile(rootFD, "root-binding.json", limit: 8192), try decodeBinding(persisted.bytes) == binding else { throw DeviceStructuralStoreError.unsafeBinding }
         }
@@ -944,22 +1028,35 @@ final class DeviceStructuralStore {
     private func identity(_ fd: Int32, directory: Bool) throws -> Identity {
         var info = stat(); guard fstat(fd, &info) == 0 else { throw failure() }
         guard (info.st_mode & mode_t(S_IFMT)) == mode_t(directory ? S_IFDIR : S_IFREG), directory || info.st_nlink == 1 else { throw DeviceStructuralStoreError.unsafeBinding }
-        return Identity(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino))
+        let result = Identity(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino))
+        guard activeFilesystemContext?.acceptsCurrentDevice(result.device) != false else { throw DeviceStructuralStoreError.unsafeBinding }
+        return result
+    }
+    private func requirePhysicalRoot() throws {
+        #if os(iOS)
+        // Preserve the exact physical caller spelling; Foundation can rewrite
+        // /private/var to /var. Check every in-sandbox component without following links.
+        do { try NativeEnrollmentPhysicalDirectory.require(root) }
+        catch { throw DeviceStructuralStoreError.unsafeBinding }
+        #else
+        guard root.path.utf8.count <= 4096, root.resolvingSymlinksInPath().path == root.path else { throw DeviceStructuralStoreError.unsafeBinding }
+        #endif
     }
     private func check(_ context: Context) throws {
-        guard root.resolvingSymlinksInPath().path == root.path else { throw DeviceStructuralStoreError.unsafeBinding }
-        var info = stat(); guard lstat(root.path, &info) == 0, Identity(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino)) == context.binding.directory,
+        try requirePhysicalRoot()
+        var info = stat(); guard lstat(root.path, &info) == 0, Identity(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino)) == context.currentDirectory,
               (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else { throw DeviceStructuralStoreError.unsafeBinding }
-        guard try identity(context.root, directory: true) == context.binding.directory,
-              try identity(context.lock, directory: false) == context.binding.lock,
-              try identity(context.operations, directory: true) == context.binding.operations else { throw DeviceStructuralStoreError.unsafeBinding }
-        for (name, expected, directory) in [("structural.lock",context.binding.lock,false),("operations",context.binding.operations,true)] {
+        guard try identity(context.root, directory: true) == context.currentDirectory,
+              try identity(context.lock, directory: false) == context.currentLock,
+              try identity(context.operations, directory: true) == context.currentOperations else { throw DeviceStructuralStoreError.unsafeBinding }
+        for (name, expected, directory) in [("structural.lock",context.currentLock,false),("operations",context.currentOperations,true)] {
             let fd = openat(context.root, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | (directory ? O_DIRECTORY : 0))
             guard fd >= 0 else { throw failure() }; defer { close(fd) }
             guard try identity(fd, directory: directory) == expected else { throw DeviceStructuralStoreError.unsafeBinding }
         }
         let persistedBinding = try readFile(context.root, "root-binding.json", limit: 8192)
         if context.requiresBinding && persistedBinding == nil { throw DeviceStructuralStoreError.unsafeBinding }
+        if let original = context.originalBindingNode { guard persistedBinding == original else { throw DeviceStructuralStoreError.unsafeBinding } }
         if let persisted = persistedBinding {
             guard try decodeBinding(persisted.bytes) == context.binding else { throw DeviceStructuralStoreError.unsafeBinding }
         }

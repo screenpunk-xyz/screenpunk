@@ -3,13 +3,15 @@ import Foundation
 import CryptoKit
 import Security
 
+private struct ControllerCloudKnownFailure: Decodable { let code: String }
 public enum ControllerCloudError: Error, Equatable {
-    case invalidConfiguration, invalidCallback, signedOut, accountMismatch, conflict, deletedProject, invalidSource, invalidRemoveEntryIds, sourceLimitExceeded, invalidResponse, http(Int)
+    case invalidConfiguration, invalidCallback, signedOut, accountMismatch, conflict, deletedProject, invalidSource, invalidRemoveEntryIds, sourceLimitExceeded, invalidResponse, resourceLimit, http(Int)
 }
 extension ControllerCloudError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .sourceLimitExceeded: return "This project exceeds the controller source limit of 2,000 files, 50 MiB total, 52,428,801 bytes per file, or a 71,000,000-byte sync body. Source was not truncated or applied."
+        case .resourceLimit: return "Cloud Screen limit reached. Your local copy is preserved."
         case .conflict: return "The project changed after review. Synchronize and review both revisions again."
         case .accountMismatch: return "This project is linked to a different cloud account."
         case .deletedProject: return "The cloud project is unavailable or deleted. Local source is preserved."
@@ -107,7 +109,7 @@ public actor ControllerCloudSession {
         let verifier = try random(), state = try random()
         let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         var url = URLComponents(url: configuration.authorizationURL, resolvingAgainstBaseURL: false)!
-        url.queryItems = ["response_type":"code", "client_id":configuration.clientID, "redirect_uri":configuration.redirectURI, "scope":"screenpunk.read screenpunk.write screenpunk.workspaces", "resource":configuration.baseURL.appendingPathComponent("mcp").absoluteString, "state":state, "code_challenge":challenge, "code_challenge_method":"S256"].map { URLQueryItem(name: $0.key, value: $0.value) }
+        url.queryItems = ["response_type":"code", "client_id":configuration.clientID, "redirect_uri":configuration.redirectURI, "scope":"openid offline_access screenpunk.read screenpunk.write screenpunk.workspaces", "prompt":"consent", "resource":configuration.baseURL.appendingPathComponent("mcp").absoluteString, "state":state, "code_challenge":challenge, "code_challenge_method":"S256"].map { URLQueryItem(name: $0.key, value: $0.value) }
         guard let target = url.url else { throw ControllerCloudError.invalidConfiguration }
         let request = ControllerCloudAuthorization(url: target, state: state, verifier: verifier, generation: epoch); pending = request; return request
     }
@@ -159,12 +161,14 @@ public actor ControllerCloudSession {
     }
 
     private func exchange(_ values: [String: String]) async throws -> ControllerCloudTokens {
-        if let tokenExchange { return try await tokenExchange(values) }
         var values = values; values["client_id"] = configuration.clientID
+        values["resource"] = configuration.baseURL.appendingPathComponent("mcp").absoluteString
+        if let tokenExchange { return try await tokenExchange(values) }
         var components = URLComponents(); components.queryItems = values.map { URLQueryItem(name: $0.key, value: $0.value) }
         var request = URLRequest(url: configuration.tokenURL); request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B").data(using: .utf8)
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ControllerCloudError.invalidResponse }
         guard response.statusCode == 200 else { throw ControllerCloudError.http(response.statusCode) }
@@ -174,15 +178,23 @@ public actor ControllerCloudSession {
         return .init(accessToken: result.access_token, refreshToken: result.refresh_token, expiresAt: Date().addingTimeInterval(result.expires_in))
     }
     public func request<Response: Decodable & Sendable>(_ path: String, method: String = "GET", body: Data? = nil, as type: Response.Type) async throws -> Response {
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         guard path.hasPrefix("/"), !path.hasPrefix("//"), !path.contains(".."),
               let url = URL(string: path, relativeTo: configuration.baseURL)?.absoluteURL,
               url.host == configuration.baseURL.host else { throw ControllerCloudError.invalidConfiguration }
         var request = URLRequest(url: url); request.httpMethod = method; request.httpBody = body
         request.setValue("Bearer " + (try await accessToken()), forHTTPHeaderField: "Authorization")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let (data, response) = try await session.data(for: request)
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         guard let response = response as? HTTPURLResponse else { throw ControllerCloudError.invalidResponse }
-        guard (200..<300).contains(response.statusCode) else { throw ControllerCloudError.http(response.statusCode) }
+        guard (200..<300).contains(response.statusCode) else {
+            if data.count <= 16 * 1024, (try? JSONDecoder().decode(ControllerCloudKnownFailure.self, from: data).code) == "resource_limit" {
+                throw ControllerCloudError.resourceLimit
+            }
+            throw ControllerCloudError.http(response.statusCode)
+        }
         return try JSONDecoder().decode(type, from: data)
     }
 }

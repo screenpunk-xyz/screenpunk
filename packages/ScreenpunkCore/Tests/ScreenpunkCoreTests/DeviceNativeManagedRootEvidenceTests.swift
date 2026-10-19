@@ -20,6 +20,33 @@ final class DeviceNativeManagedRootEvidenceTests: XCTestCase {
     private func inspector(_ parent: URL) throws -> DeviceManagedNamespaceInspector { try .fixture(existingPhysicalAnchor: parent) }
     private func names(_ parent: URL) throws -> [String] { try FileManager.default.contentsOfDirectory(atPath: parent.path).sorted() }
 
+    #if os(iOS)
+    func testExplicitPhysicalFixtureChecksOnlyAppHomeAndItsDescendants() throws {
+        let parent = try ownedParent(), check = try inspector(parent)
+        guard let raw = realpath(NSHomeDirectory(), nil) else { throw NSError(domain: "fixture home realpath", code: Int(errno)) }
+        let home = String(cString: raw); free(raw)
+        XCTAssertTrue(parent.path.hasPrefix(home + "/"))
+        let expectedCount = 1 + parent.path.dropFirst(home.count + 1).split(separator: "/").count
+        let absent = try check.inspect()
+        XCTAssertEqual(absent.classification, .confirmedAbsent)
+        XCTAssertEqual(absent.checkedDirectoryCountForTesting, expectedCount)
+        try FileManager.default.createDirectory(at: child(parent), withIntermediateDirectories: false)
+        let present = try check.inspect()
+        XCTAssertEqual(present.classification, .managedPresent)
+        XCTAssertEqual(present.checkedDirectoryCountForTesting, expectedCount)
+        XCTAssertTrue(absent.hasSameCheckedAnchor(as: present))
+    }
+
+    func testExplicitPhysicalFixtureRejectsGlobalAncestorOutsideAppHome() throws {
+        guard let raw = realpath(NSHomeDirectory(), nil) else { throw NSError(domain: "fixture home realpath", code: Int(errno)) }
+        let home = URL(fileURLWithPath: String(cString: raw), isDirectory: true); free(raw)
+        let outside = home.deletingLastPathComponent()
+        XCTAssertThrowsError(try inspector(outside)) { error in
+            XCTAssertEqual(error as? DeviceNativeManagedRootFailure, .invalidLocator)
+        }
+    }
+    #endif
+
     func testCheckedAbsenceIsStableTypedEvidenceAndCreatesNothing() throws {
         let parent = try ownedParent(), sentinel = parent.appendingPathComponent("sentinel")
         let bytes = Data("unrelated sentinel".utf8); try bytes.write(to: sentinel)

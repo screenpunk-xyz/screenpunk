@@ -62,6 +62,19 @@ public final class WorkbenchAuthoringRecoveryDomain {
                 }
                 try check()
                 result = try perform(inner, cancelled: cancelled, progress: progress)
+            case .cloudProjectCreate(let intent, let dashboard, let name, let path):
+                try mutationGate(); try check()
+                let staged = try WorkspaceFiles(path: path, requiredPrivateRoot: true)
+                let snapshot = try JSONDecoder().decode(ControllerCloudSourceSnapshot.self, from: staged.read(staged.fd, "snapshot.json", maxBytes: 36 * 1024 * 1024))
+                try snapshot.validate()
+                guard let bytes = snapshot.files["screenpunk.project.json"],
+                      var shape = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw WorkspaceError.invalidSchema }
+                shape["projectId"] = intent; shape["dashboardId"] = dashboard
+                let descriptor = try WorkspaceJSON.decode(WorkspaceProjectDocument.self, from: JSONSerialization.data(withJSONObject: shape), shape: .project)
+                authoring.cloudCreationScope = nil; authoring.cloudImportIdentity = (intent, dashboard)
+                try staged.verifyRoot()
+                let project = try authoring.importVerifiedSource(descriptor: descriptor, files: snapshot.files, name: name)
+                result = .init(kind: .authoringProject, project: project)
             case .projectCreate(let name, let kind):
                 try mutationGate(); try check()
                 let project = try authoring.create(name: name, kind: kind,
@@ -193,7 +206,7 @@ public final class WorkbenchAuthoringRecoveryDomain {
                 result = .init(kind: .buildHead, build: buildRead(built.head, diagnostics: built.diagnostics))
             case .buildHead(let id):
                 guard let head = try plainWebCoordinator().readHead(projectID: id)?.0 else {
-                    throw WorkbenchIPCError(.unavailable)
+                    throw WorkbenchIPCError(.buildNotFound)
                 }
                 try check()
                 result = .init(kind: .buildHead, build: buildRead(head, diagnostics: ""))
@@ -324,6 +337,12 @@ public final class WorkbenchAuthoringRecoveryDomain {
             switch error {
             case .sourceVersion: throw WorkbenchIPCError(.buildSourceConflict)
             case .baseRevision: throw WorkbenchIPCError(.buildHeadConflict)
+            }
+        }
+        catch let error as WorkbenchBuildValidationError {
+            switch error {
+            case .configurationInvalid: throw WorkbenchIPCError(.buildConfigurationInvalid)
+            case .packageInvalid: throw WorkbenchIPCError(.buildPackageInvalid)
             }
         }
         catch is ToolchainTrustError { throw WorkbenchIPCError(.toolchainTrustUnavailable) }

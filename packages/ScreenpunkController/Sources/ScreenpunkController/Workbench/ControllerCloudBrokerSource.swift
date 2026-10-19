@@ -1,14 +1,35 @@
 import Foundation
 #if os(macOS)
 /// All reads and mutations go through the existing broker and its source CAS journal.
-public actor ControllerCloudBrokerSource: ControllerCloudProjectLocal {
+public actor ControllerCloudBrokerSource: ControllerCloudProjectLocalMetadata {
     private let client: WorkbenchBrokerClient
     private let scratchRoot: URL
+    private let projectionRoot: URL?
     public init(client: WorkbenchBrokerClient, scratchRoot: URL) throws {
-        self.client = client; self.scratchRoot = scratchRoot
+        self.client = client; self.scratchRoot = scratchRoot; self.projectionRoot = nil
         try FileManager.default.createDirectory(at: scratchRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     }
+    init(client: WorkbenchBrokerClient, scratchRoot: URL, projectionRoot: URL) throws {
+        self.client = client; self.scratchRoot = scratchRoot; self.projectionRoot = projectionRoot
+        try FileManager.default.createDirectory(at: scratchRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    }
+    private func projection(_ project: String, workspace: String) throws -> ControllerCloudCanonicalSourceStore.Record? {
+        guard let projectionRoot else { return nil }
+        let record = try ControllerCloudCanonicalSourceStore(root: projectionRoot.appendingPathComponent(workspace).appendingPathComponent("source-projections")).read(project)
+        guard record == nil || record?.localWorkspaceId == workspace else { throw ControllerCloudError.conflict }
+        return record
+    }
+    func revision(projectId: String) async throws -> String {
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
+        let selected = try client.workspaceStatus()
+        guard let workspace = selected.workspaceId, let generation = selected.selectionGeneration else { throw ControllerCloudError.invalidSource }
+        let result = try client.performAuthoring(method: .projectInspect, params: ["schemaVersion": 1, "projectId": projectId,
+            "expectedWorkspaceId": workspace, "expectedSelectionGeneration": generation])
+        guard let revision = result.project?.sourceVersion else { throw ControllerCloudError.invalidResponse }
+        return revision
+    }
     public func read(projectId: String) async throws -> ControllerCloudSourceSnapshot {
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let selection = try client.workspaceStatus()
         guard let workspaceId = selection.workspaceId, let generation = selection.selectionGeneration else { throw ControllerCloudError.invalidSource }
         let bound: [String:Any] = ["schemaVersion":1,"expectedWorkspaceId":workspaceId,"expectedSelectionGeneration":generation]
@@ -31,6 +52,9 @@ public actor ControllerCloudBrokerSource: ControllerCloudProjectLocal {
         }
         guard try WorkbenchSourceHasher.hash(files) == project.sourceVersion else { throw ControllerCloudError.invalidSource }
         files = files.filter { !ControllerCloudSourcePolicy.excludes($0.key) }
+        if let projection = try projection(projectId, workspace: workspaceId) {
+            return try projection.canonicalView(.init(revision: project.sourceVersion, files: files))
+        }
         // Normalize only identity fields; retain entry/config/toolchain/build metadata in cloud.
         if let descriptor = files["screenpunk.project.json"], var shape = try JSONSerialization.jsonObject(with: descriptor) as? [String:Any] {
             shape.removeValue(forKey: "projectId"); shape.removeValue(forKey: "dashboardId")
@@ -47,9 +71,12 @@ public actor ControllerCloudBrokerSource: ControllerCloudProjectLocal {
         let staging = scratchRoot.appendingPathComponent("apply-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions:0o700])
         defer { try? FileManager.default.removeItem(at: staging) }
-        try JSONEncoder().encode(snapshot).write(to: staging.appendingPathComponent("snapshot.json"), options:.atomic)
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let selection = try client.workspaceStatus()
         guard let workspaceId = selection.workspaceId, let generation = selection.selectionGeneration else { throw ControllerCloudError.invalidSource }
+        let projected = try projection(projectId, workspace: workspaceId)?.localView(snapshot) ?? snapshot
+        try JSONEncoder().encode(projected).write(to: staging.appendingPathComponent("snapshot.json"), options:.atomic)
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         _ = try client.performAuthoring(method:.projectSyncSource, params:["schemaVersion":1,"expectedWorkspaceId":workspaceId,"expectedSelectionGeneration":generation,"projectId":projectId,"expectedSourceVersion":expectedRevision,"path":staging.path])
     }
 }

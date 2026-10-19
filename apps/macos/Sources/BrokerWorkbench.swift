@@ -412,7 +412,7 @@ final class BrokerWorkbench: ObservableObject {
                 await MainActor.run {
                     guard let self = owner, self.screenMutationRequest == token else { return }
                     self.screenMutationInProgress = false
-                    self.error = "Rename may have applied. Refresh the project and source version before retrying: \(error.localizedDescription)"
+                    self.error = "Rename may have applied. Refresh the Screen before retrying: \(error.localizedDescription)"
                 }
             }
         }
@@ -863,12 +863,12 @@ final class BrokerWorkbench: ObservableObject {
         guard !loading, let client, let selected = workspace, selected.state == "selected",
               let workspaceId = selected.workspaceId,
               let selectionGeneration = selected.selectionGeneration else {
-            error = "Select a visible workspace before creating a project."
+            error = "Select a workspace before creating a Screen."
             return
         }
         let alert = NSAlert()
-        alert.messageText = "New web project"
-        alert.informativeText = "Create a contained source project in the selected workspace."
+        alert.messageText = "New Screen"
+        alert.informativeText = "Create an editable Screen in this workspace."
         alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(string: "New Screen")
@@ -876,7 +876,7 @@ final class BrokerWorkbench: ObservableObject {
         alert.accessoryView = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { error = "A project name is required."; return }
+        guard !name.isEmpty else { error = "A Screen name is required."; return }
         let request = UUID(); createRequest = request
         loading = true
         Task.detached { [weak self] in
@@ -904,7 +904,7 @@ final class BrokerWorkbench: ObservableObject {
                 await MainActor.run {
                     guard owner?.createRequest == request else { return }
                     owner?.loading = false
-                    owner?.error = "Project creation rejected; refresh workspace selection: \(error.localizedDescription)"
+                    owner?.error = "Couldn’t create the Screen. Refresh the workspace: \(error.localizedDescription)"
                 }
             }
         }
@@ -916,7 +916,7 @@ final class BrokerWorkbench: ObservableObject {
               let selectionGeneration = selected.selectionGeneration else { return }
         if editor.needsDiscardBeforeNavigating(
             from: selectedProject?.project.projectId, to: id) {
-            guard confirmDiscardSourceDraft(reason: "select another project") else { return }
+            guard confirmDiscardSourceDraft(reason: "select another Screen") else { return }
             editor.discardDraft()
         }
         let request = projectGate.begin(projectId: id, workspaceId: workspaceId,
@@ -974,7 +974,7 @@ final class BrokerWorkbench: ObservableObject {
                     guard owner?.projectGate.accepts(request, projectId: id,
                         workspaceId: workspaceId,
                         selectionGeneration: selectionGeneration) == true else { return }
-                    owner?.error = "Project inspection unavailable: \(error.localizedDescription)"
+                    owner?.error = "Screen details are unavailable: \(error.localizedDescription)"
                 }
             }
         }
@@ -1512,6 +1512,7 @@ enum WorkspacePackagePreviewLoader {
     private static let previewByteLimit = 4 * 1024 * 1024
     static func load(client: WorkbenchBrokerClient, selected: WorkbenchWorkspaceStatus,
                      summary: WorkbenchWorkspacePackageSummary) throws -> PackageAssetStore {
+        try Task.checkCancellation()
         let detail = try client.workspacePackage(dashboardId: summary.dashboardId,
                                                  revision: summary.revision, in: selected)
         guard detail == summary, summary.fileCount <= PackageLimits.maxFiles,
@@ -1530,6 +1531,7 @@ enum WorkspacePackagePreviewLoader {
         var remaining = previewByteLimit - manifestBytes.count
         guard remaining >= 0 else { throw BrokerConsumerError.previewRequired }
         for file in manifest.files {
+            try Task.checkCancellation()
             guard file.bytes >= 0, file.bytes <= remaining, assets[file.path] == nil else {
                 throw BrokerConsumerError.previewRequired
             }
@@ -1552,6 +1554,7 @@ enum WorkspacePackagePreviewLoader {
         var expectedSize: Int?
         var expectedHash: String?
         repeat {
+            try Task.checkCancellation()
             let chunk = try client.workspacePackageFile(dashboardId: summary.dashboardId,
                 revision: summary.revision, path: path, offset: bytes.count, in: selected)
             guard chunk.totalBytes <= limit, chunk.totalBytes >= 0,
@@ -1611,7 +1614,7 @@ struct BrokerWorkbenchView: View {
                         }
                     }
                 }
-                Section("Projects") {
+                Section("Screens") {
                     ForEach(model.projects, id: \.projectId) { item in
                         Button(item.name) { model.inspectProject(item.projectId) }.buttonStyle(.plain)
                     }
@@ -1630,7 +1633,7 @@ struct BrokerWorkbenchView: View {
                     Spacer()
                     Text(model.guiLeaseStatus).font(.caption).foregroundStyle(.secondary)
                     Button("Retry GUI Verification") { model.retryGUILease() }
-                    Button("New Project…") { model.createProject() }
+                    Button("New Screen…") { model.createProject() }
                     Button("Pair Device…") { model.beginPairing() }
                     Button("Review Connection…") { model.reviewConnectionIntent() }
                         .disabled(model.reviewInProgress)
@@ -1649,7 +1652,7 @@ struct BrokerWorkbenchView: View {
                 if model.editor.orphaned {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Unsaved source draft retained").font(.headline)
-                        Text("Workspace \(model.editor.originWorkspaceId) · project \(model.editor.originProjectId) · \(model.editor.originPath)")
+                        Text("Workspace \(model.editor.originWorkspaceId) · Screen \(model.editor.originProjectId) · \(model.editor.originPath)")
                             .font(.caption.monospaced()).textSelection(.enabled)
                         TextEditor(text: $model.editor.draft)
                             .font(.system(.body, design: .monospaced))
@@ -1733,7 +1736,7 @@ struct BrokerWorkbenchView: View {
                             Button("Remove from Library…", role: .destructive) {
                                 model.archiveSelectedSourceScreen()
                             }.disabled(!model.canArchiveScreen)
-                            Button("Reload Project") { model.inspectProject(project.project.projectId) }
+                            Button("Reload Screen") { model.inspectProject(project.project.projectId) }
                             Button("Build") { model.buildSelectedProject() }
                         }
                         Text("Source version: " + project.sourceVersion).font(.caption.monospaced()).lineLimit(1)
@@ -1800,7 +1803,7 @@ struct BrokerWorkbenchView: View {
                     if let destination = plan.destinationPath {
                         Text("Destination: \(destination)").font(.caption.monospaced()).textSelection(.enabled)
                     }
-                    Text("\(plan.packageRevisions.count) retained package revisions · \(plan.projectIds.count) registered projects · \(plan.plannedMembers) copied members")
+                    Text("\(plan.packageRevisions.count) retained package revisions · \(plan.projectIds.count) editable Screens · \(plan.plannedMembers) copied members")
                     Text("Editable personal source stays in its separate verified archive and needs later import or adoption. Device records, grants, and local authority are excluded.")
                         .foregroundStyle(.secondary)
                     if !plan.unsupportedPortablePaths.isEmpty {

@@ -24,6 +24,10 @@ enum WorkbenchBuildConflict: Error {
     case sourceVersion, baseRevision
 }
 
+enum WorkbenchBuildValidationError: Error {
+    case configurationInvalid, packageInvalid
+}
+
 final class WorkbenchBuildCoordinator {
     typealias ReactCompiler = (_ projectID: String, _ sourceVersion: String,
                                _ requirement: WorkspaceToolchainRequirements.Requirement,
@@ -75,18 +79,34 @@ final class WorkbenchBuildCoordinator {
         } else {
             selectedToolchain = nil
             diagnostics = ""
-            packageFiles = try plainWebFiles(snapshot.files)
+            packageFiles = try validateBeforePublication {
+                try plainWebFiles(snapshot.files, document: snapshot.document)
+            }
         }
-        let package = try makePackage(snapshot: snapshot, files: packageFiles)
+        let package = try validateBeforePublication {
+            try makePackage(snapshot: snapshot, files: packageFiles)
+        }
         if cancelled() { throw WorkspaceError.unavailable }
         let manifest = package.manifest
         let proposed = WorkbenchBuildHead(schemaVersion: 1, projectID: projectID,
             dashboardID: snapshot.project.dashboardId, sourceVersion: snapshot.version,
             revision: manifest.revision, digest: manifest.digest!, selectedToolchain: selectedToolchain)
+        try WorkbenchContainedAuthoring(workspace: workspace).retainSourceVersion(
+            projectID, expectedSourceVersion: snapshot.version)
         try publishPackageHead(package, proposed: proposed,
                                baseRevision: baseRevision, cancelled: cancelled)
         guard try readHead(projectID: projectID)?.0 == proposed else { throw WorkspaceError.conflict }
         return WorkbenchBuildResult(head: proposed, diagnostics: diagnostics)
+    }
+
+    // Keep deterministic input failures separate from errors after publication starts.
+    private func validateBeforePublication<T>(_ operation: () throws -> T) throws -> T {
+        do { return try operation() }
+        catch is DecodingError { throw WorkbenchBuildValidationError.configurationInvalid }
+        catch is PackageValidationError { throw WorkbenchBuildValidationError.packageInvalid }
+        catch let error as ControllerError where error.code == .validationFailed {
+            throw WorkbenchBuildValidationError.packageInvalid
+        }
     }
 
     func readHead(projectID: String) throws -> (WorkbenchBuildHead, WorkbenchPortablePackage)? {
@@ -187,17 +207,33 @@ final class WorkbenchBuildCoordinator {
         }
     }
 
-    private func plainWebFiles(_ files: [String: Data]) throws -> [String: Data] {
-        guard files["web/index.html"] != nil else { throw WorkspaceError.invalidSchema }
+    private func plainWebFiles(_ files: [String: Data], document: WorkspaceProjectDocument) throws -> [String: Data] {
+        guard let config = files[document.screenConfig] else { throw WorkspaceError.invalidSchema }
+        let description = try JSONDecoder().decode(BuildScreenDescription.self, from: config)
+        let components = document.entry.split(separator: "/").map(String.init)
+        guard components.last == "index.html", files[document.entry] != nil else { throw WorkspaceError.invalidSchema }
+        let prefix = components.dropLast().joined(separator: "/")
+        let base = prefix.isEmpty ? "" : prefix + "/"
         let allowed: Set<String> = ["html", "htm", "js", "css", "svg", "png", "jpg", "jpeg",
-                                    "webp", "woff", "woff2", "json"]
-        var output: [String: Data] = [:]
-        for (path, bytes) in files where path.hasPrefix("web/") {
-            let member = String(path.dropFirst(4))
-            guard WorkspaceValidation.member(member),
-                  allowed.contains(URL(fileURLWithPath: member).pathExtension.lowercased()) else {
+                                    "webp", "gif", "woff", "woff2", "json", "mp3", "wav", "ogg", "m4a", "mp4"]
+        // Explicit runtime inventory supports existing source layouts without copying
+        // their deployment receipts, build scripts, or private research into packages.
+        let members: [String]
+        if let assets = description.assets {
+            guard !assets.isEmpty, assets.count <= 2_000,
+                  Set(assets).count == assets.count, assets.contains("index.html") else {
                 throw WorkspaceError.invalidSchema
             }
+            members = assets
+        } else {
+            guard !base.isEmpty else { throw WorkspaceError.invalidSchema }
+            members = files.keys.filter { $0.hasPrefix(base) }.map { String($0.dropFirst(base.count)) }
+        }
+        var output: [String: Data] = [:]
+        for member in members {
+            guard WorkspaceValidation.member(member),
+                  allowed.contains(URL(fileURLWithPath: member).pathExtension.lowercased()),
+                  let bytes = files[base + member] else { throw WorkspaceError.invalidSchema }
             output[member] = bytes
         }
         return output
@@ -327,6 +363,7 @@ final class WorkbenchBuildCoordinator {
 
 private struct BuildScreenDescription: Decodable {
     let name: String
+    let assets: [String]?
     let target: ManifestTarget?
     let connections: [ManifestConnection]?
     let pages: [DashboardPage]?

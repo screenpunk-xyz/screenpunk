@@ -91,6 +91,179 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         self.supportAnchorSetup = supportAnchorSetup
     }
 
+    @_spi(NativeInstallation) public final class DetachedLocalContext: @unchecked Sendable {
+        public let commonRoot: URL, commonRootID: UUID, retiredInstallationID: UUID
+        fileprivate let root: UnifiedRootReservation
+        fileprivate let resetBaseline: DeviceLocalResetRecord?
+        fileprivate let owner: UUID
+        fileprivate var active = false
+        fileprivate init(root: UnifiedRootReservation, owner: UUID, retiredInstallationID: UUID,
+            resetBaseline: DeviceLocalResetRecord?) {
+            self.root = root; self.owner = owner; self.retiredInstallationID = retiredInstallationID
+            self.resetBaseline = resetBaseline; commonRoot = root.root; commonRootID = root.rootID
+        }
+    }
+    private var detachedCandidate: DetachedLocalContext?
+    private var detachedLocal: DetachedLocalContext?
+    /// Called before the explicit mixed detach; an inactive candidate grants no LAN authority.
+    @_spi(NativeInstallation) public func prepareCloudDetachment(context: CloudInstallationContext,
+        session: DeviceUnifiedInventorySession) throws -> DetachedLocalContext {
+        let association = try session.validatedAssociation()
+        return try serialized {
+            try checkCloud(context)
+            guard concurrentControlQualified, let original = unifiedRoot, original.context === context,
+                original.root.rootID == association.commonRootID,
+                association.installationID == context.activation.installationId else { throw Failure.staleLease }
+            try original.root.validate()
+            let candidate = DetachedLocalContext(root: original.root, owner: identity,
+                retiredInstallationID: context.activation.installationId, resetBaseline: try cloudResetAllowed())
+            detachedCandidate = candidate
+            return candidate
+        }
+    }
+    /// The caller only discovered metadata. Source and detached-CAS validation must
+    /// finish in Core before acceptDetachedLocalSession can grant a Local context.
+    @_spi(NativeInstallation) public func prepareDetachedLocalRestore(commonRootID: UUID,
+        retiredInstallationID: UUID) throws -> DetachedLocalContext {
+        try serialized {
+            try supportAnchorSetup.validateForInspection()
+            let root = try physicalInventoryParent(managedNamespace.inspect().namespaceURL.deletingLastPathComponent())
+                .appendingPathComponent("xyz.screenpunk.unified-inventory", isDirectory: true)
+            let anchor = open(root.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard anchor >= 0 else { throw Failure.staleLease }
+            let descriptor = openat(anchor, root.lastPathComponent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard descriptor >= 0 else { close(anchor); throw Failure.staleLease }
+            var parentInfo = stat(), info = stat()
+            guard fstat(anchor, &parentInfo) == 0, fstat(descriptor, &info) == 0 else {
+                close(descriptor); close(anchor); throw Failure.staleLease
+            }
+            let reservation = UnifiedRootReservation(root: root, rootID: commonRootID, anchor: anchor,
+                descriptor: descriptor, anchorIdentity: parentInfo, identity: info)
+            try reservation.validate()
+            let candidate = DetachedLocalContext(root: reservation, owner: identity,
+                retiredInstallationID: retiredInstallationID, resetBaseline: try cloudResetAllowed())
+            detachedCandidate = candidate
+            return candidate
+        }
+    }
+    @_spi(NativeInstallation) public func validateDetachedLocalResources(_ context: DetachedLocalContext) throws {
+        try serialized { try checkDetachedLocal(context, requireActive: false) }
+    }
+    private func checkDetachedLocal(_ context: DetachedLocalContext, requireActive: Bool) throws {
+        guard context.owner == identity, detachedCandidate === context || detachedLocal === context,
+            !requireActive || (detachedLocal === context && context.active),
+            try cloudResetAllowed() == context.resetBaseline else { throw Failure.staleLease }
+        try context.root.validate()
+    }
+    @_spi(NativeInstallation) public func acceptDetachedLocalSession(_ session: DeviceUnifiedInventorySession,
+        context: DetachedLocalContext) throws -> DeviceManagementContext {
+        let association = try session.detachedAssociation()
+        try association.validateCurrent()
+        return try serialized {
+            try checkDetachedLocal(context, requireActive: false)
+            guard association.metadata.commonRootID == context.commonRootID,
+                association.metadata.retiredInstallationID == context.retiredInstallationID else { throw Failure.staleLease }
+            invalidateCloud()
+            unifiedRoot = nil; detachedLocal = context; detachedCandidate = nil; context.active = true
+            return DeviceManagementContext(authority: self, detached: context)
+        }
+    }
+    fileprivate func withDetachedLocalAuthority<T>(_ context: DetachedLocalContext, operation: () throws -> T) throws -> T {
+        try serialized {
+            try checkDetachedLocal(context, requireActive: true)
+            let value = try operation()
+            try checkDetachedLocal(context, requireActive: true)
+            return value
+        }
+    }
+    private func liveUnifiedLocalRoot() throws -> (root: UnifiedRootReservation, installationID: UUID) {
+        if let detachedLocal {
+            try checkDetachedLocal(detachedLocal, requireActive: true)
+            return (detachedLocal.root, detachedLocal.retiredInstallationID)
+        }
+        guard let original = unifiedRoot else { throw Failure.staleLease }
+        try checkUnifiedLocalRoot(original)
+        return (original.root, original.context.activation.installationId)
+    }
+    fileprivate func observeDetachedInvalidation(_ context: DetachedLocalContext,
+        action: @escaping () -> Void) throws -> UUID {
+        try serialized {
+            try checkDetachedLocal(context, requireActive: true)
+            let id = UUID(); unifiedInvalidationObservers[id] = action; return id
+        }
+    }
+    @_spi(NativeInstallation) public func retireDetachedLocalContext(_ context: DetachedLocalContext) throws {
+        try serialized {
+            try checkDetachedLocal(context, requireActive: true)
+            context.active = false; detachedLocal = nil; detachedCandidate = nil
+            invalidationActions.append(contentsOf: unifiedInvalidationObservers.values)
+            unifiedInvalidationObservers.removeAll()
+        }
+    }
+    /// Explicit logout cleanup must have made the original Cloud namespace truly
+    /// absent. No ordinary fresh-enrollment absence/ownership fence is relaxed.
+    @_spi(NativeInstallation) public func prepareCloudEnrollmentAfterDetach(context: DetachedLocalContext,
+        association: DeviceDetachedLocalInventoryAssociation, claim: NativeClaimInput,
+        cloudRootID: UUID, localIDs: NativeManagedLocalRootIDs) throws -> FreshCloudEnrollmentRoots {
+        try association.validateCurrent()
+        try serialized {
+            try checkDetachedLocal(context, requireActive: true)
+            guard association.metadata.commonRootID == context.commonRootID,
+                association.metadata.retiredInstallationID == context.retiredInstallationID, association.metadata.cleanupCompleted else { throw Failure.staleLease }
+            if freshCloudRoots?.claim != claim { freshCloudRoots = nil }
+        }
+        if try managedNamespace.inspect().classification == .managedPresent {
+            // A retry may reopen only the caller's same persisted new request;
+            // Core still proves all IDs/journal/Keychain ownership before use.
+            return try restoreRecordedCloudEnrollmentRoots(claim: claim, cloudRootID: cloudRootID, localIDs: localIDs)
+        }
+        return try prepareFreshCloudRoots(claim: claim, recordedCloudRootID: cloudRootID,
+            recordedLocalIDs: localIDs, afterDetached: true)
+    }
+    @_spi(NativeInstallation) public func reattachCloudInventory(detached: DeviceUnifiedInventorySession,
+        detachedContext: DetachedLocalContext, context: CloudInstallationContext,
+        native: NativeDeliveryExecutionSession, current: NativeCurrentInstallationDispatch,
+        operationID: UUID, generationID: UUID) throws -> DeviceUnifiedInventorySession {
+        let prior = try detached.detachedAssociation()
+        try prior.validateCurrent()
+        let root = try serialized { () throws -> UnifiedRootReservation in
+            try checkDetachedLocal(detachedContext, requireActive: true); try checkCloud(context)
+            guard prior.metadata.cleanupCompleted, prior.metadata.commonRootID == detachedContext.commonRootID,
+                prior.metadata.retiredInstallationID == detachedContext.retiredInstallationID else { throw Failure.staleLease }
+            return detachedContext.root
+        }
+        // Core validates before and after its attachment CAS. Before that CAS
+        // the exact retained root still belongs to the sealed detached context;
+        // it cannot already be registered as the new attached owner. Once the
+        // handoff below registers it, every later check uses normal admission.
+        let validateAttachment: () throws -> Void = { [self] in
+            try serialized {
+                try checkCloud(context); try root.validate()
+                if let attached = unifiedRoot {
+                    guard attached.context === context, attached.root === root else { throw Failure.staleLease }
+                    try checkUnifiedLocalRoot(attached)
+                } else {
+                    try checkDetachedLocal(detachedContext, requireActive: true)
+                    guard detachedContext.root === root else { throw Failure.staleLease }
+                }
+            }
+        }
+        let session = try detached.reattachCloud(native: native, current: current,
+            operationID: operationID, generationID: generationID,
+            validateAttached: validateAttachment,
+            validateMutation: { [self] in
+                try validateAttachment()
+                try serialized { try checkCloud(context); try root.validate(); guard concurrentControlQualified else { throw Failure.staleLease } }
+            }, automationOwner: { [self] base in try makeAutomaticSelectionOwner(context: context, commonRootID: root.rootID, baseGenerationID: base) })
+        try serialized {
+            try checkCloud(context); try root.validate()
+            unifiedRoot = (context, root)
+            detachedContext.active = false; detachedLocal = nil; detachedCandidate = nil
+            invalidationActions.append(contentsOf: unifiedInvalidationObservers.values)
+            unifiedInvalidationObservers.removeAll()
+        }
+        return session
+    }
     /// Original first-native directory ownership. No server IDs or management
     /// permission are manufactured by this local initialization reservation.
     @_spi(NativeInstallation) public final class FreshCloudEnrollmentRoots {
@@ -120,18 +293,23 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     /// into an empty history. Any existing managed namespace is refused, not adopted.
     @_spi(NativeInstallation) public func prepareFreshCloudEnrollmentRoots(claim: NativeClaimInput, recordedCloudRootID: UUID? = nil,
         recordedLocalIDs: NativeManagedLocalRootIDs? = nil) throws -> FreshCloudEnrollmentRoots {
+        try prepareFreshCloudRoots(claim: claim, recordedCloudRootID: recordedCloudRootID,
+            recordedLocalIDs: recordedLocalIDs, afterDetached: false)
+    }
+    private func prepareFreshCloudRoots(claim: NativeClaimInput, recordedCloudRootID: UUID?,
+        recordedLocalIDs: NativeManagedLocalRootIDs?, afterDetached: Bool) throws -> FreshCloudEnrollmentRoots {
         try serialized {
             if let original = freshCloudRoots {
                 guard original.claim == claim else { throw Failure.staleLease }
                 try checkFreshCloudRoots(original, requireReady: false)
                 try createFreshCloudRoots(original); return original
             }
-            guard cloudForeground, !managedNamespaceQuarantined, !quarantined, observedHistory == nil,
+            guard cloudForeground, (!managedNamespaceQuarantined || afterDetached), !quarantined, observedHistory == nil,
                 try journal.loadEvidence() == nil, try credentials.references().isEmpty else { throw Failure.staleLease }
             let resetBaseline = try cloudResetAllowed()
             try supportAnchorSetup.validateForInspection()
             let absence = try managedNamespace.inspect()
-            guard absence.classification == .confirmedAbsent, observedNamespace == nil || observedNamespace == absence else { throw Failure.staleLease }
+            guard absence.classification == .confirmedAbsent, afterDetached || observedNamespace == nil || observedNamespace == absence else { throw Failure.staleLease }
             // Revoke Local before any creation. Failed initialization stays retained
             // on this SAME owner; namespace presence never reopens Local permission.
             invalidate(); managedNamespaceQuarantined = true
@@ -147,12 +325,28 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     /// the journal and compare current Keychain material before it can bind.
     @_spi(NativeInstallation) public func restoreRecordedCloudEnrollmentRoots(claim: NativeClaimInput,
         cloudRootID: UUID, localIDs: NativeManagedLocalRootIDs) throws -> FreshCloudEnrollmentRoots {
+        try restoreRecordedCloudRoots(claim: claim, cloudRootID: cloudRootID, localIDs: localIDs, inspector: managedNamespace)
+    }
+    private func restoreRecordedCloudRoots(claim: NativeClaimInput, cloudRootID: UUID,
+        localIDs: NativeManagedLocalRootIDs, inspector: DeviceManagedNamespaceInspector) throws -> FreshCloudEnrollmentRoots {
         try serialized {
-            guard cloudForeground, freshCloudRoots == nil || freshCloudRoots?.generation != cloudGeneration else { throw Failure.staleLease }
+            guard cloudForeground else { throw Failure.staleLease }
+            if let original = freshCloudRoots, original.generation == cloudGeneration {
+                guard original.originalAbsence.classification == .managedPresent,
+                    original.claim == claim, original.cloudRootID == cloudRootID,
+                    original.localIDs.package == localIDs.package, original.localIDs.grant == localIDs.grant,
+                    original.localIDs.structural == localIDs.structural, original.localIDs.provisioning == localIDs.provisioning,
+                    original.localIDs.contentGenesis == localIDs.contentGenesis else { throw Failure.staleLease }
+                // An earlier restore may fail before its session is retained. Retry
+                // only this exact reservation; Core must still replay all durable
+                // journal/credential evidence before operational binding.
+                try checkFreshCloudRoots(original, requireReady: true)
+                return original
+            }
             freshCloudRoots = nil
             let baseline = try cloudResetAllowed()
             try supportAnchorSetup.validateForInspection()
-            let present = try managedNamespace.inspect()
+            let present = try inspector.inspect()
             guard present.classification == .managedPresent else { throw Failure.staleLease }
             invalidate(); managedNamespaceQuarantined = true
             let original = try FreshCloudEnrollmentRoots(owner: identity, process: cloudProcess,
@@ -176,7 +370,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
             }
             let namespaceFD = try pin(DeviceNativeManagedRootLocator.namespaceName, parent: original.anchor)
             for name in DeviceNativeManagedRootLocator.futureChildNames + ["enrollment"] { _ = try pin(name, parent: namespaceFD) }
-            guard try managedNamespace.inspect() == present else { throw Failure.staleLease }
+            guard try inspector.inspect() == present else { throw Failure.staleLease }
             freshCloudRoots = original; original.ready = true
             try checkFreshCloudRoots(original, requireReady: true)
             return original
@@ -317,14 +511,44 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
             first.st_dev == last.st_dev, first.st_ino == last.st_ino else { throw Failure.staleLease }
         return result
     }
+    /// Reopens retained Local source roots from committed mixed metadata. This
+    /// never creates a namespace or derives Local authority from metadata alone.
+    @_spi(NativeInstallation) public func restoreDetachedLocalInventoryRoots(context: DetachedLocalContext,
+        operationID: UUID? = nil, ids: NativeManagedLocalRootIDs) throws -> LocalInventoryRoots {
+        try serialized {
+            try checkDetachedLocal(context, requireActive: false)
+            let name = operationID.map { "xyz.screenpunk.local-operation-" + $0.uuidString.lowercased() } ?? "xyz.screenpunk.local-inventory"
+            let namespace = context.commonRoot.deletingLastPathComponent().appendingPathComponent(name, isDirectory: true)
+            var reservations: [UnifiedRootReservation] = []
+            for (root, id) in [(namespace, ids.contentGenesis),
+                (namespace.appendingPathComponent("packages", isDirectory: true), ids.package),
+                (namespace.appendingPathComponent("grants", isDirectory: true), ids.grant),
+                (namespace.appendingPathComponent("structural", isDirectory: true), ids.structural),
+                (namespace.appendingPathComponent("provisioning", isDirectory: true), ids.provisioning)] {
+                let parent = open(root.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                guard parent >= 0 else { throw Failure.staleLease }
+                let fd = openat(parent, root.lastPathComponent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                guard fd >= 0 else { close(parent); throw Failure.staleLease }
+                var p = stat(), n = stat()
+                guard fstat(parent, &p) == 0, fstat(fd, &n) == 0 else { close(fd); close(parent); throw Failure.staleLease }
+                let reservation = UnifiedRootReservation(root: root, rootID: id, anchor: parent,
+                    descriptor: fd, anchorIdentity: p, identity: n)
+                try reservation.validate(); reservations.append(reservation)
+            }
+            try checkDetachedLocal(context, requireActive: false)
+            return LocalInventoryRoots(namespace: namespace, ids: ids,
+                lease: Lease(owner: identity, generation: generation), resetBaseline: context.resetBaseline, reservations: reservations)
+        }
+    }
+
     /// Reserves disjoint incoming package roots after the host has durably recorded
     /// its operation and root identities. Final mutation still requires a sealed peer command.
     @_spi(NativeInstallation) public func prepareIncomingLocalInventoryRoots(context: DeviceManagementContext,
         operationID: UUID, ids: NativeManagedLocalRootIDs) throws -> LocalInventoryRoots {
         try serialized {
-            guard context.belongs(to: self), context.isConcurrent, concurrentControlQualified,
-                let original = unifiedRoot, context.commonRootID == original.root.rootID else { throw Failure.staleLease }
-            try checkUnifiedLocalRoot(original)
+            guard context.belongs(to: self), context.isConcurrent, concurrentControlQualified else { throw Failure.staleLease }
+            let original = try liveUnifiedLocalRoot()
+            guard context.commonRootID == original.root.rootID else { throw Failure.staleLease }
             let namespace = try physicalInventoryParent(original.root.root.deletingLastPathComponent())
                 .appendingPathComponent("xyz.screenpunk.local-operation-" + operationID.uuidString.lowercased(), isDirectory: true)
             var reservations: [UnifiedRootReservation] = []
@@ -348,7 +572,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
                 guard fsync(fd) == 0, fsync(anchor) == 0 else { throw Failure.staleLease }
                 reservations.append(reservation)
             }
-            try checkUnifiedLocalRoot(original)
+            _ = try liveUnifiedLocalRoot()
             return LocalInventoryRoots(namespace: namespace, ids: ids,
                 lease: Lease(owner: identity, generation: generation), resetBaseline: try reset.load(), reservations: reservations)
         }
@@ -395,7 +619,9 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     @_spi(NativeInstallation) public func restoreRecordedLocalInventoryRoots(context: CloudInstallationContext,
         ids: NativeManagedLocalRootIDs) throws -> LocalInventoryRoots {
         try serialized {
-            try checkCloud(context)
+            guard context.owner == identity, context.process == cloudProcess, resetAttempt == nil,
+                !resetQuarantined, try reset.load() == context.resetBaseline else { throw Failure.staleLease }
+            try context.installation.verifyManagedNamespace(managedNamespace.inspect())
             let namespace = try managedNamespace.inspect().namespaceURL.deletingLastPathComponent()
                 .appendingPathComponent("xyz.screenpunk.local-inventory", isDirectory: true)
             var reservations: [UnifiedRootReservation] = []
@@ -414,7 +640,9 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
                     descriptor: fd, anchorIdentity: anchorStat, identity: value)
                 try reservation.validate(); reservations.append(reservation)
             }
-            try checkCloud(context)
+            guard context.owner == identity, context.process == cloudProcess, resetAttempt == nil,
+                !resetQuarantined, try reset.load() == context.resetBaseline else { throw Failure.staleLease }
+            try context.installation.verifyManagedNamespace(managedNamespace.inspect())
             return LocalInventoryRoots(namespace: namespace, ids: ids,
                 lease: Lease(owner: identity, generation: generation), resetBaseline: try reset.load(), reservations: reservations)
         }
@@ -835,9 +1063,9 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     /// is held before accepting the intent, and again for the nominal fixed commit.
     func acceptUnifiedLocalIntent(peerPinHex: String, validateApproved: () throws -> Void) throws -> DeviceCommandIntentCoordinator.Checkpoint? {
         try serialized {
-            guard concurrentControlQualified, let commandIntents, let original = unifiedRoot,
+            guard concurrentControlQualified, let commandIntents,
                 peerPinHex.count == 64, PeerPin.bytes(peerPinHex)?.count == 32 else { throw Failure.staleLease }
-            try checkUnifiedLocalRoot(original); try validateApproved()
+            _ = try liveUnifiedLocalRoot(); try validateApproved()
             try commandIntents.acceptLocalIntent()
             return try commandIntents.checkpoint()
         }
@@ -868,17 +1096,18 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         peerPinHex: String, checkpoint: DeviceCommandIntentCoordinator.Checkpoint?,
         performApproved: () throws -> NativeInstallationUnifiedLocalDispatchResult) throws -> NativeInstallationUnifiedLocalDispatchResult {
         try serialized {
-            guard concurrentControlQualified, let original = unifiedRoot,
+            let original = try liveUnifiedLocalRoot()
+            guard concurrentControlQualified,
                 original.root.rootID == command.commonRootID,
-                command.installationID == original.context.activation.installationId,
+                command.installationID == original.installationID,
                 command.peerPinHex == peerPinHex,
                 commandIntents != nil, checkpoint != nil else { throw Failure.staleLease }
             // Local approved control continues during Cloud network outages; only
             // the genuine installation/reset lifetime is required here.
-            try checkUnifiedLocalRoot(original)
+            _ = try liveUnifiedLocalRoot()
             if let checkpoint { try commandIntents?.requireUnchanged(checkpoint) }
             let result = try performApproved() // Fixed LAN adapter retains registry lock throughout.
-            try checkUnifiedLocalRoot(original)
+            _ = try liveUnifiedLocalRoot()
             if let checkpoint {
                 try commandIntents?.requireUnchanged(checkpoint)
                 try commandIntents?.recordCommittedInventory(checkpoint: checkpoint, generationID: command.resultingGenerationID)
@@ -936,7 +1165,25 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
             if observedNamespace != nil { try checkManagedNamespace(); return }
             invalidate(); supportAnchorPending = true
             try supportAnchorSetup.prepare()
+            try supportAnchorSetup.prepareDefaultDeviceStateRoot()
             supportAnchorPending = false
+        }
+    }
+
+    /// Inspection only for a completed detached Local inventory. This does not
+    /// create a lease/context or qualify any inventory resource for management.
+    func validateRecordedDetachedLocalStartup(commonRootID: UUID, retiredInstallationID: UUID) throws {
+        try serialized {
+            guard !supportAnchorPending, supportAnchorSetup.allowsNamespaceInspection else { throw Failure.staleLease }
+            try supportAnchorSetup.validateForInspection()
+            _ = try cloudResetAllowed()
+            let namespace = try managedNamespace.inspect()
+            guard namespace.classification == .confirmedAbsent else { throw Failure.staleLease }
+            let root = try physicalInventoryParent(namespace.namespaceURL.deletingLastPathComponent())
+                .appendingPathComponent("xyz.screenpunk.unified-inventory", isDirectory: true)
+            guard let metadata = try DeviceUnifiedInventorySession.peekDetachedMetadata(commonRoot: root, commonRootID: commonRootID),
+                metadata.commonRootID == commonRootID, metadata.retiredInstallationID == retiredInstallationID,
+                metadata.cleanupCompleted else { throw Failure.staleLease }
         }
     }
 
@@ -944,6 +1191,16 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     /// checks do not exclude external filesystem writers; future managed writes share this owner.
     func requireLegacyNamespaceAbsent() throws {
         try serialized { try checkManagedNamespace() }
+    }
+    /// Prepared-owner routing check only. No native identity, lease, root
+    /// reservation or credential is adopted here; exact restore remains separate.
+    func validateRecordedNativeStartup() throws {
+        try serialized {
+            guard !supportAnchorPending, supportAnchorSetup.allowsNamespaceInspection else { throw Failure.staleLease }
+            try supportAnchorSetup.validateForInspection()
+            _ = try cloudResetAllowed()
+            guard try managedNamespace.inspect().classification == .managedPresent else { throw Failure.staleLease }
+        }
     }
     private func checkManagedNamespace() throws {
         guard !managedNamespaceQuarantined else { throw Failure.staleLease }
@@ -1447,6 +1704,12 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
         invalidationActions.append(contentsOf: invalidationObservers.values)
         invalidationObservers = [:]
     }
+    /// Called only inside the captured management context's authority transaction.
+    /// Detached Local keeps the retired installation identity without Cloud authority.
+    fileprivate func validateUnifiedLocalAttachmentUnderAuthority(commonRootID: UUID, installationID: UUID) throws {
+        let live = try liveUnifiedLocalRoot()
+        guard live.root.rootID == commonRootID, live.installationID == installationID else { throw Failure.staleLease }
+    }
     fileprivate func qualifiedCloudInstallationIDUnderAuthority() throws -> UUID? {
         guard let context = cloudInstallation else { return nil }
         try checkCloud(context)
@@ -1454,8 +1717,7 @@ public final class DeviceManagementAuthority: @unchecked Sendable {
     }
     fileprivate func acceptLocalCommandIntent() throws { try commandIntents?.acceptLocalIntent() }
     fileprivate func validateKnownLocalDeploymentUnderAuthority(key: String, digest: String) throws -> Bool {
-        guard let original = unifiedRoot else { throw Failure.staleLease }
-        try checkUnifiedLocalRoot(original)
+        _ = try liveUnifiedLocalRoot()
         return try commandIntents?.knownDeployment(key: key, digest: digest) ?? false
     }
     fileprivate func acceptLocalDeployment(key: String, digest: String) throws { try commandIntents?.acceptLocalDeployment(key: key, digest: digest) }
@@ -1488,19 +1750,27 @@ public struct DeviceManagementContext: @unchecked Sendable {
     private let authority: DeviceManagementAuthority
     private let lease: DeviceManagementAuthority.Lease?
     private let concurrent: DeviceManagementAuthority.CloudInstallationContext?
+    private let detached: DeviceManagementAuthority.DetachedLocalContext?
     private let factoryResetID: UUID?
     let commonRootID: UUID?
-    var isConcurrent: Bool { concurrent != nil }
+    var isConcurrent: Bool { concurrent != nil || detached != nil }
     public init(authority: DeviceManagementAuthority, lease: DeviceManagementAuthority.Lease) {
-        self.authority = authority; self.lease = lease; concurrent = nil; commonRootID = nil; factoryResetID = nil
+        self.authority = authority; self.lease = lease; concurrent = nil; detached = nil; commonRootID = nil; factoryResetID = nil
     }
     fileprivate init(authority: DeviceManagementAuthority, concurrent: DeviceManagementAuthority.CloudInstallationContext, commonRootID: UUID) {
-        self.authority = authority; lease = nil; self.concurrent = concurrent; self.commonRootID = commonRootID; factoryResetID = nil
+        self.authority = authority; lease = nil; self.concurrent = concurrent; detached = nil; self.commonRootID = commonRootID; factoryResetID = nil
     }
     fileprivate init(authority: DeviceManagementAuthority, factoryResetID: UUID) {
-        self.authority = authority; lease = nil; concurrent = nil; commonRootID = nil; self.factoryResetID = factoryResetID
+        self.authority = authority; lease = nil; concurrent = nil; detached = nil; commonRootID = nil; self.factoryResetID = factoryResetID
+    }
+    fileprivate init(authority: DeviceManagementAuthority, detached: DeviceManagementAuthority.DetachedLocalContext) {
+        self.authority = authority; lease = nil; concurrent = nil; self.detached = detached
+        commonRootID = detached.commonRootID; factoryResetID = nil
     }
     func belongs(to owner: DeviceManagementAuthority) -> Bool { authority === owner }
+    func validateUnifiedLocalAttachmentUnderAuthority(commonRootID: UUID, installationID: UUID) throws {
+        try authority.validateUnifiedLocalAttachmentUnderAuthority(commonRootID: commonRootID, installationID: installationID)
+    }
     func qualifiedCloudInstallationIDUnderAuthority() throws -> UUID? { try authority.qualifiedCloudInstallationIDUnderAuthority() }
     func acceptCommandIntentUnderAuthority() throws { try authority.acceptLocalCommandIntent() }
     func validateKnownLocalDeploymentUnderAuthority(key: String, digest: String) throws -> Bool {
@@ -1511,6 +1781,7 @@ public struct DeviceManagementContext: @unchecked Sendable {
     public func revoke() throws { try authority.revoke() }
     func beginLocalReset(record: DeviceLocalResetRecord) throws { if let factoryResetID { try authority.beginFactoryReset(factoryResetID, record: record); return }; guard let lease else { throw DeviceManagementAuthority.Failure.staleLease }; try authority.beginLocalReset(lease, record: record) }
     func observeInvalidation(_ action: @escaping () -> Void) throws -> UUID {
+        if let detached { return try authority.observeDetachedInvalidation(detached, action: action) }
         if let concurrent, let commonRootID { return try authority.observeUnifiedInvalidation(context: concurrent, commonRootID: commonRootID, action: action) }
         guard let lease else { throw DeviceManagementAuthority.Failure.staleLease }
         return try authority.observeInvalidation(lease, action)
@@ -1529,6 +1800,7 @@ public struct DeviceManagementContext: @unchecked Sendable {
             checkpoint: checkpoint, performApproved: performApproved)
     }
     func withAuthority<T>(_ operation: () throws -> T) throws -> T {
+        if let detached { return try authority.withDetachedLocalAuthority(detached, operation: operation) }
         if let concurrent, let commonRootID { return try authority.withUnifiedHostAuthority(context: concurrent, commonRootID: commonRootID, operation: operation) }
         guard let lease else { throw DeviceManagementAuthority.Failure.staleLease }
         var result: Result<T, Error>?

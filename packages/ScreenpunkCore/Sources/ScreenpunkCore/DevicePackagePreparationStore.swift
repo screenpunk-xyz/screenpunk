@@ -65,13 +65,17 @@ final class DevicePackagePreparationStore {
         let schemaVersion: Int; let rootID: UUID; let rootPath: String; let protectedPaths: [String]
         let rootIdentity: PreparationIdentity; let lockIdentity: PreparationIdentity; let operationsIdentity: PreparationIdentity
     }
-    private struct Context { let root: Int32; let lock: Int32; let operations: Int32; let binding: Binding }
+    private struct Context { let root: Int32; let lock: Int32; let operations: Int32; let binding: Binding
+        let liveRoot: PreparationIdentity; let liveLock: PreparationIdentity; let liveOperations: PreparationIdentity
+    }
     private struct Entry { let record: PreparationRecord; let final: Node?; let staged: Node? }
     private struct Inventory { let entries: [Entry]; var tip: Entry? { entries.last }; var hasStages: Bool { entries.contains { $0.staged != nil } } }
     let root: URL
     let rootID: UUID
     private let scope: DevicePackageProtectedScope
     private let boundary: (Boundary) throws -> Void
+    private let contextFactory: (URL, Int32) throws -> DevicePersistedFilesystemContext
+    private var filesystemContext: DevicePersistedFilesystemContext?
     private let mutex = NSLock()
     private var bindingQualified = false
     private var setupRoot: PreparationIdentity?
@@ -81,8 +85,9 @@ final class DevicePackagePreparationStore {
     private var qualification: (epoch: UInt64, tip: Node)?
     private static let gateLock = NSLock()
     private static var epochs: [String: UInt64] = [:]
-    init(root: URL, rootID: UUID, protectedScope: DevicePackageProtectedScope, boundary: @escaping (Boundary) throws -> Void = { _ in }) {
-        self.root = root; self.rootID = rootID; scope = protectedScope; self.boundary = boundary
+    init(root: URL, rootID: UUID, protectedScope: DevicePackageProtectedScope, contextFactory: @escaping (URL, Int32) throws -> DevicePersistedFilesystemContext = { try .capture(currentRoot: $0, heldRoot: $1) },
+        boundary: @escaping (Boundary) throws -> Void = { _ in }) {
+        self.root = root; self.rootID = rootID; scope = protectedScope; self.boundary = boundary; self.contextFactory = contextFactory
     }
     private func epoch(invalidate: Bool = false) -> UInt64 {
         Self.gateLock.lock(); defer { Self.gateLock.unlock() }
@@ -92,7 +97,7 @@ final class DevicePackagePreparationStore {
     }
     /// Root must already exist. Unknown preexisting setup/content is never silently initialized.
     func makeIndependentStore(root: URL, rootID: UUID) -> DevicePackagePreparationStore {
-        .init(root: root, rootID: rootID, protectedScope: scope)
+        .init(root: root, rootID: rootID, protectedScope: scope, contextFactory: contextFactory)
     }
     func initializeExplicit() throws {
         try disk(create: true) { context in
@@ -258,8 +263,9 @@ final class DevicePackagePreparationStore {
             _ = try checkedPackage(c,record:initial,directory:initial.plan.leaf,synchronize:false);return
         }
         guard let id=initial.directoryIdentity else{throw DevicePackagePreparationError.conflict}
-        let stage=try directory(c.root,initial.plan.stage,expected:id,create:false);defer{close(stage)}
-        var record=initial,missing=Set<String>(),existing:[String]=[""]
+        let stage=try directory(c.root,initial.plan.stage,expected:id,create:false,recorded:true);defer{close(stage)}
+        var record=initial
+        var missing=Set<String>(),existing:[String]=[""]
         func missingAncestor(_ path:String)->Bool{missing.contains{path.utf8.starts(with:($0+"/").utf8)}}
         for (index,path) in record.plan.directories.enumerated() {
             let key=captureKey(request.operationID,path+"/"),expected=record.directoryIdentities[index] ?? captured[key]
@@ -267,7 +273,15 @@ final class DevicePackagePreparationStore {
             let parent=try parent(stage,path:path,record:record);defer{close(parent)}
             let leaf=String(path.split(separator:"/").last!)
             if let found=try directoryIdentity(parent,leaf) {
-                guard expected == found else{throw DevicePackagePreparationError.repairRequired};record.directoryIdentities[index]=found;existing.append(path)
+                if let recorded = record.directoryIdentities[index] {
+                    guard matchesDurable(recorded, found) else { throw DevicePackagePreparationError.repairRequired }
+                } else {
+                    guard captured[key] == found else { throw DevicePackagePreparationError.repairRequired }
+                    // Local traversal projection only: the same owning instance captured this
+                    // raw inode before its interrupted write. Never change retained metadata.
+                    record.directoryIdentities[index] = found
+                }
+                existing.append(path)
             } else {guard expected == nil else{throw DevicePackagePreparationError.conflict};missing.insert(path)}
         }
         var content=Dictionary(uniqueKeysWithValues:request.package.files.map{($0.path,$0.bytes)})
@@ -278,7 +292,7 @@ final class DevicePackagePreparationStore {
             let parent=try parent(stage,path:file.path,record:record);defer{close(parent)}
             let leaf=String(file.path.split(separator:"/").last!)
             if let node=try readFile(parent,leaf,limit:file.bytes) {
-                guard node.identity == expected,let bytes=content[file.path],bytes.starts(with:node.bytes) else{throw DevicePackagePreparationError.repairRequired}
+                guard (record.fileIdentities[index] != nil ? matchesDurable(expected, node.identity) : node.identity == expected),let bytes=content[file.path],bytes.starts(with:node.bytes) else{throw DevicePackagePreparationError.repairRequired}
             } else {guard expected == nil else{throw DevicePackagePreparationError.conflict}}
         }
         let paths=record.plan.files.map(\.path)+record.plan.directories
@@ -643,19 +657,20 @@ final class DevicePackagePreparationStore {
         }
         // Rename uncertainty: the exact recorded inode may already be installed. Never recreate it.
         if let final = try directoryIdentity(context.root, record.plan.leaf) {
-            guard final == record.directoryIdentity, try directoryIdentity(context.root, record.plan.stage) == nil else { throw DevicePackagePreparationError.conflict }
+            guard matchesDurable(record.directoryIdentity, final), try directoryIdentity(context.root, record.plan.stage) == nil else { throw DevicePackagePreparationError.conflict }
             _ = try checkedPackage(context, record: record, directory: record.plan.leaf, synchronize: true)
             try sync(context.root)
         } else {
             guard let stageIdentity = record.directoryIdentity else { throw DevicePackagePreparationError.conflict }
-            let stage = try directory(context.root, record.plan.stage, expected: stageIdentity, create: false)
+            let stage = try directory(context.root, record.plan.stage, expected: stageIdentity, create: false, recorded: true)
             defer { close(stage) }
+            let liveStageIdentity = try identity(stage, directory: true)
             for (index, path) in record.plan.directories.enumerated() {
                 let parent = try parent(stage, path: path, record: record); defer { close(parent) }
                 let leaf = path.split(separator: "/").last.map(String.init)!
                 let key = captureKey(request.operationID, path + "/")
                 let child = try directory(parent, leaf, expected: record.directoryIdentities[index] ?? captured[key],
-                    create: record.directoryIdentities[index] == nil && captured[key] == nil, onCreate: { captured[key] = $0 })
+                    create: record.directoryIdentities[index] == nil && captured[key] == nil, recorded: record.directoryIdentities[index] != nil, onCreate: { captured[key] = $0 })
                 defer { close(child) }
                 let found = try identity(child, directory: true)
                 if record.directoryIdentities[index] == nil {
@@ -674,7 +689,8 @@ final class DevicePackagePreparationStore {
                 if let expected = record.fileIdentities[index] ?? captured[key] {
                     fd = openat(parent, leaf, O_RDWR | O_NOFOLLOW | O_NONBLOCK)
                     guard fd >= 0 else { throw failure() }
-                    guard try identity(fd, directory: false) == expected else { throw DevicePackagePreparationError.conflict }
+                    let observed = try identity(fd, directory: false)
+                    guard (record.fileIdentities[index] != nil ? matchesDurable(expected, observed) : observed == expected) else { throw DevicePackagePreparationError.conflict }
                 } else {
                     fd = openat(parent, leaf, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0o600)
                     guard fd >= 0 else { throw failure() }
@@ -697,11 +713,11 @@ final class DevicePackagePreparationStore {
             // Verify exact inventory and bytes before dependent rename, then synchronize owned subtree.
             _ = try checkedPackage(context, record: record, directory: record.plan.stage, synchronize: true)
             try boundary(.beforeReplace(.install)); try check(context)
-            guard try directoryIdentity(context.root, record.plan.stage) == stageIdentity,
+            guard try directoryIdentity(context.root, record.plan.stage) == liveStageIdentity,
                   try directoryIdentity(context.root, record.plan.leaf) == nil else { throw DevicePackagePreparationError.conflict }
             guard renameat(context.root, record.plan.stage, context.root, record.plan.leaf) == 0 else { throw failure() }
             try boundary(.afterReplace(.install)); try sync(context.root); try boundary(.afterDirectorySync(.install))
-            guard try directoryIdentity(context.root, record.plan.leaf) == stageIdentity else { throw DevicePackagePreparationError.conflict }
+            guard try directoryIdentity(context.root, record.plan.leaf) == liveStageIdentity else { throw DevicePackagePreparationError.conflict }
         }
         record.phase = .terminal
         try persist(context, record: record, name: name, kind: .terminal)
@@ -748,10 +764,10 @@ final class DevicePackagePreparationStore {
             let staged = try directoryIdentity(context.root, record.plan.stage)
             let final = try directoryIdentity(context.root, record.plan.leaf)
             if record.phase == .terminal {
-                guard staged == nil, final == record.directoryIdentity else { throw DevicePackagePreparationError.conflict }
+                guard staged == nil, matchesDurable(record.directoryIdentity, final) else { throw DevicePackagePreparationError.conflict }
                 _ = try checkedPackage(context, record: record, directory: record.plan.leaf, synchronize: false)
             } else if record.phase == .prepared {
-                guard (staged == record.directoryIdentity && final == nil) || (final == record.directoryIdentity && staged == nil) else { throw DevicePackagePreparationError.conflict }
+                guard (matchesDurable(record.directoryIdentity, staged) && final == nil) || (matchesDurable(record.directoryIdentity, final) && staged == nil) else { throw DevicePackagePreparationError.conflict }
             } else { guard final == nil else { throw DevicePackagePreparationError.conflict } }
             allowed.insert(record.plan.stage); allowed.insert(record.plan.leaf)
         }
@@ -760,7 +776,8 @@ final class DevicePackagePreparationStore {
     }
     private func checkedPackage(_ context: Context, record: PreparationRecord, directory name: String, synchronize: Bool) throws -> QualifiedDevicePackage {
         guard let expectedRoot = record.directoryIdentity, record.fileIdentities.allSatisfy({ $0 != nil }), record.directoryIdentities.allSatisfy({ $0 != nil }) else { throw DevicePackagePreparationError.conflict }
-        let package = try directory(context.root, name, expected: expectedRoot, create: false); defer { close(package) }
+        let package = try directory(context.root, name, expected: expectedRoot, create: false, recorded: true); defer { close(package) }
+        let livePackageIdentity = try identity(package, directory: true)
         let allPaths = record.plan.files.map(\.path) + record.plan.directories
         for path in [""] + record.plan.directories {
             let fd = path.isEmpty ? dup(package) : try openDirectory(package, path: path, record: record)
@@ -775,7 +792,7 @@ final class DevicePackagePreparationStore {
         for (index, file) in record.plan.files.enumerated() {
             let parent = try parent(package, path: file.path, record: record); defer { close(parent) }
             let leaf = file.path.split(separator: "/").last.map(String.init)!
-            guard let node = try readFile(parent, leaf, limit: file.bytes), node.identity == record.fileIdentities[index],
+            guard let node = try readFile(parent, leaf, limit: file.bytes), matchesDurable(record.fileIdentities[index], node.identity),
                   node.bytes.count == file.bytes, try PackagePreparationCodec.hash(node.bytes) == file.sha256 else { throw DevicePackagePreparationError.conflict }
             if synchronize { try syncExisting(parent, leaf, expected: node) }
             if file.path == "manifest.json" { manifest = node.bytes } else { files.append(.init(path: file.path, bytes: node.bytes)) }
@@ -792,7 +809,7 @@ final class DevicePackagePreparationStore {
             }
             try sync(package); try boundary(.afterDirectorySync(.directory))
         }
-        guard try directoryIdentity(context.root, name) == expectedRoot else { throw DevicePackagePreparationError.conflict }
+        guard try directoryIdentity(context.root, name) == livePackageIdentity else { throw DevicePackagePreparationError.conflict }
         try check(context); return qualified
     }
     private func parent(_ package: Int32, path: String, record: PreparationRecord) throws -> Int32 {
@@ -806,13 +823,13 @@ final class DevicePackagePreparationStore {
             for part in path.split(separator: "/") {
                 prefix = prefix.isEmpty ? String(part) : prefix + "/" + part
                 guard let index = record.plan.directories.firstIndex(of: prefix), let expected = record.directoryIdentities[index] else { throw DevicePackagePreparationError.conflict }
-                let child = try directory(fd, String(part), expected: expected, create: false)
+                let child = try directory(fd, String(part), expected: expected, create: false, recorded: true)
                 close(fd); fd = child
             }
             return fd
         } catch { close(fd); throw error }
     }
-    private func directory(_ parent: Int32, _ name: String, expected: PreparationIdentity?, create: Bool,
+    private func directory(_ parent: Int32, _ name: String, expected: PreparationIdentity?, create: Bool, recorded: Bool = false,
                            onCreate: (PreparationIdentity) -> Void = { _ in }) throws -> Int32 {
         if create {
             guard mkdirat(parent, name, 0o700) == 0 else { throw failure() }
@@ -821,7 +838,7 @@ final class DevicePackagePreparationStore {
         guard fd >= 0 else { throw failure() }
         do {
             let found = try identity(fd, directory: true)
-            if let expected { guard found == expected else { throw DevicePackagePreparationError.conflict } }
+            if let expected { guard (recorded ? matchesDurable(expected, found) : found == expected) else { throw DevicePackagePreparationError.conflict } }
             if create { onCreate(found) }
             return fd
         } catch { close(fd); throw error }
@@ -874,6 +891,11 @@ final class DevicePackagePreparationStore {
     private func diskContext<T>(create: Bool, releasePermit: DeviceLocalResourcePermit? = nil, _ operation: (Context) throws -> T) throws -> T {
         let paths = try protectedPaths()
         let rootFD = try absoluteDirectory(root.path); defer { close(rootFD) }
+        let filesystem: DevicePersistedFilesystemContext
+        do { filesystem = try contextFactory(root, rootFD) }
+        catch { throw DevicePackagePreparationError.unsafeBinding }
+        let previousFilesystem = filesystemContext; filesystemContext = filesystem
+        defer { filesystemContext = previousFilesystem }
         let rootIdentity = try identity(rootFD, directory: true)
         let bindingExists = try readFile(rootFD, "root-binding.json", limit: PackagePreparationCodec.metadataLimit) != nil
         if create && !bindingExists {
@@ -905,33 +927,59 @@ final class DevicePackagePreparationStore {
             if let expected = setupOperations { guard expected == opsIdentity else { throw DevicePackagePreparationError.conflict } }
             setupOperations = opsIdentity
         }
-        let binding = Binding(schemaVersion: 1, rootID: rootID, rootPath: root.path, protectedPaths: paths,
+        var binding = Binding(schemaVersion: 1, rootID: rootID, rootPath: root.path, protectedPaths: paths,
             rootIdentity: rootIdentity, lockIdentity: lockIdentity, operationsIdentity: opsIdentity)
-        let context = Context(root: rootFD, lock: lock, operations: ops, binding: binding)
         if !create || bindingExists {
-            guard let existing = try readFile(rootFD, "root-binding.json", limit: PackagePreparationCodec.metadataLimit), existing.bytes == (try PackagePreparationCodec.encode(binding)) else { throw DevicePackagePreparationError.unsafeBinding }
+            guard let existing = try readFile(rootFD, "root-binding.json", limit: PackagePreparationCodec.metadataLimit) else { throw DevicePackagePreparationError.unsafeBinding }
+            let retained = try JSONDecoder().decode(Binding.self, from: existing.bytes)
+            guard try PackagePreparationCodec.encode(retained) == existing.bytes,
+                retained.schemaVersion == binding.schemaVersion, retained.rootID == binding.rootID,
+                (retained.rootIdentity.device == retained.lockIdentity.device) == (binding.rootIdentity.device == binding.lockIdentity.device),
+                (retained.rootIdentity.device == retained.operationsIdentity.device) == (binding.rootIdentity.device == binding.operationsIdentity.device),
+                (retained.lockIdentity.device == retained.operationsIdentity.device) == (binding.lockIdentity.device == binding.operationsIdentity.device),
+                matchesDurable(retained.rootIdentity, binding.rootIdentity), matchesDurable(retained.lockIdentity, binding.lockIdentity),
+                matchesDurable(retained.operationsIdentity, binding.operationsIdentity),
+                filesystem.matchesRecordedRootPath(retained.rootPath),
+                recordedPaths(retained.protectedPaths, matchCurrentPaths: paths) else { throw DevicePackagePreparationError.unsafeBinding }
+            binding = retained // Keep exact recorded bytes for every subsequent receipt/checkpoint.
         }
+        let context = Context(root: rootFD, lock: lock, operations: ops, binding: binding,
+            liveRoot: rootIdentity, liveLock: lockIdentity, liveOperations: opsIdentity)
         try check(context, allowMissingBinding: create && !bindingExists)
         return try operation(context)
     }
     private func check(_ context: Context, allowMissingBinding: Bool = false) throws {
-        guard try protectedPaths() == context.binding.protectedPaths else { throw DevicePackagePreparationError.unsafeBinding }
+        guard recordedPaths(context.binding.protectedPaths, matchCurrentPaths: try protectedPaths()) else { throw DevicePackagePreparationError.unsafeBinding }
         let fd = try absoluteDirectory(root.path); defer { close(fd) }
-        guard try identity(fd, directory: true) == context.binding.rootIdentity,
-              try identity(context.root, directory: true) == context.binding.rootIdentity,
-              try identity(context.lock, directory: false) == context.binding.lockIdentity,
-              try directoryIdentity(context.root, "operations") == context.binding.operationsIdentity else { throw DevicePackagePreparationError.unsafeBinding }
-        guard let lock = try readFile(context.root, "preparation.lock", limit: 0), lock.identity == context.binding.lockIdentity else { throw DevicePackagePreparationError.unsafeBinding }
+        guard try identity(fd, directory: true) == context.liveRoot,
+              try identity(context.root, directory: true) == context.liveRoot,
+              try identity(context.lock, directory: false) == context.liveLock,
+              try directoryIdentity(context.root, "operations") == context.liveOperations else { throw DevicePackagePreparationError.unsafeBinding }
+        guard let lock = try readFile(context.root, "preparation.lock", limit: 0), lock.identity == context.liveLock else { throw DevicePackagePreparationError.unsafeBinding }
         if let binding = try readFile(context.root, "root-binding.json", limit: PackagePreparationCodec.metadataLimit) {
             guard binding.bytes == (try PackagePreparationCodec.encode(context.binding)) else { throw DevicePackagePreparationError.unsafeBinding }
         } else if !allowMissingBinding { throw DevicePackagePreparationError.unsafeBinding }
+    }
+    /// Only decoded durable metadata may use this comparison. Live observations stay raw/exact.
+    private func matchesDurable(_ recorded: PreparationIdentity?, _ observed: PreparationIdentity?) -> Bool {
+        guard let recorded, let observed else { return recorded == nil && observed == nil }
+        guard let filesystemContext else { return recorded == observed }
+        return filesystemContext.matchesDurableIdentity(recordedDevice: recorded.device, recordedInode: recorded.inode,
+            observedDevice: observed.device, observedInode: observed.inode)
+    }
+    private func recordedPaths(_ recorded: [String], matchCurrentPaths current: [String]) -> Bool {
+        if let filesystemContext { return filesystemContext.recordedPaths(recorded, matchCurrentPaths: current) }
+        return DeviceFilesystemTraversal.recordedPaths(recorded, matchCurrentPaths: current)
     }
     private func absoluteDirectory(_ path: String, allowMissing: Bool = false) throws -> Int32 {
         let parts = path.split(separator: "/")
         guard path.hasPrefix("/"), path.utf8.count <= 4096, parts.count <= 64,
               !parts.contains(where: { $0 == "." || $0 == ".." }), !path.contains("//") else { throw DevicePackagePreparationError.unsafeBinding }
         let traversal: DeviceFilesystemTraversal
-        do { traversal = try .plan(for: path) } catch { throw DevicePackagePreparationError.unsafeBinding }
+        do {
+            if let filesystemContext { traversal = try filesystemContext.planCurrentPath(path) }
+            else { traversal = try .plan(for: path) }
+        } catch { throw DevicePackagePreparationError.unsafeBinding }
         var fd = open(traversal.rootPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard fd >= 0 else { throw failure() }
         for part in traversal.components {
@@ -948,7 +996,9 @@ final class DevicePackagePreparationStore {
     private func identity(_ fd: Int32, directory: Bool) throws -> PreparationIdentity {
         var info = stat(); guard fstat(fd, &info) == 0 else { throw failure() }
         guard (info.st_mode & mode_t(S_IFMT)) == mode_t(directory ? S_IFDIR : S_IFREG), directory || info.st_nlink == 1 else { throw DevicePackagePreparationError.unsafeBinding }
-        return .init(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino))
+        let result = PreparationIdentity(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino))
+        guard filesystemContext?.acceptsCurrentDevice(result.device) != false else { throw DevicePackagePreparationError.unsafeBinding }
+        return result
     }
     private func names(_ fd: Int32, maximum: Int) throws -> [String] {
         let duplicate = dup(fd); guard duplicate >= 0 else { throw failure() }
