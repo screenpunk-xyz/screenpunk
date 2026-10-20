@@ -67,7 +67,8 @@ import ScreenpunkCore
     private var missingConnection: DeviceSetupPage? {
         _ = connectionRevision
         guard let active = cloud.activeManifest else { return nil }
-        return DeviceConnectorCatalog(manifests: [active], installationID: cloud.connectionInstallationID).missing(for: active.dashboardId)
+        let cloudOwned = cloud.connectionManifests.contains { $0.digest == active.digest && $0.dashboardId == active.dashboardId }
+        return DeviceConnectorCatalog(manifests: [active], installationID: cloudOwned ? cloud.connectionInstallationID : nil).missing(for: active.dashboardId)
     }
     @State private var page = DeviceCloudMenuPage.welcome
     @State private var automaticallyPresentedMenu = false
