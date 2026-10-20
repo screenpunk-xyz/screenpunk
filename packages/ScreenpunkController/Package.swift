@@ -18,6 +18,7 @@ let package = Package(
             dependencies: ["ScreenpunkCore"],
             resources: [
                 .copy("Resources/help.json"),
+                .copy("Resources/ConnectionValidator"),
                 .copy("Resources/mcp-catalog.json")
             ]
         ),

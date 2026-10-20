@@ -83,7 +83,7 @@ export function createInputInventory(source, kitRoot, sourceIdentity) {
     for (const [file, data] of snapshot.files) files.set(file, data);
     return snapshot;
   }
-  for (const dir of ['react', 'ui', 'icons', 'licenses']) add(path.join(kitRoot, dir));
+  for (const dir of ['react', 'ui', 'icons', 'licenses', 'types']) add(path.join(kitRoot, dir));
   // The lockfile and kit are operator-installed trusted input, never project input.
   // Enumerate only packages in that catalog; a caller's node_modules is excluded.
   const lockFile = path.join(kitRoot, 'package-lock.json');
@@ -106,7 +106,7 @@ export function createInputInventory(source, kitRoot, sourceIdentity) {
   }
   const directories = new Set();
   for (const file of files.keys()) { let dir = path.dirname(file); while (!directories.has(dir)) { directories.add(dir); const parent = path.dirname(dir); if (parent === dir) break; dir = parent; } }
-  const roots = [project.root, kitPackageFile, lockFile, ...packages.keys(), configFile, ...['react', 'ui', 'icons', 'licenses'].map(dir => path.join(kitRoot, dir))];
+  const roots = [project.root, kitPackageFile, lockFile, ...packages.keys(), configFile, ...['react', 'ui', 'icons', 'licenses', 'types'].map(dir => path.join(kitRoot, dir))];
   function scope(file) { file = path.resolve(file); const root = roots.filter(root => inside(root, file)).sort((a,b) => b.length - a.length)[0]; if (!root) throw containmentError(); return root; }
   function check(file) { file = path.resolve(file); scope(file); return file; }
   return Object.freeze({ source: project.root, files, packages, directories,

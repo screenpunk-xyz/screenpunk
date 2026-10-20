@@ -30,7 +30,7 @@ Changing the TV's identity clears previous screen/link approvals. Forget removes
 
 ## Screen API
 
-Uses the already available JavaScript SDK; no new external library or manifest HTTP grant is needed. The native app looks up the active package's `dashboardId`; JavaScript cannot supply a different identity, host, pairing code, certificate, or permission grant.
+Declare `{"alias":"googleTV","required":false}` in the `connections` array in screen.json (and retain it in the built manifest). Use `required:true` only when the whole screen must wait for setup. Optional still means declared: Settings uses the manifest to discover Google TV. Preserve this declaration across revisions. No external library or publicHTTP grant is needed. The native app looks up the active package's `dashboardId`; JavaScript cannot supply a different identity, host, pairing code, certificate, or permission grant.
 
 ```js
 const { value: status } = await screenpunk.connections.request('googleTV', 'status', {});

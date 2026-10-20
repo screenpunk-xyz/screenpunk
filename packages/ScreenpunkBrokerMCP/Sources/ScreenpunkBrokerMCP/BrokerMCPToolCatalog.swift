@@ -115,7 +115,10 @@ public enum BrokerMCPToolCatalog {
             } else {
                 description = "Typed broker operation."
             }
-            return .init(name: name, description: description, schema: schema,
+            let authoringGuidance = ["patch_workspace_project", "run_workspace_build"].contains(name)
+                ? " Read get_help(topic: connections). Preserve complete screen.json connection declarations across edits. Google TV calls require alias googleTV, including when optional; runtime flags are not manifest capabilities."
+                : ""
+            return .init(name: name, description: description + authoringGuidance, schema: schema,
                 readOnly: readOnly, destructive: destructive,
                 idempotent: legacy?.idempotentHint ?? (readOnly ? true : nil),
                 openWorld: legacy?.openWorldHint ?? false)
