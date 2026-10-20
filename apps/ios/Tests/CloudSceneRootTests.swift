@@ -8,6 +8,27 @@ import Combine
 
 @MainActor
 final class CloudSceneRootTests: XCTestCase {
+    func testRequiredCloudHomeShowsSetupAndOpensStandaloneConnection() async throws {
+        var connection = ManifestConnection(alias: "home", required: true)
+        connection.operations = [.init(name: "getStates", kind: "http")]
+        let manifest = DashboardManifest(schemaVersion: 1, dashboardId: UUID().uuidString, name: "Game lights", revision: UUID().uuidString, entrypoint: "index.html", sdkVersion: "1", digest: String(repeating: "a", count: 64), target: .init(profileId: "iPad", width: 1112, height: 834, scale: 2, orientation: "landscape"), connections: [connection], files: [])
+        let installation = UUID()
+        let menu = DeviceCloudMenuContent(deviceName: "Fixture", connectionDescription: "Connected", screenSummary: "Game lights", screenCount: 1, installedManifests: [manifest], connectionInstallationID: installation, connectionManifests: [manifest], activeManifest: manifest, settings: Text("Cloud settings"), screens: Text("Your screens"))
+        let scene = try foregroundScene(), previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let hosting = UIHostingController(rootView: DeviceCloudDisplayView(host: nil, cloud: menu, installationIdentity: installation, emptyGeneration: nil, hasDisplayContent: true) { Text("Screen content") })
+        window.rootViewController = hosting; window.makeKeyAndVisible()
+        defer { hosting.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        let setup = try await routeButton("Set up connection", in: hosting.view)
+        assertVisible(setup, in: window)
+        capture(window, name: "Required-Home-Assistant-Setup")
+        XCTAssertTrue(setup.accessibilityActivate())
+        let settings = try await presentedSettings(hosting, phase: "required connection setup")
+        let screen = try await routeButton("Game lights", in: settings.view)
+        assertVisible(screen, in: window)
+        capture(window, name: "Home-Assistant-Under-Connections")
+    }
+
     func testPreparedNativeConnectClosesOriginalRootSheetBeforeActualEmptyMount() async throws {
         let native = try await NativePreparedConnectionFixture.make()
         defer { native.close() }

@@ -5,16 +5,17 @@ function customHTTP(connection: ManifestConnection, index: number): void {
   const d = connection.customHTTP;
   if (!d) return;
   const bad = () => fail("native_validation", `$manifest.connections[${index}].customHTTP`, "Invalid custom HTTP connection declaration");
-  const component = (x: string) => /^[A-Za-z0-9_.-]+$/.test(x) && x !== "." && x !== "..";
+  const bytes = (x: string) => new TextEncoder().encode(x).length;
+  const component = (x: string) => x.length <= 128 && /^[A-Za-z0-9_.-]+$/.test(x) && x !== "." && x !== "..";
   const forbidden = /^(authorization|x-api-key|token|password|access_token|api_key|apikey|secret|path|url|host|origin|method|headers|scheme|port)$/i;
-  if (["home", "googleTV", "googleCalendar", "google-calendar", "appleMaps"].includes(connection.alias) || connection.publicHTTP !== undefined || connection.operations !== undefined || connection.serviceCalls !== undefined || connection.cameraEntities !== undefined || /[\x00-\x1f\x7f]/.test(d.name) || new Set(d.operations.map(o => o.name)).size !== d.operations.length) bad();
+  if (["home", "googleTV", "googleCalendar", "google-calendar", "appleMaps"].includes(connection.alias) || connection.publicHTTP !== undefined || connection.operations !== undefined || connection.serviceCalls !== undefined || connection.cameraEntities !== undefined || (bytes(d.name) > 80 || /[\p{Cc}\p{Cf}]/u.test(d.name)) || new Set(d.operations.map(o => o.name)).size !== d.operations.length) bad();
   if (d.authentication === "apiKey") {
     if (!d.headerName || /^(host|cookie|content-length|transfer-encoding|connection|proxy-authorization|authorization)$/i.test(d.headerName)) bad();
   } else if (d.headerName !== undefined) bad();
   for (const o of d.operations) {
-    if (!component(o.name) || !o.path.startsWith("/") || !o.path.slice(1).split("/").every(x => /^[A-Za-z0-9_.,~-]+$/.test(x) && x !== "." && x !== "..")) bad();
+    if (!component(o.name) || !o.path.startsWith("/") || !o.path.slice(1).split("/").every(x => x.length <= 256 && /^[A-Za-z0-9_.,~-]+$/.test(x) && x !== "." && x !== "..")) bad();
     for (const [key, values] of Object.entries(o.parameters)) {
-      if (!component(key) || forbidden.test(key) || key.toLowerCase() === d.headerName?.toLowerCase() || values.some(v => /[\x00-\x1f\x7f]/.test(v))) bad();
+      if (!component(key) || forbidden.test(key) || key.toLowerCase() === d.headerName?.toLowerCase() || values.some(v => bytes(v) > 256 || /[\p{Cc}\p{Cf}]/u.test(v))) bad();
     }
   }
 }
