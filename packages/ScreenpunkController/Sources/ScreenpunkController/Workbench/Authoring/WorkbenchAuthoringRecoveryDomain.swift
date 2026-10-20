@@ -52,16 +52,22 @@ public final class WorkbenchAuthoringRecoveryDomain {
         authoring.cloudCreationScope = creationScope
         do {
             try check()
-            let result: WorkbenchAuthoringRecoveryResult
-            switch request {
-            case .selectionBound(let inner, let expectedId, let expectedGeneration):
+            // Validate every selection wrapper without recursively allocating the
+            // large dispatcher frame on the broker's bounded worker-thread stack.
+            var operation = request
+            while case .selectionBound(let inner, let expectedId, let expectedGeneration) = operation {
                 guard let current = try workspace.current(),
                       current.descriptor.workspaceId == expectedId,
                       current.selectionGeneration == expectedGeneration else {
                     throw WorkbenchIPCError(.workspaceConflict)
                 }
                 try check()
-                result = try perform(inner, cancelled: cancelled, progress: progress)
+                operation = inner
+            }
+            let result: WorkbenchAuthoringRecoveryResult
+            switch operation {
+            case .selectionBound:
+                throw WorkbenchIPCError(.invalidRequest)
             case .cloudProjectCreate(let intent, let dashboard, let name, let path):
                 try mutationGate(); try check()
                 let staged = try WorkspaceFiles(path: path, requiredPrivateRoot: true)
