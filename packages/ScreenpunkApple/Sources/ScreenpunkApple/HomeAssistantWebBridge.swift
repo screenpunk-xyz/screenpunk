@@ -26,6 +26,10 @@ private final class BridgeQualificationWait: @unchecked Sendable {
     private var result: Result<Void, Error>?
     private var continuation: CheckedContinuation<Void, Error>?
     private var workers: [Task<Void, Never>] = []
+    private func checkPending() throws {
+        lock.lock(); defer { lock.unlock() }
+        if result != nil { throw CancellationError() }
+    }
     private func finish(_ value: Result<Void, Error>) {
         lock.lock()
         guard result == nil else { lock.unlock(); return }
@@ -42,9 +46,11 @@ private final class BridgeQualificationWait: @unchecked Sendable {
                 // Timed-out workers can still be draining store locks. Keep their
                 // slots until they actually finish, rather than allocate endlessly.
                 guard pool.begin() else { finish(.failure(ConnectionFailure.sizeLimit)); return }
-                let work = Task.detached { [self] in
+                // Verification is synchronous and can block on store locks. It
+                // must not occupy the cooperative executor used by deadlines.
+                DispatchQueue.global(qos: .userInitiated).async { [self] in
                     defer { pool.end() }
-                    do { try Task.checkCancellation(); try verify(); try Task.checkCancellation(); finish(.success(())) }
+                    do { try checkPending(); try verify(); try checkPending(); finish(.success(())) }
                     catch { finish(.failure(error)) }
                 }
                 let deadline = Task.detached { [self] in
@@ -52,8 +58,8 @@ private final class BridgeQualificationWait: @unchecked Sendable {
                     catch { }
                 }
                 lock.lock()
-                if result == nil { workers = [work, deadline]; lock.unlock() }
-                else { lock.unlock(); work.cancel(); deadline.cancel() }
+                if result == nil { workers = [deadline]; lock.unlock() }
+                else { lock.unlock(); deadline.cancel() }
             }
         }, onCancel: { self.finish(.failure(CancellationError())) })
     }
