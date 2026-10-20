@@ -2,8 +2,8 @@ import {validateConnectionDeclarations} from './connection-declarations.mjs';
 import path from 'node:path';import {readInventory} from './captured-store.mjs';
 import {workerJob,trustedBytes,sendPacket,failWorker} from './runtime.mjs';
 const start=performance.now(),cpu=process.cpuUsage();
-try {const job=workerJob('typecheck');trustedBytes('node_modules/typescript/lib/typescript.js');
-const {default:ts}=await import(job.kit+'/node_modules/typescript/lib/typescript.js'); const inventory=readInventory(job.manifest,job.manifestSha256,job.manifestIdentity),source=job.source,kitRoot=job.kit;
+try {const job=workerJob('typecheck');trustedBytes('node_modules/typescript-api/lib/typescript.js');
+const {default:ts}=await import(job.kit+'/node_modules/typescript-api/lib/typescript.js'); const inventory=readInventory(job.manifest,job.manifestSha256,job.manifestIdentity),source=job.source,kitRoot=job.kit;
   const files = [...inventory.files.keys()].filter(file => file.startsWith(source + path.sep));
   const options = { strict: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, resolveJsonModule: true, allowJs: true,
     baseUrl: kitRoot, paths: { '@screenpunk/react': ['react/index.tsx'], '@screenpunk/ui': ['ui/index.tsx'], 'react': ['node_modules/@types/react/index.d.ts'], 'react/*': ['node_modules/@types/react/*'], 'react-dom/*': ['node_modules/@types/react-dom/*'], '*': ['node_modules/*'] }, typeRoots: [path.join(kitRoot, 'node_modules/@types')], types: ['react','react-dom'], lib: ['lib.es2022.d.ts','lib.dom.d.ts','lib.dom.iterable.d.ts'] };
