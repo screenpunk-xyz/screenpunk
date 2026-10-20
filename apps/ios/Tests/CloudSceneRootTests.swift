@@ -17,8 +17,21 @@ final class CloudSceneRootTests: XCTestCase {
         let scene = try foregroundScene(), previous = scene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: scene)
         let hosting = UIHostingController(rootView: DeviceCloudDisplayView(host: nil, cloud: menu, installationIdentity: installation, emptyGeneration: nil, hasDisplayContent: true) { Text("Screen content") })
-        window.rootViewController = hosting; window.makeKeyAndVisible()
-        defer { hosting.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        let root = UIViewController()
+        window.rootViewController = root; window.makeKeyAndVisible()
+        hosting.modalPresentationStyle = .fullScreen
+        var presented = false
+        root.present(hosting, animated: false) { presented = true }
+        defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await waitFor("required setup fixture presentation") { presented }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        // Optional pause allows the Simulator accessibility inspector to initialize
+        // its service before in-process SwiftUI accessibility traversal.
+        if ProcessInfo.processInfo.environment["SCREENPUNK_INSPECT_SETUP"] == "1" { try await Task.sleep(nanoseconds: 30_000_000_000) }
+        capture(window, name: "Connection-Setup-Before-Action")
+        var visited = Set<ObjectIdentifier>()
+        let labels = routeAccessibilityElements(hosting.view, visited: &visited).compactMap { $0.accessibilityLabel }.joined(separator: "\n")
+        let labelsAttachment = XCTAttachment(string: labels); labelsAttachment.lifetime = .keepAlways; add(labelsAttachment)
         let setup = try await routeButton("Set up connection", in: hosting.view)
         assertVisible(setup, in: window)
         capture(window, name: "Required-Home-Assistant-Setup")

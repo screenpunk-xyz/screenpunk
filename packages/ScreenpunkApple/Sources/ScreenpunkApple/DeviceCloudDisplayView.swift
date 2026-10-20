@@ -99,7 +99,7 @@ import ScreenpunkCore
             // content changes when a rendered screen becomes an empty display.
             ZStack {
                 DeviceMenuHold(content: displayedContent
-                    .allowsHitTesting(!showMenu).accessibilityHidden(showMenu), open: { open(.welcome) })
+                    .allowsHitTesting(!showMenu && missingConnection == nil).accessibilityHidden(showMenu || missingConnection != nil), open: { open(.welcome) })
                     .accessibilityAction(named: "Open Screenpunk menu") { open(.welcome) }
                 if let missing = missingConnection, menuEnabled {
                     Color.black.opacity(0.4).ignoresSafeArea()
@@ -114,9 +114,9 @@ import ScreenpunkCore
                             case .googleCalendar: open(.googleCalendar)
                             default: open(.settings)
                             }
-                        }.buttonStyle(.borderedProminent)
+                        }.buttonStyle(.borderedProminent).accessibilityIdentifier("device.connection.setup")
                         Button("Your screens") { open(.screens) }
-                    }.padding(28).frame(maxWidth: 480).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24)).padding(24)
+                    }.accessibilityElement(children: .contain).padding(28).frame(maxWidth: 480).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24)).padding(24)
                 }
             }
                 .sheet(isPresented: $showMenu, onDismiss: { automaticallyPresentedMenu = false }) {
