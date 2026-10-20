@@ -3324,11 +3324,11 @@ final class DeviceMixedResourceResolver {
     /// physical input. The final current/mount reads follow those callbacks.
     func verifyActiveRuntimePresentationExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
         current: DeviceMixedInventoryStore.Capture, presentation: DeviceMixedInventoryStore.Capture,
-        content: DeviceManagedStaticContent, entryID: UUID, manifestDigest: String) throws {
-        try Task.checkCancellation()
+        content: DeviceManagedStaticContent, entryID: UUID, manifestDigest: String, cancellation: DeviceRuntimeVerificationCancellation? = nil) throws {
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
         try withScope(binding: original.local, inventory: store) { permit in
             for _ in 0..<2 {
-                try Task.checkCancellation()
+                try DeviceRuntimeVerificationCancellation.check(cancellation)
                 let qualified = try qualifiedLocalEntries(original.local, permit: permit)
                     + qualifiedNativeEntries(original, permit: permit)
                     + qualifiedIncomingEntries(incomingSnapshot(), store: store, permit: permit)
@@ -3349,9 +3349,9 @@ final class DeviceMixedResourceResolver {
                     throw DeviceStructuralStoreError.conflict
                 }
             }
-            try Task.checkCancellation()
+            try DeviceRuntimeVerificationCancellation.check(cancellation)
         }
-        try Task.checkCancellation()
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
     }
     func selectedLocalRuntimeSourceExact(_ original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore,
         current: DeviceMixedInventoryStore.Capture) throws -> (gate: DeviceLocalResourceGate, binding: DeviceBoundRestoredRuntimeBinding,

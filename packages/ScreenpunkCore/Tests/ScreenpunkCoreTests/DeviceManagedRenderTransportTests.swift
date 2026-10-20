@@ -191,6 +191,8 @@ extension DeviceManagedRenderTransportTests {
         let rootID: UUID
         private let lock = NSLock()
         private var values: [String: (DeviceGrantCredentialObservation, Data)] = [:]
+        private var reads = 0
+        var readCount: Int { lock.lock(); defer { lock.unlock() }; return reads }
         private var readHook: (() throws -> Void)?
         init(rootID: UUID) { self.rootID = rootID }
         func armRead(_ hook: @escaping () throws -> Void) { lock.lock(); readHook = hook; lock.unlock() }
@@ -200,7 +202,7 @@ extension DeviceManagedRenderTransportTests {
             for item in observed { try visit(item) }
         }
         func read(account: String, maximumBytes: Int) throws -> DeviceGrantCredentialTransportSecret? {
-            lock.lock(); let hook = readHook; readHook = nil; lock.unlock()
+            lock.lock(); reads += 1; let hook = readHook; readHook = nil; lock.unlock()
             try hook?()
             lock.lock(); let value = values[account]; lock.unlock()
             guard let value else { return nil }
@@ -581,6 +583,36 @@ extension DeviceManagedRenderTransportTests {
         // A remains the exact confirmed historical mount after the serialized B CAS.
         try runtime.verifyActive()
     }
+    func testExplicitCancellationOnDispatchWorkerStopsBeforeSecondGraphPass() async throws {
+        let f = try activeFixture(), runtime = try await activeRuntime(f)
+        try f.common.confirmMountedLocalContent(runtime.content)
+        let before = f.credentials.readCount
+        try runtime.verifyActive()
+        let fullReads = f.credentials.readCount - before
+        XCTAssertGreaterThan(fullReads, 0)
+        let cancellation = DeviceRuntimeVerificationCancellation()
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        f.credentials.armRead {
+            entered.signal()
+            guard release.wait(timeout: .now() + 10) == .success else { throw Injected.fault }
+        }
+        let cancelledBefore = f.credentials.readCount
+        let finished = expectation(description: "dispatch verification observed cancellation")
+        DispatchQueue.global().async {
+            defer { finished.fulfill() }
+            do { try runtime.verifyActive(cancellation: cancellation); XCTFail("expired verification succeeded") }
+            catch { XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)") }
+        }
+        defer { cancellation.cancel(); release.signal() }
+        XCTAssertEqual(entered.wait(timeout: .now() + 10), .success)
+        cancellation.cancel(); release.signal()
+        await fulfillment(of: [finished], timeout: 10)
+        XCTAssertLessThan(f.credentials.readCount - cancelledBefore, fullReads,
+            "Cancellation must interrupt Core graph work, not merely reject its final result")
+        // Cancellation is scoped to one verification, not a permanent runtime revocation.
+        try runtime.verifyActive()
+    }
+
     func testUnifiedActivePreCancelledCallAndLateResponseCannotAuthorizeEffects() async throws {
         let f = try activeFixture(), runtime = try await activeRuntime(f)
         try f.common.confirmMountedLocalContent(runtime.content)

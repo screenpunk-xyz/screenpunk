@@ -694,21 +694,21 @@ private final class DeviceUnifiedInventoryOperationGate {
     func verifyActiveRuntimePresentationExact(_ content: DeviceManagedStaticContent,
         resolver expectedResolver: DeviceMixedResourceResolver, original expectedOriginal: DeviceMixedResolvedResources,
         store expectedStore: DeviceMixedInventoryStore, presentation: DeviceMixedInventoryStore.Capture,
-        entryID: UUID, manifestDigest: String) throws {
-        try Task.checkCancellation()
+        entryID: UUID, manifestDigest: String, cancellation: DeviceRuntimeVerificationCancellation? = nil) throws {
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
         try beginOperation(); defer { operationMutex.unlock() }
-        try Task.checkCancellation()
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
         try validateOriginal()
         guard resolver === expectedResolver, original === expectedOriginal, store === expectedStore,
             let capture else { throw DeviceStructuralStoreError.conflict }
-        try Task.checkCancellation()
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
         try expectedResolver.verifyActiveRuntimePresentationExact(expectedOriginal, store: store,
-            current: capture, presentation: presentation, content: content, entryID: entryID, manifestDigest: manifestDigest)
+            current: capture, presentation: presentation, content: content, entryID: entryID, manifestDigest: manifestDigest, cancellation: cancellation)
         // Preserve mount eligibility failure before exact-object disagreement.
         // This read-only check cannot publish or authorize an unconfirmed object.
         guard confirmedPresentation === content else { throw DeviceStructuralStoreError.conflict }
         try validateOriginal()
-        try Task.checkCancellation()
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
     }
     func verifyRuntimePresentationMountedExact(_ content: DeviceManagedStaticContent) throws {
         try beginOperation(); defer { operationMutex.unlock() }
