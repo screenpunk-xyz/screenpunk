@@ -3,7 +3,7 @@ import ScreenpunkCore
 @testable import ScreenpunkApple
 
 @MainActor final class DeviceLocalResetCleanupTests: XCTestCase {
-    func testExplicitV2RetainsSentinelsAndDeletesOnlyFivePairs() async throws {
+    func testExplicitV2RetainsSentinelsAndDeletesOnlyAllowedPairs() async throws {
         let f = try Fixture()
         for path in ["device/content", "preferences/preferences-v1.json", "preferences/unknown.tmp", "management/evidence", "reset/sentinel"] {
             let url = f.base.appendingPathComponent(path)
@@ -90,7 +90,9 @@ import ScreenpunkCore
         try await coordinator.retry()
         XCTAssertEqual(f.reset.record?.resetID, id)
         XCTAssertEqual(f.reset.record?.phase, .completed)
-        XCTAssertEqual(f.keys.deleted.count, 6)
+        XCTAssertEqual(f.keys.deleted.count, DeviceLocalResetScope.allowedCredentialItems.count + 1)
+        XCTAssertEqual(Set(f.keys.deleted), Set(DeviceLocalResetScope.allowedCredentialItems))
+        XCTAssertEqual(f.keys.remaining, [f.keys.protected, f.keys.unrelatedAccount])
     }
     func testV1PendingAndCompletedCannotBeReinterpreted() async throws {
         for phase in [DeviceLocalResetPhase.pending, .completed] {

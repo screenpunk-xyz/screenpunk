@@ -31,7 +31,7 @@ import ScreenpunkCore
         XCTAssertEqual(f.evidence.record?.phase, .completed)
         XCTAssertFalse(FileManager.default.fileExists(atPath: owned.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: f.sentinel.path))
-        XCTAssertEqual(f.keys.deletes, 5); XCTAssertEqual(hosts, 2); XCTAssertEqual(validatedContexts, 2)
+        XCTAssertEqual(f.keys.deletes, DeviceLocalResetScope.allowedCredentialItems.count); XCTAssertEqual(hosts, 2); XCTAssertEqual(validatedContexts, 2)
         XCTAssertFalse(f.lifecycle.authority === original)
         guard case .blocked = boot.state else { return XCTFail("failed replacement host must remain truthfully blocked") }
         XCTAssertEqual(boot.startupDiagnostic?.stage, .localHost)
@@ -42,7 +42,7 @@ import ScreenpunkCore
         while hosts < 3 && clock.now < retryDeadline { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(hosts, 3); XCTAssertEqual(validatedContexts, 3)
         XCTAssertEqual(f.evidence.record?.resetID, completedResetID)
-        XCTAssertEqual(f.evidence.record?.phase, .completed); XCTAssertEqual(f.keys.deletes, 5)
+        XCTAssertEqual(f.evidence.record?.phase, .completed); XCTAssertEqual(f.keys.deletes, DeviceLocalResetScope.allowedCredentialItems.count)
         guard case .blocked = boot.state else { return XCTFail("retry must not claim a host after injected failure") }
         XCTAssertEqual(boot.startupDiagnostic?.stage, .localHost)
     }
@@ -152,7 +152,7 @@ import ScreenpunkCore
             try await f.lifecycle.begin(context: context, resetID: id, progress: {})
             XCTAssertEqual(f.evidence.record?.resetID, id)
             XCTAssertEqual(f.evidence.record?.phase, .completed)
-            XCTAssertEqual(f.keys.deletes, (cycle + 1) * 5)
+            XCTAssertEqual(f.keys.deletes, (cycle + 1) * DeviceLocalResetScope.allowedCredentialItems.count)
             XCTAssertNoThrow(try f.provider.preferences.generation())
             XCTAssertNoThrow(try f.provider.calendar.snapshot())
         }
@@ -183,18 +183,18 @@ import ScreenpunkCore
             else { f.evidence.failPhase = .completed }
             let task = Task { try await f.lifecycle.begin(context: context, resetID: UUID(), progress: {}) }
             do { try await task.value; XCTFail("completion blocked") } catch {}
-            XCTAssertEqual(f.keys.deletes, 5)
+            XCTAssertEqual(f.keys.deletes, DeviceLocalResetScope.allowedCredentialItems.count)
             XCTAssertThrowsError(try f.provider.preferences.generation())
             f.evidence.onCompletion = nil
             if !cancelled {
                 f.evidence.failPhase = .completed
                 do { try await f.lifecycle.recover(progress: {}); XCTFail("repeated completion uncertainty") } catch {}
-                XCTAssertEqual(f.keys.deletes, 5)
+                XCTAssertEqual(f.keys.deletes, DeviceLocalResetScope.allowedCredentialItems.count)
                 XCTAssertThrowsError(try f.provider.preferences.generation())
                 XCTAssertThrowsError(try f.provider.calendar.snapshot())
             }
             try await f.lifecycle.recover(progress: {})
-            XCTAssertEqual(f.keys.deletes, 5)
+            XCTAssertEqual(f.keys.deletes, DeviceLocalResetScope.allowedCredentialItems.count)
             XCTAssertNoThrow(try f.provider.preferences.generation())
         }
     }
@@ -220,10 +220,10 @@ import ScreenpunkCore
         })
         boot.start(); await settle(boot)
         guard case .blocked = boot.state else { return XCTFail("host failed") }
-        XCTAssertEqual(retained, 0); XCTAssertEqual(f.keys.deletes, 5)
+        XCTAssertEqual(retained, 0); XCTAssertEqual(f.keys.deletes, DeviceLocalResetScope.allowedCredentialItems.count)
         boot.retry(); await settle(boot)
         guard case .localReady(let host) = boot.state else { return XCTFail("fresh host") }
-        XCTAssertFalse(host.lifetime.isRetired); XCTAssertEqual(hosts, 2); XCTAssertEqual(f.keys.deletes, 5)
+        XCTAssertFalse(host.lifetime.isRetired); XCTAssertEqual(hosts, 2); XCTAssertEqual(f.keys.deletes, DeviceLocalResetScope.allowedCredentialItems.count)
     }
     func testSharedOwnerReusesAdmissionWithoutRevokingFirstLease() async throws {
         let f = try LifecycleFixture(); var hosts = 0
@@ -284,7 +284,7 @@ import ScreenpunkCore
         let second = bootstrap(); second.start(); await settle(second)
         guard case .localReady(let shared) = second.state else { return XCTFail("shared replacement") }
         XCTAssertTrue(fresh === shared); XCTAssertTrue(f.lifecycle.authority === authority)
-        XCTAssertEqual(hosts, 2); XCTAssertEqual(f.keys.deletes, 5)
+        XCTAssertEqual(hosts, 2); XCTAssertEqual(f.keys.deletes, DeviceLocalResetScope.allowedCredentialItems.count)
         XCTAssertNoThrow(try fresh.saveSettings(.init(expectedRevision: fresh.settingsSnapshot?.revision ?? "", value: .init(displayName: "fresh"))))
     }
     private func settle(_ boot: DeviceManagementBootstrap) async {
