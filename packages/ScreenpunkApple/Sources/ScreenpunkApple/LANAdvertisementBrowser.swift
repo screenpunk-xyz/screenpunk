@@ -2,6 +2,7 @@ import Foundation
 import ScreenpunkCore
 #if canImport(Network)
 import Network
+import dnssd
 #endif
 
 #if canImport(Network)
@@ -13,7 +14,7 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     private var pathMonitor: NWPathMonitor?
     private var networkPath: String?
     private var recoveryTimer: DispatchSourceTimer?
-    private var resolutions: [String: NWConnection] = [:]
+    private var resolutions: [String: BonjourServiceResolver] = [:]
     private var activeIDs = Set<String>()
 
     public init(hub: LoopbackDiscovery) {
@@ -85,7 +86,7 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
     private func clearBrowser() {
         browser?.cancel()
         browser = nil
-        for connection in resolutions.values { connection.cancel() }
+        for resolver in resolutions.values { resolver.cancel() }
         resolutions.removeAll()
         for id in activeIDs { hub.withdraw(id) }
         activeIDs.removeAll()
@@ -95,11 +96,11 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
         pathMonitor?.cancel()
         recoveryTimer?.cancel()
         browser?.cancel()
-        for connection in resolutions.values { connection.cancel() }
+        for resolver in resolutions.values { resolver.cancel() }
         for id in activeIDs { hub.withdraw(id) }
     }
 
-    private struct TXTFields {
+    private struct TXTFields: Sendable {
         var id: String
         var major: Int
         var name: String?
@@ -117,42 +118,36 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
             switch result.endpoint {
             case .hostPort(let host, let port):
                 advertise(meta, host: "\(host)", port: Int(port.rawValue))
-            default:
+            case .service:
                 resolve(result, meta: meta)
-            }
-        }
-    }
-
-    private func resolve(_ result: NWBrowser.Result, meta: TXTFields) {
-        guard resolutions[meta.id] == nil else { return }
-        let connection = NWConnection(to: result.endpoint, using: .tcp)
-        resolutions[meta.id] = connection
-        connection.stateUpdateHandler = { [weak self, weak connection] state in
-            guard let self, let connection, self.resolutions[meta.id] === connection else { return }
-            switch state {
-            case .ready:
-                if case .hostPort(let host, let port) = connection.currentPath?.remoteEndpoint {
-                    self.advertise(meta, host: "\(host)", port: Int(port.rawValue))
-                }
-                self.resolutions[meta.id] = nil
-                connection.cancel()
-            case .failed, .cancelled:
-                self.resolutions[meta.id] = nil
-                connection.cancel()
             default:
                 break
             }
         }
-        connection.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + 5) { [weak self, weak connection] in
-            guard let self, let connection, self.resolutions[meta.id] === connection else { return }
+    }
+
+    /// SRV target (`name.local`) and port. A TCP connect here would hit the TLS listener.
+    private func resolve(_ result: NWBrowser.Result, meta: TXTFields) {
+        guard resolutions[meta.id] == nil else { return }
+        guard case .service(let name, let type, let domain, let interface) = result.endpoint,
+              name.isEmpty == false, type.isEmpty == false else { return }
+        let resolver = BonjourServiceResolver(queue: queue, onResolved: { [weak self] host, port in
+            self?.advertise(meta, host: host, port: port)
+        }, onDone: { [weak self] resolver in
+            guard let self, self.resolutions[meta.id] === resolver else { return }
             self.resolutions[meta.id] = nil
-            connection.cancel()
-        }
+        })
+        resolutions[meta.id] = resolver
+        resolver.start(
+            name: name,
+            type: type,
+            domain: domain.isEmpty ? "local." : domain,
+            interfaceIndex: UInt32(exactly: interface?.index ?? 0) ?? 0
+        )
     }
 
     private func advertise(_ meta: TXTFields, host: String, port: Int) {
-        guard port > 0, meta.id.isEmpty == false, activeIDs.contains(meta.id) else { return }
+        guard port > 0, host.isEmpty == false, meta.id.isEmpty == false, activeIDs.contains(meta.id) else { return }
         hub.advertise(
             AdvertisedDevice(
                 deviceId: meta.id,
@@ -182,6 +177,104 @@ public final class LANAdvertisementBrowser: @unchecked Sendable {
             meta.id = "bonjour:\(result.endpoint)"
         }
         return meta
+    }
+}
+
+/// One `DNSServiceResolve`. The service ref is deallocated exactly once.
+private final class BonjourServiceResolver: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let onResolved: @Sendable (String, Int) -> Void
+    private let onDone: @Sendable (BonjourServiceResolver) -> Void
+    private let lock = NSLock()
+    private var service: DNSServiceRef?
+    private var finished = false
+
+    init(queue: DispatchQueue, onResolved: @escaping @Sendable (String, Int) -> Void,
+         onDone: @escaping @Sendable (BonjourServiceResolver) -> Void) {
+        self.queue = queue
+        self.onResolved = onResolved
+        self.onDone = onDone
+    }
+
+    func start(name: String, type: String, domain: String, interfaceIndex: UInt32) {
+        var created: DNSServiceRef?
+        let flags: DNSServiceFlags = interfaceIndex == 0 ? kDNSServiceFlagsIncludeP2P : 0
+        let error = name.withCString { name in
+            type.withCString { type in
+                domain.withCString { domain in
+                    DNSServiceResolve(
+                        &created, flags, interfaceIndex, name, type, domain,
+                        Self.reply, Unmanaged.passUnretained(self).toOpaque()
+                    )
+                }
+            }
+        }
+        guard Self.succeeded(error), let created else {
+            finish(nil, 0)
+            return
+        }
+        guard Self.succeeded(DNSServiceSetDispatchQueue(created, queue)) else {
+            DNSServiceRefDeallocate(created)
+            finish(nil, 0)
+            return
+        }
+        lock.lock()
+        let stopped = finished
+        if stopped == false { service = created }
+        lock.unlock()
+        if stopped {
+            queue.async { DNSServiceRefDeallocate(created) }
+            return
+        }
+        queue.asyncAfter(deadline: .now() + 5) { [weak self] in self?.finish(nil, 0) }
+    }
+
+    func cancel() {
+        var ref: DNSServiceRef?
+        guard claim(&ref), let ref else { return }
+        let queue = self.queue
+        queue.async { DNSServiceRefDeallocate(ref) }
+    }
+
+    deinit { cancel() }
+
+    private func finish(_ host: String?, _ port: Int) {
+        var ref: DNSServiceRef?
+        guard claim(&ref) else { return }
+        if let ref { DNSServiceRefDeallocate(ref) }
+        if let host = Self.hostname(host), port > 0 { onResolved(host, port) }
+        onDone(self)
+    }
+
+    private func claim(_ ref: inout DNSServiceRef?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if finished { return false }
+        finished = true
+        ref = service
+        service = nil
+        return true
+    }
+
+    // Port is network byte order. `kDNSServiceErr_*` is an untyped C enum (`Int`);
+    // the callback's error parameter is `int32_t`.
+    private static let reply: DNSServiceResolveReply = { _, _, _, error, _, target, port, _, _, context in
+        guard let context else { return }
+        let resolver = Unmanaged<BonjourServiceResolver>.fromOpaque(context).takeUnretainedValue()
+        let host = BonjourServiceResolver.succeeded(error) ? target.map { String(cString: $0) } : nil
+        let resolvedPort = host == nil ? 0 : Int(UInt16(bigEndian: port))
+        resolver.queue.async { [weak resolver] in resolver?.finish(host, resolvedPort) }
+    }
+
+    private static func succeeded(_ error: DNSServiceErrorType) -> Bool {
+        error == DNSServiceErrorType(kDNSServiceErr_NoError)
+    }
+
+    private static func hostname(_ raw: String?) -> String? {
+        guard var host = raw?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        if host.hasSuffix("."), host.count > 1 { host.removeLast() }
+        host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        return host.isEmpty || host == "." ? nil : host
     }
 }
 #endif
