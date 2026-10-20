@@ -2,9 +2,8 @@
   "gallery": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
-      "bytes": 103405,
-      "sha256": "dae240bebc7877b1893faf8510a0b916a83320e8df7edb7feb753d9f7a6eb88e",
-      "baselineEqual": true
+      "bytes": 105697,
+      "sha256": "b24738d3dea4b29615594d154360a818d608a8b4df38aa1dddc11e159dc19ae1"
     },
     {
       "path": "index.html",
@@ -20,16 +19,15 @@
     },
     {
       "path": "screen.js",
-      "bytes": 885434,
-      "sha256": "bd096be75a7ae53bbe77aea0b4ad44a2dd12c5569e7dffb29443ce7725559d23"
+      "bytes": 948425,
+      "sha256": "132a1110d4617bf1be01d53ef72b32e554ab27268faee0a72753a16a365b1275"
     }
   ],
   "earthquakes": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
-      "bytes": 91881,
-      "sha256": "33e13d61ea6b54dd5797abc9c4f07161a54f2f05c0bf343981fc4a5bd7554092",
-      "baselineEqual": true
+      "bytes": 94173,
+      "sha256": "242337705fcf1349815a21ac221791f16c725fc613077d48d69c1c6311cc1aec"
     },
     {
       "path": "index.html",
@@ -45,15 +43,15 @@
     },
     {
       "path": "screen.js",
-      "bytes": 731458,
-      "sha256": "185b1e65fcd763a1cd0c357c31b243bae346d1a40571e5c8a29a7bc215d27db5"
+      "bytes": 794172,
+      "sha256": "4524d8c7a2c37705cfd7ffa04c19feb4214865e3801f960f6f663aa5dce751b7"
     }
   ],
   "cjs": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 5771,
-      "sha256": "a12af22c9e77aa68095d24e8da97551bb00ee0862b90ca53a8de70a0769ed116"
+      "sha256": "46e2cf90d3d65133137c2a9bf5995cdd8455cd8211da9a5ea3680560d75b7173"
     },
     {
       "path": "index.html",
@@ -67,15 +65,15 @@
     },
     {
       "path": "screen.js",
-      "bytes": 745489,
-      "sha256": "ef7f3e74a1cc0b667c2a152385f0505189ccade3c0ead9bdde10550ddf6bd231"
+      "bytes": 749271,
+      "sha256": "a01f553ab7d6f82ca7906d1232dd0e941732534a68b429ed13b84472d726bdc8"
     }
   ],
   "mixed": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 5771,
-      "sha256": "a12af22c9e77aa68095d24e8da97551bb00ee0862b90ca53a8de70a0769ed116"
+      "sha256": "46e2cf90d3d65133137c2a9bf5995cdd8455cd8211da9a5ea3680560d75b7173"
     },
     {
       "path": "index.html",
@@ -89,8 +87,8 @@
     },
     {
       "path": "screen.js",
-      "bytes": 745925,
-      "sha256": "f812e58185f8b2e0926d96bc13c879555fefa0303601b33ad452b66dfac5edb4"
+      "bytes": 749707,
+      "sha256": "dc081ec99bd196031c5b436fafcf6ed83023fbd66bff2b9efaf8b2c350dc7a16"
     }
   ]
 }
