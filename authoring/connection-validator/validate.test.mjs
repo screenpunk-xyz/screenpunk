@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import ts from '../node_modules/typescript/lib/typescript.js';
+import ts from '../node_modules/typescript-api/lib/typescript.js';
 import {validateConnectionFiles} from '../scripts/validate-connection-files.mjs';
 import {validatePackage} from './validate.mjs';
 const tv="screenpunk.connections.request('googleTV','status',{})";

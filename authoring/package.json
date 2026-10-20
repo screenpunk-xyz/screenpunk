@@ -9,7 +9,7 @@
   "scripts": {
     "build": "node scripts/build.mjs templates/earthquakes dist/earthquakes",
     "gallery": "node scripts/build.mjs templates/gallery dist/gallery",
-    "test": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --jsx react-jsx --module ESNext --moduleResolution Bundler --target ES2022 test/sdk-contract.ts && node --import tsx --test --test-concurrency=1 test/*.test.*",
+    "test": "node node_modules/typescript/bin/tsc --ignoreConfig --noEmit --strict --skipLibCheck --jsx react-jsx --module ESNext --moduleResolution Bundler --target ES2022 test/sdk-contract.ts && node --import tsx --test --test-concurrency=1 test/*.test.*",
     "kit": "node scripts/kit.mjs"
   },
   "dependencies": {
@@ -31,6 +31,7 @@
     "react-test-renderer": "19.3.0",
     "recharts": "3.10.1",
     "tsx": "4.23.15",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "typescript-api": "npm:typescript@5.9.3"
   }
 }

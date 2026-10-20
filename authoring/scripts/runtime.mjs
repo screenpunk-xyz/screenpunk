@@ -12,7 +12,7 @@ export const manifestLimit = 64*1024*1024;
 export const trustedManifestLimit = manifestLimit - 65536 - limits.sourceFiles*lineLimit;
 export const pins = Object.freeze({
   'tsconfig.json':'61f587ee4ec21279ed19a879ffed2c7fb16fa31bd10e768a0521523c704732aa',
-  'node_modules/typescript/lib/typescript.js':'3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675',
+  'node_modules/typescript-api/lib/typescript.js':'3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675',
   'node_modules/esbuild-wasm/lib/browser.js':'91593b8f5d1021600a92443717a52e311bb1e1b772981f6aab76cd0ffba33169',
   'node_modules/esbuild-wasm/esbuild.wasm':'b1831a5c0f6cf688034fb94d0419812f165ea316a3380d3fc00a151e562d2eaf'
 });

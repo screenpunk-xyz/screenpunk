@@ -8,7 +8,7 @@ try {
  const job=workerJob('snapshot'),cpu=process.cpuUsage();
  const inventory=createInputInventory(job.source,job.kit,job.sourceIdentity),configPath=path.join(job.kit,'tsconfig.json');
  // Validate actual operator bootstrap bytes, not caller config or URLs.
- trustedBytes('tsconfig.json');trustedBytes('node_modules/typescript/lib/typescript.js');trustedBytes('node_modules/esbuild-wasm/lib/browser.js');trustedBytes('node_modules/esbuild-wasm/esbuild.wasm');
+ trustedBytes('tsconfig.json');trustedBytes('node_modules/typescript-api/lib/typescript.js');trustedBytes('node_modules/esbuild-wasm/lib/browser.js');trustedBytes('node_modules/esbuild-wasm/esbuild.wasm');
  fs.mkdirSync(job.store,{mode:0o700});
  const backingPath=path.join(job.store,'00000'),fd=fs.openSync(backingPath,'wx',0o400),entries=[];let offset=0;
  try {for(const [p,b]of inventory.files){if(/\/(?:tsconfig|jsconfig)\.json$/.test(p)&&p!==configPath)continue;let n=0;while(n<b.length){const c=fs.writeSync(fd,b,n,b.length-n,offset+n);if(!c)throw Error('Captured backing write failed');n+=c;}entries.push([p,String(entries.length).padStart(5,'0'),offset,b.length,crypto.createHash('sha256').update(b).digest('hex')]);offset+=b.length;}}finally{fs.closeSync(fd);}

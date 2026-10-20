@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import ts from 'typescript';
+import ts from 'typescript-api';
 import {validateConnectionFiles} from '../scripts/validate-connection-files.mjs';
 import {validatePackage} from './validate.mjs';
 try {

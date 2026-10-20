@@ -96,7 +96,7 @@ export function createInputInventory(source, kitRoot, sourceIdentity) {
     if (!relative.startsWith('node_modules/') || relative.includes('..') || metadata.link) continue;
     const root = path.join(kitRoot, relative);
     if (!fs.existsSync(root)) { if (metadata.optional) continue; throw Error('Pinned dependency is missing'); }
-    add(root, file => relative === 'node_modules/typescript'
+    add(root, file => ['node_modules/typescript', 'node_modules/typescript-api'].includes(relative)
       ? file === path.join(root, 'package.json') || (path.dirname(file) === path.join(root, 'lib') && /^lib\..*\.d\.ts$/.test(path.basename(file)))
       : /\.(?:[cm]?[jt]sx?|css|json|svg|png|jpe?g|woff2?|txt|md)$/.test(file) || /^(?:licen[cs]e|notice|copying)/i.test(path.basename(file)));
     const pkgFile = path.join(root, 'package.json');

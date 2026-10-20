@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import ts from 'typescript';
+import ts from 'typescript-api';
 import {validateConnectionFiles} from '../scripts/validate-connection-files.mjs';
 const check=(text,connections=[])=>validateConnectionFiles(ts,[{path:'src/main.tsx',text}],{connections});
 const tv={alias:'googleTV',required:false};
