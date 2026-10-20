@@ -6,6 +6,50 @@ import ScreenpunkCore
 @testable import ScreenpunkController
 
 final class WorkbenchDomainBrokerTests: XCTestCase {
+    func testSocketBuildErrorsAreTypedAndLeaveNoPublishedHead() throws {
+        let fixture = try Fixture(mutationGate: {}); defer { fixture.cleanup() }
+        _ = try fixture.workspace.create(at: fixture.root.appendingPathComponent("visible").path)
+        let authoring = WorkbenchContainedAuthoring(workspace: fixture.workspace)
+        var source = try authoring.create(name: "Build errors", kind: "web", trustedKitVersion: "1.0.0")
+        let id = source.project.projectId
+        let server = WorkbenchBrokerServer(environment: fixture.environment, domain: fixture.domain)
+        try server.start(); defer { server.stop() }
+        let client = WorkbenchBrokerClient(environment: fixture.environment)
+        try client.connect(); defer { client.close() }
+        let selected = try client.workspaceStatus()
+        let scope: [String: Any] = ["schemaVersion": 1, "projectId": id,
+            "expectedWorkspaceId": try XCTUnwrap(selected.workspaceId),
+            "expectedSelectionGeneration": try XCTUnwrap(selected.selectionGeneration)]
+        func missingHead() throws {
+            XCTAssertThrowsError(try client.performAuthoring(method: .buildHead, params: scope)) {
+                XCTAssertEqual(($0 as? WorkbenchIPCError)?.code, .buildNotFound)
+            }
+            try client.connect()
+        }
+        try missingHead()
+        for (target, code) in [
+            (#"{"width":1024,"height":768,"orientation":"landscape","profileId":"test"}"#, WorkbenchIPCErrorCode.buildConfigurationInvalid),
+            (#"{"width":1024,"height":768,"scale":2,"orientation":"diagonal","profileId":"test"}"#, .buildPackageInvalid)
+        ] {
+            let config = Data(("{\"name\":\"Build errors\",\"target\":" + target + "}").utf8)
+            source = try authoring.patch(id, expectedSourceVersion: source.sourceVersion,
+                changes: [.init(path: "screen.json", bytes: config)])
+            var params = scope; params["expectedSourceVersion"] = source.sourceVersion
+            XCTAssertThrowsError(try client.performAuthoring(method: .buildRun, params: params)) {
+                XCTAssertEqual(($0 as? WorkbenchIPCError)?.code, code)
+            }
+            try client.connect()
+            try missingHead()
+            XCTAssertTrue(try client.listPackages().isEmpty)
+        }
+        let config = Data(#"{"name":"Build errors","target":{"width":1024,"height":768,"scale":2,"orientation":"landscape","profileId":"test"}}"#.utf8)
+        source = try authoring.patch(id, expectedSourceVersion: source.sourceVersion,
+            changes: [.init(path: "screen.json", bytes: config)])
+        var params = scope; params["expectedSourceVersion"] = source.sourceVersion
+        let built = try XCTUnwrap(client.performAuthoring(method: .buildRun, params: params).build)
+        XCTAssertEqual(try client.performAuthoring(method: .buildHead, params: scope).build?.revision, built.revision)
+    }
+
     func testSocketPackageImportIsMeasuredBoundedAndHistoricalOnly() throws {
         let fixture = try Fixture(mutationGate: {})
         defer { fixture.cleanup() }
@@ -301,6 +345,45 @@ final class WorkbenchDomainBrokerTests: XCTestCase {
         XCTAssertEqual(drained.wait(timeout: .now() + 2), .success)
         XCTAssertTrue(try drainResult?.get().guiConsumersKnown ?? false)
         XCTAssertEqual(try drainResult?.get().guiConsumers, [])
+    }
+
+    func testPreviewReadsRevalidateBytesAndSelectionBetweenRequests() throws {
+        let fixture = try Fixture(); defer { fixture.cleanup() }
+        let root = fixture.root.appendingPathComponent("visible")
+        _ = try fixture.workspace.create(at: root.path)
+        let bytes = Data(repeating: 65, count: 140_000)
+        var manifest = DashboardManifest(schemaVersion: 1, dashboardId: "carousel", name: "Carousel",
+            revision: "one", entrypoint: "index.html", sdkVersion: "1",
+            target: ManifestTarget(profileId: "test", width: 800, height: 480, scale: 1, orientation: "landscape"),
+            connections: [], files: [ManifestFile(path: "index.html", bytes: bytes.count,
+                sha256: DeploymentDigest.sha256Hex(bytes))])
+        manifest.digest = try DeploymentDigest.digest(for: manifest)
+        _ = try WorkbenchPortablePackages(workspace: fixture.workspace).importVerified(
+            .init(manifest: manifest, files: ["index.html": bytes]))
+        let server = WorkbenchBrokerServer(environment: fixture.environment, domain: fixture.domain)
+        try server.start(); defer { server.stop() }
+        let client = WorkbenchBrokerClient(environment: fixture.environment)
+        try client.connect(); defer { client.close() }
+        let selected = try client.workspaceStatus()
+        for _ in 0..<3 {
+            for offset in stride(from: 0, to: bytes.count, by: 64 * 1024) {
+                let chunk = try client.workspacePackageFile(dashboardId: "carousel", revision: "one",
+                    path: "index.html", offset: offset, in: selected)
+                XCTAssertEqual(chunk.bytes, bytes.subdata(in: offset..<min(bytes.count, offset + 64 * 1024)))
+            }
+        }
+        let object = WorkbenchTransactionDigest.hex(Data("carousel\0one".utf8))
+        let file = root.appendingPathComponent("Workbench/History/Packages/" + object + "/files/index.html")
+        try Data(repeating: 66, count: bytes.count).write(to: file)
+        XCTAssertThrowsError(try client.workspacePackageFile(dashboardId: "carousel", revision: "one",
+            path: "index.html", offset: 0, in: selected))
+        try bytes.write(to: file)
+        try client.connect()
+        _ = try fixture.workspace.create(at: fixture.root.appendingPathComponent("other").path)
+        XCTAssertThrowsError(try client.workspacePackageFile(dashboardId: "carousel", revision: "one",
+            path: "index.html", offset: 0, in: selected)) {
+            XCTAssertEqual(($0 as? WorkbenchIPCError)?.code, .workspaceConflict)
+        }
     }
 
     func testWorkspacePackageReadsRejectClaimedRolesAndUnsafeMembers() throws {

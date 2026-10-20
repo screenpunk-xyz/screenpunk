@@ -51,6 +51,77 @@ final class DeviceGrantPreparationTests: XCTestCase {
         let bytes = try Data(contentsOf:path), temp = path.appendingPathExtension("external")
         try bytes.write(to:temp); try FileManager.default.removeItem(at:path); try FileManager.default.moveItem(at:temp,to:path)
     }
+    private func homeStore(_ root: URL, _ backend: Backend,
+        boundary: @escaping (DeviceGrantPreparationStore.Boundary) throws -> Void = { _ in }) -> DeviceGrantPreparationStore {
+        let home = root.deletingLastPathComponent()
+        return .init(root: root, rootID: id(1), protectedScope: scope(root), backend: backend,
+            contextFactory: { root, fd in
+                try .syntheticCurrentAppHomeForTesting(currentRoot: root, heldRoot: fd,
+                    systemHome: home.path, physicalHome: home.path)
+            }, boundary: boundary)
+    }
+    func testFilesystemContextCaptureFailureUsesGrantUnsafeBindingWithoutEffects() throws {
+        enum CaptureFailure: Error { case expected }
+        let root = try root(), backend = Backend()
+        let store = DeviceGrantPreparationStore(root: root, rootID: id(1), protectedScope: scope(root), backend: backend,
+            contextFactory: { _, _ in throw CaptureFailure.expected })
+        XCTAssertThrowsError(try store.initializeExplicit()) { error in
+            XCTAssertEqual(error as? DeviceGrantPreparationError, .unsafeBinding)
+        }
+        XCTAssertEqual(backend.adds, 0)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+    func testSyntheticCurrentHomeReopenAppendAndReplayPreserveHistoricalGrantProofs() throws {
+        let root = try root(), backend = Backend(), first = try request(71), second = try request(72)
+        let initial = homeStore(root, backend); try initial.initializeExplicit(); _ = try initial.prepareExact(first)
+        let oldURLs = [root.appendingPathComponent("root-binding.json")] +
+            [".json", ".terminal", ".binding", ".head-binding", ".confirmed"].map { operation(root, first, $0) }
+        let oldBytes = try oldURLs.map { try Data(contentsOf: $0) }
+        let headBytes = try Data(contentsOf: root.appendingPathComponent("head.json"))
+        let adds = backend.adds
+        let reopened = homeStore(root, backend); try reopened.initializeExplicit()
+        let retained = try reopened.recommitExact(first); XCTAssertNoThrow(try reopened.verify(retained))
+        XCTAssertEqual(backend.adds, adds)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("head.json")), headBytes)
+        _ = try reopened.prepareExact(second)
+        XCTAssertEqual(backend.adds, adds + 1)
+        XCTAssertEqual(try oldURLs.map { try Data(contentsOf: $0) }, oldBytes)
+        let third = homeStore(root, backend); try third.initializeExplicit()
+        let current = try third.recommitExact(second); XCTAssertNoThrow(try third.verify(current))
+        _ = try third.recommitExact(first) // Historical replay cannot replace the current head.
+        XCTAssertEqual(try oldURLs.map { try Data(contentsOf: $0) }, oldBytes)
+        XCTAssertEqual(backend.adds, adds + 1)
+    }
+    func testSyntheticCurrentHomeRejectsIncoherentRootBindingBeforePrivateEffects() throws {
+        let root = try root(), backend = Backend(), initial = homeStore(root, backend)
+        try initial.initializeExplicit() // No terminal/credential proof has been issued.
+        let url = root.appendingPathComponent("root-binding.json")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var lock = try XCTUnwrap(object["lockIdentity"] as? [String: Any])
+        let device = try XCTUnwrap(lock["device"] as? NSNumber).uint64Value
+        lock["device"] = NSNumber(value: device ^ 1); object["lockIdentity"] = lock
+        let malformed = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        try malformed.write(to: url)
+        XCTAssertThrowsError(try homeStore(root, backend).initializeExplicit()) { error in
+            XCTAssertEqual(error as? DeviceGrantPreparationError, .unsafeBinding)
+        }
+        XCTAssertEqual(backend.adds, 0)
+        XCTAssertEqual(try Data(contentsOf: url), malformed)
+    }
+    func testSyntheticCurrentHomeStillRejectsCapturedLiveRootReplacement() throws {
+        let root = try root(), backend = Backend(); var armed = false
+        let displaced = root.appendingPathExtension("displaced")
+        addTeardownBlock { try? FileManager.default.removeItem(at: displaced) }
+        let store = homeStore(root, backend) { boundary in
+            if armed && boundary == .afterFileSync(.terminal) {
+                armed = false
+                try FileManager.default.moveItem(at: root, to: displaced)
+                try FileManager.default.copyItem(at: displaced, to: root)
+            }
+        }
+        try store.initializeExplicit(); armed = true
+        XCTAssertThrowsError(try store.prepareExact(try request(73)))
+    }
     func testExplicitInitializationNoImplicitRootAndSecretFreeJournal() throws {
         let root = try root(), backend = Backend(), request = try request(), store = store(root,backend)
         XCTAssertThrowsError(try store.prepareExact(request)); XCTAssertEqual(backend.adds,0)
@@ -239,6 +310,71 @@ final class DeviceGrantPreparationTests: XCTestCase {
         let terminal = operation(root,request,".terminal"), linked = root.appendingPathComponent("terminal-hardlink")
         try FileManager.default.linkItem(at:terminal,to:linked)
         XCTAssertThrowsError(try a.recommitExact(request)); XCTAssertEqual(backend.adds,1)
+    }
+
+    func testHeldHomePlanningRecapturesAndRecoversWithoutReusingPriorContext() throws {
+        enum CaptureFailure: Error { case injected }
+        let root = try root(), backend = Backend(), request = try request(81)
+        let home = root.deletingLastPathComponent()
+        var captures = 0, failCapture = false, narrowHome = false
+        let store = DeviceGrantPreparationStore(root: root, rootID: id(1), protectedScope: scope(root), backend: backend,
+            contextFactory: { current, fd in
+                captures += 1
+                if failCapture { throw CaptureFailure.injected }
+                let capturedHome = narrowHome ? root : home
+                return try .syntheticCurrentAppHomeForTesting(currentRoot: current, heldRoot: fd,
+                    systemHome: capturedHome.path, physicalHome: capturedHome.path)
+            })
+        try store.initializeExplicit()
+        let receipt = try store.prepareExact(request)
+        let paths = [root.appendingPathComponent("root-binding.json"), root.appendingPathComponent("head.json"), operation(root, request, ".terminal")]
+        let before = try paths.map { try Data(contentsOf: $0) }, adds = backend.adds
+        let firstCaptures = captures
+        failCapture = true
+        XCTAssertThrowsError(try store.verify(receipt)) { error in
+            XCTAssertEqual(error as? DeviceGrantPreparationError, .unsafeBinding)
+        }
+        XCTAssertEqual(captures, firstCaptures + 1)
+        XCTAssertEqual(backend.adds, adds)
+        XCTAssertEqual(try paths.map { try Data(contentsOf: $0) }, before)
+
+        failCapture = false; narrowHome = true
+        // A genuine held root can fit a narrower synthetic home while its
+        // protected siblings do not. Fresh global planning must not rescue it.
+        XCTAssertThrowsError(try store.verify(receipt)) { error in
+            XCTAssertEqual(error as? DeviceGrantPreparationError, .unsafeBinding)
+        }
+        XCTAssertEqual(captures, firstCaptures + 2)
+        XCTAssertEqual(backend.adds, adds)
+        XCTAssertEqual(try paths.map { try Data(contentsOf: $0) }, before)
+        narrowHome = false
+        XCTAssertNoThrow(try store.verify(receipt))
+        XCTAssertEqual(captures, firstCaptures + 3)
+        XCTAssertEqual(backend.adds, adds)
+        XCTAssertEqual(try paths.map { try Data(contentsOf: $0) }, before)
+    }
+
+    func testHeldHomePlanningStillRejectsProtectedPathSymlinkReplacement() throws {
+        let root = try root(), backend = Backend(), request = try request(82)
+        let protectedParent = root.deletingLastPathComponent().appendingPathComponent(root.lastPathComponent + "-protected")
+        let protected = protectedParent.appendingPathComponent("state"), retained = protected.appendingPathExtension("retained")
+        try FileManager.default.createDirectory(at: protected, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: protectedParent) }
+        let sentinel = protected.appendingPathComponent("sentinel"), bytes = Data("owned protected sentinel".utf8)
+        try bytes.write(to: sentinel)
+        var armed = false, replaced = false
+        let store = homeStore(root, backend) { point in
+            if armed && point == .afterFileSync(.terminal) {
+                armed = false; replaced = true
+                try FileManager.default.moveItem(at: protected, to: retained)
+                try FileManager.default.createSymbolicLink(at: protected, withDestinationURL: retained)
+            }
+        }
+        try store.initializeExplicit(); armed = true
+        XCTAssertThrowsError(try store.prepareExact(request))
+        XCTAssertTrue(replaced)
+        XCTAssertEqual(try Data(contentsOf: retained.appendingPathComponent("sentinel")), bytes)
+        XCTAssertEqual(try Data(contentsOf: sentinel), bytes)
     }
 
 }

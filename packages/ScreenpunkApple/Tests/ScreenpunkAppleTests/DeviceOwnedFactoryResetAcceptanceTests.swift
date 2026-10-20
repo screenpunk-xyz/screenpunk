@@ -5,6 +5,26 @@ import CryptoKit
 @_spi(NativeInstallation) @testable import ScreenpunkApple
 
 @MainActor final class DeviceOwnedFactoryResetAcceptanceTests: XCTestCase {
+    func testGenuineOwnedResetClearsRecordedNativeBootstrapRouteBeforeLegacyReadmission() async throws {
+        let fixture = try await FactoryResetFixture.make(common: false, qualified: false)
+        defer { fixture.close() }
+        var owners = 0, localConstructions = 0
+        let bootstrap = DeviceManagementBootstrap(preparationFactory: {
+            owners += 1
+            let authority = owners == 1 ? fixture.authority : try fixture.newAuthority(qualified: false)
+            return .init(authority: authority, constructLifecycle: { localConstructions += 1; throw FactoryResetFixtureFailure.injected })
+        }, ownedResetHandoff: { try $0.consumeHandoff() }, retained: { .empty }, hostFactory: { _ in throw FactoryResetFixtureFailure.injected })
+        bootstrap.useRecordedNativeCloudStartup(); bootstrap.start()
+        XCTAssertTrue(bootstrap.currentAuthority === fixture.authority)
+        let preparation = try fixture.prepare()
+        let receipt = try await preparation.execute()
+        try await bootstrap.completeOwnedFactoryReset(receipt)
+        for _ in 0..<100 where bootstrap.startupDiagnostic?.stage != .resetConfiguration { await Task.yield() }
+        XCTAssertFalse(bootstrap.readyForRecordedNativeRestore); XCTAssertNil(bootstrap.cloudAuthorityGeneration)
+        XCTAssertEqual(localConstructions, 1, "Only genuine owned completion returns to ordinary Local lifecycle construction")
+        XCTAssertEqual(bootstrap.startupDiagnostic?.stage, .resetConfiguration)
+        XCTAssertEqual(fixture.storage.itemCount, 0)
+    }
     func testNativeOfflineFlagOffResetThenFreshEnrollmentAndSecondReset() async throws {
         let fixture = try await FactoryResetFixture.make(common: false, qualified: false)
         defer { fixture.close() }

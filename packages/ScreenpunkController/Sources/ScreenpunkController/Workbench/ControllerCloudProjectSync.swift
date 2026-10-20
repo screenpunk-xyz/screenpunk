@@ -45,12 +45,19 @@ public protocol ControllerCloudProjectRemote: Sendable {
     /// Atomic source replacement with server-side immutable revision CAS and idempotency.
     func write(workspaceId: String, projectId: String, baseRevision: String?, files: [String: Data], idempotencyKey: String) async throws -> ControllerCloudSourceSnapshot
 }
+enum ControllerCloudRemoteHead: Sendable { case present(String), deleted }
+protocol ControllerCloudProjectRemoteMetadata: ControllerCloudProjectRemote {
+    func head(workspaceId: String, projectId: String) async throws -> ControllerCloudRemoteHead
+}
+protocol ControllerCloudProjectLocalMetadata: ControllerCloudProjectLocal {
+    func revision(projectId: String) async throws -> String
+}
 public protocol ControllerCloudProjectLocal: Sendable {
     func read(projectId: String) async throws -> ControllerCloudSourceSnapshot
     /// Must compare the expected local revision and atomically replace included files.
     func replace(projectId: String, expectedRevision: String, snapshot: ControllerCloudSourceSnapshot) async throws
 }
-public enum ControllerCloudSyncStatus: String, Codable, Sendable { case linked, synced, uploading, downloading, conflict, deleted }
+public enum ControllerCloudSyncStatus: String, Codable, Sendable { case linked, synced, uploading, downloading, conflict, deleted, unavailable }
 public enum ControllerCloudConflictChoice: Sendable { case local, remote }
 public struct ControllerCloudProjectBinding: Codable, Sendable, Equatable {
     public let accountId: String
@@ -90,14 +97,15 @@ public actor ControllerCloudProjectSync {
     }
     private func save(_ journal: ControllerCloudSyncJournal) throws {
         let target = try url(journal.binding.localProjectId)
-        try JSONEncoder().encode(journal).write(to: target, options: .atomic)
+        try ControllerCloudPersistence.write(JSONEncoder().encode(journal), to: target)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
     }
-    public func bindings(accountId: String) throws -> [ControllerCloudProjectBinding] {
+    public func allBindings() throws -> [ControllerCloudProjectBinding] {
         try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil).filter {$0.pathExtension == "json"}.map {
             try JSONDecoder().decode(ControllerCloudSyncJournal.self, from: Data(contentsOf: $0)).binding
-        }.filter {$0.accountId == accountId}.sorted {$0.localProjectId < $1.localProjectId}
+        }.sorted {$0.localProjectId < $1.localProjectId}
     }
+    public func bindings(accountId: String) throws -> [ControllerCloudProjectBinding] { try allBindings().filter { $0.accountId == accountId } }
     public func status(localProjectId: String) throws -> ControllerCloudProjectBinding { try read(localProjectId).binding }
     public func statusIfPresent(localProjectId: String) throws -> ControllerCloudProjectBinding? {
         guard FileManager.default.fileExists(atPath: try url(localProjectId).path) else { return nil }
@@ -108,10 +116,37 @@ public actor ControllerCloudProjectSync {
         if FileManager.default.fileExists(atPath: try url(localProjectId).path) { throw ControllerCloudError.conflict }
         try save(.init(binding: .init(accountId: accountId, workspaceId: workspaceId, localProjectId: localProjectId, cloudProjectId: cloudProjectId, status: .linked)))
     }
+    public func isSuppressed(localProjectId: String) throws -> Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent("suppressed").appendingPathComponent(localProjectId + ".json").path)
+    }
+    public func suppressedBindings(accountId: String? = nil) throws -> [ControllerCloudProjectBinding] {
+        let directory = root.appendingPathComponent("suppressed")
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).map {
+            try JSONDecoder().decode(ControllerCloudProjectBinding.self, from: Data(contentsOf: $0))
+        }.filter { accountId == nil || $0.accountId == accountId }
+    }
+    func remoteEligibility(accountId: String, workspaceId: String, cloudProjectIds: Set<String>, admitted: Bool) throws {
+        for binding in try bindings(accountId: accountId) where binding.workspaceId == workspaceId && cloudProjectIds.contains(binding.cloudProjectId) && binding.status != .deleted {
+            guard !busy.contains(binding.localProjectId) else { throw ControllerCloudError.conflict }
+            var journal = try read(binding.localProjectId)
+            if admitted {
+                guard journal.binding.status == .unavailable else { continue }
+                journal.binding.status = .linked
+            } else {
+                guard journal.binding.status != .conflict else { continue }
+                journal.binding.status = .unavailable
+            }
+            try save(journal) // Pending drafts, prior CAS bases and identities remain unchanged.
+        }
+    }
     public func unlink(localProjectId: String) throws {
         guard !busy.contains(localProjectId) else { throw ControllerCloudError.conflict }
         // Keep recoverable drafts and interrupted writes. Unlinking detaches the journal rather than erasing evidence.
         let source = try url(localProjectId)
+        let suppressed = root.appendingPathComponent("suppressed")
+        try FileManager.default.createDirectory(at: suppressed, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try ControllerCloudPersistence.write(JSONEncoder().encode(read(localProjectId).binding), to: suppressed.appendingPathComponent(localProjectId + ".json"))
         let retained = root.appendingPathComponent(localProjectId + "-unlinked-" + UUID().uuidString + ".draft")
         try FileManager.default.moveItem(at: source, to: retained)
     }
@@ -120,14 +155,30 @@ public actor ControllerCloudProjectSync {
         defer { busy.remove(localProjectId) }
         var journal = try read(localProjectId)
         guard journal.binding.accountId == accountId else { throw ControllerCloudError.accountMismatch }
-        if journal.binding.status == .deleted { throw ControllerCloudError.deletedProject }
+        if journal.binding.status == .deleted || journal.binding.status == .unavailable { throw ControllerCloudError.deletedProject }
         if journal.binding.status == .conflict { return journal.binding }
         if let upload = journal.pendingUpload { return try await uploadPending(&journal, snapshot: upload) }
         if let download = journal.pendingDownload { return try await downloadPending(&journal, snapshot: download) }
+        if let localRevision = journal.binding.localRevision, let cloudRevision = journal.binding.cloudRevision,
+           let localMetadata = local as? any ControllerCloudProjectLocalMetadata,
+           let remoteMetadata = remote as? any ControllerCloudProjectRemoteMetadata {
+            let currentRevision = try await localMetadata.revision(projectId: localProjectId)
+            if case .present(let revision) = try await remoteMetadata.head(workspaceId: journal.binding.workspaceId, projectId: journal.binding.cloudProjectId),
+               revision == cloudRevision, currentRevision == localRevision {
+                try ControllerCloudAutomaticSyncAuthorization.requireConsent()
+                if journal.binding.status != .synced { journal.binding.status = .synced; try save(journal) }
+                return journal.binding
+            }
+        }
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let current = try await local.read(projectId: localProjectId); try current.validate()
-        guard let head = try await remote.read(workspaceId: journal.binding.workspaceId, projectId: journal.binding.cloudProjectId) else {
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
+        let observedHead = try await remote.read(workspaceId: journal.binding.workspaceId, projectId: journal.binding.cloudProjectId)
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
+        guard let head = observedHead else {
             journal.binding.status = .deleted; journal.conflictLocal = current; try save(journal); return journal.binding
         }
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         try head.validate()
         if head.revision.isEmpty && head.files.isEmpty {
             journal.binding.cloudRevision = ""; journal.pendingUpload = current; journal.idempotencyKey = UUID().uuidString
@@ -155,6 +206,7 @@ public actor ControllerCloudProjectSync {
         var journal = try read(localProjectId)
         guard journal.binding.accountId == accountId else { throw ControllerCloudError.accountMismatch }
         guard journal.binding.status == .conflict, let localDraft = journal.conflictLocal, let remoteDraft = journal.conflictRemote else { throw ControllerCloudError.conflict }
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let current = try await local.read(projectId: localProjectId)
         guard current.revision == localDraft.revision else { throw ControllerCloudError.conflict }
         // Review authorization is tied to both exact snapshots.
@@ -171,6 +223,7 @@ public actor ControllerCloudProjectSync {
         let base: String? = storedBase.isEmpty ? nil : storedBase
         let result: ControllerCloudSourceSnapshot
         do {
+            try ControllerCloudAutomaticSyncAuthorization.requireConsent()
             result = try await remote.write(workspaceId: journal.binding.workspaceId, projectId: journal.binding.cloudProjectId, baseRevision: base, files: snapshot.files, idempotencyKey: key)
         } catch {
             if error as? ControllerCloudError == .http(404) {
@@ -189,13 +242,16 @@ public actor ControllerCloudProjectSync {
             throw error
         }
         try result.validate(); guard result.files == snapshot.files else { throw ControllerCloudError.invalidResponse }
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let latestLocal = try await local.read(projectId: journal.binding.localProjectId)
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         journal.binding.localRevision = snapshot.revision; journal.binding.cloudRevision = result.revision
         journal.binding.status = latestLocal.revision == snapshot.revision ? .synced : .linked
         journal.pendingUpload = nil; journal.idempotencyKey = nil; try save(journal); return journal.binding
     }
     private func downloadPending(_ journal: inout ControllerCloudSyncJournal, snapshot: ControllerCloudSourceSnapshot) async throws -> ControllerCloudProjectBinding {
         guard let expected = journal.expectedLocalRevision else { throw ControllerCloudError.conflict }
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let current = try await local.read(projectId: journal.binding.localProjectId)
         if current.files != snapshot.files {
             guard current.revision == expected else {
@@ -203,9 +259,12 @@ public actor ControllerCloudProjectSync {
                 journal.pendingDownload = nil; journal.expectedLocalRevision = nil; journal.binding.status = .conflict
                 try save(journal); return journal.binding
             }
+            try ControllerCloudAutomaticSyncAuthorization.requireConsent()
             try await local.replace(projectId: journal.binding.localProjectId, expectedRevision: expected, snapshot: snapshot)
         }
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         let applied = try await local.read(projectId: journal.binding.localProjectId)
+        try ControllerCloudAutomaticSyncAuthorization.requireConsent()
         guard applied.files == snapshot.files else { throw ControllerCloudError.invalidResponse }
         journal.binding.localRevision = applied.revision; journal.binding.cloudRevision = snapshot.revision; journal.binding.status = .synced
         journal.pendingDownload = nil; journal.expectedLocalRevision = nil; try save(journal); return journal.binding

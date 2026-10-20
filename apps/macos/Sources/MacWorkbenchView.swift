@@ -11,6 +11,9 @@ struct MacWorkbenchView: View {
     @State private var connectionSearch = ""
     @State private var agentProfile: AgentSetupProfile = .cursor
     @StateObject private var connectionsStore = ConnectionsStore()
+    @StateObject private var cloudSync = CloudControllerModel()
+    // UI progress only: this timer reads local state and never queues a sync.
+    private let localSyncStatusTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
     @State private var visibility: NavigationSplitViewVisibility = .all
     @State private var screenPicker = false
     @State private var devicePresetPicker = false
@@ -67,6 +70,8 @@ struct MacWorkbenchView: View {
         .confirmationDialog("Delete this screen?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete Screen", role: .destructive) { model.deleteScreen() }
         } message: { Text("It will be removed from your library. Screens already running on devices keep running.") }
+        .task { cloudSync.refreshLibraryStatus(trigger: .appOpened) }
+        .onReceive(localSyncStatusTimer) { _ in cloudSync.refreshLibraryStatus() }
         .onDisappear { if model.brokerMode { model.detachCompatibleBroker() } }
     }
 
@@ -78,10 +83,12 @@ struct MacWorkbenchView: View {
                         if model.section == "Devices" {
                             sectionHeader("Devices", count: model.brokerDevices.count) {
                                 refreshDevicesButton
+                                circle("Add Device", symbol: "plus") { model.sheet = .manual }
+                                    .disabled(model.busy)
                             }
                             ForEach(model.brokerDevices, id: \.deviceId) { device in
                                 sidebarItem(id: device.deviceId, title: device.name,
-                                            subtitle: device.reachability,
+                                            subtitle: model.brokerDeviceSubtitle(device),
                                             symbol: model.deviceSymbol(device.name)) {
                                     EmptyView()
                                 }.contextMenu {
@@ -99,11 +106,25 @@ struct MacWorkbenchView: View {
                             sectionHeader("Screens", count: model.brokerPackages.count) {
                                 refreshDevicesButton
                             }
+                            if model.brokerWorkspace?.state == "unconfigured" {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Your screen library needs a workspace.")
+                                    Text("Restore existing screens into Documents/Screenpunk Workspace. Originals and settings are kept.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    Button("Restore Existing Screens") { model.recoverExistingScreens() }
+                                        .disabled(model.busy)
+                                }.padding(12)
+                            }
                             ForEach(Array(model.brokerPackages.enumerated()), id: \.offset) { _, package in
                                 sidebarNavigationItem(package.name, symbol: model.symbol(for: package.dashboardId),
-                                    selected: model.brokerSelectedPackage == package) {
+                                    selected: model.brokerSelectedPackage == package, syncDashboardID: package.dashboardId) {
                                     connectionsSelected = false
                                     model.selectBrokerPackage(package)
+                                    cloudSync.refreshLibraryStatus(trigger: .screenSelected, dashboardId: package.dashboardId)
+                                }.contextMenu {
+                                    Button("Remove Screen…", role: .destructive) {
+                                        model.archiveBrokerPackage(package)
+                                    }.disabled(model.busy)
                                 }
                             }
                         }
@@ -200,11 +221,17 @@ struct MacWorkbenchView: View {
             .background(.quaternary, in: .rect(cornerRadius: 5))
     }
 
-    private func sidebarNavigationItem(_ title: String, symbol: String, selected: Bool, count: Int? = nil, action: @escaping () -> Void) -> some View {
+    private func sidebarNavigationItem(_ title: String, symbol: String, selected: Bool, count: Int? = nil, syncDashboardID: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: symbol).font(.system(size: 16, weight: .regular)).frame(width: 20)
                 Text(title).font(.system(size: 14, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                if let syncDashboardID {
+                    Spacer(minLength: 8)
+                    ScreenSyncIndicator(status: cloudSync.localSyncStatus?.screenSyncScreens[syncDashboardID],
+                        enabled: cloudSync.localSyncStatus?.screenSyncEnabled ?? false,
+                        available: cloudSync.localSyncStatus != nil && cloudSync.error == nil)
+                }
                 if let count {
                     Spacer(minLength: 10)
                     sidebarCount(count).accessibilityLabel("\(count) active plugins")
@@ -343,45 +370,53 @@ struct MacWorkbenchView: View {
     @ToolbarContentBuilder private var detailToolbar: some ToolbarContent {
         if model.brokerMode {
             if model.section == "Devices", model.brokerScreenSet != nil {
-                ToolbarItem(placement: .navigation) {
-                    Text(model.brokerScreenSet?.profile.model ?? "Device")
-                        .foregroundStyle(.secondary)
+                if let deviceModel = model.brokerScreenSet?.profile.model, !deviceModel.isEmpty, deviceModel != "Device" {
+                    ToolbarItem(placement: .navigation) { Text(deviceModel).foregroundStyle(.secondary) }
+                        .workbenchSeparateBackground()
                 }
                 ToolbarItem(placement: .principal) {
-                    Menu(model.brokerSelectedPackage?.name ?? "Choose Screen") {
-                        ForEach(Array(model.brokerPackages.enumerated()), id: \.offset) { _, package in
-                            Button(package.name + " · " + String(package.revision.prefix(12))) {
-                                model.selectBrokerPackage(package)
-                            }
+                    Button { screenPicker.toggle() } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: model.brokerMultipleScreens ? "rectangle.stack" : "rectangle")
+                            Text(model.brokerMultipleScreens ? "\(model.brokerDraftScreens.count) Screens" : (model.brokerDraftScreens.first?.name ?? "Choose Screens"))
+                            Image(systemName: "chevron.down").font(.caption)
                         }
                     }.workbenchButton()
-                }
-                ToolbarItemGroup(placement: .primaryAction) {
+                        .help("Choose screens for this device. Apply sends the selected set.")
+                        .accessibilityLabel("Choose device screens")
+                        .popover(isPresented: $screenPicker) { BrokerDeviceScreenPicker(model: model) { screenPicker = false } }
+                }.workbenchSeparateBackground()
+                ToolbarItem(placement: .primaryAction) {
                     orientationPicker
-                    Button("Restore Previous Set…", systemImage: "arrow.uturn.backward") {
-                        model.rollbackBrokerScreen()
+                }.workbenchSeparateBackground()
+                ToolbarItem(placement: .primaryAction) {
+                    Button { model.rollbackBrokerScreen() } label: {
+                        Image(systemName: "arrow.uturn.backward").frame(width: 20, height: 20)
                     }
-                    .workbenchButton()
+                    .workbenchToolbarCircle()
+                    .help("Restore Previous Set…").accessibilityLabel("Restore Previous Set…")
                     .disabled(!model.canRollbackBrokerApply)
+                }.workbenchSeparateBackground()
+                ToolbarItem(placement: .primaryAction) {
                     Button { model.applyScreen() } label: {
-                        Label(model.applyLabel, systemImage: "arrow.up.doc")
-                            .foregroundStyle(.white)
+                        Image(systemName: "arrow.up.doc").frame(width: 20, height: 20).foregroundStyle(.white)
                     }
-                    .workbenchButton(prominent: true)
+                    .workbenchToolbarCircle(prominent: true)
                     .tint(WorkbenchPalette.accent)
-                    .controlSize(.large)
+                    .help(model.applyLabel).accessibilityLabel(model.applyLabel)
                     .disabled(!model.canApply)
-                }
+                }.workbenchSeparateBackground()
             } else if model.section == "Screens", model.brokerSelectedPackage != nil {
                 ToolbarItem(placement: .navigation) {
-                    Button("Reveal Source…", systemImage: "curlybraces") {
-                        model.revealBrokerSource()
-                    }.workbenchButton()
-                }
+                    Button { model.revealBrokerSource() } label: {
+                        Image(systemName: "curlybraces").frame(width: 20, height: 20)
+                    }.workbenchToolbarCircle()
+                        .help("Screen Files: reveal source or export this screen’s files")
+                        .accessibilityLabel("Screen Files…")
+                }.workbenchSeparateBackground()
             }
             ToolbarItem(placement: .status) {
                 if model.busy { ProgressView().controlSize(.small) }
-                else { Text(model.brokerApplyState).font(.caption).foregroundStyle(.secondary) }
             }
         } else if connectionsSelected {
             ToolbarItem(placement: .principal) {
@@ -485,6 +520,50 @@ struct MacWorkbenchView: View {
             .modifier(GlassControlOutline())
     }
 
+    @ViewBuilder private var brokerDeviceDetail: some View {
+        VStack(spacing: 16) {
+            if let observed = model.brokerScreenSet {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.brokerDevices.first(where: { $0.deviceId == observed.deviceId })?.name ?? observed.name)
+                        .font(.title2.bold())
+                    Text("Connected · \(observed.profile.width) × \(observed.profile.height) · \(observed.screens.count) installed screens")
+                        .foregroundStyle(.secondary)
+                    if observed.screens.isEmpty { Text("No screens installed on this device yet.") }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding()
+                if let store = model.preview {
+                    ScreenCanvas(store: store, size: model.previewSize, deviceFrame: true,
+                                 dashboardId: model.previewDashboardId, revision: model.previewRevision,
+                                 usesHomeAssistant: model.previewUsesHomeAssistant, manifest: model.previewManifest,
+                                 publicConnectionController: model.service, serviceInvocation: model.cloudServiceInvocation,
+                                 previous: previewNeighbor(-1), next: previewNeighbor(1), carouselPosition: previewPosition, onBrowse: model.browseScreen)
+                        .id(model.previewKey)
+                } else {
+                    VStack(spacing: 20) {
+                        if model.notice == nil && !model.brokerDraftScreens.isEmpty { ProgressView() }
+                        Text(model.brokerDraftScreens.isEmpty ? "Choose screens using the picker above." : (model.notice ?? "Loading the installed screen preview…")).foregroundStyle(.secondary)
+                        if let position = previewPosition {
+                            HStack(spacing: 24) {
+                                Button { model.browseScreen(-1) } label: { Image(systemName: "chevron.left") }
+                                    .accessibilityLabel("Previous screen")
+                                Text(position).foregroundStyle(.secondary)
+                                Button { model.browseScreen(1) } label: { Image(systemName: "chevron.right") }
+                                    .accessibilityLabel("Next screen")
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else if let message = model.brokerDeviceMessage {
+                ContentUnavailableView("Device Unavailable", systemImage: "wifi.slash", description: Text(message))
+                if let id = model.selection { Button("Try Again") { model.selectBrokerDevice(id) } }
+            } else if model.selection != nil {
+                ProgressView("Connecting to device…")
+            } else {
+                ContentUnavailableView("Choose a Device", systemImage: "ipad")
+            }
+            brokerOperationBar
+        }
+    }
+
     @ViewBuilder private var detail: some View {
         if connectionsSelected {
             ConnectionsView(agents: model.agents, store: connectionsStore, openAgent: { profile in
@@ -494,6 +573,7 @@ struct MacWorkbenchView: View {
         }
         else if model.pairing != nil { pairingState }
         else if model.detected != nil && model.section == "Devices" { pairingState }
+        else if model.brokerMode && model.section == "Devices" { brokerDeviceDetail }
         else if let store = model.preview {
             VStack(spacing: 0) {
                 ScreenCanvas(store: store, size: model.previewSize, deviceFrame: model.section == "Devices", dashboardId: model.previewDashboardId, revision: model.previewRevision, usesHomeAssistant: model.previewUsesHomeAssistant, manifest: model.previewManifest, publicConnectionController: model.service, serviceInvocation: model.cloudServiceInvocation,
@@ -502,12 +582,23 @@ struct MacWorkbenchView: View {
                 if model.brokerMode { brokerOperationBar }
             }
         } else if model.brokerMode {
-            ContentUnavailableView {
-                Label("Choose a Selected-Workspace Screen", systemImage: "rectangle.on.rectangle")
-            } description: {
-                Text("The native preview opens verified offline package bytes. Connected packages and unsupported provider actions remain unavailable in service mode.")
+            VStack(spacing: 0) {
+                if model.brokerSelectedPackage != nil {
+                    if let notice = model.notice {
+                        ContentUnavailableView("Preview Unavailable", systemImage: "exclamationmark.triangle",
+                            description: Text(notice))
+                        Button("Retry Preview") {
+                            if let package = model.brokerSelectedPackage { model.selectBrokerPackage(package) }
+                        }
+                    } else {
+                        ProgressView("Loading screen preview…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    ContentUnavailableView("Choose a Screen", systemImage: "rectangle.on.rectangle",
+                        description: Text("Select a screen from the sidebar to preview it."))
+                }
+                brokerOperationBar
             }
-            brokerOperationBar
         } else if model.device != nil {
             ContentUnavailableView {
                 Label("Make This Device Useful Again", systemImage: "rectangle.on.rectangle")
@@ -534,7 +625,7 @@ struct MacWorkbenchView: View {
 
     private var brokerOperationBar: some View {
         HStack(spacing: 12) {
-            Text("Offline preview · not device state").font(.caption).foregroundStyle(.secondary)
+            Text("Local preview · not a device screenshot").font(.caption).foregroundStyle(.secondary)
             Text(model.brokerApplyState).font(.caption).foregroundStyle(.secondary)
             if model.brokerApplyRecord?.operationId != nil {
                 Button("Check Apply Status") { model.inspectBrokerApply() }.disabled(model.busy)
@@ -545,11 +636,25 @@ struct MacWorkbenchView: View {
         }.padding(12).frame(maxWidth: .infinity)
     }
     private var previewPosition: String? {
+        if model.brokerMode {
+            let screens = model.brokerDraftScreens
+            guard model.section == "Devices", screens.count > 1,
+                  let index = screens.firstIndex(where: { $0.dashboardId == model.selectedScreen }) else { return nil }
+            return "\(screens[index].name) · \(index + 1) of \(screens.count)"
+        }
         guard model.section == "Devices", model.deviceScreens.multiple, model.deviceScreens.ids.count > 1,
               let id = model.selectedScreen, let index = model.deviceScreens.ids.firstIndex(of: id) else { return nil }
         return "\(model.screenName) · \(index + 1) of \(model.deviceScreens.ids.count)"
     }
     private func previewNeighbor(_ offset: Int) -> ScreenPreviewCard? {
+        if model.brokerMode {
+            guard model.section == "Devices", let screen = model.brokerPreviewNeighbor(offset) else { return nil }
+            let size = model.previewSize
+            return ScreenPreviewCard(name: screen.name, symbol: model.symbol(for: screen.dashboardId),
+                thumbnailKey: "\(screen.dashboardId):\(screen.revision):\(size.width)x\(size.height)",
+                cachedThumbnail: model.cachedPreviewThumbnail(screen.dashboardId, revision: screen.revision, size: size),
+                loadThumbnail: { await model.previewThumbnail(screen.dashboardId, revision: screen.revision, size: size) })
+        }
         guard model.section == "Devices",
               let id = model.deviceScreens.previewNeighbor(of: model.selectedScreen, offset: offset) else { return nil }
         let name = model.screens.first { $0.dashboardId == id }?.name
@@ -593,6 +698,43 @@ struct MacWorkbenchView: View {
                     .workbenchButton(prominent: true).tint(Color(nsColor: .systemGreen)).controlSize(.large).disabled(model.busy)
             }
         }.padding(36).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct BrokerDeviceScreenPicker: View {
+    @ObservedObject var model: MacWorkbenchModel
+    let dismiss: () -> Void
+    @State private var query = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Find a screen", text: $query).textFieldStyle(.roundedBorder)
+            Toggle("Multiple Screens", isOn: Binding(get: { model.brokerMultipleScreens }, set: model.setBrokerMultipleScreens))
+                .toggleStyle(.switch)
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(model.brokerPickerScreens.filter { DeviceScreenSelection.matches(name: $0.name, query: query) }, id: \.dashboardId) { screen in
+                        let selected = model.brokerDraftScreens.contains { $0.dashboardId == screen.dashboardId }
+                        Button {
+                            model.chooseBrokerScreen(screen)
+                            if !model.brokerMultipleScreens { dismiss() }
+                        } label: {
+                            HStack {
+                                Image(systemName: model.brokerMultipleScreens ? (selected ? "checkmark.square.fill" : "square") : (selected ? "checkmark.circle.fill" : "circle"))
+                                    .foregroundStyle(WorkbenchPalette.accent)
+                                Text(screen.name).lineLimit(1)
+                                Spacer()
+                            }.padding(8).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                            .accessibilityLabel(screen.name).accessibilityValue(selected ? "Selected" : "Not selected")
+                            .disabled(!selected && model.brokerMultipleScreens && model.brokerDraftScreens.count >= 12)
+                    }
+                }
+            }.frame(height: 320)
+            Text("\(model.brokerDraftScreens.count) of 12 selected").font(.caption).foregroundStyle(.secondary)
+            Text("Changes stay on this Mac until you apply them. Use the carousel to preview the selected screens.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack { Spacer(); Button("Done", action: dismiss) }
+        }.padding(16).frame(width: 360).disabled(model.busy)
     }
 }
 
@@ -680,12 +822,15 @@ struct ScreenCanvas: View {
                         }.joined(separator: "\n\n")).font(.caption.monospaced())
                     }.frame(maxHeight: 160)
                     if let publicReadError { Text(publicReadError).foregroundStyle(.red) }
-                    Button("Allow reads for this revision") {
+                    if publicConnectionController != nil { Button("Allow reads for this revision") {
                         do {
                             guard let controller = publicConnectionController else { return }
                             let config = try controller.approvePublicConnections(dashboardId: manifest.dashboardId, revision: manifest.revision, approved: true)
                             publicSession = try PublicReadSession(provisioning: config); publicApprovalNeeded = false
                         } catch { publicReadError = error.localizedDescription }
+                    }
+                    } else {
+                        Text("This revision has no saved public-data approval on this Mac. Its layout is still available to preview.").font(.caption)
                     }
                 }.padding().background(.regularMaterial).padding()
             }
@@ -693,7 +838,10 @@ struct ScreenCanvas: View {
         .task {
             if let manifest, manifest.connections.contains(where: { $0.publicHTTP != nil }) {
                 do {
-                    guard let config = try publicConnectionController?.approvedPublicConnections(manifest) else { throw ConnectionFailure.permissionRequired }
+                    let config: PublicReadProvisioning?
+                    if let controller = publicConnectionController { config = try controller.approvedPublicConnections(manifest) }
+                    else { config = try ControllerService.loadApprovedPublicConnections(manifest, root: DashboardPackageStore.defaultRoot()) }
+                    guard let config else { throw ConnectionFailure.permissionRequired }
                     publicSession = try PublicReadSession(provisioning: config)
                 } catch { publicApprovalNeeded = true }
             }
@@ -763,13 +911,80 @@ struct ManualDeviceSheet: View {
     @ObservedObject var model: MacWorkbenchModel
     @State private var host = ""
     @State private var port = "7843"
+    @State private var manual = false
+    @State private var discovered: [AdvertisedDevice] = []
+    @State private var discoveryError: String?
+    @State private var searching = true
+    private var discoveryActive: Bool { !manual && model.brokerPendingPairing == nil && !model.busy }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Add Device").font(.title2.weight(.semibold))
-            Text("Enter the address and port shown on your device’s Ready to pair screen.").foregroundStyle(.secondary)
-            Form { TextField("Host or IP", text: $host); TextField("Port", text: $port) }
-            HStack { Spacer(); Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction); Button("Add Device") { model.addManual(host: host, port: port) }.keyboardShortcut(.defaultAction).disabled(WorkbenchSidebar.normalizeHost(host) == nil || WorkbenchSidebar.parsePort(port) == nil) }
-        }.padding(28).frame(width: 420)
+            if let pairing = model.brokerPendingPairing {
+                Text("Compare this code with the code on \(pairing.deviceName). Confirm only if they match.")
+                Text(pairing.matchingCode).font(.largeTitle.monospacedDigit())
+                Text("Confirm on the device too, then choose Codes Match.").foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { model.finishBrokerPairing(cancel: true) }.keyboardShortcut(.cancelAction)
+                    Button("Codes Match") { model.finishBrokerPairing(cancel: false) }.keyboardShortcut(.defaultAction)
+                }.disabled(model.busy)
+            } else if manual {
+                Text("Enter the address and port shown on your device’s Ready to pair screen.").foregroundStyle(.secondary)
+                Form { TextField("Host or IP", text: $host); TextField("Port", text: $port) }.disabled(model.busy)
+                Button("Back to Nearby Devices") { manual = false }.disabled(model.busy)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction).disabled(model.busy)
+                    Button("Add Device") { model.addManual(host: host, port: port) }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(model.busy || WorkbenchSidebar.normalizeHost(host) == nil || WorkbenchSidebar.parsePort(port) == nil)
+                }
+            } else {
+                Text("Open Screenpunk on your device and keep it on the same network as this Mac.").foregroundStyle(.secondary)
+                if searching && discovered.isEmpty { ProgressView("Looking for nearby devices…") }
+                else if let discoveryError { Text(discoveryError).foregroundStyle(.secondary) }
+                else if discovered.isEmpty {
+                    Text("No new devices found yet. Make sure your device is ready to pair. Already connected devices are in the Devices list.")
+                        .foregroundStyle(.secondary)
+                }
+                if !discovered.isEmpty {
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            ForEach(discovered) { device in
+                                Button { model.addManual(host: device.host, port: String(device.port)) } label: {
+                                    HStack {
+                                        Image(systemName: "ipad")
+                                        Text(device.name ?? "Screenpunk Device").lineLimit(1)
+                                        Spacer()
+                                        Text("Connect").foregroundStyle(.secondary)
+                                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                }.buttonStyle(.bordered).disabled(model.busy)
+                            }
+                        }
+                    }.frame(maxHeight: 240)
+                }
+                HStack {
+                    Button("Enter Address Manually…") { manual = true }.disabled(model.busy)
+                    Spacer()
+                    Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction).disabled(model.busy)
+                }
+            }
+            if model.busy { ProgressView("Connecting…").controlSize(.small) }
+        }.padding(28).frame(width: 460)
+            .interactiveDismissDisabled(model.busy || model.brokerPendingPairing != nil)
+            .task(id: discoveryActive) {
+                guard discoveryActive else { return }
+                searching = discovered.isEmpty
+                while !Task.isCancelled {
+                    do {
+                        let found = try await model.discoverPairableDevices()
+                        try Task.checkCancellation()
+                        discovered = found; discoveryError = nil; searching = false
+                    } catch is CancellationError { return }
+                    catch { discoveryError = "Couldn’t search the network. Check this Mac’s Local Network access for Screenpunk."; searching = false }
+                    do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                }
+            }
     }
 }
 
@@ -836,5 +1051,54 @@ struct RenameDeviceSheet: View {
                     .disabled(DeviceDisplayName.sanitize(name) == nil || model.busy)
             }
         }.padding(28).frame(width: 420).onAppear { name = model.title }
+    }
+}
+
+
+private struct ScreenSyncIndicator: View {
+    let status: ControllerCloudScreenSyncStatus?
+    let enabled: Bool
+    let available: Bool
+
+    private var state: String {
+        guard available else { return "unknown" }
+        guard enabled else { return "off" }
+        return status?.state ?? "pending"
+    }
+    private var symbol: String {
+        switch state {
+        case "synced": return "cloud"
+        case "syncing": return "arrow.triangle.2.circlepath"
+        case "pending": return "clock.arrow.circlepath"
+        case "error": return "exclamationmark.icloud"
+        case "off": return "icloud.slash"
+        default: return "questionmark.circle"
+        }
+    }
+    private var tooltip: String {
+        let summary: String
+        switch state {
+        case "off": summary = "Screen syncing is off."
+        case "unknown": summary = "Sync status is unavailable."
+        case "pending": summary = status?.message ?? "Waiting to sync."
+        case "syncing": summary = status?.message ?? "Syncing with the cloud…"
+        case "synced": summary = "Synced with the cloud."
+        case "error": summary = status?.message ?? "This Screen could not sync."
+        default: summary = "Waiting for sync status."
+        }
+        guard let timestamp = status?.lastSuccessfulSyncAt else { return summary }
+        let formatter = ISO8601DateFormatter()
+        let date = formatter.date(from: timestamp) ?? {
+            formatter.formatOptions.insert(.withFractionalSeconds)
+            return formatter.date(from: timestamp)
+        }()
+        guard let date else { return summary }
+        return summary + "\nLast successful sync: " + date.formatted(date: .abbreviated, time: .standard)
+    }
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 13)).frame(width: 18, height: 18)
+            .opacity(state == "off" ? 0.45 : 0.9)
+            .help(tooltip).accessibilityLabel(tooltip)
     }
 }

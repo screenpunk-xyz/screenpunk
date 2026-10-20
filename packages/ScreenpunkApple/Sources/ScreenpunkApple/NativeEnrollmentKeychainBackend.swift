@@ -7,6 +7,96 @@ import Security
     static let finalService = "xyz.screenpunk.installation.cloud"
     static let stageService = "xyz.screenpunk.installation.cloud.enrollment-stage.v1"
     enum Failure: Error, Equatable { case invalidInput, malformedResult, inaccessible(Int32), randomFailure }
+    /// Fixed diagnostic labels only; no item, associated status or SDK message escapes.
+    public struct FailureDiagnostic: Equatable {
+        public enum Domain: String { case nativeEnrollmentCredential, grantCredential }
+        public enum Reason: String {
+            case invalidInput, malformedResult, locked, entitlement, unavailable, authorization
+            case invalidParameter, missing, duplicate, changedInventory, namespaceMismatch
+            case capacity, sizeLimit, randomFailure, other
+        }
+        public let domain: Domain
+        public let reason: Reason
+    }
+    public static func diagnostic(for error: any Error) -> FailureDiagnostic? {
+        func statusReason(_ status: Int32) -> FailureDiagnostic.Reason {
+            switch status {
+            case errSecInteractionNotAllowed: return .locked
+            case errSecMissingEntitlement: return .entitlement
+            case errSecNotAvailable: return .unavailable
+            case errSecAuthFailed: return .authorization
+            case errSecParam: return .invalidParameter
+            case errSecItemNotFound: return .missing
+            case errSecDuplicateItem: return .duplicate
+            case errSecDecode: return .malformedResult
+            default: return .other
+            }
+        }
+        if let failure = error as? Failure {
+            let reason: FailureDiagnostic.Reason
+            switch failure {
+            case .invalidInput: reason = .invalidInput
+            case .malformedResult: reason = .malformedResult
+            case .randomFailure: reason = .randomFailure
+            case .inaccessible(let status): reason = statusReason(status)
+            }
+            return .init(domain: .nativeEnrollmentCredential, reason: reason)
+        }
+        if let failure = error as? DeviceGrantCredentialTransportFailure {
+            let reason: FailureDiagnostic.Reason
+            switch failure {
+            case .invalidAccount: reason = .invalidInput
+            case .invalidObservation: reason = .malformedResult
+            case .sizeLimit: reason = .sizeLimit
+            case .capacity: reason = .capacity
+            case .namespaceMismatch: reason = .namespaceMismatch
+            case .changedInventory: reason = .changedInventory
+            case .duplicateItem: reason = .duplicate
+            case .inaccessible(let status): reason = statusReason(status)
+            }
+            return .init(domain: .grantCredential, reason: reason)
+        }
+        return nil
+    }
+    /// Cleanup is confined to the fixed, captured Cloud-only namespace. Common,
+    /// retained Local roots and pairings never enter this plan.
+    @MainActor public static func cleanupCloudResources(after association: DeviceDetachedLocalInventoryAssociation,
+        namespace: URL) throws -> NativeConfirmedCloudCleanup {
+        try association.validateCloudCleanupScope(namespace: namespace)
+        let retirement = try association.credentialRetirement()
+        guard try retirement.namespaceURL.path.utf8.elementsEqual(namespace.path.utf8),
+            namespace.lastPathComponent == "xyz.screenpunk.native-managed" else { throw Failure.invalidInput }
+        let support = namespace.deletingLastPathComponent()
+        let protected = ["xyz.screenpunk.unified-inventory", "xyz.screenpunk.local-inventory", "xyz.screenpunk.device",
+            "xyz.screenpunk.local-reset", "xyz.screenpunk.preferences", "xyz.screenpunk.management", "xyz.screenpunk.managed"].map {
+                support.appendingPathComponent($0, isDirectory: true)
+            }
+        let plan = try DeviceLocalFilesystemCleanupPlan(anchor: support,
+            roots: [.init(directory: namespace, mode: .ownedDirectory(device: retirement.namespace.device, inode: retirement.namespace.inode))],
+            protectedRoots: protected)
+        try DeviceLocalFilesystemCleanup(plan: plan).execute(withDestructiveStep: { operation in
+            try association.validateCloudCleanupScope(namespace: namespace)
+            try operation()
+        })
+        try retireCloudCredentials(after: association)
+        return try retirement.confirmCleanup(namespace: namespace, probe: NativeCloudKeychainAbsenceProbe())
+    }
+    /// Only a source-qualified committed detach can authorize exact native-item
+    /// retirement. A replacement account/reference is never substituted on replay.
+    @MainActor public static func retireCloudCredentials(after association: DeviceDetachedLocalInventoryAssociation) throws {
+        try retireCloudCredentials(after: association, cleanup: DeviceOwnedResetKeychainCleanup())
+    }
+    @MainActor static func retireCloudCredentials(after association: DeviceDetachedLocalInventoryAssociation,
+        cleanup: any DeviceOwnedResetCredentialCleanup) throws {
+        let retirement = try association.credentialRetirement()
+        guard retirement.installationID == association.metadata.retiredInstallationID else { throw Failure.invalidInput }
+        for item in retirement.credentials {
+            try association.validateCurrent()
+            try cleanup.deleteExact(.init(service: item.service, account: item.account,
+                persistentReference: item.persistentReference, byteCount: item.byteCount, valueSHA256: item.valueSHA256))
+        }
+        try association.validateCurrent()
+    }
     private let api: any NativeEnrollmentSecurityAPI
     /// Actual add-only grant transport for the explicit dedicated native root.
     public static func grantTransport(rootID: UUID) -> any DeviceGrantCredentialTransport {
@@ -136,9 +226,7 @@ import Security
         try boundedData(value(d, key), maximum: CFEqual(key, kSecValuePersistentRef) ? 1024 : 4096)
     }
     private func nonsynchronizable(_ d: CFDictionary) throws -> Bool {
-        guard let value = self.value(d, kSecAttrSynchronizable) else { return true }
-        guard CFGetTypeID(value) == CFBooleanGetTypeID() else { throw Failure.malformedResult }
-        return !CFBooleanGetValue(unsafeBitCast(value, to: CFBoolean.self))
+        DeviceKeychainNonsynchronizableFlag.matches(value(d, kSecAttrSynchronizable))
     }
     private func row(_ value: CFTypeRef, expectedService: String? = nil) throws -> Row {
         let d = try dictionary(value)
@@ -172,5 +260,26 @@ private struct NativeEnrollmentSystemSecurityAPI: NativeEnrollmentSecurityAPI {
         var bytes = [UInt8](repeating: 0, count: 48)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw NativeEnrollmentKeychainBackend.Failure.randomFailure }
         return Data(bytes)
+    }
+}
+
+
+/// Status-only exact-tuple checks. No credential, attribute or reference result
+/// is requested or returned to the cleanup confirmation collector.
+private final class NativeCloudKeychainAbsenceProbe: NativeCloudCredentialAbsenceProbe, @unchecked Sendable {
+    func requireAbsent(_ credential: DeviceOwnedInstallationResetResources.Credential) throws {
+        var reference: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecValuePersistentRef as String: credential.persistentReference, kSecMatchLimit as String: kSecMatchLimitOne]
+        var account: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: credential.service, kSecAttrAccount as String: credential.account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny, kSecMatchLimit as String: kSecMatchLimitOne]
+        #if os(macOS)
+        reference[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue
+        account[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue
+        #endif
+        for query in [reference, account] {
+            let status = SecItemCopyMatching(query as CFDictionary, nil)
+            guard status == errSecItemNotFound else { throw NativeEnrollmentKeychainBackend.Failure.inaccessible(status) }
+        }
     }
 }

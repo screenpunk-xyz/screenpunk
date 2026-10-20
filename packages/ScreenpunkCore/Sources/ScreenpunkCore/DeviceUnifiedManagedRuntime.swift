@@ -1,5 +1,26 @@
 import Foundation
 
+/// Device-owned approval lookup. Neither declarations nor Cloud delivery supply credentials.
+@_spi(ManagedRender) public typealias DeviceCloudHomeAssistantProvider = @Sendable (UUID, DashboardManifest) throws -> HomeAssistantProvisioning?
+
+/// Cancellation can only deny verification; it never replaces graph checks.
+/// Explicit state also works on blocking dispatch workers without a Swift task.
+@_spi(ManagedRender) public final class DeviceRuntimeVerificationCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    public init() {}
+    public func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    public func checkCancellation() throws {
+        try Task.checkCancellation()
+        lock.lock(); let isCancelled = cancelled; lock.unlock()
+        if isCancelled { throw CancellationError() }
+    }
+    static func check(_ cancellation: DeviceRuntimeVerificationCancellation?) throws {
+        try Task.checkCancellation()
+        try cancellation?.checkCancellation()
+    }
+}
+
 struct DeviceUnifiedPrivateRuntimeSeed {
     let hasGeneric: Bool
     let homeAssistant: HomeAssistantProvisioning?
@@ -32,29 +53,40 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
     public let content: DeviceManagedStaticContent
     public let manifest: DashboardManifest
     public let publicReads: PublicReadProvisioning?
+    /// Only qualified Local provenance may use device providers keyed by legacy dashboard identity.
+    public let allowsLegacyDeviceLocalAccess: Bool
     private let generic: (any DeviceImmutableGenericOperations)?
     private let home: UnifiedHomeRuntime?
+    private var cloudHome: UnifiedCloudHomeRuntime?
     private let validate: () throws -> Void
     private let validateActive: () throws -> Void
-    private init(content: DeviceManagedStaticContent, manifest: DashboardManifest, seed: DeviceUnifiedPrivateRuntimeSeed,
+    private let validateActiveWithCancellation: (DeviceRuntimeVerificationCancellation?) throws -> Void
+    private init(content: DeviceManagedStaticContent, manifest: DashboardManifest, allowsLegacyDeviceLocalAccess: Bool, seed: DeviceUnifiedPrivateRuntimeSeed,
         generic: (any DeviceImmutableGenericOperations)?, http: any HTTPTransport, webSocket: any WebSocketTransport,
-        resolver: any DestinationResolver, validate: @escaping () throws -> Void, validateActive: @escaping () throws -> Void) {
+        resolver: any DestinationResolver, validate: @escaping () throws -> Void, validateActive: @escaping (DeviceRuntimeVerificationCancellation?) throws -> Void) {
         self.content = content; self.manifest = manifest; publicReads = seed.publicReads
-        self.generic = generic; self.validate = validate; self.validateActive = validateActive
-        home = seed.homeAssistant.map { UnifiedHomeRuntime(configuration: $0, http: http, webSocket: webSocket, resolver: resolver, validate: validateActive) }
+        self.allowsLegacyDeviceLocalAccess = allowsLegacyDeviceLocalAccess
+        self.generic = generic; self.validate = validate; self.validateActive = { try validateActive(nil) }; self.validateActiveWithCancellation = validateActive
+        home = seed.homeAssistant.map { UnifiedHomeRuntime(configuration: $0, http: http, webSocket: webSocket, resolver: resolver, validate: { try validateActive(nil) }) }
     }
-    public func verifyResources() throws { try content.verifyResources(); try validate() }
-    public func verifyActive() throws { try verifyResources(); try validateActive(); try Task.checkCancellation() }
+    public func verifyResources() throws { try content.verifyResources() }
+    public func verifyActive(cancellation: DeviceRuntimeVerificationCancellation? = nil) throws {
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
+        try validateActiveWithCancellation(cancellation)
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
+    }
     public func request(alias: String, operation: String, parameters: [String: String], readOnly: Bool = false) async throws -> ConnectionHTTPResult {
         try verifyActive()
         let result: ConnectionHTTPResult
-        if alias == "home", let home { result = try await home.request(operation: operation, parameters: parameters, readOnly: readOnly) }
+        if alias == "home", let cloudHome { result = try await cloudHome.request(operation: operation, parameters: parameters, readOnly: readOnly) }
+        else if alias == "home", let home { result = try await home.request(operation: operation, parameters: parameters, readOnly: readOnly) }
         else if let generic { result = readOnly ? try await generic.requestRead(alias: alias, operation: operation, parameters: parameters) : try await generic.request(alias: alias, operation: operation, parameters: parameters) }
         else { throw ConnectionFailure.permissionRequired }
         try verifyActive(); return result
     }
     public func subscribe(alias: String, operation: String, parameters: [String: String]) async throws -> AsyncThrowingStream<DeviceUnifiedRuntimeUpdate, Error> {
         try verifyActive()
+        if alias == "home", let cloudHome { return try await cloudHome.subscribe(operation: operation, parameters: parameters) }
         if alias == "home", let home { return try await home.subscribe(operation: operation, parameters: parameters) }
         guard let generic else { throw ConnectionFailure.permissionRequired }
         let id = try await generic.subscribe(alias: alias, operation: operation, parameters: parameters)
@@ -75,36 +107,56 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
     }
     public func resolveCamera(_ source: CameraSource) async throws -> DeviceUnifiedCameraStream {
         try verifyActive()
-        guard let home else { throw ConnectionFailure.permissionRequired }
-        let stream = try await home.resolveCamera(source)
+        let stream: DeviceUnifiedCameraStream
+        if let cloudHome { stream = try await cloudHome.resolveCamera(source) }
+        else if let home { stream = try await home.resolveCamera(source) }
+        else { throw ConnectionFailure.permissionRequired }
         try verifyActive(); return stream
     }
-    public func cancel() async { await generic?.cancel(); await home?.cancel() }
+    public func cancel() async { await generic?.cancel(); await home?.cancel(); await cloudHome?.cancel() }
     /// Public-read provisioning contains no secrets. The returned transport still
     /// checks the original private graph and common presentation on every result.
     public func guardedHTTP(_ transport: any HTTPTransport) -> any HTTPTransport { UnifiedRuntimeHTTP(delegate: transport, validate: validateActive) }
     static func issue(session: DeviceUnifiedInventorySession, operationID: UUID,
         http: any HTTPTransport, webSocket: any WebSocketTransport, resolver: any DestinationResolver,
-        clock: any PairingClock, historicalMounted: Bool = false) async throws -> DeviceUnifiedManagedRuntime {
+        clock: any PairingClock, historicalMounted: Bool = false, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
         let source: (resolver: DeviceMixedResourceResolver, original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore, capture: DeviceMixedInventoryStore.Capture, validate: () throws -> Void)
         if historicalMounted {
             guard let retained = try session.lastSuccessfulRuntimeSourceExact() else { throw DeviceManagedRenderFailure.invalidContent }
             source = retained
         } else { source = try session.runtimeSourceExact() }
         guard let historicalEntryID = source.capture.snapshot.configuredEntryID else { throw DeviceManagedRenderFailure.invalidContent }
+        if let entry = source.capture.snapshot.entries.first(where: { $0.entryID == historicalEntryID }), case .cloud = entry {
+            let content = try source.resolver.selectedStaticContentExact(source.original, store: source.store,
+                current: source.capture, operationID: operationID, historicalMounted: historicalMounted, runtime: true)
+            let cancellableActiveValidate: (DeviceRuntimeVerificationCancellation?) throws -> Void = { cancellation in
+                try session.verifyActiveRuntimePresentationExact(content, resolver: source.resolver, original: source.original,
+                    store: source.store, presentation: source.capture, entryID: entry.entryID, manifestDigest: entry.manifestDigest, cancellation: cancellation)
+            }
+            let activeValidate: () throws -> Void = { try cancellableActiveValidate(nil) }
+            let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: content.manifest, allowsLegacyDeviceLocalAccess: false,
+                seed: .init(hasGeneric: false, homeAssistant: nil, publicReads: nil), generic: nil,
+                http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: cancellableActiveValidate)
+            if let provider = cloudHomeAssistant {
+                runtime.cloudHome = UnifiedCloudHomeRuntime(installationID: source.capture.snapshot.installationOwner.installationID,
+                    manifest: content.manifest, provider: provider, http: http, webSocket: webSocket, resolver: resolver, validate: activeValidate)
+            }
+            if historicalMounted { try session.retainRestoredRuntimePresentationExact(content, historical: source.capture) }
+            else { try session.retainRuntimePresentationExact(content, current: source.capture) }
+            try source.validate(); return runtime
+        }
         let local = historicalMounted
             ? try source.resolver.installedLocalRuntimeSourceExact(source.original, store: source.store, current: source.capture, entryID: historicalEntryID, historicalMounted: true)
             : try source.resolver.selectedLocalRuntimeSourceExact(source.original, store: source.store, current: source.capture)
         let seed = try local.gate.makeUnifiedRuntimeSeedExact(binding: local.binding, entryID: local.entryID)
         try source.validate()
         let presentation = UnifiedRuntimePresentationBinding()
-        let activeValidate: () throws -> Void = {
-            try source.validate()
-            guard let mounted = try session.mountedAssociation(), mounted.generationID == source.capture.snapshot.generationID,
-                mounted.entryID == local.entryID, mounted.manifestDigest == local.package.revision.digest else { throw ConnectionFailure.permissionRequired }
-            try session.verifyRuntimePresentationMountedExact(presentation.requireContent())
-            try source.validate()
+        let cancellableActiveValidate: (DeviceRuntimeVerificationCancellation?) throws -> Void = { cancellation in
+            try session.verifyActiveRuntimePresentationExact(presentation.requireContent(),
+                resolver: source.resolver, original: source.original, store: source.store,
+                presentation: source.capture, entryID: local.entryID, manifestDigest: local.package.revision.digest, cancellation: cancellation)
         }
+        let activeValidate: () throws -> Void = { try cancellableActiveValidate(nil) }
         let generic = seed.hasGeneric ? try await local.gate.makeGenericRuntimeExact(binding: local.binding, entryID: local.entryID,
             admission: CommonRuntimeAdmission(validate: source.validate), http: UnifiedRuntimeHTTP(delegate: http, validate: activeValidate),
             webSocket: UnifiedRuntimeSocketTransport(delegate: webSocket, validate: activeValidate), resolver: resolver, clock: clock) : nil
@@ -115,8 +167,8 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
                 generationID: source.capture.snapshot.generationID, entryID: local.entryID,
                 displayName: retained.entry.displayName, validate: source.validate)
             presentation.bind(content)
-            let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: local.package.manifest, seed: seed,
-                generic: generic, http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: activeValidate)
+            let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: local.package.manifest, allowsLegacyDeviceLocalAccess: true, seed: seed,
+                generic: generic, http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: cancellableActiveValidate)
             if historicalMounted { try session.retainRestoredRuntimePresentationExact(content, historical: source.capture) }
             else { try session.retainRuntimePresentationExact(content, current: source.capture) }
             try source.validate(); return runtime
@@ -125,12 +177,12 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
 }
 extension DeviceUnifiedInventorySession {
     @_spi(ManagedRender) public func lastSuccessfulManagedRuntime(operationID: UUID, http: any HTTPTransport,
-        webSocket: any WebSocketTransport, resolver: any DestinationResolver, clock: any PairingClock) async throws -> DeviceUnifiedManagedRuntime {
-        try await DeviceUnifiedManagedRuntime.issue(session: self, operationID: operationID, http: http, webSocket: webSocket, resolver: resolver, clock: clock, historicalMounted: true)
+        webSocket: any WebSocketTransport, resolver: any DestinationResolver, clock: any PairingClock, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
+        try await DeviceUnifiedManagedRuntime.issue(session: self, operationID: operationID, http: http, webSocket: webSocket, resolver: resolver, clock: clock, historicalMounted: true, cloudHomeAssistant: cloudHomeAssistant)
     }
     @_spi(ManagedRender) public func makeManagedRuntime(operationID: UUID, http: any HTTPTransport,
-        webSocket: any WebSocketTransport, resolver: any DestinationResolver, clock: any PairingClock) async throws -> DeviceUnifiedManagedRuntime {
-        try await DeviceUnifiedManagedRuntime.issue(session: self, operationID: operationID, http: http, webSocket: webSocket, resolver: resolver, clock: clock)
+        webSocket: any WebSocketTransport, resolver: any DestinationResolver, clock: any PairingClock, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
+        try await DeviceUnifiedManagedRuntime.issue(session: self, operationID: operationID, http: http, webSocket: webSocket, resolver: resolver, clock: clock, cloudHomeAssistant: cloudHomeAssistant)
     }
 }
 /// Issuance binds an opaque candidate; only the session's successful native
@@ -309,4 +361,59 @@ enum UnifiedCameraMediaURL {
             let base = URL(string: origin), let url = URL(string: path, relativeTo: base)?.absoluteURL else { throw ConnectionFailure.deniedEgress }
         return url
     }
+}
+
+/// A separate device approval is checked before and after each IO operation. Changing
+/// or removing it invalidates cached data and already-issued streaming callbacks.
+private actor UnifiedCloudHomeRuntime {
+    let installationID: UUID
+    let manifest: DashboardManifest
+    let provider: DeviceCloudHomeAssistantProvider
+    let http: any HTTPTransport
+    let webSocket: any WebSocketTransport
+    let resolver: any DestinationResolver
+    let validate: () throws -> Void
+    private var runtime: UnifiedHomeRuntime?
+    private var configuration: HomeAssistantProvisioning?
+    private var retired = false
+    init(installationID: UUID, manifest: DashboardManifest, provider: @escaping DeviceCloudHomeAssistantProvider,
+        http: any HTTPTransport, webSocket: any WebSocketTransport, resolver: any DestinationResolver, validate: @escaping () throws -> Void) {
+        self.installationID = installationID; self.manifest = manifest; self.provider = provider
+        self.http = http; self.webSocket = webSocket; self.resolver = resolver; self.validate = validate
+    }
+    private func current() async throws -> UnifiedHomeRuntime {
+        guard !retired else { throw ConnectionFailure.permissionRequired }
+        try validate()
+        guard let declaration = manifest.connections.first(where: { $0.alias == "home" && $0.publicHTTP == nil }),
+            let approved = try provider(installationID, manifest) else { throw ConnectionFailure.permissionRequired }
+        try approved.validate()
+        guard approved.schemaVersion >= 2, approved.dashboardId == manifest.dashboardId, approved.revision == manifest.revision,
+            (approved.serviceCalls ?? []).allSatisfy({ (declaration.serviceCalls ?? []).contains($0) }),
+            (approved.cameraEntities ?? []).allSatisfy({ (declaration.cameraEntities ?? []).contains($0) }) else { throw ConnectionFailure.permissionRequired }
+        if configuration != approved {
+            await runtime?.cancel()
+            configuration = approved
+            runtime = UnifiedHomeRuntime(configuration: approved, http: http, webSocket: webSocket, resolver: resolver,
+                validate: { [provider, installationID, manifest, validate] in
+                    try validate()
+                    guard try provider(installationID, manifest) == approved else { throw ConnectionFailure.permissionRequired }
+                })
+        }
+        guard !retired, let runtime else { throw ConnectionFailure.permissionRequired }
+        return runtime
+    }
+    func request(operation: String, parameters: [String: String], readOnly: Bool) async throws -> ConnectionHTTPResult {
+        if operation == "getStates" {
+            guard manifest.connections.first(where: { $0.alias == "home" })?.operations?.contains(where: { $0.name == operation && $0.kind == "http" }) == true else { throw ConnectionFailure.permissionRequired }
+        }
+        return try await current().request(operation: operation, parameters: parameters, readOnly: readOnly)
+    }
+    func subscribe(operation: String, parameters: [String: String]) async throws -> AsyncThrowingStream<DeviceUnifiedRuntimeUpdate, Error> {
+        guard manifest.connections.first(where: { $0.alias == "home" })?.operations?.contains(where: { $0.name == operation && $0.kind == "websocket" }) == true else { throw ConnectionFailure.permissionRequired }
+        return try await current().subscribe(operation: operation, parameters: parameters)
+    }
+    func resolveCamera(_ source: CameraSource) async throws -> DeviceUnifiedCameraStream {
+        try await current().resolveCamera(source)
+    }
+    func cancel() async { retired = true; await runtime?.cancel(); runtime = nil; configuration = nil }
 }

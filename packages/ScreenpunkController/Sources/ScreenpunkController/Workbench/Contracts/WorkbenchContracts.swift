@@ -5,7 +5,8 @@ public enum WorkbenchIPCErrorCode: String, Codable, Sendable {
     case authenticationFailed, instanceMismatch, unsupportedVersion, invalidRequest, methodNotFound
     case frameTooLarge, resourceLimit, timedOut, disconnected
     case workspaceExists, workspaceConflict, workspaceIncomplete, invalidWorkspacePath
-    case buildSourceConflict, buildHeadConflict
+    case buildSourceConflict, buildHeadConflict, buildNotFound, buildConfigurationInvalid, buildPackageInvalid
+    case deploymentPackageInvalid, deploymentTargetMismatch, deploymentIdentityInvalid, deploymentPreflightUnavailable
     case migrationRequired
     case incompatibleOwner
     case confirmationRequired
@@ -37,6 +38,13 @@ public struct WorkbenchIPCError: Error, LocalizedError, Codable, Sendable, Equat
         case .disconnected: return "Broker connection closed."
         case .workspaceExists: return "Workspace destination already exists."
         case .workspaceConflict: return "Workspace identity or generation changed."
+        case .buildNotFound: return "This Screen has no local build yet. Build it without a base revision."
+        case .buildConfigurationInvalid: return "Screen configuration is invalid or missing required fields. Check screen.json, including target width, height, scale and orientation."
+        case .buildPackageInvalid: return "Screen package validation failed. Check its manifest, assets and HTML compatibility before building again."
+        case .deploymentPreflightUnavailable: return "Deployment was stopped before sending because local validation could not complete. Inspect the original plan and operation, refresh device status, and review a new plan after resolving the local problem."
+        case .deploymentPackageInvalid: return "Screen package failed device compatibility checks before sending. Rebuild from the current source and prepare a new deployment; inspect the manifest, assets, paths and hashes. No device content was changed."
+        case .deploymentTargetMismatch: return "Screen package does not match the selected device before sending. Refresh the device and prepare this Screen for its current dimensions and orientation. Keep the existing Screen ID."
+        case .deploymentIdentityInvalid: return "Screen package identity is invalid before sending. Screen IDs support existing bounded letters, digits, dots, underscores and hyphens; revisions must be UUIDs. Keep existing Screen IDs and rebuild from the registered source."
         case .buildSourceConflict: return "Project source version changed; inspect the current project before building."
         case .buildHeadConflict: return "Build base revision does not match the current build head; inspect build head before building."
         case .workspaceIncomplete: return "Workspace recovery material or required content needs review."
@@ -47,7 +55,7 @@ public struct WorkbenchIPCError: Error, LocalizedError, Codable, Sendable, Equat
         case .credentialCleanupRequired: return "The connection intent is inactive, but its scoped credential still needs local cleanup. Retry inspection or denial when Keychain is available."
         case .connectionValidationFailed: return "Home Assistant validation or setup failed; inspect the setup status before retrying."
         case .serviceBusy: return "The service cannot complete this lifecycle operation while work, GUI consumers, or another lifecycle reservation are active. Inspect service status before retrying."
-        case .remoteOutcomeUnknown: return "The device may have accepted the connection; inspect the intent and device state before retrying."
+        case .remoteOutcomeUnknown: return "The device may have accepted the request. Inspect the original operation and current device state before retrying; do not resend blindly."
         case .publicationOutcomeUnknown: return "A mutation may have been published, but its response or durability could not be confirmed. Inspect current state before retrying."
         case .toolchainTrustUnavailable: return "No authenticated installed kit matches this request under the production release trust policy."
         }

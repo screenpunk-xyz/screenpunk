@@ -1,10 +1,28 @@
 import XCTest
 import Combine
 import ScreenpunkCore
-@testable import ScreenpunkApple
+@_spi(NativeInstallation) @testable import ScreenpunkApple
 
 @MainActor
 final class DeviceManagementBootstrapTests: XCTestCase {
+    func testRecordedNativeMissingNamespaceClearsReadinessWithoutLegacyFallback() async throws {
+        let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString), anchor = parent.appendingPathComponent("Application Support")
+        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let owner = DeviceManagementAuthority(journal: BootstrapJournal(), credentials: .init(backend: BootstrapBackend(), random: { XCTFail("no credentials"); return Data() }),
+            reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor), supportAnchorSetup: try .fixture(existingPhysicalParent: parent))
+        var legacy = 0, hosts = 0
+        let bootstrap = DeviceManagementBootstrap(preparationFactory: { .init(authority: owner, constructLifecycle: { legacy += 1; throw BootstrapError.factory }) },
+            retained: { XCTFail("no fallback"); return .empty }, hostFactory: { _ in hosts += 1; throw BootstrapError.factory })
+        bootstrap.useRecordedNativeCloudStartup()
+        let failed = expectation(description: "native namespace failure after original reset checks")
+        let observer = bootstrap.$startupDiagnostic.first(where: { $0?.stage == .namespace }).sink { _ in failed.fulfill() }
+        defer { observer.cancel() }
+        bootstrap.start(); await fulfillment(of: [failed], timeout: 2)
+        XCTAssertNil(bootstrap.cloudAuthorityGeneration); XCTAssertFalse(bootstrap.readyForRecordedNativeRestore)
+        XCTAssertEqual(legacy, 0); XCTAssertEqual(hosts, 0)
+        guard case .cloudReady = bootstrap.state else { return XCTFail("existing Cloud action remains available") }
+    }
     func testStartupDiagnosticReportsStageAndErrnoWithoutErrorDescriptionOrPaths() {
         var calls = 0
         let bootstrap = DeviceManagementBootstrap(preparationFactory: {

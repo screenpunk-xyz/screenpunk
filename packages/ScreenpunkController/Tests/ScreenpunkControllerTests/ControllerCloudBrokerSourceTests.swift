@@ -29,7 +29,7 @@ final class ControllerCloudBrokerSourceTests: XCTestCase {
         try client.connect(); defer { client.close() }
         let capabilities = try client.capabilities()
         XCTAssertFalse(capabilities.supportedMethods.contains("project.syncSource"), "Preserve the pinned legacy public API catalogue")
-        XCTAssertEqual(WorkbenchAuthoringRecoveryMethod.advertisedCases.map(\.rawValue),WorkbenchAuthoringRecoveryMethod.allCases.filter {$0 != .projectSyncSource}.map(\.rawValue))
+        XCTAssertEqual(WorkbenchAuthoringRecoveryMethod.advertisedCases.map(\.rawValue),WorkbenchAuthoringRecoveryMethod.allCases.filter {$0 != .projectSyncSource && $0 != .cloudProjectCreate}.map(\.rawValue))
         let adapter = try ControllerCloudBrokerSource(client:client,scratchRoot:root.appendingPathComponent("cloud-scratch"))
         let before = try await adapter.read(projectId:original.project.projectId)
         XCTAssertNil(before.files["credentials.json"]); XCTAssertNil(before.files["build/temporary.js"]); XCTAssertNil(before.files["cache/entry.txt"])

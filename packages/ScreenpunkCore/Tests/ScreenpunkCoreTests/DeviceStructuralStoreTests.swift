@@ -24,6 +24,62 @@ final class DeviceStructuralStoreTests: XCTestCase {
                      candidate: try StructuralStoreCodec.encode(envelope), resourceAssertions: assertions)
     }
     private func current(_ root: URL) throws -> Data { try Data(contentsOf: root.appendingPathComponent("structural-envelope.json")) }
+    private func confinedStore(_ root: URL, boundary: @escaping (DeviceStructuralStore.Boundary) throws -> Void = { _ in }) -> DeviceStructuralStore {
+        let home = root.deletingLastPathComponent()
+        return .init(root: root, rootID: rootID, contextFactory: { current, fd in
+            try .syntheticCurrentAppHomeForTesting(currentRoot: current, heldRoot: fd, systemHome: home.path, physicalHome: home.path)
+        }, boundary: boundary)
+    }
+    func testVerifiedHomeContextRetainsHistoryAcrossReplayAndNewOperation() throws {
+        let root = try directory(), first = try record(1), store = confinedStore(root)
+        try store.initializeExplicit(); try store.prepare(first); _ = try store.attempt(operationID: first.operationID)
+        let binding = try Data(contentsOf: root.appendingPathComponent("root-binding.json"))
+        let proof = try Data(contentsOf: root.appendingPathComponent("operations/" + first.operationID.uuidString.lowercased() + ".json"))
+        let reopened = confinedStore(root)
+        _ = try reopened.recommitExact(operationID: first.operationID)
+        let next = try record(2, old: first.candidate)
+        try reopened.prepare(next); _ = try reopened.attempt(operationID: next.operationID)
+        XCTAssertEqual(try current(root), next.candidate)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("root-binding.json")), binding)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("operations/" + first.operationID.uuidString.lowercased() + ".json")), proof)
+    }
+    func testVerifiedHomeRejectsIncoherentDeviceRelationshipsInOneBindingSnapshot() throws {
+        let root = try directory(); try confinedStore(root).initializeExplicit()
+        let file = root.appendingPathComponent("root-binding.json"), bytes = try Data(contentsOf: file)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        let directory = try XCTUnwrap(object["directory"] as? [String: Any])
+        let device = try XCTUnwrap(directory["device"] as? NSNumber).uint64Value
+        let text = String(decoding: bytes, as: UTF8.self), old = "\"directory\":{\"device\":\(device),"
+        XCTAssertTrue(text.contains(old))
+        let malformed = Data(text.replacingOccurrences(of: old, with: "\"directory\":{\"device\":\(device ^ 0x4000),").utf8)
+        // Negative corruption only: keep the actual file/inode, change one recorded edge.
+        try malformed.write(to: file)
+        XCTAssertThrowsError(try confinedStore(root).initializeExplicit())
+        XCTAssertEqual(try Data(contentsOf: file), malformed)
+    }
+    func testVerifiedHomeContextKeepsLiveBindingReplacementFenceExact() throws {
+        let root = try directory(), first = try record(1), store = confinedStore(root)
+        try store.initializeExplicit(); try store.prepare(first)
+        var replaced = false
+        let interrupted = confinedStore(root) { point in
+            if point == .beforeReplace(.envelope) && !replaced {
+                replaced = true
+                let file = root.appendingPathComponent("root-binding.json"), replacement = root.appendingPathComponent("binding-replacement")
+                try Data(contentsOf: file).write(to: replacement)
+                try FileManager.default.removeItem(at: file); try FileManager.default.moveItem(at: replacement, to: file)
+            }
+        }
+        XCTAssertThrowsError(try interrupted.attempt(operationID: first.operationID)); XCTAssertTrue(replaced)
+    }
+    func testContextCaptureFailureRetainsStoreErrorContractBeforeEffects() throws {
+        enum CaptureFailure: Error { case injected }
+        let root = try directory(), before = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        let store = DeviceStructuralStore(root: root, rootID: rootID, contextFactory: { _, _ in throw CaptureFailure.injected })
+        XCTAssertThrowsError(try store.initializeExplicit()) { error in
+            XCTAssertEqual(error as? DeviceStructuralStoreError, .unsafeBinding)
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), before)
+    }
     func testExplicitInitializationAndRetainedOldReplayDoNotReplaceTip() throws {
         let root = try directory(); let store = DeviceStructuralStore(root: root, rootID: rootID)
         XCTAssertThrowsError(try store.prepare(record(1)))

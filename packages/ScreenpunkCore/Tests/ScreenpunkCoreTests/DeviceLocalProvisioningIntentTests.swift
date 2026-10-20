@@ -24,6 +24,60 @@ final class DeviceLocalProvisioningIntentTests:XCTestCase {
     private func store(_ root:URL,boundary:@escaping(DeviceLocalProvisioningIntentStore.Boundary)throws->Void={_ in})->DeviceLocalProvisioningIntentStore {.init(root:root,rootID:id(1),protectedRoots:[root.deletingLastPathComponent().appendingPathComponent("protected-"+root.lastPathComponent)],boundary:boundary)}
     private enum Marker:Error{case injected}
     private final class Fault {var target:DeviceLocalProvisioningIntentStore.Boundary?;var hit=false}
+    private func confinedStore(_ root:URL,boundary:@escaping(DeviceLocalProvisioningIntentStore.Boundary)throws->Void={_ in})->DeviceLocalProvisioningIntentStore {
+        let home=root.deletingLastPathComponent()
+        return .init(root:root,rootID:id(1),protectedRoots:[home.appendingPathComponent("protected-"+root.lastPathComponent)],contextFactory:{current,fd in
+            try .syntheticCurrentAppHomeForTesting(currentRoot:current,heldRoot:fd,systemHome:home.path,physicalHome:home.path)
+        },boundary:boundary)
+    }
+    func testVerifiedHomeContextPreservesCanonicalHistoryAndReplaysExactPlan()throws {
+        let r=try root(),p=try plan(),s=confinedStore(r)
+        try s.initializeExplicit();_ = try s.stageExact(p)
+        let names=try FileManager.default.subpathsOfDirectory(atPath:r.path).filter{!$0.hasSuffix(".stage") && $0 != "operations"}
+        let before=try Dictionary(uniqueKeysWithValues:names.map{($0,try Data(contentsOf:r.appendingPathComponent($0)))})
+        let reopened=confinedStore(r),receipt=try reopened.recommitExact(p)
+        XCTAssertNoThrow(try reopened.verify(receipt))
+        for (name,bytes) in before {XCTAssertEqual(try Data(contentsOf:r.appendingPathComponent(name)),bytes,name)}
+    }
+    func testVerifiedHomeRejectsIncoherentDeviceRelationshipsInOneBindingSnapshot()throws {
+        let r=try root();try confinedStore(r).initializeExplicit()
+        let file=r.appendingPathComponent("root-binding.json"),bytes=try Data(contentsOf:file)
+        let object=try XCTUnwrap(JSONSerialization.jsonObject(with:bytes) as? [String:Any])
+        let directory=try XCTUnwrap(object["directory"] as? [String:Any]),device=try XCTUnwrap(directory["device"] as? NSNumber).uint64Value
+        let text=String(decoding:bytes,as:UTF8.self),old="\"directory\":{\"device\":\(device),"
+        XCTAssertTrue(text.contains(old))
+        let malformed=Data(text.replacingOccurrences(of:old,with:"\"directory\":{\"device\":\(device ^ 0x4000),").utf8)
+        // Negative corruption only; no synthetic positive proof or stat values.
+        try malformed.write(to:file)
+        XCTAssertThrowsError(try confinedStore(r).initializeExplicit())
+        XCTAssertEqual(try Data(contentsOf:file),malformed)
+    }
+    func testVerifiedHomeContextKeepsLiveBindingReplacementFenceExact()throws {
+        let r=try root(),p=try plan(),seed=confinedStore(r);try seed.initializeExplicit()
+        var replace=false,didReplace=false,didReplaceHead=false
+        let originalHead=try Data(contentsOf:r.appendingPathComponent("head.json"))
+        let s=confinedStore(r){point in
+            if replace && point == .afterReplace(.head) {didReplaceHead=true}
+            if replace && point == .beforeReplace(.head) && !didReplace {
+                didReplace=true
+                let file=r.appendingPathComponent("root-binding.json"),replacement=r.appendingPathComponent("binding-replacement")
+                try Data(contentsOf:file).write(to:replacement)
+                try FileManager.default.removeItem(at:file);try FileManager.default.moveItem(at:replacement,to:file)
+            }
+        }
+        try s.initializeExplicit();replace=true
+        XCTAssertThrowsError(try s.stageExact(p));XCTAssertTrue(didReplace)
+        XCTAssertFalse(didReplaceHead)
+        XCTAssertEqual(try Data(contentsOf:r.appendingPathComponent("head.json")),originalHead)
+    }
+    func testContextCaptureFailureRetainsStoreErrorContractBeforeEffects()throws {
+        let r=try root(),before=try FileManager.default.contentsOfDirectory(atPath:r.path)
+        let s=DeviceLocalProvisioningIntentStore(root:r,rootID:id(1),protectedRoots:[],contextFactory:{_,_ in throw Marker.injected})
+        XCTAssertThrowsError(try s.initializeExplicit()){error in
+            guard let failure=error as? DeviceLocalProvisioningIntentStore.Failure,case .unsafeRoot=failure else{return XCTFail("expected unsafeRoot, got \(error)")}
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath:r.path),before)
+    }
     func testEmptyPlanOneUnresolvedAndRestartEpoch()throws {
         let p=try plan(),r=try root(),a=store(r);XCTAssertThrowsError(try a.stageExact(p));try a.initializeExplicit()
         let old=try a.stageExact(p);XCTAssertNoThrow(try a.verify(old));XCTAssertEqual(try a.inspectPendingExact()?.exactIntentBytes,p.canonicalBytes)
@@ -214,6 +268,49 @@ final class DeviceLocalProvisioningIntentTests:XCTestCase {
             XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:owned.path).isEmpty,"Invalid input created journal files: \(invalid)")
         }
         let valid=try root(),s=store(valid);try s.initializeExplicit();XCTAssertNoThrow(try s.stageExact(plan()))
+    }
+
+    func testHeldHomePlanningRecapturesAndRecoversWithoutReusingPriorContext()throws {
+        let r=try root(),p=try plan(81),home=r.deletingLastPathComponent()
+        var captures=0,failCapture=false,narrowHome=false
+        let s=DeviceLocalProvisioningIntentStore(root:r,rootID:id(1),protectedRoots:[home.appendingPathComponent("protected-"+r.lastPathComponent)],contextFactory:{current,fd in
+            captures += 1
+            if failCapture {throw Marker.injected}
+            let capturedHome=narrowHome ? r:home
+            return try .syntheticCurrentAppHomeForTesting(currentRoot:current,heldRoot:fd,systemHome:capturedHome.path,physicalHome:capturedHome.path)
+        })
+        try s.initializeExplicit();let receipt=try s.stageExact(p),before=try evidence(r),firstCaptures=captures
+        failCapture=true
+        XCTAssertThrowsError(try s.inspectLatestRetainedIntentExact()){error in
+            guard let failure=error as? DeviceLocalProvisioningIntentStore.Failure,case .unsafeRoot=failure else{return XCTFail("expected unsafeRoot, got \(error)")}
+        }
+        XCTAssertEqual(captures,firstCaptures+1);XCTAssertEqual(try evidence(r),before)
+        failCapture=false;narrowHome=true
+        // The held root is valid in this narrower home; its recorded protected
+        // sibling is outside it and must not use a global-plan fallback.
+        XCTAssertThrowsError(try s.inspectLatestRetainedIntentExact())
+        XCTAssertEqual(captures,firstCaptures+2);XCTAssertEqual(try evidence(r),before)
+        narrowHome=false
+        XCTAssertNoThrow(try s.verify(receipt))
+        XCTAssertEqual(captures,firstCaptures+3);XCTAssertEqual(try evidence(r),before)
+    }
+
+    func testHeldHomePlanningStillRejectsLiveRootReplacementBeforePublication()throws {
+        let r=try root(),p=try plan(82),displaced=r.appendingPathExtension("retained")
+        addTeardownBlock{try? FileManager.default.removeItem(at:displaced)}
+        var armed=false,replaced=false,publishedHead=false
+        let s=confinedStore(r){point in
+            if armed && point == .afterReplace(.head) {publishedHead=true}
+            if armed && point == .beforeReplace(.head) && !replaced {
+                replaced=true
+                try FileManager.default.moveItem(at:r,to:displaced)
+                try FileManager.default.copyItem(at:displaced,to:r)
+            }
+        }
+        try s.initializeExplicit();let head=try Data(contentsOf:r.appendingPathComponent("head.json"));armed=true
+        XCTAssertThrowsError(try s.stageExact(p));XCTAssertTrue(replaced);XCTAssertFalse(publishedHead)
+        XCTAssertEqual(try Data(contentsOf:r.appendingPathComponent("head.json")),head)
+        XCTAssertEqual(try Data(contentsOf:displaced.appendingPathComponent("head.json")),head)
     }
 
 }

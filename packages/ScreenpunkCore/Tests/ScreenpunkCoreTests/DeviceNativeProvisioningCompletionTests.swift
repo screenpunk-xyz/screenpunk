@@ -8,7 +8,7 @@ import Glibc
 #if canImport(CryptoKit)
 import CryptoKit
 #endif
-@testable import ScreenpunkCore
+@_spi(NativeInstallation) @_spi(DeviceGrantTransport) @testable import ScreenpunkCore
 
 final class DeviceNativeProvisioningCompletionTests:XCTestCase {
     private enum Fault:Error {case injected}
@@ -331,6 +331,102 @@ final class DeviceNativeProvisioningCompletionTests:XCTestCase {
         XCTAssertEqual(restored.0.candidate, f.original.request.candidate)
         XCTAssertEqual(restored.0.delivery.commandBytes, f.original.request.delivery.commandBytes)
         try reopened.coordinator.verifyUnifiedInventorySourceExact(restored.0, completed: restored.1)
+    }
+    private final class DisplayTransport: DeviceGrantCredentialTransport, @unchecked Sendable {
+        let rootID: UUID
+        var values: [String: DeviceGrantCredentialTransportSecret] = [:]
+        var adds = 0
+        init(rootID: UUID) { self.rootID = rootID }
+        func inventory(maximum: Int, visit: (DeviceGrantCredentialObservation) throws -> Void) throws {
+            guard values.count <= maximum else { throw DeviceGrantCredentialTransportFailure.capacity }
+            for key in values.keys.sorted() { try visit(values[key]!.observation) }
+        }
+        func read(account: String, maximumBytes: Int) throws -> DeviceGrantCredentialTransportSecret? { values[account] }
+        func add(account: String, bytes: Data) throws -> DeviceGrantCredentialObservation {
+            guard values[account] == nil else { throw DeviceGrantCredentialTransportFailure.duplicateItem }
+            let observation = try DeviceGrantCredentialObservation(account: account, persistentReference: Data(UUID().uuidString.utf8), byteCount: bytes.count)
+            values[account] = try .init(observation: observation, bytes: bytes); adds += 1
+            return observation
+        }
+    }
+    private func displayLocalSource() throws -> (source: DeviceMixedIncomingLocalResources, transport: DisplayTransport, roots: [URL], manifest: DashboardManifest) {
+        let p = try root(), g = try root(), s = try root(), j = try root(), protected = try root()
+        let roots = DeviceProvisioningRoots(journalID: UUID(), structuralID: UUID(), packageID: UUID(), grantID: UUID())
+        let transport = DisplayTransport(rootID: roots.grantID)
+        let session = try DeviceLegacyMigrationSession(packageRoot: p, packageRootID: roots.packageID,
+            grantRoot: g, grantRootID: roots.grantID, structuralRoot: s, structuralRootID: roots.structuralID,
+            provisioningRoot: j, provisioningRootID: roots.journalID,
+            legacyStateRoot: protected.appendingPathComponent("state"), legacyArchiveRoot: protected.appendingPathComponent("archive"),
+            resetRoot: protected.appendingPathComponent("reset"), cloudRoot: protected.appendingPathComponent("cloud"),
+            managementRoot: protected.appendingPathComponent("management"), preferencesRoot: protected.appendingPathComponent("preferences"),
+            otherProtectedRoots: [], credentialTransport: transport, validateRoots: {})
+        let package = try package(generic: true), id = UUID(), operation = UUID()
+        let screen = DeviceLegacyMigrationScreen(entryID: id, packageOperationID: UUID(), displayName: "Nonselected local",
+            revision: package.revision, manifest: package.originalManifestBytes,
+            files: Dictionary(uniqueKeysWithValues: package.files.map { ($0.path, $0.bytes) }),
+            homeAssistant: nil, generic: nil, publicReads: nil)
+        try session.prepareAndCommit(screens: [screen], selected: id,
+            owner: .init(role: .controller, publicKey: Array(repeating: 7, count: PairingLimits.identityByteCount)),
+            profile: .init(deviceId: "fixture", name: "Fixture"), profileID: "profile",
+            operationID: operation, grantOperationID: UUID(), generationID: UUID(), grantRevisionID: UUID(),
+            legacyGrantSet: nil, validateOriginal: {})
+        return (try DeviceIncomingLocalPreparation(completed: session, operationID: operation).resources,
+            transport, [p, g, s, j], package.manifest)
+    }
+    private func displayResourceSnapshot(_ roots: [URL]) throws -> [String: Data] {
+        var values: [String: Data] = [:]
+        for root in roots {
+            let paths = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]))
+            for case let path as URL in paths where try path.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+                values[path.path] = try Data(contentsOf: path)
+            }
+        }
+        return values
+    }
+    func testDisplayManifestsIncludeNonselectedRetainedAndIncomingLocalAlongsideCloudWithoutMutationAndRejectInvalidGraph() throws {
+        let f = try privateFixture(generic: false), terminal = try terminal(f)
+        let activation = try f.coordinator.retainNativeActivationRequestExact(f.original.request, terminal: terminal, requestID: UUID())
+        _ = try f.coordinator.retainNativeAuthorizationExact(f.original.request, original: activation, response: activationResponse(activation))
+        let committed = try f.coordinator.commitNativeStructuralExact(f.original.request, terminal: terminal)
+        let completed = try f.coordinator.completeNativeProvisioningExact(f.original.request, original: committed)
+        let retained = try displayLocalSource(), incoming = try displayLocalSource()
+        let common = try root(), store = DeviceMixedInventoryStore(root: common, rootID: UUID())
+        try store.initializeExplicit()
+        let resolver = DeviceMixedResourceResolver(local: retained.source.gate, native: f.coordinator)
+        let original = try resolver.resolveInitialMigrationExact(local: retained.source.binding,
+            native: .completed(f.original.request, completed), generationID: UUID())
+        let initial = try resolver.commitInitialMigrationExact(original, store: store, operationID: UUID(), admissionEnabled: true).0
+        let current = try resolver.commitIncomingLocalExact(original, store: store, previous: initial,
+            source: incoming.source, operationID: incoming.source.operationID, generationID: UUID(),
+            retainedEntryIDs: initial.snapshot.entries.map(\.entryID), selected: initial.snapshot.configuredEntryID,
+            peerPinHex: String(repeating: "07", count: PairingLimits.identityByteCount))
+        let allRoots = retained.roots + incoming.roots + [common, f.packageRoot, f.grantRoot, f.original.journalRoot, f.original.structuralRoot]
+        let before = try displayResourceSnapshot(allRoots), adds = f.backend.adds
+        let localAdds = retained.transport.adds + incoming.transport.adds
+        let manifests = try resolver.displayManifestsExact(original, store: store, current: current)
+        XCTAssertEqual(manifests.map(\.dashboardId), current.snapshot.entries.map(\.dashboardID))
+        XCTAssertEqual(manifests.count, 3)
+        XCTAssertEqual(manifests[0], retained.manifest)
+        XCTAssertEqual(manifests[2], incoming.manifest)
+        XCTAssertEqual(manifests[0].connections.map(\.alias), ["api"])
+        XCTAssertEqual(manifests[2].connections.map(\.alias), ["api"])
+        XCTAssertTrue(manifests[1].connections.isEmpty)
+        XCTAssertEqual(current.snapshot.configuredEntryID, current.snapshot.entries[1].entryID)
+        XCTAssertEqual(try displayResourceSnapshot(allRoots), before)
+        XCTAssertEqual(f.backend.adds, adds)
+        XCTAssertEqual(retained.transport.adds + incoming.transport.adds, localAdds)
+        XCTAssertThrowsError(try resolver.displayManifestsExact(original, store: store, current: initial))
+        XCTAssertEqual(try displayResourceSnapshot(allRoots), before)
+        let package = try XCTUnwrap(f.original.request.candidate.entries.first)
+        let asset = f.packageRoot.appendingPathComponent(package.preparedPackage.directory).appendingPathComponent("index.html")
+        let bytes = try Data(contentsOf: asset)
+        defer { try? bytes.write(to: asset) }
+        try Data("changed fixture".utf8).write(to: asset)
+        let damaged = try displayResourceSnapshot(allRoots)
+        XCTAssertThrowsError(try resolver.displayManifestsExact(original, store: store, current: current))
+        XCTAssertEqual(try displayResourceSnapshot(allRoots), damaged)
+        XCTAssertEqual(f.backend.adds, adds)
+        XCTAssertEqual(retained.transport.adds + incoming.transport.adds, localAdds)
     }
     func testDurableOriginalActivationAndGenuineCompletedActivatedReporting()throws {
         let f=try privateFixture(generic:true,count:2,distinct:true),t=try terminal(f),id=UUID(),adds=f.backend.adds

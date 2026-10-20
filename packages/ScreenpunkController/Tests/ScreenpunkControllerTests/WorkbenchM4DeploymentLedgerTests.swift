@@ -36,6 +36,36 @@ final class WorkbenchM4DeploymentLedgerTests: XCTestCase {
         return approval
     }
 
+    func testPackageRejectionSurvivesBothPreSendBoundariesAndReopen() throws {
+        for late in [false, true] {
+            let fixture = try Fixture(); defer { fixture.cleanup() }
+            let ledger = try WorkbenchDeploymentLedger(path: fixture.path)
+            let approval = try setup(ledger, fixture)
+            let admitted = try ledger.admit(planId: "plan-1", planHash: planHash, contextHash: contextHash,
+                approvalId: approval.approvalId, idempotencyKey: "preflight", approved: true,
+                clock: fixture.clock, validateCurrent: {})
+            _ = try ledger.markSending(operationId: admitted.operationId, clock: fixture.clock) {
+                if !late { throw WorkbenchDeploymentError.packageIdentityInvalid }
+            }
+            if late {
+                XCTAssertFalse(try ledger.validateFirstSend(operationId: admitted.operationId,
+                    clockProvider: { fixture.clock }, validateCurrent: { throw WorkbenchDeploymentError.packageIdentityInvalid }))
+            }
+            let reopened = try WorkbenchDeploymentLedger(path: fixture.path).status(admitted.operationId)
+            XCTAssertFalse(reopened.sendAttempted)
+            XCTAssertEqual(reopened.state, late ? .failed : .cancelled)
+            XCTAssertEqual(reopened.preSendRejection, .identityInvalid)
+            XCTAssertThrowsError(try reopened.throwIfRejectedBeforeSend()) {
+                XCTAssertEqual(($0 as? WorkbenchIPCError)?.code, .deploymentIdentityInvalid)
+            }
+            var oldJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(reopened)) as? [String: Any])
+            oldJSON.removeValue(forKey: "preSendRejection")
+            let legacy = try JSONDecoder().decode(WorkbenchDeploymentOperationRecord.self,
+                from: JSONSerialization.data(withJSONObject: oldJSON))
+            XCTAssertNil(legacy.preSendRejection, "Existing operation records remain readable")
+        }
+    }
+
     func testCanonicalPlanAndBodyVectors() throws {
         let body = WorkbenchDeploymentPlanBody(planVersion: 1, planId: "plan-fixture",
             workspaceId: "8ea237eb-b9d1-4dba-803d-0377be9c871f", deviceId: "device-fixture",

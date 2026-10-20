@@ -1,7 +1,23 @@
 import Foundation
+import CryptoKit
 import ScreenpunkController
 import ScreenpunkCore
 import ScreenpunkApple
+
+/// A process choice, independent of saved account consent or pending work.
+enum WorkbenchCloudSyncStartup: Equatable {
+    case automatic
+    case localOnly
+
+    var readinessDiagnostic: String {
+        switch self {
+        case .automatic:
+            return "Screenpunk workbench broker ready; Ctrl-C stops this foreground service."
+        case .localOnly:
+            return "Screenpunk workbench broker ready (local-only). Automatic Screen syncing is not started in this process; saved consent and pending work are unchanged. Ctrl-C stops this foreground service."
+        }
+    }
+}
 
 /// Owns one foreground broker, including its home lock and lazy native adapter.
 /// Tests supply a private process inventory and inert native adapter; executable
@@ -19,6 +35,8 @@ final class WorkbenchServiceHost {
                  activate: { try lan.activate($0) }, deactivate: { lan.deactivate(controller) })
          }, guiVerifier: WorkbenchGUIConsumerVerifier? = nil,
          installedReleaseTrust: WorkbenchInstalledReleaseTrust? = nil,
+         cloudSyncStartup: WorkbenchCloudSyncStartup = .automatic,
+         cloudTaskFactory: (() -> Task<Void, Never>)? = nil,
          onShutdown: @escaping () -> Void = {}) throws {
         try ownerCheck()
         // Competing legacy GUI and broker startups arbitrate on the same
@@ -56,38 +74,38 @@ final class WorkbenchServiceHost {
         _ = try server.start()
         self.ownerLock = lock
         self.server = server
-        cloudSyncTask = Task.detached { [broker, home, documents] in
-            var clients: [String: WorkbenchBrokerClient] = [:]
-            var facades: [String: ControllerCloudWorkbench] = [:]
-            defer { clients.values.forEach { $0.close() } }
-            while !Task.isCancelled {
-                do {
-                    let environment = try WorkbenchCloudCLI.deploymentEnvironment(documents.environment)
-                    if let origin = environment["SCREENPUNK_CLOUD_BASE_URL"], let base = URL(string: origin) {
-                        for clientID in ["screenpunk-cli", "screenpunk-mac"] {
-                            guard try ControllerCloudKeychain(server: base, clientID: clientID).load() != nil else { continue }
-                            if facades[clientID] == nil {
-                                let config = try await ControllerCloudConfiguration.deployment(clientID: clientID, environment: environment, machineRoot: broker.runtimeDirectory.appendingPathComponent("machine"))
-                                let client = WorkbenchBrokerClient(environment: broker)
-                                try client.connect()
-                                guard try client.hello().controllerHomePath == home.path else { client.close(); throw ControllerCloudError.invalidConfiguration }
-                                clients[clientID] = client
-                                facades[clientID] = try ControllerCloudWorkbench(configuration: config, client: client,
-                                    machineRoot: broker.runtimeDirectory.appendingPathComponent("machine"))
-                            }
-                            if let client = clients[clientID] { _ = try client.reconnectIfPeerClosed() }
-                            try await facades[clientID]?.automaticSync()
+        // The test factory observes construction; production uses the unchanged
+        // automatic worker below. Local-only must not construct either one.
+        if cloudSyncStartup == .automatic {
+            if let cloudTaskFactory {
+                cloudSyncTask = cloudTaskFactory()
+            } else {
+                cloudSyncTask = Task.detached { [broker, home, documents] in
+                    do {
+                        let environment = try WorkbenchCloudCLI.deploymentEnvironment(documents.environment)
+                        guard let origin = environment["SCREENPUNK_CLOUD_BASE_URL"], let base = URL(string: origin),
+                              base.scheme == "https", base.host != nil else { throw ControllerCloudError.invalidConfiguration }
+                        let machine = broker.runtimeDirectory.appendingPathComponent("machine")
+                        let namespace = SHA256.hash(data: Data(base.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
+                        let source = try WorkbenchCloudSyncEventSource(root: machine.appendingPathComponent("cloud-controller/" + namespace))
+                        let coordinator = WorkbenchCloudSyncCoordinator(baseURL: base, environment: environment, broker: broker, home: home, source: source)
+                        source.observePolicy { [weak coordinator] in Task { await coordinator?.policyChanged() } }
+                        await coordinator.idle()
+                        await WorkbenchCloudSyncEventLoop.run(events: source.events,
+                            load: { try ControllerCloudWorkbench.pendingScreenSyncRequest(baseURL: base, machineRoot: machine) },
+                            localChange: { try await coordinator.localChange() },
+                            process: { try await coordinator.process($0) },
+                            acknowledge: { try ControllerCloudWorkbench.acknowledgeScreenSyncRequest(baseURL: base, machineRoot: machine, requestId: $0) },
+                            idle: { await coordinator.idle() }, failed: { coordinator.failed() })
+                        await coordinator.stop()
+                    } catch {
+                        let value = ["state": "paused", "reason": "Screen sync is not configured for this service.",
+                            "checkedAt": ISO8601DateFormatter().string(from: Date())]
+                        if let bytes = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {
+                            try? bytes.write(to: broker.runtimeDirectory.appendingPathComponent("machine/cloud-sync-status.json"), options: .atomic)
                         }
                     }
-                } catch is CancellationError { break }
-                catch {
-                    // Bounded status evidence, with no tokens or source bytes in service logs.
-                    let value = ["state": "paused", "reason": String(describing: error), "checkedAt": ISO8601DateFormatter().string(from: Date())]
-                    if let bytes = try? JSONSerialization.data(withJSONObject: value) {
-                        try? bytes.write(to: broker.runtimeDirectory.appendingPathComponent("machine/cloud-sync-status.json"), options: .atomic)
-                    }
                 }
-                do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { break }
             }
         }
     }

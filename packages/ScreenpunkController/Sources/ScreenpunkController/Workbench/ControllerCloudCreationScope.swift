@@ -7,6 +7,8 @@ import Darwin
 /// account/workspace even if the creating client disappears.
 struct ControllerCloudCreationScope {
     private struct Connection: Codable, Equatable {
+        let screenSyncEnabled: Bool?
+        let policyEpoch: String?
         let clientId: String
         let accountId: String
         let workspaceId: String
@@ -20,7 +22,12 @@ struct ControllerCloudCreationScope {
         guard let workspaceId, let localWorkspaceId else {
             try disconnect(root: root, clientId: clientId); return
         }
-        let connection = Connection(clientId: clientId, accountId: accountId,
+        guard let policy = try? JSONDecoder().decode(ControllerCloudSyncPolicy.self, from: regularBytes(root.appendingPathComponent("screen-sync-policy.json"))),
+              policy.enabled, policy.accountId == accountId, policy.workspaceId == workspaceId, policy.localWorkspaceId == localWorkspaceId,
+              policy.clientId == nil || policy.clientId == clientId else {
+            try disconnect(root: root, clientId: clientId); return
+        }
+        let connection = Connection(screenSyncEnabled: true, policyEpoch: policy.epoch, clientId: clientId, accountId: accountId,
             workspaceId: workspaceId, localWorkspaceId: localWorkspaceId)
         try durable(JSONEncoder().encode(connection), to: try contextFile(root: root, clientId: clientId))
     }
@@ -43,7 +50,11 @@ struct ControllerCloudCreationScope {
             guard files.count <= 8 else { throw WorkspaceError.limitExceeded }
             for file in files {
                 let connection = try JSONDecoder().decode(Connection.self, from: Self.regularBytes(file))
-                guard connection.localWorkspaceId == selected.descriptor.workspaceId else { continue }
+                guard connection.screenSyncEnabled == true, connection.localWorkspaceId == selected.descriptor.workspaceId,
+                      let policy = try? JSONDecoder().decode(ControllerCloudSyncPolicy.self, from: Self.regularBytes(root.appendingPathComponent("screen-sync-policy.json"))),
+                      policy.enabled, policy.epoch == connection.policyEpoch, policy.accountId == connection.accountId,
+                      policy.clientId == nil || policy.clientId == connection.clientId,
+                      policy.workspaceId == connection.workspaceId, policy.localWorkspaceId == connection.localWorkspaceId else { continue }
                 if let prior = found {
                     guard prior.root == root, prior.connection.accountId == connection.accountId,
                           prior.connection.workspaceId == connection.workspaceId else { throw WorkspaceError.conflict }
@@ -67,7 +78,7 @@ struct ControllerCloudCreationScope {
         let intent = CloudNewProjectIntent(accountId: connection.accountId,
             workspaceId: connection.workspaceId, localProjectId: project.projectId,
             name: descriptor.name, kind: descriptor.kind == "web" ? "html" : descriptor.kind,
-            idempotencyKey: UUID().uuidString.lowercased(), cloudProjectId: nil, kitVersion: descriptor.kitVersion)
+            idempotencyKey: UUID().uuidString.lowercased(), cloudProjectId: nil, kitVersion: descriptor.kitVersion, requestedCloudProjectId: UUID().uuidString.lowercased())
         try Self.durable(JSONEncoder().encode(intent), to: file)
     }
     private static func contextFile(root: URL, clientId: String) throws -> URL {

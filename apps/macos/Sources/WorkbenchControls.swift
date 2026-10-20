@@ -57,6 +57,19 @@ extension View {
     func workbenchButton(prominent: Bool = false, circular: Bool = false) -> some View {
         modifier(WorkbenchButtonStyle(prominent: prominent, circular: circular))
     }
+    /// Toolbar owns layout; one native circular surface, without an extra outline.
+    @ViewBuilder func workbenchToolbarCircle(prominent: Bool = false) -> some View {
+        if #available(macOS 26, *) {
+            if prominent {
+                self.buttonStyle(.glassProminent).buttonBorderShape(.circle).controlSize(.large)
+            } else {
+                self.buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.large)
+            }
+        } else {
+            self.buttonStyle(.plain).padding(10)
+                .background(prominent ? WorkbenchPalette.accent : Color.secondary.opacity(0.15), in: Circle())
+        }
+    }
     @ViewBuilder func workbenchNotice() -> some View {
         if #available(macOS 26, *) { glassEffect(.regular, in: .rect(cornerRadius: 16)) }
         else { background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)) }

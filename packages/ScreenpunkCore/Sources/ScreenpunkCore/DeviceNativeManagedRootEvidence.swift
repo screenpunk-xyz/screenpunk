@@ -32,7 +32,17 @@ public struct DeviceNativeManagedRootLocator: Sendable {
         guard count <= maximumPathBytes else { throw DeviceNativeManagedRootFailure.invalidLocator }
         let physical = String(cString: resolved)
         guard path.utf8.elementsEqual(physical.utf8) else { throw DeviceNativeManagedRootFailure.invalidLocator }
+        #if os(iOS)
+        // Canonical caller paths still require exact spelling, but their checked
+        // chain starts at the OS-authorized physical app home. Global ancestors
+        // are outside the sandbox and carry no managed-store authority.
+        let traversal: DeviceFilesystemTraversal
+        do { traversal = try DeviceFilesystemTraversal.plan(for: path) }
+        catch { throw DeviceNativeManagedRootFailure.invalidLocator }
+        return .init(path: path, components: traversal.components, traversalRoot: traversal.rootPath)
+        #else
         return .init(path: path, components: path.split(separator: "/").map(String.init))
+        #endif
     }
     fileprivate static func containerAnchor(_ anchor: URL, existingPhysicalHome home: URL) throws -> Self {
         let root = try existingPhysicalAnchor(home), support = try existingPhysicalAnchor(anchor)

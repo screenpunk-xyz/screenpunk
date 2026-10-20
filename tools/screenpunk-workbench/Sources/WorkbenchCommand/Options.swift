@@ -30,6 +30,7 @@ struct Options {
     var words: [String] = []
     var help = false
     var version = false
+    var localOnly = false
 
     static func parse(_ arguments: [String], environment: [String: String]) throws -> Options {
         var result = Options()
@@ -39,6 +40,7 @@ struct Options {
             let word = arguments[index]
             switch word {
             case "--json": result.json = true
+            case "--local-only": result.localOnly = true
             case "--no-input": result.noInput = true
             case "--approved": result.approved = true
             case "--verbose": break
@@ -70,7 +72,7 @@ struct Options {
                                             "--source-version", "--revision", "--generation", "--out", "--to", "--external",
                                             "--catalog-entry", "--kit-version", "--inventory",
                                             "--include-external", "--allow-incomplete", "--scope", "--required",
-                                            "--watch"].contains(word) {
+                                            "--watch", "--create-local-workspace"].contains(word) {
                     throw usage("Unknown option. Use screenpunk help.")
                 }
                 result.words.append(word)
@@ -87,6 +89,13 @@ struct Options {
     }
 
     static func usage(_ message: String) -> CommandFailure { .init("usage", message, 2) }
+
+    func cloudSyncStartup(for normalizedWords: [String]) throws -> WorkbenchCloudSyncStartup {
+        guard !localOnly || normalizedWords == ["service", "run", "--foreground"] else {
+            throw Options.usage("--local-only is supported only by the foreground service. It does not change or reuse a running service.")
+        }
+        return localOnly ? .localOnly : .automatic
+    }
 
     func runtimeURL() throws -> URL {
         let runtime = runtime ?? InstallationPaths(home: FileManager.default.homeDirectoryForCurrentUser)

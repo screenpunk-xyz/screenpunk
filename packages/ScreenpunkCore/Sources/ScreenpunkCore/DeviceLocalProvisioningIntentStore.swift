@@ -179,6 +179,10 @@ final class DeviceLocalProvisioningIntentStore {
         var bytes=Data();bytes.append(plan.intentBytes);bytes.append(0);bytes.append(plan.candidateBytes);return bytes
     }
     private func fingerprint(_ node:Node)throws->NativeFingerprint {.init(identity:node.identity,byteCount:node.bytes.count,digest:try DeviceNativeDeliveryAttachmentCodec.hash(node.bytes))}
+    private func durableFingerprint(_ c:Context,_ recorded:NativeFingerprint?,_ observed:Node)throws->Bool {
+        guard let recorded else{return false};let raw=try fingerprint(observed)
+        return recorded.byteCount == raw.byteCount && recorded.digest == raw.digest && durable(c,recorded.identity,observed.identity)
+    }
     private func nativeJoinNodes(_ c:Context)throws->[String:Node] {
         var result:[String:Node]=[:]
         for name in Self.nativeJoinNames {if let n=try either(c.root,name,limit:name == "native-join.candidate" ? 128*1024:name == "native-join.confirm" ? 65536:32768){result[name]=n}}
@@ -215,11 +219,11 @@ final class DeviceLocalProvisioningIntentStore {
         if let intent=join["native-join.intent"] {guard intent.bytes == plan.intentBytes || intent.bytes.isEmpty && live["native-join.intent.stage"] == intent.identity && nativeJoinInput == exact else{throw Failure.conflict}}
         if let binding=join["native-join.binding"],!binding.bytes.isEmpty {
             let b=try decodeNativeJoinBinding(binding.bytes)
-            guard b.operationID == plan.nativeOperationID,b.selfID == binding.identity,b.intent == join["native-join.intent"],b.intent.bytes == plan.intentBytes,
-                  join["native-join.candidate"]?.identity == b.candidateID,join["native-join.confirm"]?.identity == b.confirmationID else{throw Failure.conflict}
-            for (key,node) in original {guard b.original[key] == (try fingerprint(node)) else{throw Failure.conflict}}
+            guard b.operationID == plan.nativeOperationID,durable(c,b.selfID,binding.identity),durable(c,b.intent,join["native-join.intent"]),b.intent.bytes == plan.intentBytes,
+                  durable(c,b.candidateID,join["native-join.candidate"]?.identity),durable(c,b.confirmationID,join["native-join.confirm"]?.identity) else{throw Failure.conflict}
+            for (key,node) in original {guard try durableFingerprint(c,b.original[key],node) else{throw Failure.conflict}}
             guard let candidate=join["native-join.candidate"],candidate.bytes.isEmpty || candidate.bytes == plan.candidateBytes else{throw Failure.conflict}
-            let expected=try encode(NativeJoinConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:binding,candidate:NativeFingerprint(identity:b.candidateID,byteCount:plan.candidateBytes.count,digest:body.candidateDigest)))
+            let expected=try encode(NativeJoinConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:protocolNode(c,binding),candidate:NativeFingerprint(identity:b.candidateID,byteCount:plan.candidateBytes.count,digest:body.candidateDigest)))
             guard let proof=join["native-join.confirm"],proof.bytes.isEmpty || proof.bytes == expected else{throw Failure.conflict}
         } else {
             // Until the reciprocal inode graph is durable, only the original live prefix can repair.
@@ -229,7 +233,7 @@ final class DeviceLocalProvisioningIntentStore {
         }
         // Reserve ALL actual new encoded bytes including binding/proof BEFORE effects.
         let dummy=ID(device:UInt64.max,inode:UInt64.max)
-        var refs:[String:NativeFingerprint]=[:];for(key,node)in original{refs[key]=try fingerprint(node)}
+        var refs:[String:NativeFingerprint]=[:];for(key,node)in original{refs[key]=try fingerprint(protocolNode(c,node))}
         let sample=Node(identity:dummy,bytes:try encode(NativeJoinBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,intent:Node(identity:dummy,bytes:plan.intentBytes),candidateID:dummy,confirmationID:dummy,original:refs)))
         guard sample.bytes.count <= 32768 else{throw Failure.capacity}
         let confirmation=try encode(NativeJoinConfirmation(schemaVersion:1,selfID:dummy,binding:sample,candidate:NativeFingerprint(identity:dummy,byteCount:plan.candidateBytes.count,digest:body.candidateDigest)))
@@ -263,21 +267,21 @@ final class DeviceLocalProvisioningIntentStore {
         let now=epoch(true)
         let intent:Node
         if let n=original.join["native-join.intent"],!n.bytes.isEmpty {intent=n}
-        else {let id=try allocate(c.root,"native-join.intent.stage",kind:.nativeJoinIntent);intent=Node(identity:id,bytes:plan.intentBytes);try fill(c.root,"native-join.intent.stage",intent,kind:.nativeJoinIntent)}
+        else {let id=try allocate(c.root,"native-join.intent.stage",kind:.nativeJoinIntent);intent=Node(identity:id,bytes:plan.intentBytes);try fill(c,c.root,"native-join.intent.stage",intent,kind:.nativeJoinIntent)}
         try promote(c,parent:c.root,name:"native-join.intent",expected:intent,kind:.nativeJoinIntent)
         let binding:Node
         if let n=original.join["native-join.binding"],!n.bytes.isEmpty {binding=n}
         else {
             let candidateID=try allocate(c.root,"native-join.candidate.stage",kind:.nativeJoinCandidate),confirmationID=try allocate(c.root,"native-join.confirm.stage",kind:.nativeJoinConfirmation),id=try allocate(c.root,"native-join.binding.stage",kind:.nativeJoinBinding)
-            var refs:[String:NativeFingerprint]=[:];for(key,node)in original.nodes{refs[key]=try fingerprint(node)}
-            binding=Node(identity:id,bytes:try encode(NativeJoinBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:id,intent:intent,candidateID:candidateID,confirmationID:confirmationID,original:refs)))
-            try fill(c.root,"native-join.binding.stage",binding,kind:.nativeJoinBinding)
+            var refs:[String:NativeFingerprint]=[:];for(key,node)in original.nodes{refs[key]=try fingerprint(protocolNode(c,node))}
+            binding=Node(identity:id,bytes:try encode(NativeJoinBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:id,intent:protocolNode(c,intent),candidateID:candidateID,confirmationID:confirmationID,original:refs)))
+            try fill(c,c.root,"native-join.binding.stage",binding,kind:.nativeJoinBinding)
         }
         try promote(c,parent:c.root,name:"native-join.binding",expected:binding,kind:.nativeJoinBinding)
         let b=try decodeNativeJoinBinding(binding.bytes),candidate=Node(identity:b.candidateID,bytes:plan.candidateBytes)
-        let proof=Node(identity:b.confirmationID,bytes:try encode(NativeJoinConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:binding,candidate:try fingerprint(candidate))))
+        let proof=Node(identity:b.confirmationID,bytes:try encode(NativeJoinConfirmation(schemaVersion:1,selfID:b.confirmationID,binding:protocolNode(c,binding),candidate:try fingerprint(candidate))))
         for(name,node,kind)in[("native-join.candidate",candidate,Kind.nativeJoinCandidate),("native-join.confirm",proof,Kind.nativeJoinConfirmation)] {
-            if try read(c.root,name,limit:128*1024) == nil {try fill(c.root,name+".stage",node,kind:kind)}
+            if try read(c.root,name,limit:128*1024) == nil {try fill(c,c.root,name+".stage",node,kind:kind)}
             try promote(c,parent:c.root,name:name,expected:node,kind:kind)
         }
         for(key,node)in original.nodes {
@@ -406,23 +410,24 @@ final class DeviceLocalProvisioningIntentStore {
         let d=try decodeDeliveryBinding(attached["delivery.binding"]!.bytes),proof=try decodeDeliveryConfirmation(attached["delivery.confirm"]!.bytes)
         let rootBinding=try require(c.root,"root-binding.json",limit:16384),genesis=try require(c.root,"genesis.json",limit:32768)
         let rb=try decodeBinding(rootBinding.bytes),g=try decodeGenesis(genesis.bytes);try checkBinding(c,rb,node:rootBinding)
-        guard d.selfID == attached["delivery.binding"]!.identity,d.intent == attached["delivery.intent"],
-              d.commandID == attached["delivery.command"]!.identity,d.planID == attached["delivery.plan"]!.identity,
-              proof.selfID == attached["delivery.confirm"]!.identity,d.confirmationID == proof.selfID,
-              proof.binding == attached["delivery.binding"],proof.command == Node(identity:d.commandID,bytes:Data()),
-              proof.plan == Node(identity:d.planID,bytes:Data()),rootBinding.identity == intent.bindingID,
-              genesis.identity == intent.genesisID,g.binding == rootBinding,g.initialHeadID == rb.initialHeadID,
+        guard durable(c,d.selfID,attached["delivery.binding"]!.identity),durable(c,d.intent,attached["delivery.intent"]),
+              durable(c,d.commandID,attached["delivery.command"]!.identity),durable(c,d.planID,attached["delivery.plan"]!.identity),
+              proof.selfID == d.confirmationID,durable(c,proof.selfID,attached["delivery.confirm"]!.identity),
+              proof.binding == protocolNode(c,attached["delivery.binding"]!),proof.command == Node(identity:d.commandID,bytes:Data()),
+              proof.plan == Node(identity:d.planID,bytes:Data()),durable(c,intent.bindingID,rootBinding.identity),
+              durable(c,intent.genesisID,genesis.identity),durable(c,rb.genesisID,genesis.identity),
+              snapshotDevices([rb.directory,rb.genesisID],[c.directory,genesis.identity]),g.binding == protocolNode(c,rootBinding),g.initialHeadID == rb.initialHeadID,
               try DeviceNativeDeliveryAttachmentCodec.hash(rootBinding.bytes) == intent.bindingHash,
               try DeviceNativeDeliveryAttachmentCodec.hash(genesis.bytes) == intent.genesisHash else{throw Failure.conflict}
         let actualHead=try require(c.root,"head.json",limit:8192)
-        if actualHead != intent.head {
+        if !durable(c,intent.head,actualHead) {
             guard nativeCompletionScopeActive else{throw Failure.conflict}
             let method=try requireEither(c.root,"native-completion.method",limit:32768)
             let binding=try requireEither(c.root,"native-completion.binding",limit:65536)
             let m=try nativeCompletionMethod(method.bytes),b=try nativeCompletionBinding(binding.bytes)
-            guard m.operationID == operation,m.rootID == rootID,m.selfID == method.identity,
-                  b.operationID == operation,b.rootID == rootID,b.selfID == binding.identity,
-                  b.method == (try fingerprint(method)),b.baseline == intent.head,b.candidate == actualHead else{throw Failure.conflict}
+            guard m.operationID == operation,m.rootID == rootID,durable(c,m.selfID,method.identity),
+                  b.operationID == operation,b.rootID == rootID,durable(c,b.selfID,binding.identity),
+                  b.method == (try fingerprint(protocolNode(c,method))),b.baseline == intent.head,durable(c,b.candidate,actualHead) else{throw Failure.conflict}
         }
         let command=try require(c.root,"delivery.command",limit:16384).bytes
         guard command.count == intent.commandBytes,try DeviceNativeDeliveryAttachmentCodec.hash(command) == intent.commandHash,
@@ -459,7 +464,7 @@ final class DeviceLocalProvisioningIntentStore {
             guard allowLive,isLiveEmpty(methodNode,prefix+".method.stage"),nodes.count == 1 else{throw Failure.conflict};return nodes
         }
         let method=try nativeHTTPMethod(methodNode.bytes)
-        guard method.selfID == methodNode.identity,method.operationID == operation,method.phase == phase else{throw Failure.conflict}
+        guard durable(c,method.selfID,methodNode.identity),method.operationID == operation,method.phase == phase else{throw Failure.conflict}
         let bindingInput=try nativeHTTPBindingInput(c,operation)
         _ = try DeviceNativeDeliveryHTTPCodec.observe(method.request,kind:phase == .activation ? .activationRequest:.terminalRequest,
             binding:bindingInput,requestID:method.activationRequestID,
@@ -467,7 +472,7 @@ final class DeviceLocalProvisioningIntentStore {
             expectedOutcome:phase == .receipt ? "activated":nil)
         for(name,marker)in method.original {
             let node=try nativeOriginalNode(c,name,limit:256*1024)
-            guard try fingerprint(node) == marker else{throw Failure.conflict}
+            guard try durableFingerprint(c,marker,node) else{throw Failure.conflict}
         }
         if method.prepared.isEmpty {
             guard allowLive,live[prefix+".method.stage"] == methodNode.identity || live[prefix+".method"] == methodNode.identity else{throw Failure.conflict}
@@ -476,7 +481,7 @@ final class DeviceLocalProvisioningIntentStore {
         }
         for(leaf,node)in nodes where leaf != "method" {
             let key=leaf == last ? "response":leaf
-            guard method.prepared[key] == node.identity else{throw Failure.conflict}
+            guard durable(c,method.prepared[key],node.identity) else{throw Failure.conflict}
         }
         guard let request=nodes["request"],let response=nodes[last],let binding=nodes["binding"] else{throw Failure.conflict}
         guard request.bytes.isEmpty || request.bytes == method.request else{throw Failure.conflict}
@@ -484,11 +489,11 @@ final class DeviceLocalProvisioningIntentStore {
             guard response.bytes.isEmpty else{throw Failure.conflict}
         } else {
             let b=try nativeHTTPBinding(binding.bytes)
-            guard b.selfID == binding.identity,b.operationID == operation,b.method == (try fingerprint(methodNode)),
-                  b.request == (try fingerprint(Node(identity:request.identity,bytes:method.request))),
-                  b.response.identity == response.identity else{throw Failure.conflict}
+            guard durable(c,b.selfID,binding.identity),b.operationID == operation,b.method == (try fingerprint(protocolNode(c,methodNode))),
+                  b.request == (try fingerprint(protocolNode(c,Node(identity:request.identity,bytes:method.request)))),
+                  durable(c,b.response.identity,response.identity) else{throw Failure.conflict}
             if !response.bytes.isEmpty {
-                guard b.response == (try fingerprint(response)) else{throw Failure.conflict}
+                guard b.response == (try fingerprint(protocolNode(c,response))) else{throw Failure.conflict}
                 _ = try DeviceNativeDeliveryHTTPCodec.observe(response.bytes,kind:phase == .activation ? .activationResponse:.terminalResponse,
                     binding:bindingInput,requestID:method.activationRequestID,
                     authorizationDigest:phase == .receipt ? nativeHTTPAuthorization(c,operation).authorizationDigest:nil,
@@ -596,12 +601,12 @@ final class DeviceLocalProvisioningIntentStore {
         if let methodNode=before["method"],!methodNode.bytes.isEmpty {
             let m=try nativeHTTPMethod(methodNode.bytes)
             guard m.request == request,m.activationRequestID == requestID,
-                  m.original == (try originalNodes.filter{phase != .activation || $0.key != "head.json"}.mapValues{try fingerprint($0)}) else{throw Failure.conflict}
+                  m.original == (try originalNodes.filter{phase != .activation || $0.key != "head.json"}.mapValues{try fingerprint(protocolNode(c,$0))}) else{throw Failure.conflict}
         }
         if let response,let existing=before[last],!existing.bytes.isEmpty {guard existing.bytes == response else{throw Failure.conflict}}
         // Reserve exact worst-case encoded method/binding and both installed/staging copies.
         let maxID=ID(device:UInt64.max,inode:UInt64.max)
-        let markers=try originalNodes.filter{phase != .activation || $0.key != "head.json"}.mapValues{try fingerprint($0)}
+        let markers=try originalNodes.filter{phase != .activation || $0.key != "head.json"}.mapValues{try fingerprint(protocolNode(c,$0))}
         let sample=try DeviceLocalCompleteSetBounds.encode(NativeHTTPMethod(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:maxID,phase:phase,activationRequestID:requestID,request:request,original:markers,prepared:["binding":maxID,"request":maxID,"response":maxID]),maximum:32768)
         let responseBytes=response ?? Data()
         let sampleBinding=try DeviceLocalCompleteSetBounds.encode(NativeHTTPBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:maxID,
@@ -632,36 +637,36 @@ final class DeviceLocalProvisioningIntentStore {
         if let old=before["method"],!old.bytes.isEmpty {prepared=try nativeHTTPMethod(old.bytes).prepared}else{prepared=[:]}
         if prepared.isEmpty {
             // The exact durable reservation precedes creation of dependent candidates.
-            try fill(c.ops,prefix+".method.stage",reservedMethod,kind:.nativeHTTPMethod)
+            try fill(c,c.ops,prefix+".method.stage",reservedMethod,kind:.nativeHTTPMethod)
             try sync(c.ops);try boundary(.afterDirectorySync(.nativeHTTPMethod))
             prepared=["request":try allocate(c.ops,prefix+".request.stage",kind:.nativeHTTPRequest),
                 "response":try allocate(c.ops,prefix+"."+last+".stage",kind:.nativeHTTPResponse),
                 "binding":try allocate(c.ops,prefix+".binding.stage",kind:.nativeHTTPBinding)]
             let method=Node(identity:methodID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeHTTPMethod(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:methodID,phase:phase,activationRequestID:requestID,request:request,original:markers,prepared:prepared),maximum:32768))
-            try fill(c.ops,prefix+".method.stage",method,kind:.nativeHTTPMethod)
+            try fill(c,c.ops,prefix+".method.stage",method,kind:.nativeHTTPMethod)
         }
         let method=try requireEither(c.ops,prefix+".method",limit:32768)
         try promote(c,parent:c.ops,name:prefix+".method",expected:method,kind:.nativeHTTPMethod)
         let requestNode=Node(identity:prepared["request"]!,bytes:request)
         if try read(c.ops,prefix+".request",limit:16384) == nil {
-            guard try require(c.ops,prefix+".request.stage",limit:16384).identity == requestNode.identity else{throw Failure.conflict}
-            try fill(c.ops,prefix+".request.stage",requestNode,kind:.nativeHTTPRequest)
+            guard admittedEffectIdentity(c,requestNode.identity,try require(c.ops,prefix+".request.stage",limit:16384).identity) else{throw Failure.conflict}
+            try fill(c,c.ops,prefix+".request.stage",requestNode,kind:.nativeHTTPRequest)
         }
         try promote(c,parent:c.ops,name:prefix+".request",expected:requestNode,kind:.nativeHTTPRequest)
         if let response {
             let responseNode=Node(identity:prepared["response"]!,bytes:response)
-            let bound=Node(identity:prepared["binding"]!,bytes:try DeviceLocalCompleteSetBounds.encode(NativeHTTPBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:prepared["binding"]!,method:try fingerprint(method),request:try fingerprint(requestNode),response:try fingerprint(responseNode)),maximum:65536))
-            if let existing=try read(c.ops,prefix+".binding",limit:65536){guard existing == bound else{throw Failure.conflict}}
-            else {try fill(c.ops,prefix+".binding.stage",bound,kind:.nativeHTTPBinding)}
+            let bound=Node(identity:prepared["binding"]!,bytes:try DeviceLocalCompleteSetBounds.encode(NativeHTTPBinding(schemaVersion:1,rootID:rootID,operationID:plan.nativeOperationID,selfID:prepared["binding"]!,method:try fingerprint(protocolNode(c,method)),request:try fingerprint(requestNode),response:try fingerprint(responseNode)),maximum:65536))
+            if let existing=try read(c.ops,prefix+".binding",limit:65536){guard durable(c,bound,existing) else{throw Failure.conflict}}
+            else {try fill(c,c.ops,prefix+".binding.stage",bound,kind:.nativeHTTPBinding)}
             try promote(c,parent:c.ops,name:prefix+".binding",expected:bound,kind:.nativeHTTPBinding)
-            if let existing=try read(c.ops,prefix+"."+last,limit:16384){guard existing == responseNode else{throw Failure.conflict}}
-            else {try fill(c.ops,prefix+"."+last+".stage",responseNode,kind:.nativeHTTPResponse)}
+            if let existing=try read(c.ops,prefix+"."+last,limit:16384){guard durable(c,responseNode,existing) else{throw Failure.conflict}}
+            else {try fill(c,c.ops,prefix+"."+last+".stage",responseNode,kind:.nativeHTTPResponse)}
             try promote(c,parent:c.ops,name:prefix+"."+last,expected:responseNode,kind:.nativeHTTPResponse)
         }
         for name in ["root-binding.json","genesis.json"] {try syncExisting(c.root,name,originalNodes[name]!,kind:.binding)}
         try sync(c.lock);try sync(c.ops);try sync(c.root)
         let final=try nativeHTTPGraph(c,phase,plan.nativeOperationID,allowLive:false)
-        guard final["request"] == requestNode,epoch() == now else{throw Failure.uncertain}
+        guard let installedRequest=final["request"],durable(c,requestNode,installedRequest),epoch() == now else{throw Failure.uncertain}
         let transition=NativeHTTPTransition(ObjectIdentifier(self),rootID,now,phase,original,completed?.transition,originalNodes,final,requestID,request,response)
         nativeHTTPPending=transition;return transition
     }
@@ -821,40 +826,49 @@ final class DeviceLocalProvisioningIntentStore {
         if let methodNode,!methodNode.bytes.isEmpty {
             let method=try nativeCompletionMethod(methodNode.bytes)
             guard method.schemaVersion == 3,method.rootID == rootID,method.operationID == plan.nativeOperationID,
-                  method.selfID == methodNode.identity,method.structuralRootID == structuralRootID,
+                  durable(c,method.selfID,methodNode.identity),method.structuralRootID == structuralRootID,
                   method.generationID == state.generationID else{throw Failure.conflict}
             if let bindingNode,!bindingNode.bytes.isEmpty {
                 let b=try nativeCompletionBinding(bindingNode.bytes)
                 guard b.schemaVersion == 3,b.rootID == rootID,b.operationID == plan.nativeOperationID,
-                      b.selfID == bindingNode.identity,b.method == (try fingerprint(methodNode)) else{throw Failure.conflict}
+                      durable(c,b.selfID,bindingNode.identity),b.method == (try fingerprint(protocolNode(c,methodNode))) else{throw Failure.conflict}
                 original=try nativeCompletionOriginalNodes(c,b.baseline)
-                guard nodes["native-completion.record"]?.identity == b.recordID,
-                      nodes["native-completion.confirm"]?.identity == b.confirmationID else{throw Failure.conflict}
+                guard durable(c,b.recordID,nodes["native-completion.record"]?.identity),
+                      durable(c,b.confirmationID,nodes["native-completion.confirm"]?.identity) else{throw Failure.conflict}
                 let head=try nativeCompletionDecode(NativeCompletionHead.self,b.candidate.bytes,["schemaVersion","genesisID","operationID","intentID","completionID"],limit:8192)
-                                guard head.schemaVersion == 3,head.genesisID == (try require(c.root,"genesis.json",limit:32768)).identity,
-                      head.operationID == plan.nativeOperationID,head.intentID == original["native-join.intent"]!.identity,
+                                guard head.schemaVersion == 3,head.genesisID == protocolNode(c,try require(c.root,"genesis.json",limit:32768)).identity,
+                      head.operationID == plan.nativeOperationID,head.intentID == protocolNode(c,original["native-join.intent"]!).identity,
                       head.completionID == b.recordID else{throw Failure.conflict}
                 let current=try require(c.root,"head.json",limit:8192)
-                guard current == b.baseline || current == b.candidate else{throw Failure.conflict}
+                guard durable(c,b.baseline,current) || durable(c,b.candidate,current) else{throw Failure.conflict}
                 if let staged=try read(c.root,"head.json.stage",limit:8192) {
-                    guard staged == b.candidate || live["head.json.stage"] == staged.identity && staged.bytes.isEmpty else{throw Failure.conflict}
-                } else if current != b.candidate {throw Failure.conflict}
+                    guard durable(c,b.candidate,staged) || live["head.json.stage"] == staged.identity && staged.bytes.isEmpty else{throw Failure.conflict}
+                } else if !durable(c,b.candidate,current) {throw Failure.conflict}
                 if let record=nodes["native-completion.record"],!record.bytes.isEmpty {
                     let r=try nativeCompletionRecord(record.bytes)
-                    guard r.schemaVersion == 3,r.rootID == rootID,r.operationID == plan.nativeOperationID,r.selfID == record.identity,
+                    guard r.schemaVersion == 3,r.rootID == rootID,r.operationID == plan.nativeOperationID,durable(c,r.selfID,record.identity),
                           r.association == plan.delivery.association,r.structuralRootID == structuralRootID,r.generationID == state.generationID,
-                          r.envelope == envelope,r.originalIntent == (try fingerprint(original["native-join.intent"]!)) else{throw Failure.conflict}
+                          r.envelope == envelope,r.originalIntent == (try fingerprint(protocolNode(c,original["native-join.intent"]!))) else{throw Failure.conflict}
                 }
                 if let confirmation=nodes["native-completion.confirm"],!confirmation.bytes.isEmpty {
                     let proof=try nativeCompletionConfirm(confirmation.bytes)
-                    guard let record=nodes["native-completion.record"],proof.schemaVersion == 3,proof.selfID == confirmation.identity,
-                          proof.binding == (try fingerprint(bindingNode)),proof.head == (try fingerprint(b.candidate)),
-                          proof.record == (try fingerprint(record)) else{throw Failure.conflict}
+                    guard let record=nodes["native-completion.record"],proof.schemaVersion == 3,proof.selfID == b.confirmationID,durable(c,proof.selfID,confirmation.identity),
+                          proof.binding == (try fingerprint(protocolNode(c,bindingNode))),proof.head == (try fingerprint(b.candidate)),
+                          proof.record == (try fingerprint(protocolNode(c,record))) else{throw Failure.conflict}
                 }
             } else {
                 guard nativeCompletionInputs[plan.nativeOperationID] == envelope,live["native-completion.method.stage"] == methodNode.identity else{throw Failure.conflict}
             }
-            var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(node)}
+            guard Set(method.original.keys) == Set(original.keys) else{throw Failure.conflict}
+            for (name,marker) in method.original {
+                guard let node=original[name] else{throw Failure.conflict}
+                // A reciprocal binding retains a logical predecessor, not a current
+                // filesystem observation. Keep that record-to-record identity exact.
+                if name == "head.json",let bindingNode,!bindingNode.bytes.isEmpty {
+                    guard marker == (try fingerprint(node)) else{throw Failure.conflict}
+                } else {guard try durableFingerprint(c,marker,node) else{throw Failure.conflict}}
+            }
+            var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(protocolNode(c,node))}
             guard method.original == markers,method.candidate.byteCount == envelope.count,
                   method.candidate.digest == (try DeviceNativeDeliveryAttachmentCodec.hash(envelope)) else{throw Failure.conflict}
         } else if !nodes.isEmpty {
@@ -882,11 +896,11 @@ final class DeviceLocalProvisioningIntentStore {
         guard history.operation == nil || history.completed,history.terminalCount < 128 else{throw Failure.capacity}
         // Actual encoded maximum-width inode shape is reserved before epoch/effects.
         let dummy=ID(device:UInt64.max,inode:UInt64.max)
-        var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(node)}
+        var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(protocolNode(c,node))}
         let method=try DeviceLocalCompleteSetBounds.encode(NativeCompletionMethod(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,structuralRootID:structuralRootID,generationID:state.generationID,original:markers,candidate:NativeFingerprint(identity:dummy,byteCount:envelope.count,digest:try DeviceNativeDeliveryAttachmentCodec.hash(envelope))),maximum:32768)
         let head=Node(identity:dummy,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionHead(schemaVersion:3,genesisID:dummy,operationID:plan.nativeOperationID,intentID:dummy,completionID:dummy),maximum:8192))
-        let binding=try DeviceLocalCompleteSetBounds.encode(NativeCompletionBinding(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,method:try fingerprint(Node(identity:dummy,bytes:method)),baseline:original["head.json"]!,candidate:head,recordID:dummy,confirmationID:dummy),maximum:65536)
-        let record=try DeviceLocalCompleteSetBounds.encode(NativeCompletionRecord(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,association:plan.delivery.association,structuralRootID:structuralRootID,generationID:state.generationID,envelope:envelope,originalIntent:try fingerprint(original["native-join.intent"]!)),maximum:256*1024)
+        let binding=try DeviceLocalCompleteSetBounds.encode(NativeCompletionBinding(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,method:try fingerprint(Node(identity:dummy,bytes:method)),baseline:protocolNode(c,original["head.json"]!),candidate:head,recordID:dummy,confirmationID:dummy),maximum:65536)
+        let record=try DeviceLocalCompleteSetBounds.encode(NativeCompletionRecord(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:dummy,association:plan.delivery.association,structuralRootID:structuralRootID,generationID:state.generationID,envelope:envelope,originalIntent:try fingerprint(protocolNode(c,original["native-join.intent"]!))),maximum:256*1024)
         let confirmation=try DeviceLocalCompleteSetBounds.encode(NativeCompletionConfirm(schemaVersion:3,selfID:dummy,binding:try fingerprint(Node(identity:dummy,bytes:binding)),head:try fingerprint(head),record:try fingerprint(Node(identity:dummy,bytes:record))),maximum:65536)
         var total=0
         for name in try list(c.root,limit:36) where name != "operations" && name != "provisioning.lock" {
@@ -957,13 +971,13 @@ final class DeviceLocalProvisioningIntentStore {
         nativeCompletionQualified=nil;nativeCompletionPending=nil
         let attemptEpoch=epoch(true)
         let next=try DeviceNativeStructuralStateCodec.decode(DeviceNativeStructuralEnvelopeCodec.decode(envelope).snapshotBytes)
-        var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(node)}
+        var markers:[String:NativeFingerprint]=[:];for(key,node)in original{markers[key]=try fingerprint(protocolNode(c,node))}
         let method:Node
         if let existing=before.nodes["native-completion.method"],!existing.bytes.isEmpty {method=existing}
         else {
             let id=try allocate(c.root,"native-completion.method.stage",kind:.nativeCompletionMethod)
             method=Node(identity:id,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionMethod(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:id,structuralRootID:structuralRootID,generationID:next.generationID,original:markers,candidate:NativeFingerprint(identity:id,byteCount:envelope.count,digest:try DeviceNativeDeliveryAttachmentCodec.hash(envelope))),maximum:32768))
-            try fill(c.root,"native-completion.method.stage",method,kind:.nativeCompletionMethod)
+            try fill(c,c.root,"native-completion.method.stage",method,kind:.nativeCompletionMethod)
         }
         try promote(c,parent:c.root,name:"native-completion.method",expected:method,kind:.nativeCompletionMethod)
         let binding:Node
@@ -982,35 +996,39 @@ final class DeviceLocalProvisioningIntentStore {
             nativeCompletionHeadStage=(plan.nativeOperationID,envelope,headID)
             let confirmID=try allocate(c.root,"native-completion.confirm.stage",kind:.nativeCompletionConfirm)
             let bindingID=try allocate(c.root,"native-completion.binding.stage",kind:.nativeCompletionBinding)
-            let head=Node(identity:headID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionHead(schemaVersion:3,genesisID:original["genesis.json"]!.identity,operationID:plan.nativeOperationID,intentID:original["native-join.intent"]!.identity,completionID:recordID),maximum:8192))
-            binding=Node(identity:bindingID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionBinding(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:bindingID,method:try fingerprint(method),baseline:original["head.json"]!,candidate:head,recordID:recordID,confirmationID:confirmID),maximum:65536))
+            let head=Node(identity:headID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionHead(schemaVersion:3,genesisID:protocolNode(c,original["genesis.json"]!).identity,operationID:plan.nativeOperationID,intentID:protocolNode(c,original["native-join.intent"]!).identity,completionID:recordID),maximum:8192))
+            binding=Node(identity:bindingID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionBinding(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:bindingID,method:try fingerprint(protocolNode(c,method)),baseline:protocolNode(c,original["head.json"]!),candidate:head,recordID:recordID,confirmationID:confirmID),maximum:65536))
             // Persistent inode graph precedes every dependent record/head/confirmation payload.
-            try fill(c.root,"native-completion.binding.stage",binding,kind:.nativeCompletionBinding)
+            try fill(c,c.root,"native-completion.binding.stage",binding,kind:.nativeCompletionBinding)
         }
         try promote(c,parent:c.root,name:"native-completion.binding",expected:binding,kind:.nativeCompletionBinding)
         let bound=try nativeCompletionBinding(binding.bytes)
-        let record=Node(identity:bound.recordID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionRecord(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:bound.recordID,association:plan.delivery.association,structuralRootID:structuralRootID,generationID:next.generationID,envelope:envelope,originalIntent:try fingerprint(original["native-join.intent"]!)),maximum:256*1024))
+        let record=Node(identity:bound.recordID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionRecord(schemaVersion:3,rootID:rootID,operationID:plan.nativeOperationID,selfID:bound.recordID,association:plan.delivery.association,structuralRootID:structuralRootID,generationID:next.generationID,envelope:envelope,originalIntent:try fingerprint(protocolNode(c,original["native-join.intent"]!))),maximum:256*1024))
         if try read(c.root,"native-completion.record",limit:256*1024) == nil {
-            guard try require(c.root,"native-completion.record.stage",limit:256*1024).identity == record.identity else{throw Failure.conflict}
-            try fill(c.root,"native-completion.record.stage",record,kind:.nativeCompletionRecord)
+            guard admittedEffectIdentity(c,record.identity,try require(c.root,"native-completion.record.stage",limit:256*1024).identity) else{throw Failure.conflict}
+            try fill(c,c.root,"native-completion.record.stage",record,kind:.nativeCompletionRecord)
         }
         try promote(c,parent:c.root,name:"native-completion.record",expected:record,kind:.nativeCompletionRecord)
         let current=try require(c.root,"head.json",limit:8192)
-        if current == bound.baseline {
+        if durable(c,bound.baseline,current) {
             let staged=try require(c.root,"head.json.stage",limit:8192)
-            guard staged.identity == bound.candidate.identity,staged.bytes.isEmpty || staged == bound.candidate else{throw Failure.conflict}
-            try fill(c.root,"head.json.stage",bound.candidate,kind:.nativeCompletionHead)
+            guard admittedEffectIdentity(c,bound.candidate.identity,staged.identity),staged.bytes.isEmpty || staged.bytes == bound.candidate.bytes else{throw Failure.conflict}
+            try fill(c,c.root,"head.json.stage",bound.candidate,kind:.nativeCompletionHead)
+            let written=Node(identity:staged.identity,bytes:bound.candidate.bytes)
             try boundary(.beforeReplace(.nativeCompletionHead));try check(c)
-            guard try require(c.root,"head.json",limit:8192) == bound.baseline else{throw Failure.conflict}
+            guard try require(c.root,"head.json",limit:8192) == current,try require(c.root,"head.json.stage",limit:8192) == written else{throw Failure.conflict}
             guard renameat(c.root,"head.json.stage",c.root,"head.json") == 0 else{throw failure()}
             try boundary(.afterReplace(.nativeCompletionHead))
-        } else {guard current == bound.candidate else{throw Failure.conflict}}
-        try syncExisting(c.root,"head.json",bound.candidate,kind:.nativeCompletionHead)
+            guard try require(c.root,"head.json",limit:8192) == written else{throw Failure.conflict}
+        } else {guard durable(c,bound.candidate,current) else{throw Failure.conflict}}
+        let installed=try require(c.root,"head.json",limit:8192)
+        guard durable(c,bound.candidate,installed) else{throw Failure.conflict}
+        try syncExisting(c.root,"head.json",installed,kind:.nativeCompletionHead)
         try sync(c.root);try boundary(.afterDirectorySync(.nativeCompletionHead))
-        let confirmation=Node(identity:bound.confirmationID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionConfirm(schemaVersion:3,selfID:bound.confirmationID,binding:try fingerprint(binding),head:try fingerprint(bound.candidate),record:try fingerprint(record)),maximum:65536))
+        let confirmation=Node(identity:bound.confirmationID,bytes:try DeviceLocalCompleteSetBounds.encode(NativeCompletionConfirm(schemaVersion:3,selfID:bound.confirmationID,binding:try fingerprint(protocolNode(c,binding)),head:try fingerprint(bound.candidate),record:try fingerprint(protocolNode(c,record))),maximum:65536))
         if try read(c.root,"native-completion.confirm",limit:65536) == nil {
-            guard try require(c.root,"native-completion.confirm.stage",limit:65536).identity == confirmation.identity else{throw Failure.conflict}
-            try fill(c.root,"native-completion.confirm.stage",confirmation,kind:.nativeCompletionConfirm)
+            guard admittedEffectIdentity(c,confirmation.identity,try require(c.root,"native-completion.confirm.stage",limit:65536).identity) else{throw Failure.conflict}
+            try fill(c,c.root,"native-completion.confirm.stage",confirmation,kind:.nativeCompletionConfirm)
         }
         try promote(c,parent:c.root,name:"native-completion.confirm",expected:confirmation,kind:.nativeCompletionConfirm)
         for name in ["root-binding.json","genesis.json"] {try syncExisting(c.root,name,original[name]!,kind:.binding)}
@@ -1018,8 +1036,10 @@ final class DeviceLocalProvisioningIntentStore {
         let final=try nativeCompletionPreflight(c,plan:plan,envelope:envelope,structuralRootID:structuralRootID,original:original)
         guard final.original == original,epoch() == attemptEpoch,
               Set(try nativeCompletionLeaves(c)) == Self.nativeCompletionNames,
-              try require(c.root,"head.json",limit:8192) == bound.candidate else{throw Failure.uncertain}
-        var finalNodes=final.nodes;finalNodes["head.json"]=bound.candidate
+              try require(c.root,"head.json",limit:8192) == installed else{throw Failure.uncertain}
+        // Capture the current physical node. The candidate stays in canonical
+        // durable proofs; transition receipts retain raw live identities.
+        var finalNodes=final.nodes;finalNodes["head.json"]=installed
         let transition=NativeCompletionTransition(ObjectIdentifier(self),rootID,attemptEpoch,plan.nativeOperationID,original,finalNodes,envelope)
         nativeCompletionPending=transition;return transition
     }
@@ -1166,9 +1186,43 @@ final class DeviceLocalProvisioningIntentStore {
         }
     }
 
-    private struct Context {let root:Int32,lock:Int32,ops:Int32;let directory:ID,lockID:ID,opsID:ID}
-    init(root:URL,rootID:UUID,protectedRoots:[URL],boundary:@escaping(Boundary)throws->Void={_ in}) {
-        self.root=root;self.rootID=rootID;self.boundary=boundary
+    private final class DurableLinks { var identities: [(recorded: ID, observed: ID)] = [] }
+    private struct Context {let root:Int32,lock:Int32,ops:Int32;let directory:ID,lockID:ID,opsID:ID
+        let filesystem:DevicePersistedFilesystemContext;let links:DurableLinks;let originalBindingNode:Node?}
+    private let contextFactory:(URL,Int32)throws->DevicePersistedFilesystemContext
+    private var activeFilesystemContext:DevicePersistedFilesystemContext?
+    private func durable(_ c:Context,_ recorded:ID,_ observed:ID)->Bool {
+        guard c.filesystem.matchesDurableIdentity(recordedDevice:recorded.device,recordedInode:recorded.inode,
+            observedDevice:observed.device,observedInode:observed.inode) else{return false}
+        if let prior=c.links.identities.first(where:{$0.observed == observed}){return prior.recorded == recorded}
+        c.links.identities.append((recorded,observed));return true
+    }
+    private func durable(_ c:Context,_ recorded:ID?,_ observed:ID?)->Bool {
+        guard let recorded else{return observed == nil};guard let observed else{return false};return durable(c,recorded,observed)
+    }
+    private func durable(_ c:Context,_ recorded:Node,_ observed:Node)->Bool {
+        recorded.bytes == observed.bytes && durable(c,recorded.identity,observed.identity)
+    }
+    private func durable(_ c:Context,_ recorded:Node?,_ observed:Node?)->Bool {
+        guard let recorded else{return observed == nil};guard let observed else{return false};return durable(c,recorded,observed)
+    }
+    private func admittedEffectIdentity(_ c:Context,_ recorded:ID,_ observed:ID)->Bool {
+        recorded == observed || c.links.identities.contains(where:{$0.recorded == recorded && $0.observed == observed})
+    }
+    /// Retained canonical protocol view only; raw State/receipt/read/sync nodes stay raw.
+    private func protocolNode(_ c:Context,_ observed:Node)->Node {
+        Node(identity:c.links.identities.first(where:{$0.observed == observed.identity})?.recorded ?? observed.identity,bytes:observed.bytes)
+    }
+    private func snapshotDevices(_ recorded:[ID],_ observed:[ID])->Bool {
+        guard recorded.count == observed.count else{return false}
+        return recorded.indices.allSatisfy{i in recorded.indices.allSatisfy{j in
+            (recorded[i].device == recorded[j].device) == (observed[i].device == observed[j].device)
+        }}
+    }
+    init(root:URL,rootID:UUID,protectedRoots:[URL],
+         contextFactory:@escaping(URL,Int32)throws->DevicePersistedFilesystemContext={try .capture(currentRoot:$0,heldRoot:$1)},
+         boundary:@escaping(Boundary)throws->Void={_ in}) {
+        self.root=root;self.rootID=rootID;self.boundary=boundary;self.contextFactory=contextFactory
         // Count/kind bounds precede traversal, mapping or copied path inventory. Invalid construction
         // retains no supplied protected-path inventory and paths() rejects it before disk effects.
         let valid=root.isFileURL && protectedRoots.count <= 32 && protectedRoots.allSatisfy(\.isFileURL)
@@ -1185,7 +1239,7 @@ final class DeviceLocalProvisioningIntentStore {
             try requireNoDeliveryReservation(c)
             qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;let initialEpoch=epoch(true)
             let names=try list(c.root,limit:rootScanLimit)
-            let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage","native-join.intent","native-join.intent.stage","native-join.binding","native-join.binding.stage","native-join.candidate","native-join.candidate.stage","native-join.confirm","native-join.confirm.stage"]
+        let allowed:Set<String>=["provisioning.lock","operations","root-binding.json","root-binding.json.stage","genesis.json","genesis.json.stage","head.json","head.json.stage","delivery.intent","delivery.intent.stage","delivery.binding","delivery.binding.stage","delivery.command","delivery.command.stage","delivery.plan","delivery.plan.stage","delivery.confirm","delivery.confirm.stage","native-join.intent","native-join.intent.stage","native-join.binding","native-join.binding.stage","native-join.candidate","native-join.candidate.stage","native-join.confirm","native-join.confirm.stage"]
             guard Set(names).isSubset(of:allowed) else{throw Failure.conflict}
             let binding:Node
             if let existing=try either(c.root,"root-binding.json",limit:16384), !isLiveEmpty(existing,"root-binding.json.stage") {
@@ -1200,30 +1254,31 @@ final class DeviceLocalProvisioningIntentStore {
                 let hID=try allocate(c.root,"head.json.stage",kind:.head)
                 let b=Binding(schemaVersion:1,rootID:rootID,path:root.path,protectedPaths:protectedPaths,directory:c.directory,lock:c.lockID,operations:c.opsID,selfID:bID,genesisID:gID,initialHeadID:hID)
                 binding=Node(identity:bID,bytes:try encode(b))
-                try fill(c.root,"root-binding.json.stage",binding,kind:.binding)
+                try fill(c,c.root,"root-binding.json.stage",binding,kind:.binding)
                 let genesis=Node(identity:gID,bytes:try encode(Genesis(schemaVersion:1,binding:binding,initialHeadID:hID)))
-                try fill(c.root,"genesis.json.stage",genesis,kind:.genesis)
-                try fill(c.root,"head.json.stage",Node(identity:hID,bytes:try encode(Head(schemaVersion:1,genesisID:gID,operationID:nil,intentID:nil))),kind:.head)
+                try fill(c,c.root,"genesis.json.stage",genesis,kind:.genesis)
+                try fill(c,c.root,"head.json.stage",Node(identity:hID,bytes:try encode(Head(schemaVersion:1,genesisID:gID,operationID:nil,intentID:nil))),kind:.head)
             }
             let b=try decodeBinding(binding.bytes)
             var genesis=try requireEither(c.root,"genesis.json",limit:32768)
             if genesis.bytes.isEmpty {
-                guard genesis.identity == b.genesisID,try read(c.root,"genesis.json",limit:32768) == nil else{throw Failure.conflict}
-                genesis=Node(identity:genesis.identity,bytes:try encode(Genesis(schemaVersion:1,binding:binding,initialHeadID:b.initialHeadID)))
-                try fill(c.root,"genesis.json.stage",genesis,kind:.genesis)
+                guard durable(c,b.genesisID,genesis.identity),try read(c.root,"genesis.json",limit:32768) == nil else{throw Failure.conflict}
+                genesis=Node(identity:genesis.identity,bytes:try encode(Genesis(schemaVersion:1,binding:protocolNode(c,binding),initialHeadID:b.initialHeadID)))
+                try fill(c,c.root,"genesis.json.stage",genesis,kind:.genesis)
             }
             let g=try decodeGenesis(genesis.bytes)
-            guard genesis.identity == b.genesisID,g.binding == binding,g.initialHeadID == b.initialHeadID else{throw Failure.conflict}
+            guard durable(c,b.genesisID,genesis.identity),g.binding == protocolNode(c,binding),g.initialHeadID == b.initialHeadID,
+              snapshotDevices([b.directory,b.genesisID],[c.directory,genesis.identity]) else{throw Failure.conflict}
             try promote(c,parent:c.root,name:"root-binding.json",expected:binding,kind:.binding)
             try promote(c,parent:c.root,name:"genesis.json",expected:genesis,kind:.genesis)
             if try list(c.ops,limit:1548).isEmpty {
                 var h=try requireEither(c.root,"head.json",limit:8192)
                 if h.bytes.isEmpty {
-                    guard h.identity == b.initialHeadID,try read(c.root,"head.json",limit:8192) == nil else{throw Failure.conflict}
+                    guard durable(c,b.initialHeadID,h.identity),try read(c.root,"head.json",limit:8192) == nil else{throw Failure.conflict}
                     h=Node(identity:h.identity,bytes:try encode(Head(schemaVersion:1,genesisID:b.genesisID,operationID:nil,intentID:nil)))
-                    try fill(c.root,"head.json.stage",h,kind:.head)
+                    try fill(c,c.root,"head.json.stage",h,kind:.head)
                 }
-                guard h.identity == b.initialHeadID,try decodeHead(h.bytes) == Head(schemaVersion:1,genesisID:b.genesisID,operationID:nil,intentID:nil) else{throw Failure.conflict}
+                guard durable(c,b.initialHeadID,h.identity),snapshotDevices([b.directory,b.initialHeadID],[c.directory,h.identity]),try decodeHead(h.bytes) == Head(schemaVersion:1,genesisID:b.genesisID,operationID:nil,intentID:nil) else{throw Failure.conflict}
                 try promote(c,parent:c.root,name:"head.json",expected:h,kind:.head)
             } else { _ = try inventory(c) }
             try syncExisting(c.root,"root-binding.json",binding,kind:.binding)
@@ -1309,7 +1364,7 @@ final class DeviceLocalProvisioningIntentStore {
         guard try read(c.root,"root-binding.json.stage",limit:16384) == nil,try read(c.root,"genesis.json.stage",limit:32768) == nil else{throw Failure.conflict}
         let bNode=try require(c.root,"root-binding.json",limit:16384),gNode=try require(c.root,"genesis.json",limit:32768)
         let b=try decodeBinding(bNode.bytes);try checkBinding(c,b,node:bNode)
-        guard try decodeGenesis(gNode.bytes).binding == bNode else{throw Failure.conflict}
+        guard try decodeGenesis(gNode.bytes).binding == protocolNode(c,bNode) else{throw Failure.conflict}
         // Binding durability is repaired before any new intent effects, including fresh instances.
         try syncExisting(c.root,"root-binding.json",bNode,kind:.binding);try syncExisting(c.root,"genesis.json",gNode,kind:.genesis)
         try sync(c.lock);try sync(c.ops);try sync(c.root);try check(c);qualifiedBinding=true
@@ -1317,51 +1372,53 @@ final class DeviceLocalProvisioningIntentStore {
         let attemptNode:Node
         if let existing=try either(c.ops,attemptName,limit:32768), !isLiveEmpty(existing,attemptName+".stage") {
             let a=try decodeAttempt(existing.bytes)
-            guard a.operationID == plan.operationID,a.selfID == existing.identity,a.intentByteCount == plan.canonicalBytes.count else{throw Failure.conflict}
+            guard a.operationID == plan.operationID,durable(c,a.selfID,existing.identity),a.intentByteCount == plan.canonicalBytes.count else{throw Failure.conflict}
             attemptNode=existing
         } else {
             let head=try require(c.root,"head.json",limit:8192)
             let predecessor=try decodeHead(head.bytes)
-            guard predecessor.operationID == nil && head.identity == b.initialHeadID || predecessor.schemaVersion == 2 && predecessor.completed == true else{throw Failure.conflict}
+            guard predecessor.operationID == nil && durable(c,b.initialHeadID,head.identity) || predecessor.schemaVersion == 2 && predecessor.completed == true else{throw Failure.conflict}
             let iID=try allocate(c.ops,intentName+".stage",kind:.intent)
-            try fill(c.ops,intentName+".stage",Node(identity:iID,bytes:plan.canonicalBytes),kind:.intent)
+            try fill(c,c.ops,intentName+".stage",Node(identity:iID,bytes:plan.canonicalBytes),kind:.intent)
             let hID=try allocate(c.root,"head.json.stage",kind:.head)
             let candidate=Node(identity:hID,bytes:try encode(Head(schemaVersion:predecessor.operationID == nil ? 1:2,genesisID:b.genesisID,operationID:plan.operationID,intentID:iID,completed:predecessor.operationID == nil ? nil:false)))
-            try fill(c.root,"head.json.stage",candidate,kind:.head)
+            try fill(c,c.root,"head.json.stage",candidate,kind:.head)
             let fID=try allocate(c.ops,confirmationName+".stage",kind:.confirmation)
             let aID=try allocate(c.ops,attemptName+".stage",kind:.attempt)
-            attemptNode=Node(identity:aID,bytes:try encode(Attempt(schemaVersion:predecessor.operationID == nil ? 1:2,operationID:plan.operationID,selfID:aID,intentID:iID,confirmationID:fID,intentByteCount:plan.canonicalBytes.count,baseline:head,candidate:candidate)))
-            try fill(c.ops,attemptName+".stage",attemptNode,kind:.attempt)
+            attemptNode=Node(identity:aID,bytes:try encode(Attempt(schemaVersion:predecessor.operationID == nil ? 1:2,operationID:plan.operationID,selfID:aID,intentID:iID,confirmationID:fID,intentByteCount:plan.canonicalBytes.count,baseline:protocolNode(c,head),candidate:candidate)))
+            try fill(c,c.ops,attemptName+".stage",attemptNode,kind:.attempt)
         }
         let a=try decodeAttempt(attemptNode.bytes)
         let intent=try requireEither(c.ops,intentName,limit:ProvisioningIntentCodec.limit)
-        guard intent.identity == a.intentID,intent.bytes == plan.canonicalBytes else{throw Failure.conflict}
+        guard durable(c,a.intentID,intent.identity),intent.bytes == plan.canonicalBytes else{throw Failure.conflict}
         try promote(c,parent:c.ops,name:attemptName,expected:attemptNode,kind:.attempt)
         try promote(c,parent:c.ops,name:intentName,expected:intent,kind:.intent)
         let current=try require(c.root,"head.json",limit:8192)
-        if current == a.baseline {
-            guard try require(c.root,"head.json.stage",limit:8192) == a.candidate else{throw Failure.conflict}
-            try syncExisting(c.root,"head.json.stage",a.candidate,kind:.head)
+        if durable(c,a.baseline,current) {
+            let staged=try require(c.root,"head.json.stage",limit:8192)
+            guard durable(c,a.candidate,staged) else{throw Failure.conflict}
+            try syncExisting(c.root,"head.json.stage",staged,kind:.head)
             try boundary(.beforeReplace(.head));try check(c)
-            guard try require(c.root,"head.json",limit:8192) == a.baseline else{throw Failure.conflict}
+            guard try require(c.root,"head.json",limit:8192) == current,try require(c.root,"head.json.stage",limit:8192) == staged else{throw Failure.conflict}
             guard renameat(c.root,"head.json.stage",c.root,"head.json") == 0 else{throw failure()}
             try boundary(.afterReplace(.head))
+            guard try require(c.root,"head.json",limit:8192) == staged else{throw Failure.conflict}
         } else {
             let observed=try decodeHead(current.bytes)
-            guard current == a.candidate || observed.schemaVersion == 2 && observed.completed == true && observed.operationID == plan.operationID else{throw Failure.conflict}
+            guard durable(c,a.candidate,current) || observed.schemaVersion == 2 && observed.completed == true && observed.operationID == plan.operationID else{throw Failure.conflict}
         }
         let installed=try require(c.root,"head.json",limit:8192)
         try syncExisting(c.root,"head.json",installed,kind:.head);try sync(c.root);try boundary(.afterDirectorySync(.head))
         let confirmation:Node
-        if let existing=try either(c.ops,confirmationName,limit:65536), !(existing.bytes.isEmpty && existing.identity == a.confirmationID) {
+        if let existing=try either(c.ops,confirmationName,limit:65536), !(existing.bytes.isEmpty && durable(c,a.confirmationID,existing.identity)) {
             let f=try decodeConfirmation(existing.bytes)
-            guard f.selfID == a.confirmationID,f.selfID == existing.identity,f.attempt == attemptNode,f.head == a.candidate else{throw Failure.conflict};confirmation=existing
+            guard f.selfID == a.confirmationID,durable(c,f.selfID,existing.identity),f.attempt == protocolNode(c,attemptNode),f.head == a.candidate else{throw Failure.conflict};confirmation=existing
         } else {
             let captured=try require(c.ops,confirmationName+".stage",limit:65536)
             let id=captured.identity
-            guard id == a.confirmationID else{throw Failure.conflict}
-            confirmation=Node(identity:id,bytes:try encode(Confirmation(schemaVersion:1,selfID:id,attempt:attemptNode,head:a.candidate)))
-            try fill(c.ops,confirmationName+".stage",confirmation,kind:.confirmation)
+            guard durable(c,a.confirmationID,id) else{throw Failure.conflict}
+            confirmation=Node(identity:a.confirmationID,bytes:try encode(Confirmation(schemaVersion:1,selfID:a.confirmationID,attempt:protocolNode(c,attemptNode),head:a.candidate)))
+            try fill(c,c.ops,confirmationName+".stage",confirmation,kind:.confirmation)
         }
         try promote(c,parent:c.ops,name:confirmationName,expected:confirmation,kind:.confirmation)
         try check(c)
@@ -1379,16 +1436,20 @@ final class DeviceLocalProvisioningIntentStore {
         guard try read(c.root,"root-binding.json.stage",limit:16384) == nil,try read(c.root,"genesis.json.stage",limit:32768) == nil else{throw Failure.conflict}
         let binding=try require(c.root,"root-binding.json",limit:16384),genesis=try require(c.root,"genesis.json",limit:32768)
         let b=try decodeBinding(binding.bytes),g=try decodeGenesis(genesis.bytes);try checkBinding(c,b,node:binding)
-        guard genesis.identity == b.genesisID,g.binding == binding,g.initialHeadID == b.initialHeadID else{throw Failure.conflict}
+        guard durable(c,b.genesisID,genesis.identity),g.binding == protocolNode(c,binding),g.initialHeadID == b.initialHeadID,
+              snapshotDevices([b.directory,b.genesisID],[c.directory,genesis.identity]) else{throw Failure.conflict}
         var names=try list(c.ops,limit:1548)
         if nativeHTTPScopeActive {try nativeHTTPValidateInventory(c);let http=Set(try nativeHTTPNames(c));names.removeAll{http.contains($0)}}
         let head:Node
         if let nativePredecessor {head=nativePredecessor}else{head=try require(c.root,"head.json",limit:8192)}
         let h=try decodeHead(head.bytes)
+        func headMatches(_ recorded:Node?)->Bool {
+            nativePredecessor != nil ? recorded == head : durable(c,recorded,head)
+        }
         guard h.genesisID == b.genesisID else{throw Failure.conflict}
         var nodes=["binding":binding,"genesis":genesis,"head":head]
         if names.isEmpty {
-            guard head.identity == b.initialHeadID,h.operationID == nil,h.intentID == nil else{throw Failure.conflict}
+            guard (nativePredecessor != nil ? head.identity == b.initialHeadID : durable(c,b.initialHeadID,head.identity) && snapshotDevices([b.directory,b.initialHeadID],[c.directory,head.identity])),h.operationID == nil,h.intentID == nil else{throw Failure.conflict}
             if nativePredecessor == nil {guard try read(c.root,"head.json.stage",limit:8192) == nil else{throw Failure.conflict}}
             return State(operation:nil,intent:nil,complete:false,nodes:nodes,completed:false,terminalCount:0,intentBytes:0)
         }
@@ -1406,7 +1467,7 @@ final class DeviceLocalProvisioningIntentStore {
         for op in ids {
             let prefix=op.uuidString.lowercased(),attempt=try requireEither(c.ops,prefix+".binding.json",limit:32768),a=try decodeAttempt(attempt.bytes)
             let intent=try requireEither(c.ops,prefix+".intent.json",limit:ProvisioningIntentCodec.limit),body=try ProvisioningIntentCodec.decode(intent.bytes)
-            guard a.selfID == attempt.identity,a.operationID == op,intent.identity == a.intentID,intent.bytes.count == a.intentByteCount,body.operationID == op,body.roots.journalID == rootID else{throw Failure.conflict}
+            guard durable(c,a.selfID,attempt.identity),a.operationID == op,durable(c,a.intentID,intent.identity),intent.bytes.count == a.intentByteCount,body.operationID == op,body.roots.journalID == rootID else{throw Failure.conflict}
             guard total <= Self.retainedIntentLimit-intent.bytes.count else{throw Failure.capacity};total += intent.bytes.count
             let pending=try decodeHead(a.candidate.bytes),baseline=try decodeHead(a.baseline.bytes)
             guard pending.genesisID == b.genesisID,pending.operationID == op,pending.intentID == a.intentID,pending.completed != true else{throw Failure.conflict}
@@ -1414,11 +1475,11 @@ final class DeviceLocalProvisioningIntentStore {
                 guard a.baseline.identity == b.initialHeadID,baseline == Head(schemaVersion:1,genesisID:b.genesisID,operationID:nil,intentID:nil),pending.schemaVersion == 1 else{throw Failure.conflict}
             } else {guard baseline.schemaVersion == 2,baseline.completed == true,pending.schemaVersion == 2 else{throw Failure.conflict}}
             let proofNode=try requireEither(c.ops,prefix+".confirm.json",limit:65536)
-            guard proofNode.identity == a.confirmationID else{throw Failure.conflict}
+            guard durable(c,a.confirmationID,proofNode.identity) else{throw Failure.conflict}
             var originalComplete=false
             if !proofNode.bytes.isEmpty {
                 let proof=try decodeConfirmation(proofNode.bytes)
-                guard proof.selfID == proofNode.identity,proof.attempt == attempt,proof.head == a.candidate else{throw Failure.conflict}
+                guard proof.selfID == a.confirmationID,proof.attempt == protocolNode(c,attempt),proof.head == a.candidate else{throw Failure.conflict}
                 originalComplete=try read(c.ops,prefix+".confirm.json",limit:65536) != nil && read(c.ops,prefix+".binding.json",limit:32768) != nil && read(c.ops,prefix+".intent.json",limit:ProvisioningIntentCodec.limit) != nil
             }
             var completedHead:Node?,complete=false,localNodes=["attempt":attempt,"intent":intent,"confirmation":proofNode]
@@ -1426,18 +1487,18 @@ final class DeviceLocalProvisioningIntentStore {
             let cbNode=try either(c.ops,cbName,limit:32768),completionNode=try either(c.ops,completionName,limit:Self.completionLimit),cfNode=try either(c.ops,cfName,limit:65536)
             if let cbNode,!cbNode.bytes.isEmpty {
                 let cb=try decodeCompletionBinding(cbNode.bytes)
-                guard originalComplete,cb.selfID == cbNode.identity,cb.operationID == op,cb.baseline == a.candidate,
-                      let completionNode,completionNode.identity == cb.completionID else{throw Failure.conflict}
+                guard originalComplete,durable(c,cb.selfID,cbNode.identity),cb.operationID == op,cb.baseline == a.candidate,
+                      let completionNode,durable(c,cb.completionID,completionNode.identity) else{throw Failure.conflict}
                 let completion=try decodeCompletion(completionNode.bytes)
                 guard completion.operationID == op,completion.intentID == a.intentID,completion.structuralRootID == body.roots.structuralID,completion.envelope == body.candidate else{throw Failure.conflict}
                 let finished=try decodeHead(cb.candidate.bytes)
                 guard finished.schemaVersion == 2,finished.genesisID == b.genesisID,finished.operationID == op,finished.intentID == a.intentID,finished.completed == true,finished.completionID == cb.completionID else{throw Failure.conflict}
                 completedHead=cb.candidate;localNodes["completionBinding"]=cbNode;localNodes["completion"]=completionNode
                 if let cfNode {
-                    guard cfNode.identity == cb.confirmationID else{throw Failure.conflict};localNodes["completionConfirmation"]=cfNode
+                    guard durable(c,cb.confirmationID,cfNode.identity) else{throw Failure.conflict};localNodes["completionConfirmation"]=cfNode
                     if !cfNode.bytes.isEmpty {
                         let cf=try decodeCompletionConfirmation(cfNode.bytes)
-                        guard cf.selfID == cfNode.identity,cf.binding == cbNode,cf.head == cb.candidate else{throw Failure.conflict}
+                        guard cf.selfID == cb.confirmationID,cf.binding == protocolNode(c,cbNode),cf.head == cb.candidate else{throw Failure.conflict}
                         complete=try read(c.ops,cbName,limit:32768) != nil && read(c.ops,completionName,limit:Self.completionLimit) != nil && read(c.ops,cfName,limit:65536) != nil
                     }
                 }
@@ -1456,12 +1517,12 @@ final class DeviceLocalProvisioningIntentStore {
             if complete {terminals += 1}
             records[op]=RetainedOperation(baseline:a.baseline,pending:a.candidate,completedHead:completedHead,completed:complete)
             if op == current {
-                guard head == a.baseline || head == a.candidate || head == completedHead else{throw Failure.conflict}
+                guard headMatches(a.baseline) || headMatches(a.candidate) || headMatches(completedHead) else{throw Failure.conflict}
                 if nativePredecessor == nil,let staged=try read(c.root,"head.json.stage",limit:8192) {
-                    guard staged == a.candidate || staged == completedHead || live["head.json.stage"] == staged.identity && completionLive[op] != nil else{throw Failure.conflict}
+                    guard durable(c,a.candidate,staged) || durable(c,completedHead,staged) || live["head.json.stage"] == staged.identity && completionLive[op] != nil else{throw Failure.conflict}
                     nodes["headStage"]=staged
                 }
-                currentIntent=intent.bytes;currentComplete=originalComplete;currentCompleted=complete && head == completedHead
+                currentIntent=intent.bytes;currentComplete=originalComplete;currentCompleted=complete && headMatches(completedHead)
                 for (key,value) in localNodes {nodes[key]=value}
             }
         }
@@ -1501,7 +1562,7 @@ final class DeviceLocalProvisioningIntentStore {
         let state=try inventory(c)
         guard state.completed || state.terminalCount < Self.terminalLimit,let intent=state.nodes["intent"],let originalAttempt=state.nodes["attempt"] else{throw Failure.capacity}
         let a=try decodeAttempt(originalAttempt.bytes)
-        let completionBytes=try completionEncode(Completion(schemaVersion:2,operationID:plan.operationID,structuralRootID:body.roots.structuralID,generationID:candidate.snapshot.generationID,intentID:intent.identity,envelope:envelope))
+        let completionBytes=try completionEncode(Completion(schemaVersion:2,operationID:plan.operationID,structuralRootID:body.roots.structuralID,generationID:candidate.snapshot.generationID,intentID:protocolNode(c,intent).identity,envelope:envelope))
         // Exact preflight/latch precede epoch invalidation and all completion effects.
         if let previous=completionLive[plan.operationID] {guard previous.plan == plan.canonicalBytes,previous.envelope == envelope else{throw Failure.conflict}}
         if receipt.matches(ObjectIdentifier(self),rootID,epoch(),state.nodes) {
@@ -1519,37 +1580,41 @@ final class DeviceLocalProvisioningIntentStore {
         if let existing=try either(c.ops,bindName,limit:32768),!isLiveEmpty(existing,bindName+".stage") {bindNode=existing}
         else {
             let payloadID=try allocate(c.ops,payloadName+".stage",kind:.completion)
-            try fill(c.ops,payloadName+".stage",Node(identity:payloadID,bytes:completionBytes),kind:.completion)
+            try fill(c,c.ops,payloadName+".stage",Node(identity:payloadID,bytes:completionBytes),kind:.completion)
             let headID=try allocate(c.root,"head.json.stage",kind:.completionHead)
             let b=try decodeBinding(binding.bytes)
-            let head=Node(identity:headID,bytes:try encode(Head(schemaVersion:2,genesisID:b.genesisID,operationID:plan.operationID,intentID:intent.identity,completed:true,completionID:payloadID)))
-            try fill(c.root,"head.json.stage",head,kind:.completionHead)
+            let head=Node(identity:headID,bytes:try encode(Head(schemaVersion:2,genesisID:b.genesisID,operationID:plan.operationID,intentID:protocolNode(c,intent).identity,completed:true,completionID:payloadID)))
+            try fill(c,c.root,"head.json.stage",head,kind:.completionHead)
             let confirmID=try allocate(c.ops,confirmName+".stage",kind:.completionConfirmation),bindID=try allocate(c.ops,bindName+".stage",kind:.completionBinding)
             bindNode=Node(identity:bindID,bytes:try encode(CompletionBinding(schemaVersion:2,operationID:plan.operationID,selfID:bindID,completionID:payloadID,confirmationID:confirmID,baseline:a.candidate,candidate:head)))
-            try fill(c.ops,bindName+".stage",bindNode,kind:.completionBinding)
+            try fill(c,c.ops,bindName+".stage",bindNode,kind:.completionBinding)
         }
         let cb=try decodeCompletionBinding(bindNode.bytes),payload=try requireEither(c.ops,payloadName,limit:Self.completionLimit)
-        guard cb.selfID == bindNode.identity,cb.operationID == plan.operationID,cb.baseline == a.candidate,payload.identity == cb.completionID,payload.bytes == completionBytes else{throw Failure.conflict}
+        guard durable(c,cb.selfID,bindNode.identity),cb.operationID == plan.operationID,cb.baseline == a.candidate,durable(c,cb.completionID,payload.identity),payload.bytes == completionBytes else{throw Failure.conflict}
         try promote(c,parent:c.ops,name:bindName,expected:bindNode,kind:.completionBinding)
         try promote(c,parent:c.ops,name:payloadName,expected:payload,kind:.completion)
         let head=try require(c.root,"head.json",limit:8192)
-        if head == cb.baseline {
-            guard try require(c.root,"head.json.stage",limit:8192) == cb.candidate else{throw Failure.conflict}
-            try syncExisting(c.root,"head.json.stage",cb.candidate,kind:.completionHead);try boundary(.beforeReplace(.completionHead));try check(c)
-            guard try require(c.root,"head.json",limit:8192) == cb.baseline else{throw Failure.conflict}
+        if durable(c,cb.baseline,head) {
+            let staged=try require(c.root,"head.json.stage",limit:8192)
+            guard durable(c,cb.candidate,staged) else{throw Failure.conflict}
+            try syncExisting(c.root,"head.json.stage",staged,kind:.completionHead);try boundary(.beforeReplace(.completionHead));try check(c)
+            guard try require(c.root,"head.json",limit:8192) == head,try require(c.root,"head.json.stage",limit:8192) == staged else{throw Failure.conflict}
             guard renameat(c.root,"head.json.stage",c.root,"head.json") == 0 else{throw failure()};try boundary(.afterReplace(.completionHead))
-        } else {guard head == cb.candidate else{throw Failure.conflict}}
-        try syncExisting(c.root,"head.json",cb.candidate,kind:.completionHead);try sync(c.root);try boundary(.afterDirectorySync(.completionHead))
+            guard try require(c.root,"head.json",limit:8192) == staged else{throw Failure.conflict}
+        } else {guard durable(c,cb.candidate,head) else{throw Failure.conflict}}
+        let installed=try require(c.root,"head.json",limit:8192)
+        guard durable(c,cb.candidate,installed) else{throw Failure.conflict}
+        try syncExisting(c.root,"head.json",installed,kind:.completionHead);try sync(c.root);try boundary(.afterDirectorySync(.completionHead))
         let proof:Node
         if let existing=try either(c.ops,confirmName,limit:65536),!existing.bytes.isEmpty {proof=existing}
         else {
             let staged=try require(c.ops,confirmName+".stage",limit:65536)
-            guard staged.identity == cb.confirmationID else{throw Failure.conflict}
-            proof=Node(identity:staged.identity,bytes:try encode(CompletionConfirmation(schemaVersion:2,selfID:staged.identity,binding:bindNode,head:cb.candidate)))
-            try fill(c.ops,confirmName+".stage",proof,kind:.completionConfirmation)
+            guard durable(c,cb.confirmationID,staged.identity) else{throw Failure.conflict}
+            proof=Node(identity:staged.identity,bytes:try encode(CompletionConfirmation(schemaVersion:2,selfID:cb.confirmationID,binding:protocolNode(c,bindNode),head:cb.candidate)))
+            try fill(c,c.ops,confirmName+".stage",proof,kind:.completionConfirmation)
         }
         let confirmation=try decodeCompletionConfirmation(proof.bytes)
-        guard confirmation.selfID == cb.confirmationID,confirmation.binding == bindNode,confirmation.head == cb.candidate else{throw Failure.conflict}
+        guard confirmation.selfID == cb.confirmationID,confirmation.binding == protocolNode(c,bindNode),confirmation.head == cb.candidate else{throw Failure.conflict}
         try promote(c,parent:c.ops,name:confirmName,expected:proof,kind:.completionConfirmation)
         try sync(c.lock);try sync(c.ops);try sync(c.root);try check(c)
         let final=try inventory(c)
@@ -1746,6 +1811,10 @@ final class DeviceLocalProvisioningIntentStore {
     private func diskContext<T>(create:Bool,releasePermit:DeviceLocalResourcePermit?=nil,_ body:(Context)throws->T)throws->T {
         try paths()
         let r=try directory(root.path);defer{close(r)}
+        let filesystem:DevicePersistedFilesystemContext
+        do{filesystem=try contextFactory(root,r)}catch{throw Failure.unsafeRoot}
+        let previousFilesystemContext=activeFilesystemContext;activeFilesystemContext=filesystem
+        defer{activeFilesystemContext=previousFilesystemContext}
         let rID=try identity(r,directory:true)
         var lock=openat(r,"provisioning.lock",O_RDWR|O_NOFOLLOW|O_NONBLOCK)
         defer{if lock >= 0{close(lock)}}
@@ -1766,7 +1835,7 @@ final class DeviceLocalProvisioningIntentStore {
             guard ops >= 0 else{throw failure()};live["operations"]=try identity(ops,directory:true)
         }
         guard ops >= 0 else{throw failure()}
-        let c=Context(root:r,lock:lock,ops:ops,directory:rID,lockID:lID,opsID:try identity(ops,directory:true))
+        let c=Context(root:r,lock:lock,ops:ops,directory:rID,lockID:lID,opsID:try identity(ops,directory:true),filesystem:filesystem,links:DurableLinks(),originalBindingNode:try read(r,"root-binding.json",limit:16384))
         if try read(r,"root-binding.json",limit:16384) == nil && read(r,"root-binding.json.stage",limit:16384) == nil {
             guard create,live["provisioning.lock"] == lID,live["operations"] == c.opsID else{throw Failure.conflict}
         }
@@ -1780,27 +1849,47 @@ final class DeviceLocalProvisioningIntentStore {
         for p in protectedPaths {guard !overlap(root.path,p) else{throw Failure.unsafeRoot};let fd=try directory(p,allowMissing:true);if fd >= 0{close(fd)}}
     }
     private func overlap(_ a:String,_ b:String)->Bool {let x=Data(a.utf8),y=Data(b.utf8);return x == y || x.starts(with:Data((b+"/").utf8)) || y.starts(with:Data((a+"/").utf8))}
-    private func directory(_ path:String,allowMissing:Bool=false)throws->Int32 {
+    private func directory(_ path:String,allowMissing:Bool=false,filesystem:DevicePersistedFilesystemContext?=nil)throws->Int32 {
         let traversal: DeviceFilesystemTraversal
-        do { traversal = try .plan(for: path) } catch { throw Failure.unsafeRoot }
+        do {
+            if let filesystem { traversal = try filesystem.planCurrentPath(path) }
+            else { traversal = try .plan(for: path) }
+        } catch { throw Failure.unsafeRoot }
         var fd=open(traversal.rootPath,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK);guard fd >= 0 else{throw failure()}
         do {
             for component in traversal.components {
+                var named=stat()
+                if fstatat(fd,String(component),&named,AT_SYMLINK_NOFOLLOW) != 0 {
+                    if errno == ENOENT && allowMissing {close(fd);return -1}
+                    throw failure()
+                }
+                guard named.st_mode & S_IFMT == S_IFDIR else{throw Failure.conflict}
                 let next=openat(fd,String(component),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK)
-                if next < 0 && errno == ENOENT && allowMissing {close(fd);return -1}
-                guard next >= 0 else{throw failure()};close(fd);fd=next
-                _ = try identity(fd,directory:true)
+                guard next >= 0 else{throw failure()}
+                do {
+                    // Generic traversal may begin above the app home (on another
+                    // device). These ancestors are not admitted store nodes.
+                    let opened=try rawIdentity(next,directory:true)
+                    guard opened == ID(device:UInt64(truncatingIfNeeded:named.st_dev),inode:UInt64(named.st_ino)) else{throw Failure.conflict}
+                } catch {close(next);throw error}
+                close(fd);fd=next
             }
             return fd
         } catch {close(fd);throw error}
     }
-    private func identity(_ fd:Int32,directory:Bool)throws->ID {
+    private func rawIdentity(_ fd:Int32,directory:Bool)throws->ID {
         var s=stat();guard fstat(fd,&s) == 0 else{throw failure()}
         guard (s.st_mode & S_IFMT) == (directory ? S_IFDIR:S_IFREG),directory || s.st_nlink == 1 else{throw Failure.conflict}
-        return ID(device:UInt64(s.st_dev),inode:UInt64(s.st_ino))
+        return ID(device:UInt64(truncatingIfNeeded:s.st_dev),inode:UInt64(s.st_ino))
+    }
+    private func identity(_ fd:Int32,directory:Bool)throws->ID {
+        let result=try rawIdentity(fd,directory:directory)
+        guard activeFilesystemContext?.acceptsCurrentDevice(result.device) != false else{throw Failure.conflict}
+        return result
     }
     private func check(_ c:Context)throws {
-        let fd=try directory(root.path);defer{close(fd)}
+        if let original=c.originalBindingNode {guard try read(c.root,"root-binding.json",limit:16384) == original else{throw Failure.conflict}}
+        let fd=try directory(root.path,filesystem:c.filesystem);defer{close(fd)}
         guard try identity(fd,directory:true) == c.directory,try identity(c.root,directory:true) == c.directory else{throw Failure.conflict}
         let l=openat(c.root,"provisioning.lock",O_RDONLY|O_NOFOLLOW|O_NONBLOCK);guard l >= 0 else{throw failure()};defer{close(l)}
         let o=openat(c.root,"operations",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK);guard o >= 0 else{throw failure()};defer{close(o)}
@@ -1810,8 +1899,9 @@ final class DeviceLocalProvisioningIntentStore {
         guard Set(try list(c.root,limit:rootScanLimit)).isSubset(of:allowed.union(completionAllowed)) else{throw Failure.conflict}
     }
     private func checkBinding(_ c:Context,_ b:Binding,node:Node)throws {
-        guard b.schemaVersion == 1,b.rootID == rootID,b.path.utf8.elementsEqual(root.path.utf8),b.protectedPaths.count == protectedPaths.count,
-              zip(b.protectedPaths,protectedPaths).allSatisfy({$0.utf8.elementsEqual($1.utf8)}),b.directory == c.directory,b.lock == c.lockID,b.operations == c.opsID,b.selfID == node.identity else{throw Failure.conflict}
+        guard b.schemaVersion == 1,b.rootID == rootID,c.filesystem.matchesRecordedRootPath(b.path),b.protectedPaths.count == protectedPaths.count,
+              c.filesystem.recordedPaths(b.protectedPaths, matchCurrentPaths: protectedPaths),durable(c,b.directory,c.directory),durable(c,b.lock,c.lockID),durable(c,b.operations,c.opsID),durable(c,b.selfID,node.identity),
+              snapshotDevices([b.directory,b.lock,b.operations,b.selfID],[c.directory,c.lockID,c.opsID,node.identity]) else{throw Failure.conflict}
     }
     private func list(_ fd:Int32,limit:Int)throws->[String] {
         let copy=openat(fd,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK);guard copy >= 0 else{throw failure()}
@@ -1848,13 +1938,15 @@ final class DeviceLocalProvisioningIntentStore {
         let fd=openat(parent,name,O_CREAT|O_EXCL|O_RDWR|O_NOFOLLOW|O_NONBLOCK,0o600);guard fd >= 0 else{throw failure()};defer{close(fd)}
         let id=try identity(fd,directory:false);live[key]=id;try boundary(.afterCreate(kind));return id
     }
-    private func fill(_ parent:Int32,_ name:String,_ node:Node,kind:Kind)throws {
+    private func fill(_ c:Context,_ parent:Int32,_ name:String,_ node:Node,kind:Kind)throws {
+        let observed=try require(parent,name,limit:ProvisioningIntentCodec.limit)
+        guard admittedEffectIdentity(c,node.identity,observed.identity) else{throw Failure.conflict}
         let fd=openat(parent,name,O_RDWR|O_NOFOLLOW|O_NONBLOCK);guard fd >= 0 else{throw failure()};defer{close(fd)}
-        guard try identity(fd,directory:false) == node.identity else{throw Failure.conflict}
+        guard try identity(fd,directory:false) == observed.identity else{throw Failure.conflict}
         guard ftruncate(fd,0) == 0 else{throw failure()}
         try node.bytes.withUnsafeBytes{buf in var offset=0;while offset < buf.count {let n=write(fd,buf.baseAddress!.advanced(by:offset),buf.count-offset);if n < 0 && errno == EINTR{continue};guard n > 0 else{throw failure()};offset += n}}
         try boundary(.afterWrite(kind));try sync(fd);try boundary(.afterFileSync(kind))
-        guard try read(parent,name,limit:ProvisioningIntentCodec.limit) == node else{throw Failure.conflict}
+        guard try read(parent,name,limit:ProvisioningIntentCodec.limit) == Node(identity:observed.identity,bytes:node.bytes) else{throw Failure.conflict}
     }
     private func syncExisting(_ parent:Int32,_ name:String,_ node:Node,kind:Kind)throws {
         guard try require(parent,name,limit:ProvisioningIntentCodec.limit) == node else{throw Failure.conflict}
@@ -1863,12 +1955,17 @@ final class DeviceLocalProvisioningIntentStore {
         guard try require(parent,name,limit:ProvisioningIntentCodec.limit) == node else{throw Failure.conflict}
     }
     private func promote(_ c:Context,parent:Int32,name:String,expected:Node,kind:Kind)throws {
-        if let final=try read(parent,name,limit:ProvisioningIntentCodec.limit) {guard final == expected,try read(parent,name+".stage",limit:ProvisioningIntentCodec.limit) == nil else{throw Failure.conflict};try syncExisting(parent,name,expected,kind:kind)}
-        else {
-            guard try require(parent,name+".stage",limit:ProvisioningIntentCodec.limit) == expected else{throw Failure.conflict}
-            try syncExisting(parent,name+".stage",expected,kind:kind);try boundary(.beforeReplace(kind));try check(c)
-            guard try read(parent,name,limit:ProvisioningIntentCodec.limit) == nil,try require(parent,name+".stage",limit:ProvisioningIntentCodec.limit) == expected else{throw Failure.conflict}
+        let final=try read(parent,name,limit:ProvisioningIntentCodec.limit)
+        let observed=try final ?? require(parent,name+".stage",limit:ProvisioningIntentCodec.limit)
+        guard observed.bytes == expected.bytes,admittedEffectIdentity(c,expected.identity,observed.identity) else{throw Failure.conflict}
+        if final != nil {
+            guard try read(parent,name+".stage",limit:ProvisioningIntentCodec.limit) == nil else{throw Failure.conflict}
+            try syncExisting(parent,name,observed,kind:kind)
+        } else {
+            try syncExisting(parent,name+".stage",observed,kind:kind);try boundary(.beforeReplace(kind));try check(c)
+            guard try read(parent,name,limit:ProvisioningIntentCodec.limit) == nil,try require(parent,name+".stage",limit:ProvisioningIntentCodec.limit) == observed else{throw Failure.conflict}
             guard renameat(parent,name+".stage",parent,name) == 0 else{throw failure()};try boundary(.afterReplace(kind))
+            guard try require(parent,name,limit:ProvisioningIntentCodec.limit) == observed else{throw Failure.conflict}
         }
         try sync(parent);try boundary(.afterDirectorySync(kind));try check(c)
     }
@@ -1947,7 +2044,7 @@ final class DeviceLocalProvisioningIntentStore {
             } else {guard let q=qualifiedCompletion,q.epoch == epoch(),q.nodes == state.nodes else{throw Failure.uncertain}}
             // Reserve against full original journal state before attachment creation.
             if let old=attachmentInput {guard old == exact else{throw Failure.conflict}}
-            let intent=try makeDeliveryIntent(input,state)
+            let intent=try makeDeliveryIntent(c,input,state)
             try deliveryRepresentationPreflight(intent)
             attachmentInput=exact
             return try finishDelivery(c,input,intent)
@@ -1964,9 +2061,9 @@ final class DeviceLocalProvisioningIntentStore {
             let intent:Node
             if let node=try either(c.root,"delivery.intent",limit:32768),!node.bytes.isEmpty {
                 let recorded=try decodeDeliveryIntent(node.bytes)
-                try matchDelivery(recorded,input,state)
+                try matchDelivery(c,recorded,input,state)
                 if let binding=try either(c.root,"delivery.binding",limit:32768),!binding.bytes.isEmpty {
-                    guard try decodeDeliveryBinding(binding.bytes).intent == node else{throw Failure.conflict}
+                    guard try durable(c,decodeDeliveryBinding(binding.bytes).intent,node) else{throw Failure.conflict}
                 } else {
                     // Before reciprocal binding exists, only the original live inode/input can repair.
                     guard attachmentInput == exact,live["delivery.intent.stage"] == node.identity else{throw Failure.conflict}
@@ -1974,7 +2071,7 @@ final class DeviceLocalProvisioningIntentStore {
                 intent=node
             } else {
                 guard attachmentInput == exact,let node=try read(c.root,"delivery.intent.stage",limit:32768),live["delivery.intent.stage"] == node.identity else{throw Failure.conflict}
-                intent=Node(identity:node.identity,bytes:try makeDeliveryIntent(input,state))
+                intent=Node(identity:node.identity,bytes:try makeDeliveryIntent(c,input,state))
             }
             try deliveryRepresentationPreflight(intent.bytes)
             try preflightDeliveryRetry(c,input,intent)
@@ -2044,25 +2141,25 @@ final class DeviceLocalProvisioningIntentStore {
             return
         }
         let d=try decodeDeliveryBinding(binding.bytes)
-        guard d.selfID == binding.identity,d.intent == intent else{throw Failure.conflict}
+        guard durable(c,d.selfID,binding.identity),d.intent == protocolNode(c,intent) else{throw Failure.conflict}
         for (name,id,bytes) in [("delivery.command",d.commandID,input.commandBytes),("delivery.plan",d.planID,input.planBytes)] {
-            guard let node=nodes[name],node.identity == id else{throw Failure.conflict}
+            guard let node=nodes[name],durable(c,id,node.identity) else{throw Failure.conflict}
             if try read(c.root,name,limit:65536) != nil {guard node.bytes == bytes else{throw Failure.conflict}}
             else {guard node.bytes == bytes || node.bytes.isEmpty || live[name+".stage"] == id && bytes.starts(with:node.bytes) else{throw Failure.conflict}}
         }
-        guard let confirmation=nodes["delivery.confirm"],confirmation.identity == d.confirmationID else{throw Failure.conflict}
-        let proof=try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryConfirmation(schemaVersion:1,selfID:d.confirmationID,binding:binding,command:Node(identity:d.commandID,bytes:Data()),plan:Node(identity:d.planID,bytes:Data())))
+        guard let confirmation=nodes["delivery.confirm"],durable(c,d.confirmationID,confirmation.identity) else{throw Failure.conflict}
+        let proof=try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryConfirmation(schemaVersion:1,selfID:d.confirmationID,binding:protocolNode(c,binding),command:Node(identity:d.commandID,bytes:Data()),plan:Node(identity:d.planID,bytes:Data())))
         if try read(c.root,"delivery.confirm",limit:32768) != nil {guard confirmation.bytes == proof else{throw Failure.conflict}}
         else {guard confirmation.bytes == proof || confirmation.bytes.isEmpty || live["delivery.confirm.stage"] == d.confirmationID && proof.starts(with:confirmation.bytes) else{throw Failure.conflict}}
     }
-    private func makeDeliveryIntent(_ input:DeviceNativeDeliveryCommandBinding,_ s:State)throws->Data {
+    private func makeDeliveryIntent(_ c:Context,_ input:DeviceNativeDeliveryCommandBinding,_ s:State)throws->Data {
         guard let b=s.nodes["binding"],let g=s.nodes["genesis"],let h=s.nodes["head"] else{throw Failure.conflict}
-        return try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryIntent(schemaVersion:1,rootID:rootID,nativeOperationID:input.nativeOperationID,association:input.association,commandBytes:input.commandBytes.count,commandHash:DeviceNativeDeliveryAttachmentCodec.hash(input.commandBytes),bindingID:b.identity,genesisID:g.identity,head:h,bindingHash:DeviceNativeDeliveryAttachmentCodec.hash(b.bytes),genesisHash:DeviceNativeDeliveryAttachmentCodec.hash(g.bytes)))
+        return try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryIntent(schemaVersion:1,rootID:rootID,nativeOperationID:input.nativeOperationID,association:input.association,commandBytes:input.commandBytes.count,commandHash:DeviceNativeDeliveryAttachmentCodec.hash(input.commandBytes),bindingID:protocolNode(c,b).identity,genesisID:protocolNode(c,g).identity,head:protocolNode(c,h),bindingHash:DeviceNativeDeliveryAttachmentCodec.hash(b.bytes),genesisHash:DeviceNativeDeliveryAttachmentCodec.hash(g.bytes)))
     }
-    private func matchDelivery(_ d:DeliveryIntent,_ input:DeviceNativeDeliveryCommandBinding,_ s:State)throws {
+    private func matchDelivery(_ c:Context,_ d:DeliveryIntent,_ input:DeviceNativeDeliveryCommandBinding,_ s:State)throws {
         guard d.rootID == rootID,d.nativeOperationID == input.nativeOperationID,d.association == input.association,
               d.commandBytes == input.commandBytes.count,try DeviceNativeDeliveryAttachmentCodec.hash(input.commandBytes).utf8.elementsEqual(d.commandHash.utf8),
-              let b=s.nodes["binding"],let g=s.nodes["genesis"],s.nodes["head"] == d.head,b.identity == d.bindingID,g.identity == d.genesisID,
+              let b=s.nodes["binding"],let g=s.nodes["genesis"],durable(c,d.head,s.nodes["head"]),durable(c,d.bindingID,b.identity),durable(c,d.genesisID,g.identity),
               try DeviceNativeDeliveryAttachmentCodec.hash(b.bytes).utf8.elementsEqual(d.bindingHash.utf8),
               try DeviceNativeDeliveryAttachmentCodec.hash(g.bytes).utf8.elementsEqual(d.genesisHash.utf8) else{throw Failure.conflict}
     }
@@ -2074,7 +2171,7 @@ final class DeviceLocalProvisioningIntentStore {
     }
     private func finishDelivery(_ c:Context,_ input:DeviceNativeDeliveryCommandBinding,_ intentBytes:Data,expectedIntent:ID?=nil)throws->DeliveryAttachmentReceipt {
         let state=try inventory(c,allowDeliveryAttachment:true),decoded=try decodeDeliveryIntent(intentBytes)
-        try matchDelivery(decoded,input,state)
+        try matchDelivery(c,decoded,input,state)
         attachmentQualified=nil;pendingAttachment=nil;qualifiedBinding=false;bindingEpoch=nil;bindingEvidence=nil;qualifiedCompletion=nil;pendingCompletion=nil
         let originalEpoch=epoch(true)
         let intent:Node
@@ -2083,7 +2180,7 @@ final class DeviceLocalProvisioningIntentStore {
         } else {
             let id=try allocate(c.root,"delivery.intent.stage",kind:.deliveryIntent)
             guard expectedIntent == nil || id == expectedIntent else{throw Failure.conflict}
-            intent=Node(identity:id,bytes:intentBytes);try fill(c.root,"delivery.intent.stage",intent,kind:.deliveryIntent)
+            intent=Node(identity:id,bytes:intentBytes);try fill(c,c.root,"delivery.intent.stage",intent,kind:.deliveryIntent)
         }
         try promote(c,parent:c.root,name:"delivery.intent",expected:intent,kind:.deliveryIntent)
         let binding:Node
@@ -2093,42 +2190,42 @@ final class DeviceLocalProvisioningIntentStore {
             let plan=try allocate(c.root,"delivery.plan.stage",kind:.deliveryPlan)
             let confirmation=try allocate(c.root,"delivery.confirm.stage",kind:.deliveryConfirmation)
             let id=try allocate(c.root,"delivery.binding.stage",kind:.deliveryBinding)
-            binding=Node(identity:id,bytes:try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryBinding(schemaVersion:1,selfID:id,intent:intent,commandID:command,planID:plan,confirmationID:confirmation)))
-            try fill(c.root,"delivery.binding.stage",binding,kind:.deliveryBinding)
+            binding=Node(identity:id,bytes:try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryBinding(schemaVersion:1,selfID:id,intent:protocolNode(c,intent),commandID:command,planID:plan,confirmationID:confirmation)))
+            try fill(c,c.root,"delivery.binding.stage",binding,kind:.deliveryBinding)
         }
         let d=try decodeDeliveryBinding(binding.bytes)
-        guard d.selfID == binding.identity,d.intent == intent else{throw Failure.conflict}
+        guard durable(c,d.selfID,binding.identity),d.intent == protocolNode(c,intent) else{throw Failure.conflict}
         // Recorded raw inode bindings are durable BEFORE writes/promotions of raw content.
         try promote(c,parent:c.root,name:"delivery.binding",expected:binding,kind:.deliveryBinding)
         for (name,id,bytes,kind) in [("delivery.command",d.commandID,input.commandBytes,Kind.deliveryCommand),("delivery.plan",d.planID,input.planBytes,Kind.deliveryPlan)] {
             let expected=Node(identity:id,bytes:bytes)
-            if let final=try read(c.root,name,limit:65536) {guard final == expected else{throw Failure.conflict}}
+            if let final=try read(c.root,name,limit:65536) {guard durable(c,expected,final) else{throw Failure.conflict}}
             else {
                 let staged=try require(c.root,name+".stage",limit:65536)
-                guard staged.identity == id else{throw Failure.conflict}
+                guard durable(c,id,staged.identity) else{throw Failure.conflict}
                 if staged.bytes != bytes {
                     guard staged.bytes.isEmpty || live[name+".stage"] == id else{throw Failure.conflict}
-                    try fill(c.root,name+".stage",expected,kind:kind)
+                    try fill(c,c.root,name+".stage",expected,kind:kind)
                 }
             }
             try promote(c,parent:c.root,name:name,expected:expected,kind:kind)
         }
-        let proof=Node(identity:d.confirmationID,bytes:try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryConfirmation(schemaVersion:1,selfID:d.confirmationID,binding:binding,command:Node(identity:d.commandID,bytes:Data()),plan:Node(identity:d.planID,bytes:Data()))))
-        if let final=try read(c.root,"delivery.confirm",limit:32768) {guard final == proof else{throw Failure.conflict}}
+        let proof=Node(identity:d.confirmationID,bytes:try DeviceNativeDeliveryAttachmentCodec.encode(DeliveryConfirmation(schemaVersion:1,selfID:d.confirmationID,binding:protocolNode(c,binding),command:Node(identity:d.commandID,bytes:Data()),plan:Node(identity:d.planID,bytes:Data()))))
+        if let final=try read(c.root,"delivery.confirm",limit:32768) {guard durable(c,proof,final) else{throw Failure.conflict}}
         else {
             let staged=try require(c.root,"delivery.confirm.stage",limit:32768)
-            guard staged.identity == d.confirmationID,staged.bytes.isEmpty || staged == proof || live["delivery.confirm.stage"] == d.confirmationID else{throw Failure.conflict}
-            try fill(c.root,"delivery.confirm.stage",proof,kind:.deliveryConfirmation)
+            guard durable(c,d.confirmationID,staged.identity),staged.bytes.isEmpty || staged.bytes == proof.bytes || live["delivery.confirm.stage"] == staged.identity else{throw Failure.conflict}
+            try fill(c,c.root,"delivery.confirm.stage",proof,kind:.deliveryConfirmation)
         }
         try promote(c,parent:c.root,name:"delivery.confirm",expected:proof,kind:.deliveryConfirmation)
         let b=try require(c.root,"root-binding.json",limit:16384),g=try require(c.root,"genesis.json",limit:32768)
-        guard b.identity == decoded.bindingID,g.identity == decoded.genesisID,
+        guard durable(c,decoded.bindingID,b.identity),durable(c,decoded.genesisID,g.identity),
               try DeviceNativeDeliveryAttachmentCodec.hash(b.bytes).utf8.elementsEqual(decoded.bindingHash.utf8),
               try DeviceNativeDeliveryAttachmentCodec.hash(g.bytes).utf8.elementsEqual(decoded.genesisHash.utf8),
-              try require(c.root,"head.json",limit:8192) == decoded.head else{throw Failure.conflict}
+              durable(c,decoded.head,try require(c.root,"head.json",limit:8192)) else{throw Failure.conflict}
         try syncExisting(c.root,"root-binding.json",b,kind:.binding);try syncExisting(c.root,"genesis.json",g,kind:.genesis)
         try sync(c.lock);try sync(c.ops);try sync(c.root);try check(c)
-        let finalState=try inventory(c,allowDeliveryAttachment:true);try matchDelivery(decoded,input,finalState)
+        let finalState=try inventory(c,allowDeliveryAttachment:true);try matchDelivery(c,decoded,input,finalState)
         let nodes=try checkedDeliveryNodes(c,decoded)
         guard epoch() == originalEpoch else{throw Failure.uncertain}
         let receipt=DeliveryAttachmentReceipt(ObjectIdentifier(self),rootID,originalEpoch,input.nativeOperationID,input.association.operationID,nodes)
@@ -2146,7 +2243,7 @@ final class DeviceLocalProvisioningIntentStore {
             let completionNode = try require(context.root, "native-completion.binding", limit: 65536)
             let completion = try nativeCompletionBinding(completionNode.bytes)
             guard nativeCompletionScopeActive, completion.rootID == rootID,
-                  completion.operationID == nativeOperationID, completion.selfID == completionNode.identity else { throw Failure.conflict }
+                  completion.operationID == nativeOperationID, durable(context,completion.selfID,completionNode.identity) else { throw Failure.conflict }
             let nodes = try checkedDeliveryNodes(context, intent, nativePredecessor: completion.baseline)
             let a = intent.association
             let association: [String: Any] = ["schemaVersion": 1, "operationId": a.operationID.uuidString.lowercased(),
@@ -2166,17 +2263,17 @@ final class DeviceLocalProvisioningIntentStore {
         var result:[String:Node]=[:]
         for name in Self.deliveryNames {result[name]=try require(c.root,name,limit:name == "delivery.plan" ? 65536:32768)}
         let binding=try decodeDeliveryBinding(result["delivery.binding"]!.bytes),proof=try decodeDeliveryConfirmation(result["delivery.confirm"]!.bytes)
-        guard binding.selfID == result["delivery.binding"]!.identity,binding.intent == result["delivery.intent"],
-              binding.commandID == result["delivery.command"]!.identity,binding.planID == result["delivery.plan"]!.identity,
-              proof.selfID == result["delivery.confirm"]!.identity,binding.confirmationID == proof.selfID,proof.binding == result["delivery.binding"],
+        guard durable(c,binding.selfID,result["delivery.binding"]!.identity),durable(c,binding.intent,result["delivery.intent"]),
+              durable(c,binding.commandID,result["delivery.command"]!.identity),durable(c,binding.planID,result["delivery.plan"]!.identity),
+              proof.selfID == binding.confirmationID,durable(c,proof.selfID,result["delivery.confirm"]!.identity),proof.binding == protocolNode(c,result["delivery.binding"]!),
               proof.command == Node(identity:binding.commandID,bytes:Data()),proof.plan == Node(identity:binding.planID,bytes:Data()),
               result["delivery.command"]!.bytes.count == intent.commandBytes,result["delivery.plan"]!.bytes.count == intent.association.planByteLength,
               try DeviceNativeDeliveryAttachmentCodec.hash(result["delivery.command"]!.bytes).utf8.elementsEqual(intent.commandHash.utf8),
               try DeviceNativeDeliveryAttachmentCodec.hash(result["delivery.plan"]!.bytes).utf8.elementsEqual(intent.association.planDigest.utf8) else{throw Failure.conflict}
         let state=try inventory(c,allowDeliveryAttachment:true,nativePredecessor:nativePredecessor)
-        guard state.nodes["head"] == intent.head,let b=state.nodes["binding"],let g=state.nodes["genesis"],b.identity == intent.bindingID,g.identity == intent.genesisID,
+        guard (nativePredecessor != nil ? intent.head == state.nodes["head"] : durable(c,intent.head,state.nodes["head"])),let b=state.nodes["binding"],let g=state.nodes["genesis"],durable(c,intent.bindingID,b.identity),durable(c,intent.genesisID,g.identity),
               try DeviceNativeDeliveryAttachmentCodec.hash(b.bytes).utf8.elementsEqual(intent.bindingHash.utf8),try DeviceNativeDeliveryAttachmentCodec.hash(g.bytes).utf8.elementsEqual(intent.genesisHash.utf8) else{throw Failure.conflict}
-        result["rootBinding"]=b;result["genesis"]=g;result["head"]=intent.head;return result
+        result["rootBinding"]=b;result["genesis"]=g;result["head"]=nativePredecessor == nil ? state.nodes["head"] : intent.head;return result
     }
     private func decodeDeliveryIntent(_ bytes:Data)throws->DeliveryIntent {
         let o=try DeviceNativeDeliveryAttachmentCodec.object(bytes,limit:32768,keys:["schemaVersion","rootID","nativeOperationID","association","commandBytes","commandHash","bindingID","genesisID","head","bindingHash","genesisHash"])

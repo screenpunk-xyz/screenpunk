@@ -18,9 +18,41 @@ struct DevicePackageExpectation: Equatable, Sendable {
     /// Explicit caller-supplied native profile identity, never inferred from an owner or device UUID.
     let profileID: String
 }
-enum DevicePackageQualificationError: Error, Equatable {
+public enum DevicePackageQualificationError: Error, Equatable, Sendable {
     case sizeLimit, invalidManifest, invalidExpectation, invalidPath, duplicatePath
     case assetMismatch, hashMismatch, digestMismatch, identityMismatch, targetMismatch, digestUnavailable
+}
+
+/// Native Local authoring's existing bounded identifier grammar. This validates metadata,
+/// never a filesystem component or Cloud identity; Cloud descriptors remain typed UUIDs.
+enum DeviceDashboardIdentifier {
+    static func isValid(_ value: String) -> Bool {
+        guard (1...100).contains(value.utf8.count) else { return false }
+        return value.utf8.enumerated().allSatisfy { offset, byte in
+            (48...57).contains(byte) || (65...90).contains(byte) || (97...122).contains(byte) ||
+                (offset > 0 && [46, 95, 45].contains(byte))
+        }
+    }
+}
+
+/// Pure package-byte compatibility only. Success grants no ownership, approval,
+/// filesystem durability, installation or runtime authority.
+public enum DevicePackageCompatibilityPreflight {
+    public static func validate(revision: StoredRevision, manifest: Data, files: [String: Data],
+        profile: DeviceProfile, profileID: String) throws {
+        // Check caller-owned bounds before allocating the qualifier's input array/snapshots.
+        guard !manifest.isEmpty, manifest.count <= DevicePackageQualifier.manifestLimit,
+            (1...PackageLimits.maxFiles).contains(files.count) else { throw DevicePackageQualificationError.sizeLimit }
+        var total = manifest.count
+        for (path, bytes) in files {
+            guard !bytes.isEmpty, bytes.count <= PackageLimits.expandedBytes - total,
+                path.utf8.count <= DevicePackageQualifier.pathLimit else { throw DevicePackageQualificationError.sizeLimit }
+            total += bytes.count
+        }
+        _ = try DevicePackageQualifier.qualify(.init(manifest: manifest,
+            files: files.map { .init(path: $0.key, bytes: $0.value) }),
+            expected: .init(revision: revision, target: profile, profileID: profileID))
+    }
 }
 
 /// Validated supplied bytes only: no installation, durability, authorization or approval claim.
@@ -126,8 +158,8 @@ enum DevicePackageQualifier {
     }
     private static func expectation(_ expected: DevicePackageExpectation) throws {
         let revision = expected.revision
-        guard revision.dashboardId.utf8.count == 36, revision.revision.utf8.count == 36,
-              UUID(uuidString: revision.dashboardId) != nil, UUID(uuidString: revision.revision) != nil,
+        guard DeviceDashboardIdentifier.isValid(revision.dashboardId), revision.revision.utf8.count == 36,
+              UUID(uuidString: revision.revision) != nil,
               revision.name.utf8.count <= 512,
               (1...128).contains(revision.name.unicodeScalars.count), isHash(revision.digest),
               (1...10000).contains(revision.width), (1...10000).contains(revision.height),
@@ -153,6 +185,6 @@ enum DevicePackageQualifier {
         }
     }
     #if canImport(CryptoKit)
-    private static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    private static func hash(_ data: Data) -> String { DevicePublicDigestHex.encode(Array(SHA256.hash(data: data))) }
     #endif
 }

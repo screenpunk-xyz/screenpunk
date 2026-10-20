@@ -106,6 +106,15 @@ final class WorkbenchAuthoringRecoveryDomainTests: XCTestCase {
         let oldGeneration = try XCTUnwrap(a.selectionGeneration)
         var gateCalls = 0
         let domain = WorkbenchAuthoringRecoveryDomain(workspace: workspace, mutationGate: { gateCalls += 1 })
+        let staleInner = WorkbenchAuthoringRecoveryRequest.selectionBound(
+            request: .selectionBound(request: .projectCreate(name: "Must not create", kind: "web"),
+                workspaceId: a.descriptor.workspaceId, selectionGeneration: oldGeneration + 1),
+            workspaceId: a.descriptor.workspaceId, selectionGeneration: oldGeneration)
+        XCTAssertThrowsError(try domain.perform(staleInner)) { error in
+            XCTAssertEqual((error as? WorkbenchIPCError)?.code, .workspaceConflict)
+        }
+        XCTAssertEqual(gateCalls, 0)
+        XCTAssertTrue(try WorkbenchContainedAuthoring(workspace: workspace).list().isEmpty)
         func bound(_ method: WorkbenchAuthoringRecoveryMethod, _ fields: [String: Any]) throws
             -> WorkbenchAuthoringRecoveryRequest {
             try WorkbenchAuthoringRecoveryRequest.parse(method: method,

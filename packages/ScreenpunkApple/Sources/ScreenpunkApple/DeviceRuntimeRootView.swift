@@ -45,10 +45,16 @@ public struct DeviceRuntimeRootView: View {
 #if canImport(Network) && canImport(Security)
     private var onLocalReset: (() -> Void)? = nil
     private var onCloudAccountRequested: (() -> Void)? = nil
+    private var onOnboardingVisibilityChanged: ((UUID, Bool) -> Void)? = nil
 
-    public init(host: DeviceLANHost, onLocalReset: (() -> Void)? = nil, onCloudAccountRequested: (() -> Void)? = nil) {
+    public init(host: DeviceLANHost, onLocalReset: (() -> Void)? = nil, onCloudAccountRequested: (() -> Void)? = nil,
+                startWithLocalPairing: Bool = false, onOnboardingVisibilityChanged: ((UUID, Bool) -> Void)? = nil) {
+#if os(iOS)
+        _onboardingRoute = State(initialValue: startWithLocalPairing ? "local" : "welcome")
+#endif
         self.onLocalReset = onLocalReset
         self.onCloudAccountRequested = onCloudAccountRequested
+        self.onOnboardingVisibilityChanged = onOnboardingVisibilityChanged
         _fallback = State(initialValue: host.runtime)
         _host = StateObject(wrappedValue: host)
     }
@@ -229,7 +235,7 @@ public struct DeviceRuntimeRootView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if host.errorMessage != nil && !localOnboardingActive {
+            if host.errorMessage != nil && !localOnboardingActive && localRuntimeFailureVisible {
                 VStack(spacing: 8) {
                     Text(host.server == nil ? "The local connection could not start. Unlock this device, close Screenpunk, then open it again." : "The local connection could not start. Unlock this device and try again.")
                         .font(.footnote).multilineTextAlignment(.center)
@@ -280,7 +286,10 @@ public struct DeviceRuntimeRootView: View {
         return Image(uiImage: image)
     }
 
-    @ViewBuilder private var productionLanding: some View {
+    private var productionLanding: some View {
+        productionLandingContent.modifier(DeviceOnboardingVisibilityObserver(changed: onOnboardingVisibilityChanged))
+    }
+    @ViewBuilder private var productionLandingContent: some View {
         if onboardingRoute == "local" {
             let displayedRequest = host.pendingPairingRequest
             let displayedRequestID = displayedRequest?.sessionNonceHex
@@ -400,6 +409,13 @@ public struct DeviceRuntimeRootView: View {
         false
 #endif
     }
+    private var localRuntimeFailureVisible: Bool {
+#if os(iOS)
+        host.runtime.isPaired || onboardingRoute == "connected"
+#else
+        true
+#endif
+    }
 
     private var currentSettings: DeviceSettings {
 #if canImport(Network) && canImport(Security)
@@ -486,6 +502,17 @@ public struct DeviceRuntimeRootView: View {
         }
     }
 }
+
+#if os(iOS)
+/// Presentation visibility only. Each mounted welcome/connection surface owns its own ID.
+private struct DeviceOnboardingVisibilityObserver: ViewModifier {
+    let changed: ((UUID, Bool) -> Void)?
+    @State private var id = UUID()
+    func body(content: Content) -> some View {
+        content.onAppear { changed?(id, true) }.onDisappear { changed?(id, false) }
+    }
+}
+#endif
 
 #if os(iOS)
 private struct DeviceMenuContainer<Menu: View>: ViewModifier {

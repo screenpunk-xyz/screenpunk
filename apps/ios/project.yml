@@ -64,6 +64,8 @@ targets:
         product: FirebaseCore
       - package: Firebase
         product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseDatabase
       - package: GoogleSignIn
         product: GoogleSignIn
       - sdk: WebKit.framework
@@ -78,6 +80,9 @@ targets:
     sources:
       - path: ../../packages/ScreenpunkApple/Tests/ScreenpunkAppleTests/BundledAudioTests.swift
       - path: Tests
+      - path: ../../packages/ScreenpunkApple/Tests/ScreenpunkAppleTests/DeviceManagementTestSupport.swift
+      - path: ../../packages/ScreenpunkApple/Tests/ScreenpunkAppleTests/NativeEnrollmentSharedFixtures.swift
+      - path: ../../packages/ScreenpunkApple/Tests/ScreenpunkAppleTests/UnifiedInventorySharedFixture.swift
     dependencies:
       - target: ScreenpunkiOS
       - package: ScreenpunkApple

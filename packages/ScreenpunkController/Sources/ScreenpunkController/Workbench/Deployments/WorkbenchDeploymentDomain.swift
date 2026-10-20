@@ -165,6 +165,9 @@ final class WorkbenchDeploymentDomain {
             let observation = try peer.observe(deviceId: deviceId)
             guard observation.deviceId == deviceId else { throw WorkbenchDeploymentError.staleContext }
             let manifestDetails = try verify(material: material, deviceId: deviceId)
+            if observation.stateGenerationId != nil {
+                try preflightUnified(material: material, profile: observation.profile)
+            }
             let requirements = manifestDetails.map { detail in
                 WorkbenchDeploymentGrantRequirement(dashboardId: detail.manifest.dashboardId,
                     revision: detail.manifest.revision, sourceRevision: detail.screen.sourceRevision,
@@ -523,6 +526,9 @@ final class WorkbenchDeploymentDomain {
               observation.commonEntries == review.plan.expectedCommonEntries,
               observation.configuredEntryId == review.plan.previouslyConfiguredEntryId else { throw WorkbenchDeploymentError.staleContext }
         _ = try verify(material: material, deviceId: review.plan.deviceId)
+        if observation.stateGenerationId != nil {
+            try preflightUnified(material: material, profile: observation.profile)
+        }
     }
     private func material(for review: WorkbenchDeploymentReview) throws -> WorkbenchDeploymentMaterial {
         let plan = try ledger.plan(review.plan.planId)
@@ -562,6 +568,33 @@ final class WorkbenchDeploymentDomain {
         }
         return result.sorted(by: ToolchainCanonical.utf8Less)
     }
+    /// Run the device's exact pure byte checks before plan publication and again
+    /// before first-send admission. This never installs or changes device state.
+    private func preflightUnified(material: WorkbenchDeploymentMaterial, profile: DeviceProfile) throws {
+        for screen in material.screens {
+            var files: [String: Data] = [:]
+            for file in screen.item.deployment.files {
+                guard let bytes = Data(base64Encoded: file.dataBase64), files[file.path] == nil else {
+                    throw WorkbenchDeploymentError.packageIncompatible
+                }
+                files[file.path] = bytes
+            }
+            guard let manifest = files.removeValue(forKey: "manifest.json") else {
+                throw WorkbenchDeploymentError.packageIncompatible
+            }
+            do {
+                try DevicePackageCompatibilityPreflight.validate(revision: screen.item.deployment.revision,
+                    manifest: manifest, files: files, profile: profile, profileID: profile.deviceId)
+            } catch let error as DevicePackageQualificationError {
+                switch error {
+                case .targetMismatch: throw WorkbenchDeploymentError.packageTargetMismatch
+                case .invalidExpectation, .identityMismatch: throw WorkbenchDeploymentError.packageIdentityInvalid
+                default: throw WorkbenchDeploymentError.packageIncompatible
+                }
+            }
+        }
+    }
+
     private func verify(material: WorkbenchDeploymentMaterial, deviceId: String)
         throws -> [(screen: WorkbenchFrozenScreen, manifest: DashboardManifest, bytes: Int)] {
         guard (1...12).contains(material.screens.count),

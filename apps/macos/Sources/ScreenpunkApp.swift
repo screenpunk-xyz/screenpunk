@@ -99,11 +99,11 @@ struct ScreenpunkApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandMenu("Cloud") {
-                SettingsLink { Text("Cloud Account and Project Sync…") }
+                SettingsLink { Text("Cloud Account and Screen Sync…") }
             }
             CommandGroup(replacing: .newItem) {
                 if brokerPreview || MacGUIRuntime.isTestApp {
-                    Button("New Project…") { brokerModel.createProject() }.keyboardShortcut("n")
+                    Button("New Screen…") { brokerModel.createProject() }.keyboardShortcut("n")
                     Button("Open Workspace…") { brokerModel.openWorkspace() }.keyboardShortcut("o")
                 } else {
                     Button("New Screen") { model.newScreen() }.keyboardShortcut("n")

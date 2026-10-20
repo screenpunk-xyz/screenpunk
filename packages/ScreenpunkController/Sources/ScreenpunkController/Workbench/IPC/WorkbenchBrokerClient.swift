@@ -7,18 +7,24 @@ public enum WorkbenchBrokerCredentialScope: Sendable, Equatable { case ordinary,
 
 public final class WorkbenchBrokerClient: @unchecked Sendable {
     private let environment: WorkbenchBrokerEnvironment
+    private let reconnectClosedConnections: Bool
     private let credentialScope: WorkbenchBrokerCredentialScope
     private let lock = NSLock()
     private var fd: Int32 = -1
     private var instanceId: String?
     public init(environment: WorkbenchBrokerEnvironment,
-                credentialScope: WorkbenchBrokerCredentialScope = .ordinary) {
+                credentialScope: WorkbenchBrokerCredentialScope = .ordinary,
+                reconnectClosedConnections: Bool = false) {
         self.environment = environment; self.credentialScope = credentialScope
+        self.reconnectClosedConnections = reconnectClosedConnections
     }
     public func connect() throws { try connect(timeout: environment.limits.timeout) }
     /// A caller may shorten the transport budget without changing authentication.
     public func connect(timeout: TimeInterval) throws {
         lock.lock(); defer { lock.unlock() }
+        try connectLocked(timeout: timeout)
+    }
+    private func connectLocked(timeout: TimeInterval) throws {
         guard fd < 0 else { throw WorkbenchIPCError(.invalidConfiguration) }
         let deadline = try readDeadline(timeout: timeout)
         do {
@@ -56,7 +62,10 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
     /// request. A failure while sending or awaiting a request is never retried:
     /// its mutation outcome may be unknown to the caller.
     @discardableResult public func reconnectIfPeerClosed() throws -> Bool {
-        lock.lock()
+        lock.lock(); defer { lock.unlock() }
+        return try reconnectIfPeerClosedLocked()
+    }
+    private func reconnectIfPeerClosedLocked() throws -> Bool {
         var needsConnection = fd < 0
         if !needsConnection {
             var byte: UInt8 = 0
@@ -66,8 +75,7 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
                 needsConnection = true
             }
         }
-        lock.unlock()
-        if needsConnection { try connect() }
+        if needsConnection { try connectLocked(timeout: environment.limits.timeout) }
         return needsConnection
     }
     public func hello() throws -> WorkbenchBrokerSnapshot { try requestSnapshot("system.hello") }
@@ -102,7 +110,7 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
         do {
             let deadline = method == .snapshotCreate || method == .workspaceRelocate
                 ? environment.clock.now() + 305 :
-                ([.projectClone, .packageExport, .projectUpgradeKit, .projectSyncSource].contains(method)
+                ([.projectClone, .packageExport, .projectUpgradeKit, .projectSyncSource, .migrationPlan, .migrationApply].contains(method)
                     ? environment.clock.now() + 125 : nil)
             guard case .authoringAction(let value) = try call(method.rawValue,
                 params: params, deadline: deadline, requestId: operationId) else {
@@ -925,6 +933,10 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
     }
     private func call(_ method: String, params: [String: Any], deadline: TimeInterval? = nil,
                       requestId: String? = nil) throws -> WorkbenchRPCResult {
+        // Check at the actual request boundary while holding the request lock.
+        // GUI tasks can queue behind another request after an earlier preflight.
+        // Local-review sessions deliberately retain their connection-bound consent.
+        if reconnectClosedConnections, credentialScope == .ordinary, fd >= 0 { _ = try reconnectIfPeerClosedLocked() }
         guard fd >= 0, instanceId != nil else { throw WorkbenchIPCError(.disconnected) }
         let id = requestId ?? UUID().uuidString.lowercased()
         let data = try JSONSerialization.data(withJSONObject: ["apiVersion": "1.0", "requestId": id, "method": method, "params": params], options: [.sortedKeys])
@@ -936,7 +948,9 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
         let object = try WorkbenchWireJSON.object(data,
             allowSourceChunk: method == WorkbenchSourceChunkRequest.method,
             allowDeviceSettings: [WorkbenchDeviceControlMethod.settingsGet.rawValue,
-                                  WorkbenchDeviceControlMethod.settingsSet.rawValue].contains(method))
+                                  WorkbenchDeviceControlMethod.settingsSet.rawValue].contains(method),
+            allowMigrationPlan: ["migration.plan", "migration.review"].contains(method),
+                allowWorkspacePackageChunk: method == WorkbenchWorkspacePackageMethod.file.rawValue)
         guard object["apiVersion"] as? String == "1.0", object["requestId"] as? String == requestId else { throw WorkbenchIPCError(.invalidRequest) }
         let response: WorkbenchWireResponse
         do {
@@ -1173,8 +1187,23 @@ public final class WorkbenchBrokerClient: @unchecked Sendable {
                 }
                 try result.validate(for: selected)
             }
-            let canonical = try WorkbenchWireJSON.object(WorkbenchSocket.encode(result),
-                allowSourceChunk: method == WorkbenchSourceChunkRequest.method)
+            let canonical: [String: Any]
+            if method == WorkbenchDeviceControlMethod.settingsGet.rawValue ||
+                method == WorkbenchDeviceControlMethod.settingsSet.rawValue {
+                // Use the envelope so the narrowly allowed brightness paths are identical
+                // for the received bytes and their canonical representation.
+                let envelope = try WorkbenchWireJSON.object(WorkbenchSocket.encode(response),
+                    allowDeviceSettings: true)
+                guard let settings = envelope["result"] as? [String: Any] else {
+                    throw WorkbenchIPCError(.invalidRequest)
+                }
+                canonical = settings
+            } else {
+                canonical = try WorkbenchWireJSON.object(WorkbenchSocket.encode(result),
+                    allowSourceChunk: method == WorkbenchSourceChunkRequest.method,
+                    allowMigrationPlan: ["migration.plan", "migration.review"].contains(method),
+                    allowWorkspacePackageChunk: method == WorkbenchWorkspacePackageMethod.file.rawValue)
+            }
             guard try JSONValue.from(fields) == JSONValue.from(canonical) else { throw WorkbenchIPCError(.invalidRequest) }
             return result
         }

@@ -65,7 +65,13 @@ final class MacWorkbenchModel: ObservableObject {
     @Published private(set) var brokerWorkspace: WorkbenchWorkspaceStatus?
     @Published private(set) var brokerPackages: [WorkbenchWorkspacePackageSummary] = []
     @Published private(set) var brokerDevices: [WorkbenchDeviceRead] = []
+    @Published private(set) var brokerPendingPairing: WorkbenchPairingRead?
+    @Published private(set) var brokerDeviceStates: [String: String] = [:]
+    @Published private(set) var brokerDeviceMessage: String?
     @Published private(set) var brokerScreenSet: WorkbenchDeviceScreenSetRead?
+    @Published private(set) var brokerDraftScreens: [LANScreenSetEntry] = []
+    @Published private(set) var brokerMultipleScreens = false
+    private var brokerDrafts: [String: (screens: [LANScreenSetEntry], multiple: Bool, baseline: String)] = [:]
     @Published private(set) var brokerSelectedPackage: WorkbenchWorkspacePackageSummary?
     @Published private(set) var brokerPreviewManifest: DashboardManifest?
     @Published private(set) var brokerApplyVerified = false
@@ -93,6 +99,7 @@ final class MacWorkbenchModel: ObservableObject {
     private var timer: Timer?
     private var pairingTimer: Timer?
     private var pairingPollInFlight = false
+    private var brokerPreviewTask: Task<Void, Never>?
     private var refreshing = false
     private var pendingProbe = false
     private var pendingManualProbe = false
@@ -109,7 +116,7 @@ final class MacWorkbenchModel: ObservableObject {
     var previewDashboardId: String { brokerMode ? brokerPreviewManifest?.dashboardId ?? "" : record?.manifest.dashboardId ?? "" }
     var previewRevision: String { brokerMode ? brokerPreviewManifest?.revision ?? "" : record?.manifest.revision ?? "" }
     var previewManifest: DashboardManifest? { brokerMode ? brokerPreviewManifest : record?.manifest }
-    var previewUsesHomeAssistant: Bool { !brokerMode && (record?.manifest.connections.contains { $0.alias == "home" } ?? false) }
+    var previewUsesHomeAssistant: Bool { previewManifest?.connections.contains { $0.alias == "home" } ?? false }
     var device: PairedDeviceRecord? { devices.first { $0.id == selection } }
     var detected: WorkbenchSidebar.NearbyEntry? { nearby.first { $0.id == selection } }
     var screenName: String {
@@ -147,12 +154,12 @@ final class MacWorkbenchModel: ObservableObject {
     func supports(_ orientation: DeviceOrientation) -> Bool { screenSupport.allows(orientation) }
     var canDuplicate: Bool { record != nil }
     var screenSelectorTitle: String { deviceScreens.multiple ? "\(deviceScreens.ids.count) \(deviceScreens.ids.count == 1 ? "Screen" : "Screens")" : screenName }
-    var applyLabel: String { brokerMode ? "Apply Screen" : deviceScreens.ids.count > 1 ? "Apply Screens" : "Apply Screen" }
+    var applyLabel: String { brokerMode ? (brokerDraftScreens.count > 1 ? "Apply Screens" : "Apply Screen") : deviceScreens.ids.count > 1 ? "Apply Screens" : "Apply Screen" }
     var canApply: Bool {
         if brokerMode {
             return MacBrokerApplyButtonGate.allows(verifiedGUI: brokerApplyVerified,
                 busy: busy, selectedDeviceMatches: brokerScreenSet?.deviceId == selection,
-                hasExactOfflinePackage: brokerSelectedPackage != nil &&
+                hasExactOfflinePackage: !brokerDraftScreens.isEmpty && brokerDraftScreens.count <= 12 && brokerSelectedPackage != nil &&
                     brokerPreviewManifest?.connections.isEmpty == true &&
                     brokerPreviewManifest?.target.orientation == orientation.rawValue,
                 prior: brokerApplyRecord)
@@ -261,7 +268,7 @@ final class MacWorkbenchModel: ObservableObject {
             let available: Bool
             do {
                 let environment = try WorkbenchBrokerEnvironment(runtimeDirectory: MacGUIRuntime.runtimeDirectory)
-                let client = WorkbenchBrokerClient(environment: environment)
+                let client = WorkbenchBrokerClient(environment: environment, reconnectClosedConnections: true)
                 try client.connect()
                 defer { client.close() }
                 available = try client.hello().controllerHomePath == homePath
@@ -284,7 +291,7 @@ final class MacWorkbenchModel: ObservableObject {
             let environment: WorkbenchBrokerEnvironment
             do {
                 environment = try WorkbenchBrokerEnvironment(runtimeDirectory: MacGUIRuntime.runtimeDirectory)
-                client = WorkbenchBrokerClient(environment: environment)
+                client = WorkbenchBrokerClient(environment: environment, reconnectClosedConnections: true)
                 try client.connect()
                 let expectedHome = DashboardPackageStore.defaultRoot().resolvingSymlinksInPath().path
                 guard try client.hello().controllerHomePath == expectedHome else {
@@ -329,9 +336,11 @@ final class MacWorkbenchModel: ObservableObject {
     }
 
     func detachCompatibleBroker() {
+        brokerPreviewTask?.cancel(); previewRequest = UUID(); brokerDeviceRequest = UUID()
         brokerClient?.close(); brokerClient = nil
         brokerMode = false; brokerWorkspace = nil
         brokerPackages = []; brokerDevices = []; brokerScreenSet = nil
+        brokerDraftScreens = []; brokerDrafts = [:]
         brokerSelectedPackage = nil; brokerPreviewManifest = nil
         brokerApplyVerified = false
         brokerApplyRecord = nil
@@ -342,20 +351,74 @@ final class MacWorkbenchModel: ObservableObject {
             .appendingPathComponent("apply-attempt.json"))
     }
 
-    private func refreshCompatibleBroker() {
-        guard let client = brokerClient, !refreshing, !busy else { return }
-        refreshing = true
+    func recoverExistingScreens() {
+        guard brokerMode, !busy, brokerWorkspace?.state == "unconfigured" else { return }
+        busy = true
+        notice = "Copying and verifying existing screens. Originals and settings are retained."
         Task.detached { [weak self] in
             do {
+                let environment = try WorkbenchBrokerEnvironment(runtimeDirectory: MacGUIRuntime.runtimeDirectory)
+                let client = WorkbenchBrokerClient(environment: environment, credentialScope: .localReview)
+                try client.connect(); defer { client.close() }
+                let source = DashboardPackageStore.defaultRoot().resolvingSymlinksInPath().path
+                guard try client.hello().controllerHomePath == source else {
+                    throw MacBrokerApplyWorkflow.Failure.staleSelection
+                }
+                let documents = try SystemWorkspaceDocumentsResolver().documentsDirectory()
+                let destination = documents.appendingPathComponent("Screenpunk Workspace", isDirectory: true).path
+                _ = try WorkbenchLegacyWorkspaceRecovery.recover(client: client,
+                    source: source, destination: destination)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.busy = false
+                    self.notice = "Existing screens restored. The original library and settings are retained."
+                    // Recheck the GUI session against the newly selected workspace.
+                    self.detachCompatibleBroker()
+                    self.activateCompatibleBroker()
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.busy = false
+                    self.notice = nil
+                    self.error = "Screen recovery could not finish. Originals were retained. Refresh before retrying. \(error.localizedDescription)"
+                    self.refreshCompatibleBroker()
+                }
+            }
+        }
+    }
+
+    private func refreshCompatibleBroker() {
+        guard let environment = brokerEnvironment, !refreshing, !busy else { return }
+        refreshing = true
+        let needsVerification = !brokerApplyVerified
+        Task.detached { [weak self] in
+            do {
+                // Reauthenticate a closed idle socket before sending a new request.
+                // Never replay a request whose outcome may already be committed.
+                let client = try Self.openBrokerReadClient(environment)
+                defer { client.close() }
                 let selected = try client.workspaceStatus()
                 let packages = selected.state == "selected"
                     ? try client.listWorkspacePackages(in: selected) : []
                 let devices = try client.listDevices()
+                var verified = false
+                if needsVerification, let session = try? MacBrokerApplySession.open(environment: environment,
+                    expectedControllerHome: DashboardPackageStore.defaultRoot().resolvingSymlinksInPath().path) {
+                    verified = true
+                    await session.close()
+                }
                 await MainActor.run {
                     guard let self else { return }
                     let switched = self.brokerWorkspace?.workspaceId != selected.workspaceId ||
                         self.brokerWorkspace?.selectionGeneration != selected.selectionGeneration
                     self.refreshing = false
+                    if verified {
+                        self.brokerApplyVerified = true
+                        if self.brokerApplyState == "Service connection unavailable; Apply disabled" {
+                            self.brokerApplyState = "Verified GUI Apply available"
+                        }
+                    }
                     self.brokerWorkspace = selected; self.brokerPackages = packages
                     self.brokerDevices = devices
                     if switched {
@@ -363,10 +426,14 @@ final class MacWorkbenchModel: ObservableObject {
                         self.brokerDeviceRequest = UUID()
                         self.brokerPreviewManifest = nil; self.brokerSelectedPackage = nil
                         self.brokerScreenSet = nil; self.selection = nil; self.selectedScreen = nil
+                        self.brokerDraftScreens = []; self.brokerDrafts = [:]
                         self.notice = "Workspace selection changed; choose a screen and device again."
                     } else {
                         if let package = self.brokerSelectedPackage,
-                           !packages.contains(package) {
+                           !packages.contains(package),
+                           self.brokerScreenSet?.screens.contains(where: {
+                               $0.dashboardId == package.dashboardId && $0.revision == package.revision
+                           }) != true {
                             self.previewRequest = UUID(); self.preview = nil
                             self.brokerPreviewManifest = nil; self.brokerSelectedPackage = nil
                             self.selectedScreen = nil
@@ -388,13 +455,44 @@ final class MacWorkbenchModel: ObservableObject {
         }
     }
 
+    /// Each UI read workflow owns its connection so a slow/offline device cannot
+    /// invalidate the socket used by preview or refresh. No failed mutation is replayed.
+    nonisolated private static func openBrokerReadClient(_ environment: WorkbenchBrokerEnvironment) throws -> WorkbenchBrokerClient {
+        let readEnvironment = try WorkbenchBrokerEnvironment(runtimeDirectory: environment.runtimeDirectory,
+                                                              limits: .init(timeout: 45))
+        let client = WorkbenchBrokerClient(environment: readEnvironment, reconnectClosedConnections: true)
+        try client.connect()
+        do {
+            guard try client.hello().controllerHomePath == DashboardPackageStore.defaultRoot().resolvingSymlinksInPath().path else {
+                throw MacBrokerApplyWorkflow.Failure.staleSelection
+            }
+            return client
+        } catch { client.close(); throw error }
+    }
+
+    func brokerDeviceSubtitle(_ device: WorkbenchDeviceRead) -> String {
+        brokerDeviceStates[device.deviceId] ?? (device.cachedReachability == "reachable" ? "Last seen online · select to connect" : "Select to connect")
+    }
+
     func selectBrokerDevice(_ id: String) {
-        guard brokerMode, let client = brokerClient, let selected = brokerWorkspace,
+        guard brokerMode, let environment = brokerEnvironment, let selected = brokerWorkspace,
               brokerDevices.contains(where: { $0.deviceId == id }) else { return }
-        section = "Devices"; selection = id; brokerScreenSet = nil
+        if selection == id, brokerDeviceStates[id] == "Connecting…" { return }
+        if let previous = selection, brokerDeviceStates[previous] == "Connecting…" {
+            brokerDeviceStates[previous] = nil
+        }
+        brokerPreviewTask?.cancel()
+        section = "Devices"; selection = id; brokerScreenSet = nil; brokerDraftScreens = []
+        brokerDeviceStates[id] = "Connecting…"; brokerDeviceMessage = nil
+        previewRequest = UUID(); preview = nil; brokerSelectedPackage = nil; brokerPreviewManifest = nil
+        notice = nil; error = nil
         let request = UUID(); brokerDeviceRequest = request
         Task.detached { [weak self] in
             do {
+                // Reauthenticate a closed idle socket before sending a new request.
+                // Never replay a request whose outcome may already be committed.
+                let client = try Self.openBrokerReadClient(environment)
+                defer { client.close() }
                 let observed = try client.freshDeviceScreenSet(deviceId: id)
                 let current = try client.workspaceStatus()
                 guard current.workspaceId == selected.workspaceId,
@@ -407,26 +505,133 @@ final class MacWorkbenchModel: ObservableObject {
                           self.brokerWorkspace?.workspaceId == selected.workspaceId,
                           self.brokerWorkspace?.selectionGeneration == selected.selectionGeneration else { return }
                     self.brokerScreenSet = observed
+                    if let draft = self.brokerDrafts[id], draft.baseline == observed.installedSetHash {
+                        self.brokerDraftScreens = draft.screens; self.brokerMultipleScreens = draft.multiple
+                    } else {
+                        self.brokerDraftScreens = observed.screens
+                        self.brokerMultipleScreens = observed.screens.count > 1
+                    }
+                    self.brokerDeviceStates[id] = "Connected"
                     self.orientation = observed.profile.orientation
+                    if let active = self.brokerDraftScreens.first(where: { $0.dashboardId == observed.selectedDashboardId }) ?? self.brokerDraftScreens.first {
+                        self.selectBrokerInstalledScreen(active.dashboardId, revision: active.revision)
+                    }
                 }
             } catch {
                 await MainActor.run {
-                    guard self?.selection == id else { return }
-                    self?.error = "Pinned device observation unavailable: \(error.localizedDescription)"
+                    guard let self, self.brokerMode, self.selection == id,
+                          self.brokerDeviceRequest == request else { return }
+                    self.brokerDeviceStates[id] = "Unavailable"
+                    self.brokerDeviceMessage = "Could not read this device. Keep Screenpunk open on it and check that it is on the same network, then try again."
                 }
             }
         }
     }
 
-    func selectBrokerPackage(_ package: WorkbenchWorkspacePackageSummary) {
-        guard brokerMode, let client = brokerClient, let selected = brokerWorkspace,
+    func selectBrokerInstalledScreen(_ dashboardId: String, revision: String) {
+        guard let environment = brokerEnvironment, let selected = brokerWorkspace,
+              let observed = brokerScreenSet,
+              (observed.screens + brokerDraftScreens).contains(where: { $0.dashboardId == dashboardId && $0.revision == revision }) else { return }
+        let deviceRequest = brokerDeviceRequest
+        let packageRequest = UUID(); previewRequest = packageRequest
+        selectedScreen = dashboardId; preview = nil; brokerPreviewManifest = nil; brokerSelectedPackage = nil; notice = nil
+        brokerPreviewTask?.cancel()
+        brokerPreviewTask = Task.detached { [weak self] in
+            do {
+                let client = try Self.openBrokerReadClient(environment); defer { client.close() }
+                let package = try client.workspacePackage(dashboardId: dashboardId, revision: revision, in: selected)
+                await MainActor.run {
+                    guard let self, self.brokerDeviceRequest == deviceRequest, self.previewRequest == packageRequest,
+                          self.section == "Devices", self.selection == observed.deviceId else { return }
+                    self.selectBrokerPackage(package)
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self, self.brokerDeviceRequest == deviceRequest, self.previewRequest == packageRequest,
+                          self.section == "Devices", self.selection == observed.deviceId else { return }
+                    self.notice = "Device screens loaded. This installed revision has no available local preview."
+                }
+            }
+        }
+    }
+
+    func archiveBrokerPackage(_ package: WorkbenchWorkspacePackageSummary) {
+        guard brokerMode, !busy, let environment = brokerEnvironment,
+              let selected = brokerWorkspace, let workspaceId = selected.workspaceId,
+              let selectionGeneration = selected.selectionGeneration,
               brokerPackages.contains(package) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Remove \(package.name) from the Library?"
+        alert.informativeText = "Its source and package history remain available for recovery. Installed copies on devices remain unchanged."
+        alert.addButton(withTitle: "Remove from Library")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        busy = true
+        Task { [weak self] in
+            do {
+                let receipt = try await Task.detached {
+                    let client = try Self.openBrokerReadClient(environment)
+                    defer { client.close() }
+                    let current = try client.workspaceStatus()
+                    guard current.workspaceId == workspaceId,
+                          current.selectionGeneration == selectionGeneration,
+                          let generation = current.generation else {
+                        throw MacBrokerApplyWorkflow.Failure.staleSelection
+                    }
+                    let request = try WorkbenchScreenArchiveRequest.parse([
+                        "schemaVersion": 1, "expectedWorkspaceId": workspaceId,
+                        "expectedSelectionGeneration": selectionGeneration,
+                        "expectedCatalogGeneration": generation,
+                        "dashboardId": package.dashboardId,
+                        "expectedRevision": package.revision,
+                        "expectedDigest": package.digest])
+                    // Never replay a mutation after an uncertain connection failure.
+                    return try client.archiveScreen(request)
+                }.value
+                guard let self else { return }
+                self.busy = false
+                if self.brokerWorkspace?.workspaceId == workspaceId,
+                   self.brokerWorkspace?.selectionGeneration == selectionGeneration,
+                   receipt.workspaceId == workspaceId,
+                   receipt.selectionGeneration == selectionGeneration,
+                   receipt.dashboardId == package.dashboardId,
+                   receipt.packageHistoryRetained, receipt.deviceContentsUntouched {
+                    self.brokerPackages.removeAll { $0.dashboardId == package.dashboardId }
+                    if self.section == "Screens", self.brokerSelectedPackage?.dashboardId == package.dashboardId {
+                        self.brokerPreviewTask?.cancel(); self.previewRequest = UUID()
+                        self.preview = nil; self.brokerPreviewManifest = nil
+                        self.brokerSelectedPackage = nil; self.selectedScreen = nil
+                    }
+                    self.notice = "Screen removed from the Library. Source and history are retained."
+                }
+                self.refreshCompatibleBroker()
+            } catch {
+                guard let self else { return }
+                self.busy = false
+                self.error = "Removal may have completed. Refresh the Library before trying again."
+                self.refreshCompatibleBroker()
+            }
+        }
+    }
+
+    func selectBrokerPackage(_ package: WorkbenchWorkspacePackageSummary) {
+        guard brokerMode, let environment = brokerEnvironment, let selected = brokerWorkspace,
+              (brokerPackages.contains(package) || brokerScreenSet?.screens.contains(where: {
+                  $0.dashboardId == package.dashboardId && $0.revision == package.revision
+              }) == true || brokerDraftScreens.contains(where: {
+                  $0.dashboardId == package.dashboardId && $0.revision == package.revision
+              })) else { return }
         brokerSelectedPackage = package; selectedScreen = package.dashboardId
         if section == "Screens" { selection = package.dashboardId + ":" + package.revision }
         let request = UUID(); previewRequest = request
-        preview = nil; brokerPreviewManifest = nil
-        Task.detached { [weak self] in
+        preview = nil; brokerPreviewManifest = nil; notice = nil
+        brokerPreviewTask?.cancel()
+        brokerPreviewTask = Task.detached { [weak self] in
             do {
+                // Reauthenticate a closed idle socket before sending a new request.
+                // Never replay a request whose outcome may already be committed.
+                let client = try Self.openBrokerReadClient(environment)
+                defer { client.close() }
                 let assets = try WorkspacePackagePreviewLoader.load(client: client,
                     selected: selected, summary: package)
                 guard let manifestBytes = assets.assets["manifest.json"]?.data else {
@@ -448,11 +653,9 @@ final class MacWorkbenchModel: ObservableObject {
                        let packageOrientation = DeviceOrientation(rawValue: manifest.target.orientation) {
                         self.orientation = packageOrientation
                     }
-                    if manifest.connections.isEmpty {
-                        self.preview = assets; self.previewKey = UUID()
-                    } else {
-                        self.notice = "Offline preview for this package needs connection-provider review."
-                    }
+                    // Rendering a verified package does not grant provider access.
+                    // The canvas reuses existing native credentials and exact approvals.
+                    self.preview = assets; self.previewKey = UUID()
                 }
             } catch {
                 await MainActor.run {
@@ -464,10 +667,14 @@ final class MacWorkbenchModel: ObservableObject {
     }
 
     func revealBrokerSource() {
-        guard brokerMode, let client = brokerClient, let selected = brokerWorkspace,
+        guard brokerMode, let environment = brokerEnvironment, let selected = brokerWorkspace,
               let package = brokerSelectedPackage else { return }
         Task.detached { [weak self] in
             do {
+                // Reauthenticate a closed idle socket before sending a new request.
+                // Never replay a request whose outcome may already be committed.
+                let client = try Self.openBrokerReadClient(environment)
+                defer { client.close() }
                 let before = try client.workspaceStatus()
                 guard before.workspaceId == selected.workspaceId,
                       before.selectionGeneration == selected.selectionGeneration else {
@@ -477,8 +684,10 @@ final class MacWorkbenchModel: ObservableObject {
                     $0.dashboardId == package.dashboardId
                 }
                 guard matches.count == 1, let project = matches.first else {
+                    let assets = try WorkspacePackagePreviewLoader.load(client: client, selected: selected, summary: package)
                     await MainActor.run {
-                        self?.notice = "This package has no registered source folder to reveal."
+                        guard let self, self.brokerSelectedPackage == package else { return }
+                        self.exportBrokerScreenFiles(assets, package: package)
                     }
                     return
                 }
@@ -495,10 +704,33 @@ final class MacWorkbenchModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self?.error = "Source folder unavailable: \(error.localizedDescription)"
+                    self?.error = "Screen files unavailable: \(error.localizedDescription)"
                 }
             }
         }
+    }
+
+    private func exportBrokerScreenFiles(_ assets: PackageAssetStore, package: WorkbenchWorkspacePackageSummary) {
+        let panel = NSSavePanel()
+        panel.title = "Export Screen Files"
+        panel.message = "No source folder is linked to this saved screen. Export its HTML, scripts, and assets to a new folder. The installed screen and original library stay unchanged."
+        panel.nameFieldStringValue = package.name.replacingOccurrences(of: "/", with: "-") + " Files"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            guard !FileManager.default.fileExists(atPath: destination.path) else {
+                throw NSError(domain: "ScreenpunkExport", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Choose a new folder name; existing files will not be replaced."])
+            }
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+            for (path, asset) in assets.assets {
+                let file = destination.appendingPathComponent(path)
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try asset.data.write(to: file, options: .withoutOverwriting)
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+            notice = "Screen files exported. Editing this copy does not change the installed screen."
+        } catch { self.error = "Screen-file export could not finish: \(error.localizedDescription)" }
     }
 
     func rollbackBrokerScreen() { applyBrokerScreen(rollback: true) }
@@ -507,16 +739,13 @@ final class MacWorkbenchModel: ObservableObject {
         guard (rollback ? canRollbackBrokerApply : canApply),
               let selected = brokerWorkspace, let environment = brokerEnvironment,
               let deviceId = brokerScreenSet?.deviceId else { return }
-        let package = brokerSelectedPackage
+        let draftScreens = brokerDraftScreens
+        let focusedDashboard = draftScreens.first(where: { $0.dashboardId == selectedScreen })?.dashboardId ?? draftScreens.first?.dashboardId
+        let targetOrientation = orientation
         let prior = brokerApplyRecord
-        guard rollback || package != nil else { return }
+        guard rollback || (!draftScreens.isEmpty && focusedDashboard != nil) else { return }
         busy = true; error = nil
         let verifiedGUI = brokerApplyVerified
-        let request = package.map { item in
-            MacBrokerApplyWorkflow.Request(selected: selected, deviceId: deviceId,
-                packages: [item], selectedDashboardId: item.dashboardId,
-                orientation: orientation, bindingIds: [])
-        }
         Task.detached { [weak self] in
             var workflow: MacBrokerApplyWorkflow?
             var submissionStarted = false
@@ -528,7 +757,18 @@ final class MacWorkbenchModel: ObservableObject {
                         environment: environment, expectedControllerHome: expectedHome,
                         selected: selected, deviceId: deviceId, prior: prior)
                 } else {
-                    guard let request else { throw MacBrokerApplyWorkflow.Failure.noPackages }
+                    let client = try Self.openBrokerReadClient(environment)
+                    let packages: [WorkbenchWorkspacePackageSummary]
+                    do {
+                        packages = try draftScreens.map {
+                            try client.workspacePackage(dashboardId: $0.dashboardId, revision: $0.revision, in: selected)
+                        }
+                        client.close()
+                    } catch { client.close(); throw error }
+                    guard let focusedDashboard else { throw MacBrokerApplyWorkflow.Failure.noPackages }
+                    let request = MacBrokerApplyWorkflow.Request(selected: selected, deviceId: deviceId,
+                        packages: packages, selectedDashboardId: focusedDashboard,
+                        orientation: targetOrientation, bindingIds: [])
                     workflow = try await MacBrokerApplyWorkflow.prepare(environment: environment,
                         expectedControllerHome: expectedHome, request: request)
                 }
@@ -541,7 +781,7 @@ final class MacWorkbenchModel: ObservableObject {
                           self.brokerWorkspace?.selectionGeneration == selected.selectionGeneration,
                           self.selection == deviceId,
                           (rollback ? self.brokerApplyRecord == prior :
-                              self.brokerSelectedPackage == package) else { return false }
+                              self.brokerDraftScreens == draftScreens && self.orientation == targetOrientation) else { return false }
                     return MacBrokerReviewDialog.approve(scope)
                 }
                 guard approved else {
@@ -620,6 +860,9 @@ final class MacWorkbenchModel: ObservableObject {
         busy = true
         Task.detached { [weak self] in
             do {
+                // Reauthenticate a closed idle socket before sending a new request.
+                // Never replay a request whose outcome may already be committed.
+                _ = try client.reconnectIfPeerClosed()
                 let method: WorkbenchDeploymentMethod = record.operationId == nil ? .lookup :
                     (reconcile ? .reconcile : .status)
                 var params: [String: Any] = [
@@ -820,6 +1063,7 @@ final class MacWorkbenchModel: ObservableObject {
             ?? previewThumbnails.object(forKey: thumbnailKey(id, revision: "last", size: size) as NSString)
     }
     func previewThumbnail(_ id: String, revision: String, size: CGSize) async -> NSImage? {
+        if brokerMode { return await brokerPreviewThumbnail(id, revision: revision, size: size) }
         let key = thumbnailKey(id, revision: revision, size: size)
         if let image = previewThumbnails.object(forKey: key as NSString) { return image }
         if let request = thumbnailRequests[key] { return await request.value }
@@ -851,6 +1095,46 @@ final class MacWorkbenchModel: ObservableObject {
         return await request.value
     }
 
+    private func brokerPreviewThumbnail(_ id: String, revision: String, size: CGSize) async -> NSImage? {
+        let key = thumbnailKey(id, revision: revision, size: size)
+        if let image = previewThumbnails.object(forKey: key as NSString) { return image }
+        if let task = thumbnailRequests[key] { return await task.value }
+        guard let environment = brokerEnvironment, let selected = brokerWorkspace,
+              let renderer = HelperSupervisor().makeRenderer() else { return nil }
+        let task = Task { @MainActor [weak self] () -> NSImage? in
+            guard let self else { return nil }
+            let png: Data? = await withCheckedContinuation { continuation in
+                self.thumbnailQueue.async {
+                    let data = try? { () throws -> Data in
+                        let client = try Self.openBrokerReadClient(environment); defer { client.close() }
+                        let package = try client.workspacePackage(dashboardId: id, revision: revision, in: selected)
+                        let assets = try WorkspacePackagePreviewLoader.load(client: client, selected: selected, summary: package)
+                        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("screenpunk-carousel-" + UUID().uuidString)
+                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                                               attributes: [.posixPermissions: 0o700])
+                        defer { try? FileManager.default.removeItem(at: directory) }
+                        // Only verified, bounded package files; no credentials or live runtimes.
+                        for (path, asset) in assets.assets {
+                            let file = directory.appendingPathComponent(path)
+                            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                            try asset.data.write(to: file)
+                        }
+                        return try renderer.render(PreviewRequest(dashboardId: id, revision: revision,
+                            digest: package.digest, packageDirectory: directory, width: Int(size.width), height: Int(size.height),
+                            live: false, waitsForRuntimeReady: false, timeoutSeconds: 6)).png
+                    }()
+                    continuation.resume(returning: data)
+                }
+            }
+            defer { self.thumbnailRequests[key] = nil }
+            guard let png, let image = NSImage(data: png) else { return nil }
+            self.previewThumbnails.setObject(image, forKey: key as NSString, cost: Int(image.size.width * image.size.height * 4))
+            return image
+        }
+        thumbnailRequests[key] = task
+        return await task.value
+    }
+
     func createReactScreen(starter: String) {
         guard let service, !busy else { return }
         busy = true
@@ -874,7 +1158,7 @@ final class MacWorkbenchModel: ObservableObject {
         guard let service else { return }
         do {
             guard let project = try service.authoring.project(for: dashboardId), let location = project["sourceLocation"]?.string else {
-                notice = "This screen has no managed React source project."; return
+                notice = "This Screen has no editable React source."; return
             }
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: location)])
         } catch { self.error = (error as? ControllerError)?.detail ?? error.localizedDescription }
@@ -884,7 +1168,7 @@ final class MacWorkbenchModel: ObservableObject {
         busy = true
         queue.async {
             let result = Result { () -> Void in
-                guard let project = try service.authoring.project(for: dashboardId) else { throw ControllerError.validationFailed(detail: "This screen has no managed React source project.") }
+                guard let project = try service.authoring.project(for: dashboardId) else { throw ControllerError.validationFailed(detail: "This Screen has no editable React source.") }
                 let current = try service.getDashboard(dashboardId: dashboardId, revision: nil)
                 _ = try service.authoring.build(id: project["projectId"]!.string!, expected: project["sourceVersion"]!.string!, baseRevision: current.manifest.revision, service: service)
             }
@@ -898,7 +1182,59 @@ final class MacWorkbenchModel: ObservableObject {
         }
     }
 
+    var brokerPickerScreens: [LANScreenSetEntry] {
+        var choices = brokerPackages.map { LANScreenSetEntry(dashboardId: $0.dashboardId, revision: $0.revision, name: $0.name) }
+        for selected in brokerDraftScreens {
+            if let index = choices.firstIndex(where: { $0.dashboardId == selected.dashboardId }) { choices[index] = selected }
+            else { choices.append(selected) }
+        }
+        return choices
+    }
+    private func rememberBrokerDraft() {
+        guard let observed = brokerScreenSet else { return }
+        brokerDrafts[observed.deviceId] = (brokerDraftScreens, brokerMultipleScreens, observed.installedSetHash)
+    }
+    func setBrokerMultipleScreens(_ enabled: Bool) {
+        guard !busy else { return }
+        var draft = DeviceScreenSelection(ids: brokerDraftScreens.map(\.dashboardId), multiple: brokerMultipleScreens)
+        draft.setMultiple(enabled, preferred: selectedScreen)
+        brokerMultipleScreens = draft.multiple
+        brokerDraftScreens = draft.ids.compactMap { id in brokerDraftScreens.first { $0.dashboardId == id } }
+        if let focused = brokerDraftScreens.first, !brokerDraftScreens.contains(where: { $0.dashboardId == selectedScreen }) {
+            selectBrokerInstalledScreen(focused.dashboardId, revision: focused.revision)
+        }
+        rememberBrokerDraft()
+    }
+    func chooseBrokerScreen(_ screen: LANScreenSetEntry) {
+        guard !busy, brokerPickerScreens.contains(screen) else { return }
+        let candidates = brokerDraftScreens + [screen]
+        var draft = DeviceScreenSelection(ids: brokerDraftScreens.map(\.dashboardId), multiple: brokerMultipleScreens)
+        guard draft.choose(screen.dashboardId) else { return }
+        brokerDraftScreens = draft.ids.compactMap { id in candidates.first { $0.dashboardId == id } }
+        if draft.ids.isEmpty {
+            brokerPreviewTask?.cancel(); previewRequest = UUID()
+            preview = nil; brokerPreviewManifest = nil; brokerSelectedPackage = nil; selectedScreen = nil
+        } else if draft.ids.contains(screen.dashboardId) {
+            selectBrokerInstalledScreen(screen.dashboardId, revision: screen.revision)
+        } else if selectedScreen == screen.dashboardId, let first = brokerDraftScreens.first {
+            selectBrokerInstalledScreen(first.dashboardId, revision: first.revision)
+        }
+        rememberBrokerDraft()
+    }
+
+    func brokerPreviewNeighbor(_ offset: Int) -> LANScreenSetEntry? {
+        let screens = brokerDraftScreens
+        guard section == "Devices", screens.count > 1,
+              let index = screens.firstIndex(where: { $0.dashboardId == selectedScreen }) else { return nil }
+        return screens[(index + offset % screens.count + screens.count) % screens.count]
+    }
+
     func browseScreen(_ offset: Int) {
+        if brokerMode {
+            guard section == "Devices", let screen = brokerPreviewNeighbor(offset) else { return }
+            selectBrokerInstalledScreen(screen.dashboardId, revision: screen.revision)
+            return
+        }
         guard section == "Devices", device != nil, !busy,
               let id = deviceScreens.previewNeighbor(of: selectedScreen, offset: offset) else { return }
         focusScreen(id)
@@ -976,8 +1312,50 @@ final class MacWorkbenchModel: ObservableObject {
         pairing = nil
         pairingConfirmedOnMac = false
     }
+    func discoverPairableDevices() async throws -> [AdvertisedDevice] {
+        guard brokerMode, let environment = brokerEnvironment else { return nearby.map(\.advertisement) }
+        let discovered = try await Task.detached {
+            let client = try Self.openBrokerReadClient(environment); defer { client.close() }
+            return try client.discoverDevices()
+        }.value
+        try Task.checkCancellation()
+        let paired = Set(brokerDevices.map(\.deviceId))
+        return discovered.filter { !paired.contains($0.deviceId) && $0.source == .advertised }
+            .sorted { ($0.name ?? $0.host).localizedStandardCompare($1.name ?? $1.host) == .orderedAscending }
+    }
+
+    func finishBrokerPairing(cancel: Bool) {
+        guard !busy, let pending = brokerPendingPairing, let environment = brokerEnvironment else { return }
+        busy = true
+        Task {
+            do {
+                try await Task.detached {
+                    let client = try Self.openBrokerReadClient(environment); defer { client.close() }
+                    if cancel { try client.cancelPairing(pendingId: pending.pendingId) }
+                    else { _ = try client.confirmPairing(pendingId: pending.pendingId, matchingCode: pending.matchingCode) }
+                }.value
+                busy = false; brokerPendingPairing = nil; sheet = nil
+                if !cancel { notice = "Device connected."; refreshCompatibleBroker() }
+            } catch { busy = false; self.error = error.localizedDescription }
+        }
+    }
+
     func addManual(host: String, port: String) {
         guard let host = WorkbenchSidebar.normalizeHost(host), let port = WorkbenchSidebar.parsePort(port) else { error = WorkbenchCopy.invalidAddress; return }
+        if brokerMode {
+            guard !busy, let environment = brokerEnvironment else { return }
+            busy = true
+            Task {
+                do {
+                    let pending = try await Task.detached {
+                        let client = try Self.openBrokerReadClient(environment); defer { client.close() }
+                        return try client.beginPairing(host: host, port: port)
+                    }.value
+                    busy = false; brokerPendingPairing = pending
+                } catch { busy = false; self.error = error.localizedDescription }
+            }
+            return
+        }
         let ad = service?.devices.addManual(host: host, port: port)
         sheet = nil; refresh(); if let ad { selection = ad.deviceId }
     }
@@ -996,7 +1374,8 @@ final class MacWorkbenchModel: ObservableObject {
             busy = true
             Task.detached { [weak self] in
                 let outcome = Result {
-                    try WorkbenchDeviceNameForwarder.rename(client: client,
+                    _ = try client.reconnectIfPeerClosed()
+                    return try WorkbenchDeviceNameForwarder.rename(client: client,
                         deviceId: id, rawName: raw)
                 }
                 await MainActor.run {
@@ -1064,7 +1443,10 @@ final class MacWorkbenchModel: ObservableObject {
                   let client = brokerClient else { return }
             busy = true
             Task.detached { [weak self] in
-                let outcome = Result { try client.forgetDevice(id) }
+                let outcome = Result {
+                    _ = try client.reconnectIfPeerClosed()
+                    return try client.forgetDevice(id)
+                }
                 await MainActor.run {
                     guard let self else { return }
                     self.busy = false
