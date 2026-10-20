@@ -57,69 +57,33 @@ fi
 mkdir -p "$ROOT/.ci-derived"
 core_log="$ROOT/.ci-derived/core-apple.log"
 # Bypass SwiftPM child-output capture while retaining the full generated suite.
-run_full_core_xctest() {
-  cd packages/ScreenpunkCore || return $?
-  swift build -c release --build-tests -Xswiftc -enable-testing -Xswiftc -DSCREENPUNK_CORE_TESTING || return $?
-  core_bin_dir=$(swift build -c release --show-bin-path) || return $?
-  core_test_bundle="$core_bin_dir/ScreenpunkCorePackageTests.xctest"
-  if [[ ! -d "$core_test_bundle" ]]; then
-    echo "missing generated ScreenpunkCore XCTest bundle"
-    return 1
-  fi
-  xcrun xctest "$core_test_bundle"
-}
-# Observe only the regular log; never pipe or signal the Core runner.
-core_observer_directory=$(mktemp -d "$ROOT/.ci-derived/core-observer.XXXXXX")
-core_observer_started=$SECONDS
-stop_core_observer() {
-  if ! : >"$core_observer_directory/stop"; then
-    echo "CORE_PROGRESS observer stop flag unavailable"
-    # This is our unreaped observer child, never an inferred runner PID.
-    kill "$core_observer_pid" 2>/dev/null || :
-  fi
-  if wait "$core_observer_pid"; then
-    :
-  else
-    echo "CORE_PROGRESS observer unavailable"
-  fi
-  rm -f "$core_observer_directory/stop" || echo "CORE_PROGRESS stop flag cleanup unavailable"
-  rmdir "$core_observer_directory" || echo "CORE_PROGRESS observer directory cleanup unavailable"
-}
-core_observer_exit() {
-  core_observer_exit_status=$?
-  stop_core_observer
-  trap - EXIT
-  exit "$core_observer_exit_status"
-}
 : >"$core_log"
 (
-  while [[ ! -f "$core_observer_directory/stop" ]]; do
-    for (( core_observer_tick=0; core_observer_tick<12; core_observer_tick++ )); do
-      sleep 5
-      if [[ -f "$core_observer_directory/stop" ]]; then exit 0; fi
-    done
-    if core_observer_bytes=$(wc -c <"$core_log") &&
-       core_observer_marker=$(tail -n 40 "$core_log" | awk '/^PROMOTION_LOCALIZATION capacity\.operation\.[0-9]+\.(begin|end)$/ { marker=$0 } END { print marker }'); then
-      core_observer_bytes="${core_observer_bytes//[[:space:]]/}"
-      echo "CORE_PROGRESS elapsed_seconds=$((SECONDS-core_observer_started)) bytes=$core_observer_bytes marker=${core_observer_marker:-no-recent-marker}"
-    else
-      echo "CORE_PROGRESS elapsed_seconds=$((SECONDS-core_observer_started)) observation=unavailable"
-    fi
-  done
-) &
-core_observer_pid=$!
-trap core_observer_exit EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-# Observer cleanup belongs only to the parent that owns its child PID.
-if (trap - EXIT INT TERM; run_full_core_xctest) >"$core_log" 2>&1; then
+  cd packages/ScreenpunkCore
+  swift build -c release --build-tests -Xswiftc -enable-testing -Xswiftc -DSCREENPUNK_CORE_TESTING
+) 2>&1 | tee -a "$core_log"
+core_build_status=${PIPESTATUS[0]}
+if (( core_build_status != 0 )); then
+  echo "Core build failed with exit status $core_build_status"
+  exit "$core_build_status"
+fi
+core_bin_dir="$(cd packages/ScreenpunkCore && swift build -c release --show-bin-path)"
+core_test_bundle="$core_bin_dir/ScreenpunkCorePackageTests.xctest"
+if [[ ! -d "$core_test_bundle" ]]; then
+  echo "missing generated ScreenpunkCore XCTest bundle"
+  exit 1
+fi
+# Same per-test bound as core-linux. xctest is the direct bundle runner on macOS.
+if python3 "$ROOT/scripts/ci/run-bounded-xctest.py" \
+  --log "$core_log" \
+  --test-timeout-seconds 1200 \
+  --suite-timeout-seconds 2400 \
+  -- xcrun xctest "$core_test_bundle"; then
   core_status=0
 else
   core_status=$?
 fi
-stop_core_observer
-trap - EXIT INT TERM
-tail -n 200 "$core_log"
+tail -n 80 "$core_log"
 if (( core_status != 0 )); then
   echo "Core build or full XCTest run failed with exit status $core_status"
   exit "$core_status"
@@ -134,12 +98,27 @@ fi
   cd packages/ScreenpunkApple
   swift build --build-tests
   test_bundle="$(swift build --show-bin-path)/ScreenpunkApplePackageTests.xctest"
-  python3 "$ROOT/scripts/ci/run-xctest.py" "$test_bundle"
+  python3 "$ROOT/scripts/ci/run-bounded-xctest.py" \
+    --log "$ROOT/.ci-derived/screenpunk-apple-xctest.log" \
+    --test-timeout-seconds 300 \
+    --suite-timeout-seconds 600 \
+    -- xcrun xctest "$test_bundle"
 )
-(cd tools/screenpunk-distribution && swift test)
+run_swift_test() {
+  local name="$1" dir="$2"
+  (
+    cd "$dir"
+    python3 "$ROOT/scripts/ci/run-bounded-xctest.py" \
+      --log "$ROOT/.ci-derived/${name}.log" \
+      --test-timeout-seconds 300 \
+      --suite-timeout-seconds 1200 \
+      -- swift test
+  )
+}
+run_swift_test screenpunk-distribution tools/screenpunk-distribution
 "$ROOT/scripts/bundle-connection-validator.sh" "$ROOT/packages/ScreenpunkController/Sources/ScreenpunkController/Resources/ConnectionValidator"
-(cd packages/ScreenpunkController && swift test)
-(cd packages/ScreenpunkAppleController && swift test)
+run_swift_test screenpunk-controller packages/ScreenpunkController
+run_swift_test screenpunk-apple-controller packages/ScreenpunkAppleController
 # Match the release workflow: the pinned MCP dependency requires Swift 5 mode
 # on Xcode 26; app and package tests above retain their normal settings.
 (cd tools/screenpunk-mcp && swift build -Xswiftc -swift-version -Xswiftc 5)
