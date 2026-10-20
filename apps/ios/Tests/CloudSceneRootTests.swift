@@ -37,8 +37,16 @@ final class CloudSceneRootTests: XCTestCase {
         capture(window, name: "Required-Home-Assistant-Setup")
         XCTAssertTrue(setup.accessibilityActivate())
         let settings = try await presentedSettings(hosting, phase: "required connection setup")
-        let screen = try await routeButton("Game lights", in: settings.view)
-        assertVisible(screen, in: window)
+        try await waitFor("Home Assistant connection fields") {
+            var visited = Set<ObjectIdentifier>()
+            return routeAccessibilityElements(settings.view, visited: &visited).contains {
+                ($0 as? UIAccessibilityIdentification)?.accessibilityIdentifier == "home-assistant.url" || $0.accessibilityLabel == "Home Assistant URL"
+            }
+        }
+        var connectionVisited = Set<ObjectIdentifier>()
+        let connectionElements = routeAccessibilityElements(settings.view, visited: &connectionVisited)
+        XCTAssertTrue(connectionElements.contains { ($0 as? UIAccessibilityIdentification)?.accessibilityIdentifier == "home-assistant.url" || $0.accessibilityLabel == "Home Assistant URL" }, "Home Assistant must expose its URL directly, without opening a screen submenu")
+        XCTAssertFalse(connectionElements.contains { $0.accessibilityLabel == "Game lights" && $0.accessibilityTraits.contains(.button) }, "Screen access must be inline, not a nested navigation menu")
         capture(window, name: "Home-Assistant-Under-Connections")
     }
 
