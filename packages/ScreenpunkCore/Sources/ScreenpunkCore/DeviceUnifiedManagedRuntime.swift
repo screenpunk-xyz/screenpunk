@@ -58,6 +58,7 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
     private let generic: (any DeviceImmutableGenericOperations)?
     private let home: UnifiedHomeRuntime?
     private var cloudHome: UnifiedCloudHomeRuntime?
+    private var customHTTP: DeviceCustomHTTPRuntime?
     private let validate: () throws -> Void
     private let validateActive: () throws -> Void
     private let validateActiveWithCancellation: (DeviceRuntimeVerificationCancellation?) throws -> Void
@@ -80,6 +81,7 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
         let result: ConnectionHTTPResult
         if alias == "home", let cloudHome { result = try await cloudHome.request(operation: operation, parameters: parameters, readOnly: readOnly) }
         else if alias == "home", let home { result = try await home.request(operation: operation, parameters: parameters, readOnly: readOnly) }
+        else if manifest.connections.contains(where: { $0.alias == alias && $0.customHTTP != nil }), let customHTTP { result = try await customHTTP.request(alias: alias, operation: operation, parameters: parameters, readOnly: readOnly) }
         else if let generic { result = readOnly ? try await generic.requestRead(alias: alias, operation: operation, parameters: parameters) : try await generic.request(alias: alias, operation: operation, parameters: parameters) }
         else { throw ConnectionFailure.permissionRequired }
         try verifyActive(); return result
@@ -119,7 +121,7 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
     public func guardedHTTP(_ transport: any HTTPTransport) -> any HTTPTransport { UnifiedRuntimeHTTP(delegate: transport, validate: validateActive) }
     static func issue(session: DeviceUnifiedInventorySession, operationID: UUID,
         http: any HTTPTransport, webSocket: any WebSocketTransport, resolver: any DestinationResolver,
-        clock: any PairingClock, historicalMounted: Bool = false, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
+        clock: any PairingClock, historicalMounted: Bool = false, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil, customHTTPProvider: DeviceCustomHTTPProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
         let source: (resolver: DeviceMixedResourceResolver, original: DeviceMixedResolvedResources, store: DeviceMixedInventoryStore, capture: DeviceMixedInventoryStore.Capture, validate: () throws -> Void)
         if historicalMounted {
             guard let retained = try session.lastSuccessfulRuntimeSourceExact() else { throw DeviceManagedRenderFailure.invalidContent }
@@ -137,6 +139,9 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
             let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: content.manifest, allowsLegacyDeviceLocalAccess: false,
                 seed: .init(hasGeneric: false, homeAssistant: nil, publicReads: nil), generic: nil,
                 http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: cancellableActiveValidate)
+            if let provider = customHTTPProvider {
+                runtime.customHTTP = DeviceCustomHTTPRuntime(installationID: source.capture.snapshot.installationOwner.installationID, manifest: content.manifest, provider: provider, http: http, webSocket: webSocket, resolver: resolver, validate: activeValidate)
+            }
             if let provider = cloudHomeAssistant {
                 runtime.cloudHome = UnifiedCloudHomeRuntime(installationID: source.capture.snapshot.installationOwner.installationID,
                     manifest: content.manifest, provider: provider, http: http, webSocket: webSocket, resolver: resolver, validate: activeValidate)
@@ -177,12 +182,12 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
 }
 extension DeviceUnifiedInventorySession {
     @_spi(ManagedRender) public func lastSuccessfulManagedRuntime(operationID: UUID, http: any HTTPTransport,
-        webSocket: any WebSocketTransport, resolver: any DestinationResolver, clock: any PairingClock, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
-        try await DeviceUnifiedManagedRuntime.issue(session: self, operationID: operationID, http: http, webSocket: webSocket, resolver: resolver, clock: clock, historicalMounted: true, cloudHomeAssistant: cloudHomeAssistant)
+        webSocket: any WebSocketTransport, resolver: any DestinationResolver, clock: any PairingClock, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil, customHTTPProvider: DeviceCustomHTTPProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
+        try await DeviceUnifiedManagedRuntime.issue(session: self, operationID: operationID, http: http, webSocket: webSocket, resolver: resolver, clock: clock, historicalMounted: true, cloudHomeAssistant: cloudHomeAssistant, customHTTPProvider: customHTTPProvider)
     }
     @_spi(ManagedRender) public func makeManagedRuntime(operationID: UUID, http: any HTTPTransport,
-        webSocket: any WebSocketTransport, resolver: any DestinationResolver, clock: any PairingClock, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
-        try await DeviceUnifiedManagedRuntime.issue(session: self, operationID: operationID, http: http, webSocket: webSocket, resolver: resolver, clock: clock, cloudHomeAssistant: cloudHomeAssistant)
+        webSocket: any WebSocketTransport, resolver: any DestinationResolver, clock: any PairingClock, cloudHomeAssistant: DeviceCloudHomeAssistantProvider? = nil, customHTTPProvider: DeviceCustomHTTPProvider? = nil) async throws -> DeviceUnifiedManagedRuntime {
+        try await DeviceUnifiedManagedRuntime.issue(session: self, operationID: operationID, http: http, webSocket: webSocket, resolver: resolver, clock: clock, cloudHomeAssistant: cloudHomeAssistant, customHTTPProvider: customHTTPProvider)
     }
 }
 /// Issuance binds an opaque candidate; only the session's successful native

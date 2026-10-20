@@ -32,6 +32,16 @@ final class DeviceCloudHomeAssistantStoreTests: XCTestCase {
         XCTAssertNil(try store.configuration(installationID: installation, manifest: changed))
         XCTAssertEqual(try DeviceCloudHomeAssistantStore(store: memory).configuration(installationID: installation, manifest: screen), approved)
     }
+    func testSavedConnectionRequiresNewExplicitApproval() throws {
+        let store = DeviceCloudHomeAssistantStore(store: MemoryCredentialStore()), installation = UUID()
+        let first = manifest(), second = manifest()
+        try store.approve(installationID: installation, manifest: first, origin: "https://home.example", token: "synthetic-token", allowInsecureHTTP: false)
+        XCTAssertTrue(try store.hasSavedConnection(installationID: installation))
+        XCTAssertNil(try store.configuration(installationID: installation, manifest: second))
+        try store.approveSaved(installationID: installation, manifest: second)
+        XCTAssertEqual(try store.configuration(installationID: installation, manifest: second)?.origin, "https://home.example")
+        XCTAssertThrowsError(try store.approveSaved(installationID: UUID(), manifest: second))
+    }
     func testRevocationPreservesOtherInstallationsAndDeletesLastCredentialRecord() throws {
         let memory = MemoryCredentialStore(), store = DeviceCloudHomeAssistantStore(store: memory)
         let first = UUID(), second = UUID(), screen = manifest()

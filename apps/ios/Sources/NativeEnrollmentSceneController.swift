@@ -36,9 +36,17 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
         guard hasRecordedCloudInstallation, !cloudDisconnected else { return .notConnected }
         switch state {
         case .idle, .enrolling: return .connecting
-        case .currentInstallation: return .connected
+        case .currentInstallation: return cloudDeliveryConnectionNeedsAttention ? .needsAttention : .connected
         case .needsAttention, .screenDeliveryNeedsAttention: return .needsAttention
         }
+    }
+    @Published private(set) var cloudDeliveryConnectionNeedsAttention = NativeCloudRealtimeConfiguration.enabled
+    var cloudConnectionMessage: String? {
+        if let deliveryMessage, state == .needsAttention || state == .screenDeliveryNeedsAttention { return deliveryMessage }
+        if cloudDeliveryConnectionNeedsAttention {
+            return "Screen updates are not connected. Check this device’s internet connection, then tap Retry connection."
+        }
+        return deliveryMessage
     }
     struct CloudScreenInventory: Equatable {
         struct Entry: Identifiable, Equatable {
@@ -178,7 +186,12 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
         }
     }
 
-    @Published private(set) var state: State = .idle { didSet { updatePresence() } }
+    @Published private(set) var state: State = .idle {
+        didSet {
+            if state == .currentInstallation, !cloudDisconnected { disconnectMessage = nil }
+            updatePresence()
+        }
+    }
     @Published private(set) var enrollmentProgressMessage: String?
     @Published private(set) var enrollmentDiagnostic: NativeEnrollmentFailureDiagnostic?
     private static let enrollmentLog = Logger(subsystem: "xyz.screenpunk.ios", category: "enrollment")
@@ -638,6 +651,7 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
                 guard let metadata = captureReportedMetadata() else { throw NativeEnrollmentActionFailure.unsupportedDevice }
                 let profile = metadata.profile
                 setEnrollmentStage(.viewport)
+                let viewport = try NativeEnrollmentActionInput.fullScreenViewport()
                 try NativeEnrollmentActionInput.validateViewport(viewport)
                 setEnrollmentStage(.selection)
                 let selection = try lifecycle.enrollmentSelection(accountID: accountID, locationID: locationID)
@@ -901,9 +915,12 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
         presenceContext = bound
         var discoveredOperationID: UUID?
         var discoveredConfirmation: (DeviceManagedStaticContent, DeviceRuntimeLifetime, NativeCurrentInstallationDispatch)?
-        presence.start(afterRequest: { [weak self, weak original] in
+        presence.start(onFailure: { [weak self] in
+            self?.cloudDeliveryConnectionNeedsAttention = true
+        }, afterRequest: { [weak self, weak original] in
             guard let self, let original, self.original === original, self.context === bound,
                 !self.disconnectInProgress, !self.factoryResetInProgress, !self.intentRetirementPending else { return }
+            if !NativeCloudRealtimeConfiguration.enabled { self.cloudDeliveryConnectionNeedsAttention = false }
             let confirmation = discoveredConfirmation, operationID = discoveredOperationID
             discoveredConfirmation = nil; discoveredOperationID = nil
             if let confirmation {
@@ -962,10 +979,12 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
                         try Task.checkCancellation()
                         guard self.original === original, self.context === bound else { throw CancellationError() }
                         try await self.realtime.start(session, healthChanged: { [weak self] healthy in
+                            self?.cloudDeliveryConnectionNeedsAttention = !healthy
                             self?.presence.setInterval(TimeInterval(healthy ? session.reconciliationMaxSeconds : 900))
                         }) { [weak self] in self?.presence.requestReconciliation() }
                     } catch {
                         self.realtime.stop()
+                        self.cloudDeliveryConnectionNeedsAttention = true
                         try Task.checkCancellation()
                         // Optional realtime failure retains the bounded reconciliation
                         // fallback and never discards an already authenticated command.
@@ -1089,8 +1108,12 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
                 excludedLocalResetRoot: reset, storage: NativeEnrollmentKeychainBackend())
             let result = try session.restoreCompleted(stores: stores)
             installationEnrolled = true
+            // Display geometry is a current device observation, not enrollment authority.
+            // Keep the saved request unchanged, including installations enrolled while a keyboard was open.
+            let viewport = try NativeEnrollmentActionInput.fullScreenViewport()
             let target = DeviceProfile(deviceId: proposal.claimInput.transitionId.uuidString.lowercased(), name: intent.name,
-                orientation: intent.width > intent.height ? .landscape : .portrait, width: intent.width, height: intent.height)
+                orientation: viewport.width > viewport.height ? .landscape : .portrait,
+                width: Int(viewport.width.rounded()), height: Int(viewport.height.rounded()))
             let restored = Original(selection: nil, authority: authority, proposal: proposal, origin: origin,
                 name: intent.name, profile: intent.profile, target: target, intent: intent)
             restored.restoring = true; restored.roots = roots; restored.stores = stores; restored.session = session; restored.result = result
@@ -1116,6 +1139,8 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
     }
     private func startDeviceOnlyConnection(_ original: Original, result: NativeOperationalEnrollmentResult,
         context: DeviceManagementAuthority.CloudInstallationContext, restorePresentation: Bool) {
+        presence.stop(); realtime.stop(); presenceContext = nil
+        cloudDeliveryConnectionNeedsAttention = false
         enrollmentDiagnostic = nil; deliveryMessage = nil; state = .enrolling
         workKind = .reconnect
         task = Task { [weak self, weak original] in
@@ -1228,6 +1253,7 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
         lifecycle: CloudHumanSessionLifecycle?) async throws {
         var association = try unified.detachedAssociation()
         try DeviceCloudHomeAssistantStore.shared.revoke(installationID: association.metadata.retiredInstallationID)
+        try DeviceCustomHTTPStore.shared.revoke(installationID: association.metadata.retiredInstallationID)
         cloudLogoutCleanupPending = !association.metadata.cleanupCompleted
         if cloudLogoutCleanupPending {
             let proof = try cloudCleanup(association, association.credentialRetirement().namespaceURL)
@@ -1806,7 +1832,7 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
                 unified = try original.authority.reattachCloudInventory(detached: detachedInventory,
                     detachedContext: detachedContext, context: context, native: session, current: current,
                     operationID: operationID, generationID: generationID)
-                cloudDisconnected = false; self.detachedInventory = nil; self.detachedContext = nil
+                cloudDisconnected = false; disconnectMessage = nil; self.detachedInventory = nil; self.detachedContext = nil
                 guard let body = d.stateBody, let acknowledged = d.stateAck else { throw NativeDeliveryExecutionError.association }
                 try unified.retainCloudCheckpoint(authenticatedGenerationID: acknowledged.acceptedGenerationID(body: body, installation: result.installation))
             } else {
@@ -2144,7 +2170,8 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
                 let runtime = try await unified.lastSuccessfulManagedRuntime(operationID: operationID,
                     http: URLSessionHTTPTransport(), webSocket: URLSessionWebSocketTransport(),
                     resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock(),
-                    cloudHomeAssistant: { try DeviceCloudHomeAssistantStore.shared.configuration(installationID: $0, manifest: $1) })
+                    cloudHomeAssistant: { try DeviceCloudHomeAssistantStore.shared.configuration(installationID: $0, manifest: $1) },
+                    customHTTPProvider: { try DeviceCustomHTTPStore.shared.configuration(installationID: $0, manifest: $1, alias: $2) })
                 preparedRuntime = runtime; selected = runtime.content
             } catch DeviceManagedRenderFailure.invalidContent {
                 // Fall back only when no managed historical presentation is available.
@@ -2463,7 +2490,8 @@ extension NativeInstallationStatusTransport: NativeSceneDeliveryTransport {}
         let runtime = try await unified.makeManagedRuntime(operationID: operationID,
             http: URLSessionHTTPTransport(), webSocket: URLSessionWebSocketTransport(),
             resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock(),
-            cloudHomeAssistant: { try DeviceCloudHomeAssistantStore.shared.configuration(installationID: $0, manifest: $1) })
+            cloudHomeAssistant: { try DeviceCloudHomeAssistantStore.shared.configuration(installationID: $0, manifest: $1) },
+                    customHTTPProvider: { try DeviceCustomHTTPStore.shared.configuration(installationID: $0, manifest: $1, alias: $2) })
         preparedRuntime = runtime
         return runtime.content
     }
@@ -3053,6 +3081,18 @@ struct NativeEnrollmentFailureDiagnostic: Equatable {
 }
 private enum NativeEnrollmentActionFailure: Error { case originalChanged, authorityUnavailable, invalidViewport, unsupportedDevice, busy, resetInProgress, retirementPending }
 enum NativeEnrollmentActionInput {
+    @MainActor static func fullScreenViewport() throws -> CGSize {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) else {
+            throw NativeEnrollmentActionFailure.invalidViewport
+        }
+        return try screenViewport(screen: scene.screen.bounds.size, landscape: scene.interfaceOrientation.isLandscape)
+    }
+    static func screenViewport(screen: CGSize, landscape: Bool) throws -> CGSize {
+        try validateViewport(screen)
+        let short = min(screen.width, screen.height), long = max(screen.width, screen.height)
+        return landscape ? CGSize(width: long, height: short) : CGSize(width: short, height: long)
+    }
     static func requiresRecordedRoots(installationRecorded: Bool, namespacePresent: Bool) -> Bool {
         installationRecorded || namespacePresent
     }
@@ -3521,7 +3561,7 @@ private final class NativeRelayArchivePlan {
         }
         return cadence == cadenceGeneration || reconciliationPending
     }
-    func start(afterRequest: @escaping () -> Void = {}, send: @escaping () async throws -> Void) {
+    func start(onFailure: @escaping () -> Void = {}, afterRequest: @escaping () -> Void = {}, send: @escaping () async throws -> Void) {
         stop()
         let current = generation
         timer = Task { [weak self] in
@@ -3535,7 +3575,7 @@ private final class NativeRelayArchivePlan {
                 var succeeded = false
                 let pending = Task {
                     do { try Task.checkCancellation(); try await send(); try Task.checkCancellation(); succeeded = true }
-                    catch { /* Foreground discovery cannot turn a working display into a setup error. */ }
+                    catch { if !Task.isCancelled { onFailure() } }
                 }
                 self.request = pending
                 await pending.value

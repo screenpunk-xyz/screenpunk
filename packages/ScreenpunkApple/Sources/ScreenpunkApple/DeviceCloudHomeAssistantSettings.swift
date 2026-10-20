@@ -9,9 +9,9 @@ public struct DeviceCloudHomeAssistantSettings: View {
         self.installationID = installationID; self.manifests = manifests
     }
     public var body: some View {
-        Section("Local connections") {
+        Form {
             ForEach(manifests.filter { $0.connections.contains { $0.alias == "home" } }, id: \.dashboardId) { manifest in
-                NavigationLink("Home Assistant · " + manifest.name) {
+                NavigationLink(manifest.name) {
                     CloudHomeApproval(installationID: installationID, manifest: manifest)
                 }
             }
@@ -25,6 +25,7 @@ private struct CloudHomeApproval: View {
     @State private var token = ""
     @State private var insecure = false
     @State private var approved = false
+    @State private var savedConnection = false
     @State private var message: String?
     private var declaration: ManifestConnection? { manifest.connections.first { $0.alias == "home" } }
     var body: some View {
@@ -46,6 +47,12 @@ private struct CloudHomeApproval: View {
                 ForEach(declaration?.cameraEntities ?? [], id: \.self) { Text("Camera: " + $0) }
             }
             Section("Connection") {
+                if savedConnection && !approved {
+                    Button("Approve using saved Home Assistant connection") {
+                        do { try DeviceCloudHomeAssistantStore.shared.approveSaved(installationID: installationID, manifest: manifest); approved = true; message = "Approved. Return to your screen." }
+                        catch { message = "Could not approve the saved connection. Enter connection details below." }
+                    }
+                }
                 TextField("Home Assistant URL", text: $origin).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                 SecureField("Access token", text: $token).textInputAutocapitalization(.never).autocorrectionDisabled()
                 Toggle("Allow HTTP on my local network", isOn: $insecure)
@@ -65,7 +72,7 @@ private struct CloudHomeApproval: View {
                 if let message { Text(message).font(.callout) }
             }
         }.navigationTitle("Home Assistant")
-            .task { approved = (try? DeviceCloudHomeAssistantStore.shared.configuration(installationID: installationID, manifest: manifest)) != nil }
+            .task { savedConnection = (try? DeviceCloudHomeAssistantStore.shared.hasSavedConnection(installationID: installationID)) == true; approved = (try? DeviceCloudHomeAssistantStore.shared.configuration(installationID: installationID, manifest: manifest)) != nil }
     }
 }
 #endif

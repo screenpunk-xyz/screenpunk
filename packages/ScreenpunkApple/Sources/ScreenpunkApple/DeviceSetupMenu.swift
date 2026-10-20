@@ -4,15 +4,16 @@ import UIKit
 import Combine
 import ScreenpunkCore
 
-enum DeviceSetupPage: Hashable { case settings, general, cloud, googleTV, googleCalendar, display, screens, guided }
+enum DeviceSetupPage: Hashable { case settings, general, cloud, homeAssistant, custom(String), googleTV, googleCalendar, display, screens, guided }
 
 @MainActor
 struct DeviceConnectorCatalog {
     let manifests: [DashboardManifest]
+    let installationID: UUID?
     private let basic: GoogleTVConfiguration
     private let developer: GoogleTVADBConfiguration
-    init(manifests: [DashboardManifest], basic: GoogleTVConfiguration = .load(), developer: GoogleTVADBConfiguration = .load()) {
-        self.manifests = manifests; self.basic = basic; self.developer = developer
+    init(manifests: [DashboardManifest], installationID: UUID? = nil, basic: GoogleTVConfiguration = .load(), developer: GoogleTVADBConfiguration = .load()) {
+        self.manifests = manifests; self.installationID = installationID; self.basic = basic; self.developer = developer
     }
     static func sourceManifests(managed: [DashboardManifest]?, legacy: () -> [DashboardManifest]) -> [DashboardManifest] {
         if let managed { return managed }; return legacy()
@@ -24,6 +25,10 @@ struct DeviceConnectorCatalog {
     func missing(for dashboardID: String?) -> DeviceSetupPage? {
         guard let manifest = manifests.first(where: { $0.dashboardId == dashboardID }) else { return nil }
         for connection in manifest.connections where connection.required {
+            if let installationID {
+                if connection.alias == "home", (try? DeviceCloudHomeAssistantStore.shared.configuration(installationID: installationID, manifest: manifest)) == nil { return .homeAssistant }
+                if connection.customHTTP != nil, (try? DeviceCustomHTTPStore.shared.configuration(installationID: installationID, manifest: manifest, alias: connection.alias)) == nil { return .custom(connection.alias) }
+            }
             if connection.alias == "googleTV" {
                 let operations = connection.operations?.map(\.name) ?? []
                 let needsBasic = operations.isEmpty || operations.contains(where: { !["launchChannel", "togglePower"].contains($0) })
@@ -61,7 +66,13 @@ struct DeviceSetupMenu: View {
     // snapshot must never reacquire the resource graph while SwiftUI lays out.
     private var catalog: DeviceConnectorCatalog {
         .init(manifests: DeviceConnectorCatalog.sourceManifests(managed: cloud?.installedManifests,
-            legacy: { host?.server?.installedManifests ?? [] }))
+            legacy: { host?.server?.installedManifests ?? [] }), installationID: cloud?.connectionInstallationID)
+    }
+    private var connectionManifests: [DashboardManifest] { cloud?.connectionManifests ?? [] }
+    private var showsHome: Bool { connectionManifests.contains { $0.connections.contains { $0.alias == "home" } } }
+    private var customConnections: [ManifestConnection] {
+        var seen = Set<String>()
+        return connectionManifests.flatMap(\.connections).filter { $0.customHTTP != nil && seen.insert($0.alias).inserted }
     }
     private var wide: Bool { settingsOpen && windowSize.width >= 1000 }
     private var screens: [LANScreenSetEntry] { host?.screenSet?.screens.map(\.entry) ?? [] }
@@ -167,9 +178,11 @@ struct DeviceSetupMenu: View {
                     if host != nil { Label(cloud == nil ? "General" : "Display and behavior", systemImage: "gearshape").tag(DeviceSetupPage.general) }
                     Label("Your screens", systemImage: "rectangle.on.rectangle").tag(DeviceSetupPage.screens)
                 }
-                if cloud != nil || catalog.showsTV || catalog.showsCalendar {
+                if cloud != nil || catalog.showsTV || catalog.showsCalendar || showsHome || !customConnections.isEmpty {
                     Section("Connections") {
                         if cloud != nil { Label("Screenpunk Cloud", systemImage: "cloud").tag(DeviceSetupPage.cloud) }
+                        if showsHome { Label("Home Assistant", systemImage: "house").tag(DeviceSetupPage.homeAssistant) }
+                        ForEach(customConnections, id: \.alias) { c in Label(c.customHTTP!.name, systemImage: "network").tag(DeviceSetupPage.custom(c.alias)) }
                         if catalog.showsTV { Label("Google TV", systemImage: "tv").tag(DeviceSetupPage.googleTV) }
                         if catalog.showsCalendar { Label("Google Calendar", systemImage: "calendar").tag(DeviceSetupPage.googleCalendar) }
                     }
@@ -192,7 +205,7 @@ struct DeviceSetupMenu: View {
                 if host != nil { NavigationLink(value: DeviceSetupPage.general) { Label(cloud == nil ? "General" : "Display and behavior", systemImage: "gearshape") } }
                 NavigationLink(value: DeviceSetupPage.screens) { Label("Your screens", systemImage: "rectangle.on.rectangle") }
             }
-            if cloud != nil || catalog.showsTV || catalog.showsCalendar {
+            if cloud != nil || catalog.showsTV || catalog.showsCalendar || showsHome || !customConnections.isEmpty {
                 Section("Connections") {
                     if let cloud {
                         NavigationLink(value: DeviceSetupPage.cloud) {
@@ -203,6 +216,8 @@ struct DeviceSetupMenu: View {
                         }.accessibilityLabel("Screenpunk Cloud").accessibilityValue(cloud.connectionDescription)
                             .accessibilityIdentifier("device.menu.cloudSettings")
                     }
+                    if showsHome { NavigationLink(value: DeviceSetupPage.homeAssistant) { Label("Home Assistant", systemImage: "house") } }
+                    ForEach(customConnections, id: \.alias) { c in NavigationLink(value: DeviceSetupPage.custom(c.alias)) { Label(c.customHTTP!.name, systemImage: "network") } }
                     if catalog.showsTV { NavigationLink(value: DeviceSetupPage.googleTV) {
                         Label { VStack(alignment: .leading, spacing: 4) { Text("Google TV"); Text(catalog.usesTV ? "TV connection and pairing" : "Not used by any screen").font(.subheadline).foregroundStyle(.secondary) } } icon: { Image(systemName: "tv").foregroundStyle(.blue) }
                     } }
@@ -219,6 +234,10 @@ struct DeviceSetupMenu: View {
         case .settings: settingsList
         case .googleTV: DeviceGoogleTVSettings { connectionsRevision = UUID(); onConnectionsChanged() }
         case .googleCalendar: DeviceGoogleCalendarSettings(manifests: catalog.manifests) { connectionsRevision = UUID(); onConnectionsChanged() }
+        case .homeAssistant:
+            if let id = cloud?.connectionInstallationID { DeviceCloudHomeAssistantSettings(installationID: id, manifests: connectionManifests) }
+        case .custom(let alias):
+            if let id = cloud?.connectionInstallationID { DeviceCustomHTTPSettings(installationID: id, manifests: connectionManifests, alias: alias) }
         case .cloud: if let cloud { cloud.settings }
         case .general, .display:
             if let host {
@@ -239,7 +258,7 @@ struct DeviceSetupMenu: View {
         }
     }
     private func title(_ page: DeviceSetupPage) -> String {
-        switch page { case .settings: return "Settings"; case .general: return cloud == nil ? "General" : "Display and behavior"; case .cloud: return "Screenpunk Cloud"; case .googleTV: return "Google TV"; case .googleCalendar: return "Google Calendar"; case .display: return "Display and behavior"; case .screens: return "Your screens"; case .guided: return "Lock Screenpunk on screen" }
+        switch page { case .settings: return "Settings"; case .general: return cloud == nil ? "General" : "Display and behavior"; case .cloud: return "Screenpunk Cloud"; case .homeAssistant: return "Home Assistant"; case .custom(let alias): return customConnections.first(where: { $0.alias == alias })?.customHTTP?.name ?? "Connection"; case .googleTV: return "Google TV"; case .googleCalendar: return "Google Calendar"; case .display: return "Display and behavior"; case .screens: return "Your screens"; case .guided: return "Lock Screenpunk on screen" }
     }
     private func instruction(_ title: String, _ text: String) -> some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.headline); Text(text).foregroundStyle(.secondary) } }
     private func row(_ title: String, subtitle: String, icon: String, disclosure: Bool, detail: String? = nil) -> some View {

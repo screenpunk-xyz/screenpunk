@@ -30,6 +30,18 @@ public final class DeviceCloudHomeAssistantStore: @unchecked Sendable {
         guard matching.count <= 1 else { throw ConnectionFailure.validationFailed }
         return matching.first?.configuration
     }
+    public func hasSavedConnection(installationID: UUID) throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return try records().contains { $0.installationID == installationID }
+    }
+    public func approveSaved(installationID: UUID, manifest: DashboardManifest) throws {
+        lock.lock()
+        let saved: HomeAssistantProvisioning?
+        do { saved = try records().last(where: { $0.installationID == installationID })?.configuration; lock.unlock() }
+        catch { lock.unlock(); throw error }
+        guard let saved else { throw ConnectionFailure.permissionRequired }
+        try approve(installationID: installationID, manifest: manifest, origin: saved.origin, token: saved.token, allowInsecureHTTP: saved.allowInsecureHTTP)
+    }
     /// Called by native Settings after the person reviews the exact declared permissions.
     public func approve(installationID: UUID, manifest: DashboardManifest, origin: String, token: String, allowInsecureHTTP: Bool) throws {
         try PackageValidator.validate(manifest)

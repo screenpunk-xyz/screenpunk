@@ -82,6 +82,10 @@ public enum PackageValidator {
 
         for connection in manifest.connections {
             do {
+                if let custom = connection.customHTTP {
+                    guard connection.publicHTTP == nil, connection.operations == nil, connection.serviceCalls == nil, connection.cameraEntities == nil else { throw ConnectionFailure.validationFailed }
+                    try custom.validate(alias: connection.alias)
+                }
                 if connection.serviceCalls != nil && connection.alias != "home" { throw ConnectionFailure.validationFailed }
                 try HomeAssistantServiceGrant.validate(connection.serviceCalls ?? [])
                 if connection.cameraEntities != nil && connection.alias != "home" { throw ConnectionFailure.validationFailed }

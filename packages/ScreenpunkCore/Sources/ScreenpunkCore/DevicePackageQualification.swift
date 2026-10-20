@@ -17,6 +17,7 @@ struct DevicePackageExpectation: Equatable, Sendable {
     let target: DeviceProfile
     /// Explicit caller-supplied native profile identity, never inferred from an owner or device UUID.
     let profileID: String
+    var allowsResponsiveLayout: Bool = false
 }
 public enum DevicePackageQualificationError: Error, Equatable, Sendable {
     case sizeLimit, invalidManifest, invalidExpectation, invalidPath, duplicatePath
@@ -110,7 +111,7 @@ enum DevicePackageQualifier {
         }
         var target = expected.target
         target.apply(orientation: expected.revision.orientation)
-        guard expected.revision.matches(profile: target), manifest.target.profileId.utf8.elementsEqual(expected.profileID.utf8),
+        guard (expected.allowsResponsiveLayout || expected.revision.matches(profile: target)), manifest.target.profileId.utf8.elementsEqual(expected.profileID.utf8),
               manifest.target.width == expected.revision.width, manifest.target.height == expected.revision.height,
               manifest.target.orientation == expected.revision.orientation.rawValue else { throw DevicePackageQualificationError.targetMismatch }
         guard let declaredDigest = manifest.digest, isHash(declaredDigest), declaredDigest == expected.revision.digest else {

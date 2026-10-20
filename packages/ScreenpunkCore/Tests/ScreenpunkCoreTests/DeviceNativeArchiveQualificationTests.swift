@@ -79,6 +79,38 @@ final class DeviceNativeArchiveQualificationTests:XCTestCase {
         let wrongProfile = DevicePackageExpectation(revision: deviceLabel.revision, target: deviceLabel.target, profileID: "wrong")
         XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(bytes, descriptor: approved, expected: wrongProfile))
     }
+    func testCapturedGameLightsArchiveOnKeyboardSizedDevice() throws {
+        guard let root = ProcessInfo.processInfo.environment["SCREENPUNK_CAPTURED_PACKAGE_ROOT"] else { throw XCTSkip("Optional captured-package reproduction") }
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: root).appendingPathComponent("game-lights-package.zip"))
+        let manifestBytes = try Data(contentsOf: URL(fileURLWithPath: root).appendingPathComponent("game-lights-manifest.json"))
+        let manifest = try JSONDecoder().decode(DashboardManifest.self, from: manifestBytes)
+        let expected = DevicePackageExpectation(revision: .init(revision: manifest.revision, dashboardId: manifest.dashboardId,
+            name: "Office iPad", digest: manifest.digest!, orientation: .landscape, width: 1112, height: 432),
+            target: .init(deviceId: "office", name: "Office iPad", orientation: .landscape, width: 1112, height: 432), profileID: "iPad")
+        let d = try DeviceDeliveryPackageCandidate.validating(packageProfile: DeviceDeliveryPackageCandidate.profile,
+            publicationID: UUID(), projectID: UUID(uuidString: manifest.dashboardId)!, packageID: UUID(),
+            dashboardID: UUID(uuidString: manifest.dashboardId)!, revision: UUID(uuidString: manifest.revision)!,
+            manifestDigest: .validating(manifest.digest!), manifestSHA256: .validating(hash(manifestBytes)),
+            archiveSHA256: .validating(hash(bytes)), compressedBytes: UInt64(bytes.count), expandedBytes: 325145, archiveEntries: 5)
+        let result = try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(bytes, descriptor: d, expected: expected)
+        XCTAssertEqual(result.package.manifest.connections.first?.alias, "home")
+        XCTAssertEqual(result.package.manifest.target.height, 834)
+    }
+
+    func testApprovedCloudLayoutAdaptsToDifferentViewportAndRotation() throws {
+        let f = try fixture(), bytes = try zip(f.files), approved = try descriptor(bytes, f)
+        for target in [DeviceProfile(deviceId: "small", name: "Small", width: 320, height: 568),
+                       DeviceProfile(deviceId: "wide", name: "Wide", orientation: .landscape, width: 1112, height: 432)] {
+            let expected = DevicePackageExpectation(revision: f.expected.revision, target: target, profileID: f.expected.profileID)
+            XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualify(bytes, descriptor: approved, expected: expected))
+            let responsive = try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(bytes, descriptor: approved, expected: expected)
+            XCTAssertEqual(responsive.package.manifest.target.width, f.expected.revision.width)
+            XCTAssertEqual(responsive.package.deploymentDigest, f.expected.revision.digest)
+            let wrong = DevicePackageExpectation(revision: f.expected.revision, target: target, profileID: "wrong")
+            XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(bytes, descriptor: approved, expected: wrong))
+        }
+    }
+
     func testLocalLegacyCompatibilityCannotReplaceCloudDescriptorUUIDIdentity() throws {
         let f = try fixture(), original = try zip(f.files), approved = try descriptor(original, f)
         var legacyRevision = f.expected.revision; legacyRevision.dashboardId = "google-tv-test"

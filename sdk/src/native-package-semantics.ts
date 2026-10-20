@@ -1,6 +1,24 @@
 import type { DashboardManifest, ManifestConnection } from "./package.js";
 import { fail } from "./native-package-json.js";
 
+function customHTTP(connection: ManifestConnection, index: number): void {
+  const d = connection.customHTTP;
+  if (!d) return;
+  const bad = () => fail("native_validation", `$manifest.connections[${index}].customHTTP`, "Invalid custom HTTP connection declaration");
+  const component = (x: string) => /^[A-Za-z0-9_.-]+$/.test(x) && x !== "." && x !== "..";
+  const forbidden = /^(authorization|x-api-key|token|password|access_token|api_key|apikey|secret|path|url|host|origin|method|headers|scheme|port)$/i;
+  if (["home", "googleTV", "googleCalendar", "google-calendar", "appleMaps"].includes(connection.alias) || connection.publicHTTP !== undefined || connection.operations !== undefined || connection.serviceCalls !== undefined || connection.cameraEntities !== undefined || /[\x00-\x1f\x7f]/.test(d.name) || new Set(d.operations.map(o => o.name)).size !== d.operations.length) bad();
+  if (d.authentication === "apiKey") {
+    if (!d.headerName || /^(host|cookie|content-length|transfer-encoding|connection|proxy-authorization|authorization)$/i.test(d.headerName)) bad();
+  } else if (d.headerName !== undefined) bad();
+  for (const o of d.operations) {
+    if (!component(o.name) || !o.path.startsWith("/") || !o.path.slice(1).split("/").every(x => /^[A-Za-z0-9_.,~-]+$/.test(x) && x !== "." && x !== "..")) bad();
+    for (const [key, values] of Object.entries(o.parameters)) {
+      if (!component(key) || forbidden.test(key) || key.toLowerCase() === d.headerName?.toLowerCase() || values.some(v => /[\x00-\x1f\x7f]/.test(v))) bad();
+    }
+  }
+}
+
 function unique(values: string[], path: string): void {
   if (new Set(values.map((v) => v.normalize("NFC"))).size !== values.length)
     fail("duplicate", path, "duplicate native String identity");
@@ -157,6 +175,7 @@ export function nativeSemantics(
         );
     }
     publicRead(c, index);
+    customHTTP(c, index);
   });
   if (
     /password|secret|token|api[_-]?key|bearer/.test(

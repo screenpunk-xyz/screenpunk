@@ -64,14 +64,21 @@ enum DevicePackageManifestPreflight {
             for item in items { try shape(item, .connection) }
         case .connection:
             guard let map = value as? [String: Any] else { throw DevicePackageQualificationError.invalidManifest }
-            guard map.count <= 6 else { throw DevicePackageQualificationError.invalidManifest }
-            guard Set(map.keys).isSubset(of: Set(["alias","required","cameraEntities","serviceCalls","operations","publicHTTP"] as [String])) else { throw DevicePackageQualificationError.invalidManifest }
+            guard map.count <= 7 else { throw DevicePackageQualificationError.invalidManifest }
+            guard Set(map.keys).isSubset(of: Set(["alias","required","cameraEntities","serviceCalls","operations","publicHTTP","customHTTP"] as [String])) else { throw DevicePackageQualificationError.invalidManifest }
             guard Set(["alias","required"] as [String]).isSubset(of: Set(map.keys)) else { throw DevicePackageQualificationError.invalidManifest }
             if let item = map["alias"] { try string(item, minimum: 1, maximum: 64, pattern: "^[A-Za-z][A-Za-z0-9_-]*$") }
             if let item = map["required"] { guard let number = item as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { throw DevicePackageQualificationError.invalidManifest } }
             if let item = map["cameraEntities"] { try shape(item, .cameraEntities) }
             if let item = map["serviceCalls"] { try shape(item, .serviceCalls) }
             if let item = map["operations"] { try shape(item, .operations) }
+            if let item = map["customHTTP"] {
+                guard let custom = item as? [String: Any], Set(custom.keys).isSubset(of: ["name", "authentication", "headerName", "operations"]),
+                    let operations = custom["operations"] as? [[String: Any]], (1...16).contains(operations.count),
+                    operations.allSatisfy({ Set($0.keys) == Set(["name", "method", "path", "parameters"]) }) else { throw DevicePackageQualificationError.invalidManifest }
+                let declaration = try JSONDecoder().decode(CustomHTTPDeclaration.self, from: JSONSerialization.data(withJSONObject: custom))
+                try declaration.validate(alias: map["alias"] as? String ?? "")
+            }
             if let item = map["publicHTTP"] { try shape(item, .publicHTTP) }
         case .cameraEntities:
             guard let items = value as? [Any], (0...16).contains(items.count) else { throw DevicePackageQualificationError.invalidManifest }

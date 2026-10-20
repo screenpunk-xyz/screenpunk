@@ -73,10 +73,15 @@ enum DeviceNativeArchiveQualifier {
         let qualifiedExpectation: DevicePackageExpectation
         if approvedManifestName {
             let approved = try DevicePackageManifestPreflight.decode(manifest)
+            guard let orientation = DeviceOrientation(rawValue: approved.target.orientation) else {
+                throw DevicePackageQualificationError.invalidManifest
+            }
+            // Cloud web screens lay out in the live WebView viewport. Manifest dimensions
+            // describe their authored preview; hashes and profile identity remain exact.
             qualifiedExpectation = .init(revision: .init(revision: expected.revision.revision,
                 dashboardId: expected.revision.dashboardId, name: approved.name, digest: expected.revision.digest,
-                orientation: expected.revision.orientation, width: expected.revision.width, height: expected.revision.height),
-                target: expected.target, profileID: expected.profileID)
+                orientation: orientation, width: approved.target.width, height: approved.target.height),
+                target: expected.target, profileID: expected.profileID, allowsResponsiveLayout: true)
         } else { qualifiedExpectation = expected }
         let package=try DevicePackageQualifier.qualify(.init(manifest:manifest,files:files),expected:qualifiedExpectation)
         guard package.manifestSHA256.utf8.elementsEqual(descriptor.manifestSHA256.text.utf8),
