@@ -83,6 +83,63 @@ final class NativeEnrollmentJournalStore {
     private var pairScanView: Scan?
     private var pairFrameIdentities: [NativeJournalIdentity] = []
     private var pairPendingWitness: PairPendingWitness?
+    /// Decoded prefix of an unchanged attempt chain. A changed binding, name,
+    /// inode, size, or timestamp falls back to a strict scan from that node.
+    /// Completed preparations are not read or decoded again on every command.
+    /// Inode binding guards cooperating replacement, not hostile same-UID rollback.
+    private struct ReplayCursor {
+        var usedFrames: Set<String>
+        var refs: [Ref]
+        var tip: NativeJournalNode?
+        var ownerships: [NativeJournalStageOwnership]
+        var persistentRefs: Set<Data>
+        var paired: NativePairReplay
+        var firstNativePreparationIDs: Set<UUID>
+        var context: NativePreparationReconstructionContext
+        var intent: Data?
+        var intentAttemptID: UUID?
+        var preparationID: UUID?
+        var phase: Int
+        var count: Int
+        var reserved: Int
+        var installed: Bool
+        var promotionProtocol: Int?
+        var activationProposal: NativeJournalActivationProposal?
+        var finalOwnershipAttemptID: UUID?
+    }
+    /// Identity observed after the bytes were decoded. A later write bumps ctime
+    /// even when size and mtime are restored, so the prefix is re-read.
+    private struct ReplayStat: Equatable {
+        let device: UInt64
+        let inode: UInt64
+        let size: UInt64
+        let mtimeSec: Int64
+        let mtimeNsec: Int64
+        let ctimeSec: Int64
+        let ctimeNsec: Int64
+    }
+    private struct ReplayFile {
+        let attemptName: String
+        var attemptStat: ReplayStat
+        let frameName: String
+        var frameStat: ReplayStat
+        let phase: Int
+        let candidateIdentity: NativeJournalIdentity
+        /// Step produced when this file was decoded, including a non-phase-6 tip
+        /// that was visited only because it was the last file of that scan.
+        let terminalStep: NativePreparationReconstructionStep?
+        let cursor: ReplayCursor
+    }
+    private struct ReplayDiagnostic {
+        let fileIndex: Int
+        let value: Diagnostic
+    }
+    private var replayFiles: [ReplayFile] = []
+    private var replayDiagnostics: [ReplayDiagnostic] = []
+    private var replayBinding: NativeJournalNode?
+    /// How many leading replay files were fsynced after their recorded stat.
+    /// qualify re-syncs only the tail; a changed stat truncates this with the prefix.
+    private var qualifiedSyncCount = 0
     private struct Disk {
         let root: Int32, lock: Int32, attempts: Int32, frames: Int32
         let directory: NativeJournalIdentity, lockIdentity: NativeJournalIdentity
@@ -764,11 +821,21 @@ final class NativeEnrollmentJournalStore {
     private func stageNodes(_ d: Disk, refs: [Ref]) throws -> [StageNodeDeclaration] {
         // Conservative compact declaration payload bound, not a heap promise.
         guard refs.count <= NativeJournalCodec.nodeLimit, refs.count * 512 <= NativeJournalCodec.compactDeclarationLimit else { throw NativeEnrollmentJournalError.capacity }
-        return try refs.map { ref in
-            guard ref.name.utf8.count <= 64, let frame = try readFile(d.frames, ref.name, limit: NativeJournalCodec.frameLimit),
-                frame.identity == (try loadAttemptWitness(d, ref)).value.candidateIdentity else { throw NativeEnrollmentJournalError.outcomeUncertain }
-            return .init(ref: ref, frameIdentity: frame.identity)
+        let stable = try matchedReplayPrefix(d, refs: refs)
+        var nodes: [StageNodeDeclaration] = []
+        nodes.reserveCapacity(refs.count)
+        for index in 0..<stable {
+            guard refs[index].name.utf8.count <= 64 else { throw NativeEnrollmentJournalError.outcomeUncertain }
+            nodes.append(.init(ref: refs[index], frameIdentity: replayFiles[index].candidateIdentity))
         }
+        if stable < refs.count {
+            nodes.append(contentsOf: try refs.dropFirst(stable).map { ref in
+                guard ref.name.utf8.count <= 64, let frame = try readFile(d.frames, ref.name, limit: NativeJournalCodec.frameLimit),
+                    frame.identity == (try loadAttemptWitness(d, ref)).value.candidateIdentity else { throw NativeEnrollmentJournalError.outcomeUncertain }
+                return StageNodeDeclaration(ref: ref, frameIdentity: frame.identity)
+            })
+        }
+        return nodes
     }
     private func validateStagePrefix(_ c: StageCheckpoint, d: Disk, state: Scan) throws {
         guard c.issuer == ObjectIdentifier(self), c.binding == d.binding, c.nodes.count == c.count,
@@ -1056,15 +1123,35 @@ final class NativeEnrollmentJournalStore {
     private func qualify(_ d: Disk, ref: Ref, generation: UInt64) throws -> LocalDurabilityReceipt {
         let state = try scan(d)
         guard state.latestInstalled, state.refs.last?.attemptID == ref.attemptID, let binding = d.binding else { throw NativeEnrollmentJournalError.conflict }
-        // Explicit restart qualification synchronizes the entire independently
-        // retained proof chain one bounded record at a time, not just visible tip.
-        for item in state.refs {
+        // Each admitted record is synchronized once. An unchanged inode, size, and
+        // timestamp is still the same durable record; rewriting it on every later
+        // command is quadratic and does not make the prefix more durable. A stat
+        // change truncates the prefix and synchronizes again from that node.
+        var syncFrom = min(qualifiedSyncCount, state.refs.count, replayFiles.count)
+        if syncFrom > 0 {
+            for index in 0..<syncFrom where replayFiles[index].attemptName != state.refs[index].name {
+                syncFrom = index
+                break
+            }
+        }
+        for item in state.refs.dropFirst(syncFrom) {
             let a = try loadAttemptWitness(d, item)
             try syncExisting(d.attempts, item.name, expected: a.node, limit: NativeJournalCodec.attemptLimit)
             guard let frame = try readFile(d.frames, item.name, limit: NativeJournalCodec.frameLimit),
                 frame.identity == a.value.candidateIdentity, frame.bytes == a.value.targetPayload else { throw NativeEnrollmentJournalError.conflict }
             try syncExisting(d.frames, item.name, expected: frame, limit: NativeJournalCodec.frameLimit)
         }
+        let refreshEnd = min(state.refs.count, replayFiles.count)
+        if syncFrom < refreshEnd {
+            for index in syncFrom..<refreshEnd {
+                guard replayFiles[index].attemptName == state.refs[index].name,
+                    let attemptStat = try replayStat(d.attempts, replayFiles[index].attemptName),
+                    let frameStat = try replayStat(d.frames, replayFiles[index].frameName) else { throw NativeEnrollmentJournalError.conflict }
+                replayFiles[index].attemptStat = attemptStat
+                replayFiles[index].frameStat = frameStat
+            }
+        }
+        qualifiedSyncCount = state.refs.count
         try syncExisting(d.root, "root-binding.json", expected: binding, limit: NativeJournalCodec.frameLimit)
         try sync(d.lock); try sync(d.attempts); try sync(d.frames); try sync(d.root); try check(d)
         let checked = try scan(d), proof = try loadAttempt(d, ref).node
@@ -1104,7 +1191,62 @@ final class NativeEnrollmentJournalStore {
         var preparationID: UUID?, phase = -1, count = 0, reserved = 0, installed = true
         var promotionProtocol: Int?
         var activationProposal: NativeJournalActivationProposal?, finalOwnershipAttemptID: UUID?
-        for (offset, name) in attemptNames.enumerated() {
+        if replayBinding != binding {
+            replayFiles.removeAll(keepingCapacity: false)
+            replayDiagnostics.removeAll(keepingCapacity: false)
+            qualifiedSyncCount = 0
+            replayBinding = binding
+        }
+        var start = 0
+        var recordReplay = true
+        while start < replayFiles.count && start < attemptNames.count {
+            let saved = replayFiles[start]
+            if saved.attemptName != attemptNames[start] {
+                // A caller-selected subset is not this journal prefix. Scan it
+                // strictly, and keep the prefix recorded for the real chain.
+                recordReplay = false
+                start = 0
+                break
+            }
+            guard frameNames.contains(saved.frameName),
+                let attemptStat = try replayStat(d.attempts, saved.attemptName), attemptStat == saved.attemptStat,
+                let frameStat = try replayStat(d.frames, saved.frameName), frameStat == saved.frameStat else {
+                replayFiles.removeSubrange(start...)
+                replayDiagnostics.removeAll { $0.fileIndex >= start }
+                if qualifiedSyncCount > start { qualifiedSyncCount = start }
+                break
+            }
+            start += 1
+        }
+        if start > 0 {
+            let saved = replayFiles[start - 1].cursor
+            usedFrames = saved.usedFrames; refs = saved.refs; tip = saved.tip; ownerships = saved.ownerships
+            persistentRefs = saved.persistentRefs; paired = saved.paired; firstNativePreparationIDs = saved.firstNativePreparationIDs
+            context = saved.context; intent = saved.intent; intentAttemptID = saved.intentAttemptID; preparationID = saved.preparationID
+            phase = saved.phase; count = saved.count; reserved = saved.reserved; installed = saved.installed
+            promotionProtocol = saved.promotionProtocol; activationProposal = saved.activationProposal
+            finalOwnershipAttemptID = saved.finalOwnershipAttemptID
+            let resumedAtEnd = start == attemptNames.count
+            for item in replayDiagnostics where item.fileIndex < start && !(resumedAtEnd && item.fileIndex == start - 1) {
+                try visit(item.value)
+            }
+            if resumedAtEnd {
+                let last = replayFiles[start - 1]
+                if captureOrdinary, ordinaryPhaseCommand?.phase == 6, let step = last.terminalStep {
+                    guard ordinaryAdmissionStep == nil else { throw NativeEnrollmentJournalError.outcomeUncertain }
+                    ordinaryAdmissionStep = step
+                }
+                if last.phase == 6, let item = replayDiagnostics.last, item.fileIndex == start - 1 {
+                    try visit(item.value)
+                } else if let step = last.terminalStep, let attemptID = last.cursor.refs.last?.attemptID {
+                    try visit(.init(attemptID: attemptID, candidateInstalled: last.cursor.installed, step: step))
+                }
+            }
+        }
+        if start < attemptNames.count {
+        for offset in start..<attemptNames.count {
+            let name = attemptNames[offset]
+            var emittedStep: NativePreparationReconstructionStep?
             guard let node = try readFile(d.attempts, name, limit: NativeJournalCodec.attemptLimit) else { throw NativeEnrollmentJournalError.conflict }
             let a = try NativeJournalCodec.attempt(node.bytes), f = try NativeJournalCodec.frame(a.targetPayload)
             guard name == filename(offset + 1, a.attemptID), a.index == offset + 1,
@@ -1192,20 +1334,41 @@ final class NativeEnrollmentJournalStore {
                     guard ordinaryAdmissionStep == nil else { throw NativeEnrollmentJournalError.outcomeUncertain }
                     ordinaryAdmissionStep = step
                 }
+                emittedStep = step
                 try visit(.init(attemptID: a.attemptID, candidateInstalled: installed, step: step))
                 if phase == 6 && installed {
                     context = try requireContinuation(step); intent = nil; intentAttemptID = nil; preparationID = nil
                 }
             }
+            if recordReplay {
+                let frameName = committed != nil ? name : name + ".pending"
+                guard let attemptStat = try replayStat(d.attempts, name),
+                    let frameStat = try replayStat(d.frames, frameName) else { throw NativeEnrollmentJournalError.conflict }
+                replayFiles.append(.init(attemptName: name, attemptStat: attemptStat, frameName: frameName,
+                    frameStat: frameStat, phase: phase, candidateIdentity: a.candidateIdentity, terminalStep: emittedStep, cursor: .init(
+                        usedFrames: usedFrames, refs: refs, tip: tip, ownerships: ownerships, persistentRefs: persistentRefs,
+                        paired: paired, firstNativePreparationIDs: firstNativePreparationIDs, context: context, intent: intent,
+                        intentAttemptID: intentAttemptID, preparationID: preparationID, phase: phase, count: count, reserved: reserved,
+                        installed: installed, promotionProtocol: promotionProtocol, activationProposal: activationProposal,
+                        finalOwnershipAttemptID: finalOwnershipAttemptID)))
+                if phase == 6, let step = emittedStep {
+                    replayDiagnostics.append(.init(fileIndex: offset, value: .init(attemptID: a.attemptID, candidateInstalled: installed, step: step)))
+                }
+            }
+        }
         }
         guard usedFrames == frameNames else { throw NativeEnrollmentJournalError.outcomeUncertain }
         let result = Scan(refs: refs, tip: tip, latestInstalled: installed, preparationCount: count, reservedBytes: reserved, context: context, firstNativePreparationIDs: firstNativePreparationIDs, unfinishedIntent: intent, stageOwnerships: ownerships, paired: paired)
         if pairCommandScope || captureOrdinary {
             guard !captureOrdinary || (ordinaryScopeActive && ordinaryPhaseAnchor == nil) else { throw NativeEnrollmentJournalError.outcomeUncertain }
             pairScanView = result
-            pairFrameIdentities = try refs.map { ref in
-                let a = try loadAttemptWitness(d, ref).value
-                return a.candidateIdentity
+            if replayFiles.count == refs.count, zip(replayFiles, refs).allSatisfy({ $0.attemptName == $1.name }) {
+                pairFrameIdentities = replayFiles.map(\.candidateIdentity)
+            } else {
+                pairFrameIdentities = try refs.map { ref in
+                    let a = try loadAttemptWitness(d, ref).value
+                    return a.candidateIdentity
+                }
             }
         }
         if captureOrdinary {
@@ -1487,6 +1650,24 @@ final class NativeEnrollmentJournalStore {
             names.append(name); guard names.count <= NativeJournalCodec.nameLimit else { throw NativeEnrollmentJournalError.capacity }
         }
         return names
+    }
+    private func replayStat(_ parent: Int32, _ name: String) throws -> ReplayStat? {
+        var info = stat()
+        if fstatat(parent, name, &info, AT_SYMLINK_NOFOLLOW) != 0 {
+            if errno == ENOENT { return nil }
+            throw failure()
+        }
+        guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_nlink == 1, info.st_size >= 0 else {
+            throw NativeEnrollmentJournalError.conflict
+        }
+#if canImport(Darwin)
+        let modified = info.st_mtimespec, changed = info.st_ctimespec
+#else
+        let modified = info.st_mtim, changed = info.st_ctim
+#endif
+        return .init(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino), size: UInt64(info.st_size),
+            mtimeSec: Int64(modified.tv_sec), mtimeNsec: Int64(modified.tv_nsec),
+            ctimeSec: Int64(changed.tv_sec), ctimeNsec: Int64(changed.tv_nsec))
     }
     private func readFile(_ parent: Int32, _ name: String, limit: Int) throws -> NativeJournalNode? {
         let fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
@@ -1858,6 +2039,21 @@ extension NativeEnrollmentJournalStore {
         ordinaryPhaseCommand = nil; ordinaryPhaseAnchor = nil
         pairScanView = nil; pairFrameIdentities = []; pairPendingWitness = nil
     }
+    /// How many leading refs still match the decoded replay, including inode and timestamps.
+    /// Callers re-read only the unmatched tail. The newest installed file can be one
+    /// ahead of the replay until the next full scan records it.
+    private func matchedReplayPrefix(_ d: Disk, refs: [Ref]) throws -> Int {
+        let limit = min(replayFiles.count, refs.count)
+        var index = 0
+        while index < limit {
+            let saved = replayFiles[index]
+            if saved.attemptName != refs[index].name || saved.frameName != refs[index].name { break }
+            guard let attemptStat = try replayStat(d.attempts, saved.attemptName), attemptStat == saved.attemptStat,
+                let frameStat = try replayStat(d.frames, saved.frameName), frameStat == saved.frameStat else { break }
+            index += 1
+        }
+        return index
+    }
     /// Original compact physical declarations, not retained historical intent snapshots.
     /// Only this fixed command's captured inode/bytes can account for a new suffix.
     private func checkOrdinaryPhaseWitnesses(_ d: Disk, view: Scan) throws {
@@ -1871,7 +2067,20 @@ extension NativeEnrollmentJournalStore {
         let actualAttempts = Set(try names(d.attempts)), actualFrames = Set(try names(d.frames))
         guard actualAttempts.isSubset(of: expectedNames.union(extra)), actualFrames.isSubset(of: expectedNames.union(extra)) else { throw NativeEnrollmentJournalError.outcomeUncertain }
         var predecessor: NativeJournalNode?
-        for (offset, ref) in view.refs.enumerated() {
+        let prefixCount = anchor.nodes.count
+        let stable = try matchedReplayPrefix(d, refs: Array(view.refs.prefix(prefixCount)))
+        var offsetStart = 0
+        if stable > 0 {
+            if stable == prefixCount, prefixCount > 0 {
+                let ref = view.refs[prefixCount - 1]
+                guard anchor.nodes[prefixCount - 1].ref == ref,
+                    anchor.nodes[prefixCount - 1].frameIdentity == pairFrameIdentities[prefixCount - 1] else { throw NativeEnrollmentJournalError.outcomeUncertain }
+            }
+            predecessor = replayFiles[stable - 1].cursor.tip
+            offsetStart = stable
+        }
+        for offset in offsetStart..<view.refs.count {
+            let ref = view.refs[offset]
             let loaded = try loadAttemptWitness(d, ref), a = loaded.value
             guard let committed = try readFile(d.frames, ref.name, limit: NativeJournalCodec.frameLimit),
                 try readFile(d.frames, ref.name + ".pending", limit: NativeJournalCodec.frameLimit) == nil,
@@ -2011,7 +2220,20 @@ extension NativeEnrollmentJournalStore {
         let actualAttempts = Set(try names(d.attempts)), actualFrames = Set(try names(d.frames))
         guard actualAttempts.isSubset(of: expectedNames.union(extra)), actualFrames.isSubset(of: expectedNames.union(extra)) else { throw NativeEnrollmentJournalError.outcomeUncertain }
         var predecessor: NativeJournalNode?
-        for (offset, ref) in view.refs.enumerated() {
+        let prefixCount = original.nodes.count
+        let stable = try matchedReplayPrefix(d, refs: Array(view.refs.prefix(prefixCount)))
+        var offsetStart = 0
+        if stable > 0 {
+            if stable == prefixCount, prefixCount > 0 {
+                let ref = view.refs[prefixCount - 1]
+                guard original.nodes[prefixCount - 1].ref == ref,
+                    original.nodes[prefixCount - 1].frameIdentity == pairFrameIdentities[prefixCount - 1] else { throw NativeEnrollmentJournalError.outcomeUncertain }
+            }
+            predecessor = replayFiles[stable - 1].cursor.tip
+            offsetStart = stable
+        }
+        for offset in offsetStart..<view.refs.count {
+            let ref = view.refs[offset]
             let loaded = try loadAttemptWitness(d, ref), a = loaded.value
             let committed = try readFile(d.frames, ref.name, limit: NativeJournalCodec.frameLimit)
             let pending = try readFile(d.frames, ref.name + ".pending", limit: NativeJournalCodec.frameLimit)
@@ -2111,7 +2333,22 @@ extension NativeEnrollmentJournalStore {
             pairRoot = replay.initialization?.root
             lastPair = replay.lastAssertion
         } else {
-        for name in try names(d.attempts).sorted() where !name.hasSuffix(".pending") {
+        let publishedNames = try names(d.attempts).filter { !$0.hasSuffix(".pending") }.sorted()
+        var decoded = 0
+        while decoded < publishedNames.count && decoded < replayFiles.count {
+            let saved = replayFiles[decoded]
+            if saved.attemptName != publishedNames[decoded] || saved.frameName != publishedNames[decoded] { break }
+            guard let attemptStat = try replayStat(d.attempts, saved.attemptName), attemptStat == saved.attemptStat,
+                let frameStat = try replayStat(d.frames, saved.frameName), frameStat == saved.frameStat else { break }
+            decoded += 1
+        }
+        if decoded > 0 {
+            let cached = replayFiles[decoded - 1].cursor.paired
+            reserve = cached.reservation
+            pairRoot = cached.initialization?.root
+            lastPair = cached.lastAssertion
+        }
+        for name in publishedNames.dropFirst(decoded) {
             let f: NativeJournalFrame
             if let installed = try readFile(d.frames, name, limit: NativeJournalCodec.frameLimit) {
                 f = try NativeJournalCodec.frame(installed.bytes)

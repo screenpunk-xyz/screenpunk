@@ -56,69 +56,39 @@ fi
 # Run the full generated binary directly: SwiftPM's child output capture can
 # stall before the suite finishes.
 # Run the complete unfiltered XCTest suite in Release with testing enabled.
-run_full_xctest() {
-  cd packages/ScreenpunkCore || return $?
-  swift build -c release --build-tests -Xswiftc -enable-testing -Xswiftc -DSCREENPUNK_CORE_TESTING || return $?
-  test_bin_dir=$(swift build -c release --show-bin-path) || return $?
-  test_binary="$test_bin_dir/ScreenpunkCorePackageTests.xctest"
-  if [[ ! -f "$test_binary" || ! -x "$test_binary" ]]; then
-    echo "missing generated ScreenpunkCore XCTest executable"
-    return 1
-  fi
-  "$test_binary"
-}
-# Observe only the regular log; never pipe or signal the Core runner.
-core_observer_directory=$(mktemp -d "$ROOT/.ci-derived/core-observer.XXXXXX")
-core_observer_started=$SECONDS
-stop_core_observer() {
-  if ! : >"$core_observer_directory/stop"; then
-    echo "CORE_PROGRESS observer stop flag unavailable"
-    # This is our unreaped observer child, never an inferred runner PID.
-    kill "$core_observer_pid" 2>/dev/null || :
-  fi
-  if wait "$core_observer_pid"; then
-    :
-  else
-    echo "CORE_PROGRESS observer unavailable"
-  fi
-  rm -f "$core_observer_directory/stop" || echo "CORE_PROGRESS stop flag cleanup unavailable"
-  rmdir "$core_observer_directory" || echo "CORE_PROGRESS observer directory cleanup unavailable"
-}
-core_observer_exit() {
-  core_observer_exit_status=$?
-  stop_core_observer
-  trap - EXIT
-  exit "$core_observer_exit_status"
-}
+if ! command -v python3 >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y python3
+fi
 : >"$log"
 (
-  while [[ ! -f "$core_observer_directory/stop" ]]; do
-    for (( core_observer_tick=0; core_observer_tick<12; core_observer_tick++ )); do
-      sleep 5
-      if [[ -f "$core_observer_directory/stop" ]]; then exit 0; fi
-    done
-    if core_observer_bytes=$(wc -c <"$log") &&
-       core_observer_marker=$(tail -n 40 "$log" | awk '/^PROMOTION_LOCALIZATION capacity\.operation\.[0-9]+\.(begin|end)$/ { marker=$0 } END { print marker }'); then
-      core_observer_bytes="${core_observer_bytes//[[:space:]]/}"
-      echo "CORE_PROGRESS elapsed_seconds=$((SECONDS-core_observer_started)) bytes=$core_observer_bytes marker=${core_observer_marker:-no-recent-marker}"
-    else
-      echo "CORE_PROGRESS elapsed_seconds=$((SECONDS-core_observer_started)) observation=unavailable"
-    fi
-  done
-) &
-core_observer_pid=$!
-trap core_observer_exit EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-# Observer cleanup belongs only to the parent that owns its child PID.
-if (trap - EXIT INT TERM; run_full_xctest) >"$log" 2>&1; then
+  cd packages/ScreenpunkCore
+  swift build -c release --build-tests -Xswiftc -enable-testing -Xswiftc -DSCREENPUNK_CORE_TESTING
+) 2>&1 | tee -a "$log"
+build_status=${PIPESTATUS[0]}
+if (( build_status != 0 )); then
+  echo "Core build failed with exit status $build_status"
+  exit "$build_status"
+fi
+test_bin_dir="$(cd packages/ScreenpunkCore && swift build -c release --show-bin-path)"
+test_binary="$test_bin_dir/ScreenpunkCorePackageTests.xctest"
+if [[ ! -f "$test_binary" || ! -x "$test_binary" ]]; then
+  echo "missing generated ScreenpunkCore XCTest executable"
+  exit 1
+fi
+# The 759-node public journal test is about 7 minutes in release after the
+# prefix replay fix (it previously ran for hours). 20 minutes per test and
+# 40 minutes for the suite still stop a hung replay well inside the job cap.
+if python3 "$ROOT/scripts/ci/run-bounded-xctest.py" \
+  --log "$log" \
+  --test-timeout-seconds 1200 \
+  --suite-timeout-seconds 2400 \
+  -- "$test_binary"; then
   swift_status=0
 else
   swift_status=$?
 fi
-stop_core_observer
-trap - EXIT INT TERM
-tail -n 200 "$log"
+tail -n 80 "$log"
 if (( swift_status != 0 )); then
   echo "Core build or full XCTest run failed with exit status $swift_status"
   exit "$swift_status"
