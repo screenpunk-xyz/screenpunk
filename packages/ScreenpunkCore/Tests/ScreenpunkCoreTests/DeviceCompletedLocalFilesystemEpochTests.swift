@@ -324,6 +324,13 @@ final class DeviceCompletedLocalFilesystemEpochTests: XCTestCase {
         }
     }
     #else
-    func testGenuineCompletedGraphAcrossFreshStoreEpochPhases() throws { throw Failure.invalidFixture }
+    func testGenuineCompletedGraphAcrossFreshStoreEpochPhases() throws {
+        let env = ProcessInfo.processInfo.environment
+        // An explicitly requested qualification must still fail closed. Ordinary
+        // portable CI cannot construct genuine packages without CryptoKit.
+        guard env["SCREENPUNK_COMPLETED_EPOCH_ROOT"] == nil,
+              env["SCREENPUNK_COMPLETED_EPOCH_PHASE"] == nil else { throw Failure.invalidFixture }
+        throw XCTSkip("Genuine completed-package epoch qualification requires CryptoKit")
+    }
     #endif
 }
