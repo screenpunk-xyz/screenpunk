@@ -4,7 +4,8 @@ import * as Tabs from '@radix-ui/react-tabs';
 import * as Select from '@radix-ui/react-select';
 import { ArrowLeft, ArrowRight, Check, ChevronDown, X } from 'lucide-react';
 import { Bar, BarChart, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts';
-import { flexRender, getCoreRowModel, getSortedRowModel, getFilteredRowModel, useReactTable, type ColumnDef, type SortingState } from '@tanstack/react-table';
+import { flexRender, type SortingState, type RowData } from '@tanstack/react-table';
+import { getCoreRowModel, getSortedRowModel, getFilteredRowModel, useLegacyTable as useReactTable, type LegacyColumnDef as ColumnDef } from '@tanstack/react-table/legacy';
 import useEmblaCarousel from 'embla-carousel-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useRuntimeStatus } from '@screenpunk/react';
@@ -21,7 +22,7 @@ export function TrendChart({data,kind='line',label}: {data:{name:string;value:nu
   const axes=<><XAxis dataKey="name" tick={{fill:'currentColor'}}/><YAxis tick={{fill:'currentColor'}}/></>;
   return <figure aria-label={label}><figcaption>{label}</figcaption><div className="sp-chart"><ResponsiveContainer width="100%" height="100%">{kind==='bar'?<BarChart data={data}>{axes}<Bar dataKey="value" fill="currentColor" isAnimationActive={false}/></BarChart>:<LineChart data={data}>{axes}<Line dataKey="value" stroke="currentColor" isAnimationActive={false}/></LineChart>}</ResponsiveContainer></div><details><summary>Chart data</summary><table><thead><tr><th>Label</th><th>Value</th></tr></thead><tbody>{data.map((d,i)=><tr key={i}><td>{d.name}</td><td>{d.value}</td></tr>)}</tbody></table></details></figure>;
 }
-export function DataTable<T>({data,columns}: {data:T[];columns:ColumnDef<T,any>[]}) {
+export function DataTable<T extends RowData>({data,columns}: {data:T[];columns:ColumnDef<T,any>[]}) {
   const [sorting,setSorting]=useState<SortingState>([]); const [globalFilter,setGlobalFilter]=useState('');
   const table=useReactTable({data,columns,state:{sorting,globalFilter},onSortingChange:setSorting,onGlobalFilterChange:setGlobalFilter,getCoreRowModel:getCoreRowModel(),getSortedRowModel:getSortedRowModel(),getFilteredRowModel:getFilteredRowModel()});
   return <div className="sp-table"><Input aria-label="Filter rows" placeholder="Filter rows" value={globalFilter} onChange={e=>setGlobalFilter(e.target.value)}/><table><thead>{table.getHeaderGroups().map(g=><tr key={g.id}>{g.headers.map(h=><th key={h.id} aria-sort={h.column.getIsSorted()==='asc'?'ascending':h.column.getIsSorted()==='desc'?'descending':'none'}><Button disabled={!h.column.getCanSort()} onClick={h.column.getToggleSortingHandler()}>{flexRender(h.column.columnDef.header,h.getContext())}</Button></th>)}</tr>)}</thead><tbody>{table.getRowModel().rows.map(r=><tr key={r.id}>{r.getVisibleCells().map(c=><td key={c.id}>{flexRender(c.column.columnDef.cell,c.getContext())}</td>)}</tr>)}</tbody></table></div>;
