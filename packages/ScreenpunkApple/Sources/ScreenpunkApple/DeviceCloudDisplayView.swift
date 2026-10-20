@@ -6,15 +6,17 @@ import ScreenpunkCore
 /// Device-only content for the existing menu. No identity or enrollment authority.
 @_spi(ManagedRender) public struct DeviceCloudMenuContent {
     let deviceName: String
+    let connectionNeedsAttention: Bool
     let connectionDescription: String
     let screenSummary: String
     let screenCount: Int?
     let installedManifests: [DashboardManifest]
     let settings: AnyView
     let screens: AnyView
-    public init<Settings: View, Screens: View>(deviceName: String, connectionDescription: String,
+    public init<Settings: View, Screens: View>(deviceName: String, connectionDescription: String, connectionNeedsAttention: Bool = false,
         screenSummary: String, screenCount: Int?, installedManifests: [DashboardManifest] = [], settings: Settings, screens: Screens) {
         self.deviceName = deviceName; self.connectionDescription = connectionDescription
+        self.connectionNeedsAttention = connectionNeedsAttention
         self.screenSummary = screenSummary; self.screenCount = screenCount
         self.installedManifests = installedManifests
         self.settings = AnyView(settings); self.screens = AnyView(screens)
@@ -100,13 +102,14 @@ import ScreenpunkCore
         else {
             DeviceOnboardingConnectedView(connectionDescription: cloud.connectionDescription,
                 hasScreens: (cloud.screenCount ?? 0) > 0,
-                screens: { open(.screens) }, settings: { open(.settings) },
+                screens: { open(.screens) }, settings: { open(cloud.connectionNeedsAttention ? .cloud : .settings) },
                 title: "Screenpunk Cloud", emptyMessage: emptyMessage)
                 .id(emptyGeneration)
                 .onAppear { if let emptyGeneration { emptyMounted(emptyGeneration) } }
         }
     }
     private var emptyMessage: String {
+        if cloud.connectionNeedsAttention { return "Screen updates are not connected. Open Settings to check the Cloud connection and retry." }
         guard emptyGeneration != nil else { return "Open Settings to view this device’s Cloud connection." }
         return cloud.screenCount == 0
             ? "Assign your first screen in Screenpunk Cloud."

@@ -242,6 +242,7 @@ struct CloudSceneRoot: View {
         let inventory = CloudDeviceScreenList(inventory: enrollment.displayScreenInventory)
         return .init(deviceName: enrollment.retainedDeviceName ?? enrollment.suggestedDeviceName ?? "Screenpunk",
             connectionDescription: CloudDeviceSettingsContent.description(enrollment.cloudConnectionState),
+            connectionNeedsAttention: enrollment.cloudConnectionState == .needsAttention || enrollment.cloudConnectionState == .notConnected,
             screenSummary: inventory.summary, screenCount: inventory.count,
             installedManifests: enrollment.displayInstalledManifests,
             settings: CloudDeviceSettingsView(enrollment: enrollment, lifecycle: cloud, bootstrap: bootstrap),
@@ -305,7 +306,7 @@ struct CloudDeviceSettingsView: View {
     var body: some View {
         CloudDeviceSettingsContent(state: enrollment.cloudConnectionState,
             deviceName: enrollment.retainedDeviceName ?? enrollment.suggestedDeviceName ?? "Screenpunk",
-            connectionMessage: enrollment.deliveryMessage,
+            connectionMessage: enrollment.cloudConnectionMessage,
             cloudLogoutCleanupPending: enrollment.cloudLogoutCleanupPending,
             disconnectInProgress: enrollment.disconnectInProgress,
             disconnectMessage: enrollment.disconnectMessage,
@@ -365,8 +366,8 @@ struct CloudDeviceSettingsContent: View {
                 if state == .needsAttention, let connectionMessage {
                     Text(connectionMessage).foregroundStyle(.secondary).accessibilityIdentifier("cloud.device.connectionMessage")
                 }
-                if state == .needsAttention {
-                    Button("Retry connection", action: retry)
+                if state == .needsAttention || state == .connected {
+                    Button(state == .connected ? "Check connection" : "Retry connection", action: retry)
                         .disabled(busy || cloudLogoutCleanupPending)
                         .accessibilityIdentifier("cloud.device.retry")
                 }

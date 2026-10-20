@@ -198,6 +198,7 @@ final class CloudSceneRootTests: XCTestCase {
         XCTAssertFalse(visibleEnabledButtons(in: settings.view, window: window).contains { $0.accessibilityLabel == "Retry connection" || $0.accessibilityLabel == "Check for screens" })
         capture(window, name: "Native-Cloud-Settings-Device-Only-Connecting-Landscape")
         state.connection = .connected
+        _ = try await routeButton("Check connection", in: settings.view)
         try await activateButton("Log out", in: settings.view)
         try await waitFor("logout confirmation completely attached") {
             guard let confirmation = settings.presentedViewController else { return false }
@@ -814,7 +815,7 @@ private final class NativeMenuFixtureState: ObservableObject {
     @Published var installationID = UUID()
     var retryCalls = 0, logoutCalls = 0, resetCalls = 0
     var content: DeviceCloudMenuContent {
-        .init(deviceName: "Office display", connectionDescription: CloudDeviceSettingsContent.description(connection), screenSummary: "No screens installed", screenCount: 0,
+        .init(deviceName: "Office display", connectionDescription: CloudDeviceSettingsContent.description(connection), connectionNeedsAttention: connection == .needsAttention || connection == .notConnected, screenSummary: "No screens installed", screenCount: 0,
             settings: NativeSettingsLiveFixture(state: self, embedded: true), screens: CloudDeviceScreensView(inventory: .available([], selected: nil)))
     }
 }

@@ -930,6 +930,25 @@ final class NativeEnrollmentSceneControllerTests: XCTestCase {
         XCTAssertEqual(reconciliations, 4)
         consumer.stop()
     }
+    func testCloudTargetUsesFullScreenDimensionsIndependentOfKeyboardViewport() throws {
+        let physical = CGSize(width: 834, height: 1112)
+        XCTAssertEqual(try NativeEnrollmentActionInput.screenViewport(screen: physical, landscape: true), CGSize(width: 1112, height: 834))
+        XCTAssertEqual(try NativeEnrollmentActionInput.screenViewport(screen: physical, landscape: false), physical)
+        XCTAssertThrowsError(try NativeEnrollmentActionInput.screenViewport(screen: .zero, landscape: true))
+    }
+
+    @MainActor func testPresenceFailureNotifiesConnectionRecoveryUI() async {
+        let clock = EnrollmentPresenceClock()
+        let scheduler = NativeEnrollmentPresenceScheduler(wait: { try await clock.wait() })
+        var failures = 0
+        enum Offline: Error { case disconnected }
+        scheduler.start(onFailure: { failures += 1 }) { throw Offline.disconnected }
+        defer { scheduler.stop(); clock.cancel() }
+        await clock.untilWaiting()
+        clock.tick(); await clock.untilWaiting()
+        XCTAssertEqual(failures, 1)
+    }
+
     @MainActor func testRealtimeHealthRearmsSixHourTimerWithoutInventingReconciliation() async {
         let clock = EnrollmentPresenceClock()
         let scheduler = NativeEnrollmentPresenceScheduler(wait: { try await clock.wait() }, interval: 900)
