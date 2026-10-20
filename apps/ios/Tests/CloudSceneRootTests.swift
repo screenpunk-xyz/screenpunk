@@ -46,7 +46,11 @@ final class CloudSceneRootTests: XCTestCase {
         var connectionVisited = Set<ObjectIdentifier>()
         let connectionElements = routeAccessibilityElements(settings.view, visited: &connectionVisited)
         XCTAssertTrue(connectionElements.contains { ($0 as? UIAccessibilityIdentification)?.accessibilityIdentifier == "home-assistant.url" || $0.accessibilityLabel == "Home Assistant URL" }, "Home Assistant must expose its URL directly, without opening a screen submenu")
-        XCTAssertFalse(connectionElements.contains { $0.accessibilityLabel == "Game lights" && $0.accessibilityTraits.contains(.button) }, "Screen access must be inline, not a nested navigation menu")
+        XCTAssertFalse(connectionElements.contains { $0.accessibilityLabel == "Read Home Assistant entity states" }, "Screen access should be a compact toggle list, without operation panels")
+        let save = try await routeButton("Save connection", in: settings.view)
+        assertVisible(save, in: window)
+        let scan = try await routeButton("Scan token QR code", in: settings.view)
+        assertVisible(scan, in: window)
         capture(window, name: "Home-Assistant-Under-Connections")
     }
 

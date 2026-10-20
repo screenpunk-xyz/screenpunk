@@ -15,12 +15,56 @@ public final class DeviceCloudHomeAssistantStore: @unchecked Sendable {
         let configuration: HomeAssistantProvisioning
     }
     public init(store: (any CredentialStore)? = nil) { self.store = store ?? KeychainCredentialStore(service: Self.storageService) }
-    private func records() throws -> [Record] {
-        guard let data = try store.secret(for: Self.storageKey) else { return [] }
+    public struct SavedConnection: Codable, Sendable, Equatable {
+        public var origin: String
+        public var token: String
+        public var allowInsecureHTTP: Bool
+    }
+    private struct State: Codable {
+        var records: [Record] = []
+        var connections: [String: SavedConnection] = [:]
+    }
+    private func state() throws -> State {
+        guard let data = try store.secret(for: Self.storageKey) else { return State() }
         guard data.count <= 1024 * 1024 else { throw ConnectionFailure.sizeLimit }
-        let records = try JSONDecoder().decode([Record].self, from: data)
-        guard records.count <= 64 else { throw ConnectionFailure.sizeLimit }
-        return records
+        let decoder = JSONDecoder()
+        let value: State
+        if let legacy = try? decoder.decode([Record].self, from: data) { value = State(records: legacy) }
+        else { value = try decoder.decode(State.self, from: data) }
+        guard value.records.count <= 64, value.connections.count <= 64 else { throw ConnectionFailure.sizeLimit }
+        return value
+    }
+    private func persist(_ value: State) throws {
+        if value.records.isEmpty && value.connections.isEmpty { try store.delete(Self.storageKey); return }
+        let data = try JSONEncoder().encode(value)
+        guard data.count <= 1024 * 1024 else { throw ConnectionFailure.sizeLimit }
+        try store.put(data, for: Self.storageKey)
+    }
+    private func records() throws -> [Record] { try state().records }
+    public func savedConnection(installationID: UUID) throws -> SavedConnection? {
+        lock.lock(); defer { lock.unlock() }
+        let value = try state()
+        if let connection = value.connections[installationID.uuidString] { return connection }
+        guard let legacy = value.records.last(where: { $0.installationID == installationID })?.configuration else { return nil }
+        return SavedConnection(origin: legacy.origin, token: legacy.token, allowInsecureHTTP: legacy.allowInsecureHTTP)
+    }
+    /// Saving device credentials does not approve any new screen or screen version.
+    public func saveConnection(installationID: UUID, origin: String, token: String, allowInsecureHTTP: Bool) throws {
+        let candidate = HomeAssistantProvisioning(dashboardId: "connection", connectionId: "connection", provisioningId: "connection", revision: "connection", origin: origin, allowInsecureHTTP: allowInsecureHTTP, token: token)
+        try candidate.validate()
+        guard allowInsecureHTTP || URL(string: origin)?.scheme?.lowercased() == "https" else { throw ConnectionFailure.permissionRequired }
+        lock.lock(); defer { lock.unlock() }
+        var value = try state()
+        guard value.connections[installationID.uuidString] != nil || value.connections.count < 64 else { throw ConnectionFailure.sizeLimit }
+        value.connections[installationID.uuidString] = SavedConnection(origin: origin, token: token, allowInsecureHTTP: allowInsecureHTTP)
+        value.records = value.records.map { record in
+            guard record.installationID == installationID else { return record }
+            var configuration = record.configuration
+            configuration.origin = origin; configuration.token = token; configuration.allowInsecureHTTP = allowInsecureHTTP
+            configuration.connectionId = UUID().uuidString; configuration.provisioningId = UUID().uuidString
+            return Record(installationID: record.installationID, manifestDigest: record.manifestDigest, configuration: configuration)
+        }
+        try persist(value)
     }
     public func configuration(installationID: UUID, manifest: DashboardManifest) throws -> HomeAssistantProvisioning? {
         lock.lock(); defer { lock.unlock() }
@@ -30,16 +74,9 @@ public final class DeviceCloudHomeAssistantStore: @unchecked Sendable {
         guard matching.count <= 1 else { throw ConnectionFailure.validationFailed }
         return matching.first?.configuration
     }
-    public func hasSavedConnection(installationID: UUID) throws -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        return try records().contains { $0.installationID == installationID }
-    }
+    public func hasSavedConnection(installationID: UUID) throws -> Bool { try savedConnection(installationID: installationID) != nil }
     public func approveSaved(installationID: UUID, manifest: DashboardManifest) throws {
-        lock.lock()
-        let saved: HomeAssistantProvisioning?
-        do { saved = try records().last(where: { $0.installationID == installationID })?.configuration; lock.unlock() }
-        catch { lock.unlock(); throw error }
-        guard let saved else { throw ConnectionFailure.permissionRequired }
+        guard let saved = try savedConnection(installationID: installationID) else { throw ConnectionFailure.permissionRequired }
         try approve(installationID: installationID, manifest: manifest, origin: saved.origin, token: saved.token, allowInsecureHTTP: saved.allowInsecureHTTP)
     }
     /// Called by native Settings after the person reviews the exact declared permissions.
@@ -57,17 +94,23 @@ public final class DeviceCloudHomeAssistantStore: @unchecked Sendable {
             throw ConnectionFailure.permissionRequired
         }
         lock.lock(); defer { lock.unlock() }
-        var saved = try records().filter { !($0.installationID == installationID && $0.configuration.dashboardId == manifest.dashboardId) }
+        var value = try state()
+        var saved = value.records.filter { !($0.installationID == installationID && $0.configuration.dashboardId == manifest.dashboardId) }
         guard saved.count < 64 else { throw ConnectionFailure.sizeLimit }
         saved.append(.init(installationID: installationID, manifestDigest: digest, configuration: configuration))
-        let bytes = try JSONEncoder().encode(saved)
-        guard bytes.count <= 1024 * 1024 else { throw ConnectionFailure.sizeLimit }
-        try store.put(bytes, for: Self.storageKey)
+        value.records = saved
+        try persist(value)
     }
     public func revoke(installationID: UUID, dashboardID: String? = nil) throws {
         lock.lock(); defer { lock.unlock() }
-        let saved = try records().filter { !($0.installationID == installationID && (dashboardID == nil || $0.configuration.dashboardId == dashboardID)) }
-        if saved.isEmpty { try store.delete(Self.storageKey) }
-        else { try store.put(JSONEncoder().encode(saved), for: Self.storageKey) }
+        var value = try state()
+        if dashboardID != nil, value.connections[installationID.uuidString] == nil,
+           let legacy = value.records.last(where: { $0.installationID == installationID })?.configuration {
+            guard value.connections.count < 64 else { throw ConnectionFailure.sizeLimit }
+            value.connections[installationID.uuidString] = SavedConnection(origin: legacy.origin, token: legacy.token, allowInsecureHTTP: legacy.allowInsecureHTTP)
+        }
+        value.records.removeAll { $0.installationID == installationID && (dashboardID == nil || $0.configuration.dashboardId == dashboardID) }
+        if dashboardID == nil { value.connections.removeValue(forKey: installationID.uuidString) }
+        try persist(value)
     }
 }

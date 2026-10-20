@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSCameraUsageDescription</key>
+  <string>Scan a Home Assistant access-token QR code directly into this device’s connection settings.</string>
   <key>NSLocationWhenInUseUsageDescription</key>
   <string>Show your current position alongside the destination when you tap Show my location in a fullscreen map.</string>
   <key>ScreenpunkGoogleCalendarClientID</key>
