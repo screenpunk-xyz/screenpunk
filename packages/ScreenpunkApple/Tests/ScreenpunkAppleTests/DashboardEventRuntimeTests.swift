@@ -36,6 +36,42 @@ final class DashboardEventRuntimeTests: XCTestCase {
         XCTAssertEqual(runtime.status["activeRuleId"] as? String, "ring")
     }
 
+    func testClosedPresentationGatePreventsDynamicSubscriptionBeforeRedraw() async throws {
+        let connected = expectation(description:"resumed subscription connected"), closed = expectation(description:"queued worker observed closed gate")
+        let counter = NavigationConnectCounter(onConnect:{connected.fulfill()}), socket = NavigationFixtureSocket(payloads:[])
+        let connection = ConnectionRuntime(dashboardId:"dash",store:MemoryCredentialStore(),http:NavigationFixtureHTTP(),webSocket:NavigationCountingTransport(socket:socket,counter:counter),resolver:FixedResolver(["93.184.216.34"]))
+        let grant = ConnectionGrant(schemaVersion:1,id:UUID(),alias:"events",origin:"https://example.com",transport:.ws,authRef:"events",lan:false,allowInsecureHTTP:false,operations:[.init(name:"listen",kind:.ws,method:.GET,path:"/events",idempotent:true,write:false)])
+        try await connection.install(grant:grant,binding:.init(authRef:"events",placement:.none))
+        let gate = RendererPresentationTestGate(onFirstDenial:{closed.fulfill()})
+        let runtime = try DashboardEventRuntime(manifest:manifest(condition:false),revision:"rev",settings:.init(),homeAssistant:nil,connections:connection,presentationAllowed:{gate.allows()})
+        runtime.start()
+        gate.set(false) // The worker was queued, but SwiftUI has not stopped it.
+        await fulfillment(of:[closed],timeout:2)
+        let closedCount = await counter.value(); XCTAssertEqual(closedCount,0); XCTAssertFalse(runtime.running)
+        XCTAssertFalse(runtime.open(pageId:"door"))
+        gate.set(true); runtime.start()
+        await fulfillment(of:[connected],timeout:2)
+        let resumedCount = await counter.value(); XCTAssertEqual(resumedCount,1)
+        runtime.stop()
+    }
+    func testSynchronousLifetimeSuspensionRejectsQueuedWorkWithoutClosedGateObservation() async throws {
+        let connected = expectation(description:"only resumed subscription connected")
+        connected.assertForOverFulfill = true
+        let counter = NavigationConnectCounter(onConnect:{connected.fulfill()}), socket = NavigationFixtureSocket(payloads:[])
+        let connection = ConnectionRuntime(dashboardId:"dash",store:MemoryCredentialStore(),http:NavigationFixtureHTTP(),webSocket:NavigationCountingTransport(socket:socket,counter:counter),resolver:FixedResolver(["93.184.216.34"]))
+        let grant = ConnectionGrant(schemaVersion:1,id:UUID(),alias:"events",origin:"https://example.com",transport:.ws,authRef:"events",lan:false,allowInsecureHTTP:false,operations:[.init(name:"listen",kind:.ws,method:.GET,path:"/events",idempotent:true,write:false)])
+        try await connection.install(grant:grant,binding:.init(authRef:"events",placement:.none))
+        let gate = RendererPresentationTestGate(), lifetime = DeviceRuntimeLifetime()
+        let runtime = try DashboardEventRuntime(manifest:manifest(condition:false),revision:"rev",settings:.init(),homeAssistant:nil,connections:connection,presentationAllowed:{gate.allows()})
+        let registration = lifetime.registerSuspension { runtime.stop() }
+        defer { lifetime.unregisterSuspension(registration); runtime.stop() }
+        runtime.start() // Queued worker has not received a MainActor turn yet.
+        gate.set(false); lifetime.suspendPresentation(); gate.set(true)
+        XCTAssertFalse(runtime.running)
+        runtime.start()
+        await fulfillment(of:[connected],timeout:2)
+        let count = await counter.value(); XCTAssertEqual(count,1)
+    }
     private func manifest(condition: Bool) -> DashboardManifest {
         .init(schemaVersion: 1, dashboardId: "dash", name: "House", revision: "rev", entrypoint: "index.html", sdkVersion: "1",
               target: .init(profileId: "phone", width: 390, height: 844, scale: 1, orientation: "portrait"),
@@ -71,4 +107,17 @@ private actor NavigationFixtureSocket: WebSocketSession {
     }
     func send(_ data: Data) async throws {}
     func close() async {}
+}
+
+private actor NavigationConnectCounter {
+    var count = 0
+    let onConnect: @Sendable () -> Void
+    init(onConnect:@escaping @Sendable () -> Void) { self.onConnect = onConnect }
+    func record() { count += 1; onConnect() }
+    func value() -> Int { count }
+}
+private struct NavigationCountingTransport: WebSocketTransport {
+    let socket: NavigationFixtureSocket
+    let counter: NavigationConnectCounter
+    func connect(_ request: AuthorizedWebSocketRequest) async throws -> any WebSocketSession { await counter.record(); return socket }
 }

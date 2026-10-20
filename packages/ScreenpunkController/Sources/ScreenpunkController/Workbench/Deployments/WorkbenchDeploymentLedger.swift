@@ -6,6 +6,7 @@ import Darwin
 enum WorkbenchDeploymentError: Error, Equatable {
     case invalidPlan, invalidApproval, staleContext, expired, clockUncertain, conflict
     case cancelled, alreadySent, missing, storage, unsupportedIntegration, unknownRemoteOutcome
+    case packageIncompatible, packageTargetMismatch, packageIdentityInvalid
 }
 
 struct WorkbenchDeploymentClock: Equatable {
@@ -43,6 +44,33 @@ struct WorkbenchDeploymentApprovalRecord: Codable, Equatable {
     var consumedOperationId: String? = nil
 }
 
+/// Fixed diagnostic for a locally proven rejection before the first deploy frame.
+/// It is not evidence of remote authority or an installed/failed device outcome.
+public enum WorkbenchDeploymentPreSendRejection: String, Codable, Sendable {
+    case packageInvalid, targetMismatch, identityInvalid, contextChanged, expired, validationUnavailable
+    static func classify(_ error: Error) -> Self {
+        guard let error = error as? WorkbenchDeploymentError else { return .validationUnavailable }
+        switch error {
+        case .packageIncompatible: return .packageInvalid
+        case .packageTargetMismatch: return .targetMismatch
+        case .packageIdentityInvalid: return .identityInvalid
+        case .staleContext, .conflict, .cancelled, .alreadySent: return .contextChanged
+        case .expired, .clockUncertain: return .expired
+        default: return .validationUnavailable
+        }
+    }
+    var ipcCode: WorkbenchIPCErrorCode {
+        switch self {
+        case .packageInvalid: return .deploymentPackageInvalid
+        case .targetMismatch: return .deploymentTargetMismatch
+        case .identityInvalid: return .deploymentIdentityInvalid
+        case .contextChanged: return .workspaceConflict
+        case .expired: return .confirmationRequired
+        case .validationUnavailable: return .deploymentPreflightUnavailable
+        }
+    }
+}
+
 public struct WorkbenchDeploymentOperationRecord: Codable, Equatable {
     public enum State: String, Codable { case admitted, sending, received, active, failed, cancelled, unknown }
     public var operationId: String
@@ -56,6 +84,12 @@ public struct WorkbenchDeploymentOperationRecord: Codable, Equatable {
     public var sendAttempted: Bool = false
     public var cancelRequested: Bool = false
     public var receiptJSON: Data? = nil
+    public var preSendRejection: WorkbenchDeploymentPreSendRejection? = nil
+
+    func throwIfRejectedBeforeSend() throws {
+        guard !sendAttempted, [.failed, .cancelled].contains(state), let preSendRejection else { return }
+        throw WorkbenchIPCError(preSendRejection.ipcCode)
+    }
 }
 
 private enum WorkbenchClockDecision<T> {
@@ -322,6 +356,7 @@ final class WorkbenchDeploymentLedger {
                    failure == .expired || failure == .clockUncertain {
                     try recordRejectedClock(observed, approvalId: nil)
                 }
+                operation.preSendRejection = .classify(error)
                 operation.state = .cancelled; operation.cancelRequested = true
                 try put(operation, table: "operations", keyColumn: "operation_id", key: operationId,
                         extra: ("plan_id", operation.planId), second: ("approval_id", operation.approvalId))
@@ -370,6 +405,7 @@ final class WorkbenchDeploymentLedger {
                    failure == .expired || failure == .clockUncertain {
                     try recordRejectedClock(observed, approvalId: nil)
                 }
+                operation.preSendRejection = .classify(error)
                 operation.state = .failed
                 operation.sendAttempted = false
                 operation.cancelRequested = true

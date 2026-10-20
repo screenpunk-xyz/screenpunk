@@ -81,7 +81,7 @@ enum PackagePreparationCodec {
     }
     static func hash(_ bytes: Data) throws -> String {
         #if canImport(CryptoKit)
-        return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        return DevicePublicDigestHex.encode(Array(SHA256.hash(data: bytes)))
         #else
         throw DevicePackagePreparationError.digestUnavailable
         #endif
@@ -100,7 +100,7 @@ enum PackagePreparationCodec {
         for file in files {
             frame(Data(file.path.utf8)); frame(Data(String(file.bytes).utf8)); frame(Data(file.sha256.utf8))
         }
-        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+        return DevicePublicDigestHex.encode(Array(hash.finalize()))
         #else
         throw DevicePackagePreparationError.digestUnavailable
         #endif
@@ -140,8 +140,8 @@ enum PackagePreparationCodec {
     }
     static func validate(_ plan: PreparationPlan) throws {
         guard (1...129).contains(plan.ordinal), (1...2001).contains(plan.files.count), plan.directories.count <= 4096,
-              isHash(plan.contentID), isHash(plan.revision.digest), plan.revision.dashboardId.utf8.count == 36,
-              plan.revision.revision.utf8.count == 36, UUID(uuidString: plan.revision.dashboardId) != nil,
+              isHash(plan.contentID), isHash(plan.revision.digest), DeviceDashboardIdentifier.isValid(plan.revision.dashboardId),
+              plan.revision.revision.utf8.count == 36,
               UUID(uuidString: plan.revision.revision) != nil, plan.revision.name.utf8.count <= 512,
               (1...128).contains(plan.revision.name.unicodeScalars.count), plan.profileID.utf8.count <= 512,
               (1...128).contains(plan.profileID.unicodeScalars.count), (1...10000).contains(plan.revision.width),

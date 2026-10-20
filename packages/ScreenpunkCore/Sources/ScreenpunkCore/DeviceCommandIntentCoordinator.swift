@@ -19,11 +19,20 @@ public final class DeviceCommandIntentCoordinator: @unchecked Sendable {
     }
     private let root: URL
     private let lock = NSLock()
-    public init(root: URL) { self.root = root }
+    private let contextFactory: (URL, Int32) throws -> DevicePersistedFilesystemContext
+    public convenience init(root: URL) {
+        self.init(root: root, contextFactory: {
+            try DevicePersistedFilesystemContext.capture(currentRoot: $0, heldRoot: $1)
+        })
+    }
+    /// Internal per-instance filesystem fixture seam. Production always uses OS capture.
+    init(root: URL, contextFactory: @escaping (URL, Int32) throws -> DevicePersistedFilesystemContext) {
+        self.root = root; self.contextFactory = contextFactory
+    }
     private struct RootBinding: Codable, Equatable { let device: UInt64; let inode: UInt64 }
     private var pinnedRoot: RootBinding?
     private var url: URL { root.appendingPathComponent("command-intent.json") }
-    private func withRoot<T>(create: Bool, body: (Int32) throws -> T) throws -> T {
+    private func withRoot<T>(create: Bool, body: (Int32, DevicePersistedFilesystemContext) throws -> T) throws -> T {
         if create && !FileManager.default.fileExists(atPath: root.path) {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         }
@@ -33,32 +42,45 @@ public final class DeviceCommandIntentCoordinator: @unchecked Sendable {
         var actual = stat(), named = stat()
         guard fstat(fd, &actual) == 0, lstat(root.path, &named) == 0, named.st_mode & S_IFMT == S_IFDIR,
             named.st_dev == actual.st_dev, named.st_ino == actual.st_ino else { throw Failure.persistence }
-        let identity = RootBinding(device: UInt64(actual.st_dev), inode: UInt64(actual.st_ino))
+        // Capture under the existing operation lock, against the independently held root.
+        let context: DevicePersistedFilesystemContext
+        do { context = try contextFactory(root, fd) }
+        catch { throw Failure.persistence }
+        let identity = RootBinding(device: UInt64(truncatingIfNeeded: actual.st_dev), inode: UInt64(actual.st_ino))
+        guard context.acceptsCurrentDevice(identity.device) else { throw Failure.corruptJournal }
         guard pinnedRoot == nil || pinnedRoot == identity else { throw Failure.corruptJournal }
         let bindingFD = openat(fd, "command-root.json", O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         if bindingFD >= 0 {
             defer { close(bindingFD) }
             var info = stat(); guard fstat(bindingFD, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-                info.st_size >= 0, info.st_size <= 8192 else { throw Failure.corruptJournal }
+                info.st_size >= 0, info.st_size <= 8192,
+                context.acceptsCurrentDevice(UInt64(truncatingIfNeeded: info.st_dev)) else { throw Failure.corruptJournal }
             let handle = FileHandle(fileDescriptor: bindingFD, closeOnDealloc: false)
             let bytes = try handle.read(upToCount: 8193) ?? Data()
-            guard try JSONDecoder().decode(RootBinding.self, from: bytes) == identity else { throw Failure.corruptJournal }
+            let recorded = try JSONDecoder().decode(RootBinding.self, from: bytes)
+            // Only this durable→physical edge tolerates a historical iOS mount number.
+            // Keep the original record bytes and exact current-process pin unchanged.
+            guard context.matchesDurableIdentity(recordedDevice: recorded.device, recordedInode: recorded.inode,
+                observedDevice: identity.device, observedInode: identity.inode) else { throw Failure.corruptJournal }
         } else {
             guard errno == ENOENT, try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty else { throw Failure.corruptJournal }
             guard create else { throw CocoaError(.fileReadNoSuchFile) }
-            try writeExact(fd, name: "command-root.json", bytes: JSONEncoder().encode(identity))
+            try writeExact(fd, name: "command-root.json", bytes: JSONEncoder().encode(identity), context: context)
         }
         pinnedRoot = identity
-        let result = try body(fd)
+        let result = try body(fd, context)
         guard lstat(root.path, &named) == 0, named.st_mode & S_IFMT == S_IFDIR,
             named.st_dev == actual.st_dev, named.st_ino == actual.st_ino else { throw Failure.persistence }
         return result
     }
-    private func writeExact(_ parent: Int32, name: String, bytes: Data) throws {
+    private func writeExact(_ parent: Int32, name: String, bytes: Data, context: DevicePersistedFilesystemContext) throws {
         let staging = name + ".stage-" + UUID().uuidString.lowercased()
         let fd = openat(parent, staging, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { throw Failure.persistence }
         defer { close(fd); _ = unlinkat(parent, staging, 0) }
+        var staged = stat()
+        guard fstat(fd, &staged) == 0, staged.st_mode & S_IFMT == S_IFREG,
+            context.acceptsCurrentDevice(UInt64(truncatingIfNeeded: staged.st_dev)) else { throw Failure.persistence }
         let count = bytes.withUnsafeBytes { pointer in
             #if canImport(Darwin)
             Darwin.write(fd, pointer.baseAddress, pointer.count)
@@ -70,12 +92,13 @@ public final class DeviceCommandIntentCoordinator: @unchecked Sendable {
     }
     private func load() throws -> Record? {
         do {
-            let bytes = try withRoot(create: false) { parent -> Data in
+            let bytes = try withRoot(create: false) { parent, context -> Data in
                 let fd = openat(parent, "command-intent.json", O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
                 guard fd >= 0 else { if errno == ENOENT { throw CocoaError(.fileReadNoSuchFile) }; throw Failure.corruptJournal }
                 defer { close(fd) }
                 var info = stat(); guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-                    info.st_size >= 0, info.st_size <= 8 * 1024 * 1024 else { throw Failure.corruptJournal }
+                    info.st_size >= 0, info.st_size <= 8 * 1024 * 1024,
+                    context.acceptsCurrentDevice(UInt64(truncatingIfNeeded: info.st_dev)) else { throw Failure.corruptJournal }
                 let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
                 let bytes = try handle.read(upToCount: 8 * 1024 * 1024 + 1) ?? Data()
                 var named = stat(); guard fstatat(parent, "command-intent.json", &named, AT_SYMLINK_NOFOLLOW) == 0,
@@ -173,8 +196,8 @@ public final class DeviceCommandIntentCoordinator: @unchecked Sendable {
         return .init(generation: record.generation)
     }
     private func save(_ record: Record) throws {
-        try withRoot(create: true) { parent in
-            try writeExact(parent, name: "command-intent.json", bytes: JSONEncoder().encode(record))
+        try withRoot(create: true) { parent, context in
+            try writeExact(parent, name: "command-intent.json", bytes: JSONEncoder().encode(record), context: context)
         }
     }
 }

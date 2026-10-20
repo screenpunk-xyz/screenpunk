@@ -6,6 +6,31 @@ private final class CloudMemoryTokens: ControllerCloudTokenStore, @unchecked Sen
     func load() -> ControllerCloudTokens? { lock.lock(); defer { lock.unlock() }; return tokens }
     func save(_ tokens: ControllerCloudTokens?) { lock.lock(); defer { lock.unlock() }; self.tokens = tokens }
 }
+/// Per-host handlers keep concurrent HTTP fixtures isolated. No real network or Keychain is used.
+private final class CloudTokenHTTPProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var handlers: [String: (URLRequest) throws -> (Int, Data)] = [:]
+    static func register(_ host: String, handler: @escaping (URLRequest) throws -> (Int, Data)) {
+        lock.lock(); defer { lock.unlock() }; handlers[host] = handler
+    }
+    static func unregister(_ host: String) {
+        lock.lock(); defer { lock.unlock() }; handlers.removeValue(forKey: host)
+    }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.lock(); let handler = Self.handlers[request.url?.host ?? ""]; Self.lock.unlock()
+        do {
+            guard let handler else { throw URLError(.unsupportedURL) }
+            let (status, body) = try handler(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() {}
+}
 private actor CloudExchangeGate {
     private var pending: [String:CheckedContinuation<ControllerCloudTokens,Never>] = [:]
     private var started: [String:CheckedContinuation<Void,Never>] = [:]
@@ -27,8 +52,8 @@ private actor CloudExchangeGate {
     func count(_ key: String) -> Int { counts[key,default:0] }
 }
 final class ControllerCloudSessionTests: XCTestCase {
-    private func configuration() throws -> ControllerCloudConfiguration {
-        try .init(baseURL:URL(string:"https://cloud.screenpunk.test")!,authorizationURL:URL(string:"https://auth.screenpunk.test/authorize")!,tokenURL:URL(string:"https://auth.screenpunk.test/token")!,clientID:"screenpunk-cli",redirectURI:"http://127.0.0.1:43871/callback")
+    private func configuration(tokenURL: URL = URL(string:"https://auth.screenpunk.test/token")!) throws -> ControllerCloudConfiguration {
+        try .init(baseURL:URL(string:"https://cloud.screenpunk.test")!,authorizationURL:URL(string:"https://auth.screenpunk.test/authorize")!,tokenURL:tokenURL,clientID:"screenpunk-cli",redirectURI:"http://127.0.0.1:43871/callback")
     }
     func testAuthorizationUsesPKCEAndFreshState() async throws {
         let session = ControllerCloudSession(configuration:try configuration(),tokenStore:CloudMemoryTokens())
@@ -38,7 +63,80 @@ final class ControllerCloudSessionTests: XCTestCase {
         XCTAssertEqual(items.first {$0.name == "code_challenge_method"}?.value,"S256")
         XCTAssertEqual(items.first {$0.name == "code_challenge"}?.value?.count,43)
         XCTAssertNil(items.first {$0.name == "code_verifier"})
+        XCTAssertEqual(Set((items.first {$0.name == "scope"}?.value ?? "").split(separator: " ")), Set(["openid", "offline_access", "screenpunk.read", "screenpunk.write", "screenpunk.workspaces"]))
+        XCTAssertEqual(items.first {$0.name == "prompt"}?.value, "consent")
         XCTAssertEqual(items.first {$0.name == "resource"}?.value,"https://cloud.screenpunk.test/mcp")
+    }
+    private func httpFixture(status: Int = 200, inspect: @escaping (URLRequest, [String: String]) throws -> Void) throws -> (ControllerCloudSession, CloudMemoryTokens, URLSession, String) {
+        let host = UUID().uuidString.lowercased() + ".screenpunk.test"
+        let url = URL(string: "https://" + host + "/token")!
+        CloudTokenHTTPProtocol.register(host) { request in
+            XCTAssertEqual(request.url, url)
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
+            var data = request.httpBody ?? Data()
+            if let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 1024)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    guard count >= 0 else { throw URLError(.cannotDecodeRawData) }
+                    if count == 0 { break }; data.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            var encoded = URLComponents()
+            encoded.percentEncodedQuery = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "+", with: "%20")
+            let items = encoded.queryItems ?? []
+            XCTAssertEqual(Set(items.map(\.name)).count, items.count)
+            let form = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+            XCTAssertEqual(form["client_id"], "screenpunk-cli")
+            XCTAssertEqual(form["resource"], "https://cloud.screenpunk.test/mcp")
+            try inspect(request, form)
+            return (status, Data(#"{"access_token":"fixture-access","refresh_token":"fixture-rotated","expires_in":3600,"token_type":"Bearer"}"#.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CloudTokenHTTPProtocol.self]
+        let transport = URLSession(configuration: configuration), store = CloudMemoryTokens()
+        return (ControllerCloudSession(configuration: try self.configuration(tokenURL: url), tokenStore: store, session: transport), store, transport, host)
+    }
+    func testAuthorizationCodeHTTPFormIncludesResourceAndPKCE() async throws {
+        let code = "fixture+code&with=reserved/value"
+        let (session, store, transport, host) = try httpFixture { _, form in
+            XCTAssertEqual(form["grant_type"], "authorization_code")
+            XCTAssertEqual(form["code"], code)
+            XCTAssertEqual(form["redirect_uri"], "http://127.0.0.1:43871/callback")
+            XCTAssertEqual(form["code_verifier"]?.count, 43)
+            XCTAssertNil(form["refresh_token"])
+        }
+        defer { transport.invalidateAndCancel(); CloudTokenHTTPProtocol.unregister(host) }
+        let auth = try await session.beginAuthorization()
+        var callback = URLComponents(string: "http://127.0.0.1:43871/callback")!
+        callback.queryItems = [URLQueryItem(name: "state", value: auth.state), URLQueryItem(name: "code", value: code)]
+        try await session.finishAuthorization(callback: callback.url!)
+        XCTAssertEqual(store.load()?.accessToken, "fixture-access")
+        XCTAssertEqual(store.load()?.refreshToken, "fixture-rotated")
+    }
+    func testRefreshHTTPFormIncludesResourceAndPersistsRotation() async throws {
+        let (session, store, transport, host) = try httpFixture { _, form in
+            XCTAssertEqual(form["grant_type"], "refresh_token")
+            XCTAssertEqual(form["refresh_token"], "fixture+refresh&value=1")
+            XCTAssertNil(form["code"]); XCTAssertNil(form["code_verifier"])
+        }
+        defer { transport.invalidateAndCancel(); CloudTokenHTTPProtocol.unregister(host) }
+        store.save(.init(accessToken: "expired", refreshToken: "fixture+refresh&value=1", expiresAt: .distantPast))
+        let access = try await session.accessToken()
+        XCTAssertEqual(access, "fixture-access")
+        XCTAssertEqual(store.load()?.refreshToken, "fixture-rotated")
+    }
+    func testRejectedHTTPTokenExchangeDoesNotPersistCredentials() async throws {
+        let (session, store, transport, host) = try httpFixture(status: 400) { _, _ in }
+        defer { transport.invalidateAndCancel(); CloudTokenHTTPProtocol.unregister(host) }
+        let auth = try await session.beginAuthorization()
+        do {
+            try await session.finishAuthorization(callback: URL(string: "http://127.0.0.1:43871/callback?state=\(auth.state)&code=fixture-rejected")!)
+            XCTFail("Rejected token exchange completed sign-in")
+        } catch { XCTAssertEqual(error as? ControllerCloudError, .http(400)) }
+        XCTAssertNil(store.load())
     }
     func testTamperedCallbackNeverExchangesOrPersistsTokens() async throws {
         let store = CloudMemoryTokens(); let session = ControllerCloudSession(configuration:try configuration(),tokenStore:store)

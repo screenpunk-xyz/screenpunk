@@ -172,7 +172,12 @@ final class NativeEnrollmentJournalStore {
     let root: URL, cloudRootID: UUID, excludedLocalResetRoot: URL
     init(root: URL, cloudRootID: UUID, excludedLocalResetRoot: URL,
          boundary: @escaping (Boundary) throws -> Void = { _ in }) {
-        self.root = root.standardizedFileURL; self.cloudRootID = cloudRootID
+        #if os(iOS)
+        self.root = root
+        #else
+        self.root = root.standardizedFileURL
+        #endif
+        self.cloudRootID = cloudRootID
         self.excludedLocalResetRoot = excludedLocalResetRoot; self.boundary = boundary
     }
     // The excluded reset directory may not exist yet. Foundation can rewrite a
@@ -202,6 +207,16 @@ final class NativeEnrollmentJournalStore {
         }
         return true
     }
+    private func requirePhysicalRoot() throws {
+        #if os(iOS)
+        // Exact OS-home confinement and no-follow traversal replace Foundation's
+        // alias-normalizing comparison; retained inode/binding checks remain below.
+        do { try NativeEnrollmentPhysicalDirectory.require(root) }
+        catch { throw NativeEnrollmentJournalError.unsafeRoot }
+        #else
+        guard root.path.utf8.elementsEqual(root.resolvingSymlinksInPath().path.utf8) else { throw NativeEnrollmentJournalError.unsafeRoot }
+        #endif
+    }
     private func epoch(invalidate: Bool = false) -> UInt64 {
         Self.epochLock.lock(); defer { Self.epochLock.unlock() }
         let key = root.path + "|" + cloudRootID.uuidString
@@ -213,8 +228,22 @@ final class NativeEnrollmentJournalStore {
 
     /// A first-native root is explicitly owned, not inferred from absent history.
     /// This read-only preflight precedes root metadata initialization.
+    /// Strict read-only witness for a first-device preparation that stopped before
+    /// journal initialization. Any file, partial binding or orphan is nonempty.
+    func isExactlyEmptyFirstNativeRoot() throws -> Bool {
+        try requirePhysicalRoot()
+        let fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw failure() }; defer { close(fd) }
+        let original = try identity(fd, directory: true)
+        let empty = try names(fd).isEmpty
+        let current = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+        guard current >= 0 else { throw failure() }; defer { close(current) }
+        guard try identity(current, directory: true) == original,
+            try identity(fd, directory: true) == original, (try names(current).isEmpty) == empty else { throw NativeEnrollmentJournalError.unsafeRoot }
+        return empty
+    }
     func initializeFirstNativeExplicit() throws -> LocalDurabilityReceipt {
-        guard root.path.utf8.elementsEqual(root.resolvingSymlinksInPath().path.utf8) else { throw NativeEnrollmentJournalError.unsafeRoot }
+        try requirePhysicalRoot()
         let fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { throw failure() }; defer { close(fd) }
         let rootIdentity = try identity(fd, directory: true)
@@ -1394,12 +1423,20 @@ final class NativeEnrollmentJournalStore {
             pairCommandScope = false; pairPrivateAttempt = nil; pairPrivateRoot = nil; pairPrivateFiles = nil
         }
         let path = root.path, excluded = excludedLocalResetRoot.path
-        // Foundation standardization can rewrite /private/var to /var on Darwin.
-        // Compare both roots in that same spelling while retaining the supplied
-        // physical excluded path for the no-follow directory traversal.
+        // Compare the excluded path in the same physical OS-home spelling as
+        // the journal, including a possibly absent excluded leaf. Traversal still
+        // checks the supplied components without following caller aliases.
+        #if os(iOS)
+        let excludedTraversal: DeviceFilesystemTraversal
+        do { excludedTraversal = try .plan(for: excluded) }
+        catch { throw NativeEnrollmentJournalError.unsafeRoot }
+        let comparisonExcluded = excludedTraversal.rootPath +
+            (excludedTraversal.components.isEmpty ? "" : "/" + excludedTraversal.components.joined(separator: "/"))
+        #else
         let comparisonExcluded = excludedLocalResetRoot.standardizedFileURL.path
+        #endif
+        try requirePhysicalRoot()
         guard path.utf8.count <= 4096, excluded.utf8.count <= 4096,
-            path.utf8.elementsEqual(root.resolvingSymlinksInPath().path.utf8),
             try Self.isPhysicalExcludedPath(excluded),
             path != comparisonExcluded, !path.hasPrefix(comparisonExcluded + "/"),
             !comparisonExcluded.hasPrefix(path + "/") else { throw NativeEnrollmentJournalError.unsafeRoot }
@@ -1555,7 +1592,7 @@ final class NativeEnrollmentJournalStore {
         return .init(nodes: nodes, namespaces: namespaces)
     }
     private func check(_ d: Disk, expectedBinding: NativeJournalNode? = nil) throws {
-        guard root.path.utf8.elementsEqual(root.resolvingSymlinksInPath().path.utf8) else { throw NativeEnrollmentJournalError.unsafeRoot }
+        try requirePhysicalRoot()
         var info = stat()
         guard lstat(root.path, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
             NativeJournalIdentity(device: UInt64(truncatingIfNeeded: info.st_dev), inode: UInt64(info.st_ino)) == d.directory else { throw NativeEnrollmentJournalError.unsafeRoot }
@@ -1568,7 +1605,7 @@ final class NativeEnrollmentJournalStore {
         if let expected = expectedBinding ?? d.binding { guard actual == expected else { throw NativeEnrollmentJournalError.unsafeRoot } }
         if let actual {
             let b = try NativeJournalCodec.binding(actual.bytes)
-            guard b.cloudRootID == cloudRootID, b.canonicalPath.utf8.elementsEqual(root.path.utf8), b.directory == d.directory,
+            guard b.cloudRootID == cloudRootID, NativeEnrollmentPhysicalDirectory.bindingPathMatches(b.canonicalPath, physicalPath: root.path), b.directory == d.directory,
                 b.lock == d.lockIdentity, b.attempts == d.attemptsIdentity, b.frames == d.framesIdentity,
                 b.ownIdentity == actual.identity else { throw NativeEnrollmentJournalError.unsafeRoot }
         }

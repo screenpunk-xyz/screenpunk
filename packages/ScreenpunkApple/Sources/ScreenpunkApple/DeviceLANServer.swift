@@ -19,6 +19,63 @@ public struct DevicePendingPairingRequest: Sendable, Equatable {
     public let sessionNonceHex: String
 }
 
+/// Reversible scheduling fence only. Never holds its condition while authority, server,
+/// resource, network or callback work runs. A lease covers a WHOLE synchronous request.
+final class DeviceRetainedSceneActivityGate: @unchecked Sendable {
+    struct Lease { fileprivate let id: UUID; let epoch: UUID }
+    private let condition = NSCondition()
+    private var epoch = UUID()
+    private var active = true
+    private var terminal = false
+    private var leases = Set<UUID>()
+    private var drainedEpoch: UUID?
+    func currentEpochIfAllowed() -> UUID? {
+        condition.lock(); defer { condition.unlock() }
+        return active && !terminal ? epoch : nil
+    }
+    func isAllowed() -> Bool {
+        condition.lock(); defer { condition.unlock() }
+        return active && !terminal
+    }
+    func begin(expected: UUID? = nil) throws -> Lease {
+        condition.lock(); defer { condition.unlock() }
+        guard active, !terminal, expected == nil || expected == epoch else { throw TransferFailure.interrupted }
+        let lease = Lease(id: UUID(), epoch: epoch); leases.insert(lease.id); return lease
+    }
+    func end(_ lease: Lease) {
+        condition.lock(); defer { condition.unlock() }
+        leases.remove(lease.id); condition.broadcast()
+    }
+    func require(_ expected: UUID) throws {
+        condition.lock(); defer { condition.unlock() }
+        guard active, !terminal, epoch == expected else { throw TransferFailure.interrupted }
+    }
+    func pause() -> UUID? {
+        condition.lock(); defer { condition.unlock() }
+        guard !terminal else { return nil }
+        active = false; epoch = UUID(); drainedEpoch = nil; condition.broadcast(); return epoch
+    }
+    func drain(_ expected: UUID) throws {
+        condition.lock(); defer { condition.unlock() }
+        while !terminal && !active && epoch == expected && !leases.isEmpty { condition.wait() }
+        guard !terminal, !active, epoch == expected else { throw TransferFailure.interrupted }
+        drainedEpoch = expected
+    }
+    func requirePaused(_ expected: UUID) throws {
+        condition.lock(); defer { condition.unlock() }
+        guard !terminal, !active, epoch == expected else { throw TransferFailure.interrupted }
+    }
+    func activate(_ expected: UUID) -> Bool {
+        condition.lock(); defer { condition.unlock() }
+        guard !terminal, !active, epoch == expected, drainedEpoch == expected, leases.isEmpty else { return false }
+        active = true; return true
+    }
+    func retire() {
+        condition.lock(); defer { condition.unlock() }
+        terminal = true; active = false; epoch = UUID(); condition.broadcast()
+    }
+}
+
 public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var runtime: DeviceRuntime
     public private(set) var port: UInt16 = 0
@@ -36,6 +93,8 @@ public final class DeviceLANServer: @unchecked Sendable {
     public private(set) var activePackage: PackageAssetStore?
     public private(set) var screenSet: DeviceInstalledScreenSet?
     private let management: DeviceManagementContext
+    private let sceneActivity = DeviceRetainedSceneActivityGate()
+    private let sceneActivityThreadKey = "xyz.screenpunk.lan.activity." + UUID().uuidString
     private var postCommitActions: [() -> Void] = []
     public var onManagementSuspended: (() -> Void)?
     private var managementSuspended = false
@@ -44,7 +103,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     private var listenerAttempt = UUID()
     private var pendingListener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
-    enum ManagementBoundary: Equatable { case listenerWillStart, listenerReady, handshakeReady, requestReceived(String), pairingWaitStarted }
+    enum ManagementBoundary: Equatable { case listenerWillStart, listenerReady, handshakeReady, requestReceived(String), pairingWaitStarted, unifiedDispatchWillEnter }
     // Deterministic test observation only. Invoked outside all locks and never grants admission.
     var managementBoundary: ((ManagementBoundary) -> Void)?
     private func observeManagementBoundary(_ boundary: ManagementBoundary) {
@@ -73,6 +132,7 @@ public final class DeviceLANServer: @unchecked Sendable {
     /// Uses the declaring package's grant while another screen is selected.
     /// Ambiguous declarations never select a target implicitly.
     func temporaryActivationScope() -> HomeAssistantDeviceRuntime.Scope? {
+        guard sceneActivity.isAllowed() else { return nil }
         lock.lock(); defer { lock.unlock() }
         return temporaryActivationScopeLocked()
     }
@@ -242,14 +302,48 @@ public final class DeviceLANServer: @unchecked Sendable {
         stop()
     }
 
+    func isRetainedSceneActivityAllowed() -> Bool { sceneActivity.isAllowed() }
+    func retainedSceneActivityCheck() -> @Sendable () -> Bool {
+        let gate = sceneActivity
+        return { gate.isAllowed() }
+    }
+    func retainedSceneActivityEpoch() -> UUID? { sceneActivity.currentEpochIfAllowed() }
+    func pauseRetainedSceneActivity() -> UUID? { sceneActivity.pause() }
+    func drainRetainedSceneActivity(_ token: UUID) throws {
+        try sceneActivity.requirePaused(token)
+        stop() // Worker only. Network cancellation alone is not an in-flight effect fence.
+        try sceneActivity.drain(token)
+    }
+    func activateRetainedSceneActivity(_ token: UUID) -> Bool { sceneActivity.activate(token) }
+    private var requestActivityEpoch: UUID? {
+        (Thread.current.threadDictionary[sceneActivityThreadKey] as? String).flatMap(UUID.init(uuidString:))
+    }
+    private func withActivityAdmission<T>(expectedEpoch: UUID? = nil, _ body: () throws -> T) throws -> T {
+        if let expectedEpoch, let requestActivityEpoch, expectedEpoch != requestActivityEpoch { throw TransferFailure.interrupted }
+        let lease = try sceneActivity.begin(expected: expectedEpoch ?? requestActivityEpoch)
+        let previous = Thread.current.threadDictionary[sceneActivityThreadKey]
+        Thread.current.threadDictionary[sceneActivityThreadKey] = lease.epoch.uuidString
+        defer {
+            if let previous { Thread.current.threadDictionary[sceneActivityThreadKey] = previous }
+            else { Thread.current.threadDictionary.removeObject(forKey: sceneActivityThreadKey) }
+            sceneActivity.end(lease)
+        }
+        return try body()
+    }
+
     /// Lock ordering is always authority -> server. Work and callbacks escape neither lock.
     private func managementTransaction<T>(_ operation: () throws -> T) throws -> T {
+        // Early denial must precede authority/resource locks and use a reversible error.
+        let admission = try sceneActivity.begin(expected: requestActivityEpoch)
+        defer { sceneActivity.end(admission) }
         var actions: [() -> Void] = []
         defer { for action in actions { action() } }
         do {
             return try management.withAuthority {
+                try sceneActivity.require(admission.epoch)
                 lock.lock()
                 defer { actions = postCommitActions; postCommitActions = []; lock.unlock() }
+                try sceneActivity.require(admission.epoch)
                 guard !managementSuspended, !runtimeRetired else { throw DeviceManagementAuthority.Failure.staleLease }
                 return try operation()
             }
@@ -263,6 +357,7 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     /// Revocation-only cleanup is unconditional; it cannot install authority or modify retained content.
     @discardableResult public func suspendManagement() -> Bool {
+        sceneActivity.retire()
         lock.lock()
         guard !managementSuspended else { lock.unlock(); return false }
         managementSuspended = true
@@ -276,6 +371,7 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     /// Terminal content/management fence. Persisted content and credential records stay intact.
     public func retireForReset() {
+        sceneActivity.retire()
         lock.lock()
         guard !runtimeRetired else { lock.unlock(); return }
         runtimeRetired = true; authorityGeneration = UUID()
@@ -289,7 +385,11 @@ public final class DeviceLANServer: @unchecked Sendable {
 
     /// Recreate a failed listener without touching pairing or installed content.
     /// May block during startup; callers should use a worker queue.
-    public func start() throws {
+    public func start() throws { try start(retainedSceneEpoch: nil) }
+    func start(retainedSceneEpoch: UUID?) throws {
+        try withActivityAdmission(expectedEpoch: retainedSceneEpoch) { try startAdmitted() }
+    }
+    private func startAdmitted() throws {
         let attempt = UUID()
         let needed = try managementTransaction {
             if let listener, case .ready = listener.state { return false }
@@ -634,8 +734,10 @@ public final class DeviceLANServer: @unchecked Sendable {
     // MARK: Persistence
 
     public var installedManifests: [DashboardManifest] {
+        lock.lock()
         var packages = Array(screenPackages.values)
         if let activePackage { packages.append(activePackage) }
+        lock.unlock()
         var seen = Set<String>()
         return packages.compactMap { package in
             guard let data = package.assets["manifest.json"]?.data,
@@ -818,6 +920,13 @@ public final class DeviceLANServer: @unchecked Sendable {
     }
 
     private func handle(_ request: LANEnvelope, peerPin: [UInt8]?, managementGeneration requestGeneration: inout UUID, listenerAttempt attempt: UUID) -> LANEnvelope {
+        do {
+            return try withActivityAdmission {
+                handleAdmitted(request, peerPin: peerPin, managementGeneration: &requestGeneration, listenerAttempt: attempt)
+            }
+        } catch { return failureReply(request, error: error) }
+    }
+    private func handleAdmitted(_ request: LANEnvelope, peerPin: [UInt8]?, managementGeneration requestGeneration: inout UUID, listenerAttempt attempt: UUID) -> LANEnvelope {
         if request.method == LANMethod.cloudArchiveChunk.rawValue {
             do { return try handleCloudArchiveChunk(request, peerPin: peerPin, listenerAttempt: attempt) }
             catch { return failureReply(request, error: error) }
@@ -1302,8 +1411,9 @@ public final class DeviceLANServer: @unchecked Sendable {
     @_spi(NativeInstallation) public func attachUnifiedLocalSession(_ session: DeviceUnifiedInventorySession) throws {
         let association = try session.validatedAssociation()
         try managementTransaction {
-            guard management.isConcurrent, management.commonRootID == association.commonRootID,
-                  try management.qualifiedCloudInstallationIDUnderAuthority() == association.installationID else { throw DeviceManagementAuthority.Failure.staleLease }
+            guard management.isConcurrent, management.commonRootID == association.commonRootID else { throw DeviceManagementAuthority.Failure.staleLease }
+            try management.validateUnifiedLocalAttachmentUnderAuthority(commonRootID: association.commonRootID,
+                installationID: association.installationID)
             unifiedLocalSession = session; unifiedLocalAssociation = association
         }
     }
@@ -1513,14 +1623,20 @@ public final class DeviceLANServer: @unchecked Sendable {
         private weak var server: DeviceLANServer?
         private let peerPin: [UInt8]
         private let checkpoint: DeviceCommandIntentCoordinator.Checkpoint?
-        init(server: DeviceLANServer, commonRootID: UUID, peerPin: [UInt8], checkpoint: DeviceCommandIntentCoordinator.Checkpoint?) {
+        private let activityEpoch: UUID
+        init(server: DeviceLANServer, commonRootID: UUID, peerPin: [UInt8], checkpoint: DeviceCommandIntentCoordinator.Checkpoint?, activityEpoch: UUID) {
             self.server = server; self.commonRootID = commonRootID; self.peerPin = peerPin
-            self.peerPinHex = PeerPin.hex(peerPin); self.checkpoint = checkpoint
+            self.peerPinHex = PeerPin.hex(peerPin); self.checkpoint = checkpoint; self.activityEpoch = activityEpoch
         }
         func performFixedUnifiedLocalDispatch(command: NativeInstallationUnifiedLocalDispatchCommand) throws -> NativeInstallationUnifiedLocalDispatchResult {
             guard let server else { throw DeviceManagementAuthority.Failure.staleLease }
+            server.observeManagementBoundary(.unifiedDispatchWillEnter)
+            try server.sceneActivity.require(activityEpoch)
             return try server.management.performFixedUnifiedLocalDispatch(command: command, peerPinHex: peerPinHex, checkpoint: checkpoint) {
                 server.lock.lock(); defer { server.lock.unlock() }
+                // This is the fixed-effect admission linearization point. No activity
+                // lock spans the command; a pre-pause admitted effect drains normally.
+                try server.sceneActivity.require(self.activityEpoch)
                 guard !server.managementSuspended, !server.runtimeRetired else { throw DeviceManagementAuthority.Failure.staleLease }
                 try server.requireOwner(self.peerPin)
                 return try command.performDuringFixedOwner()
@@ -1529,12 +1645,15 @@ public final class DeviceLANServer: @unchecked Sendable {
     }
 
     private func prepareUnifiedLocalControllerOwner(commonRootID: UUID, authenticatedPeerPin: [UInt8]) throws -> any NativeUnifiedLocalInventoryOwner {
+        guard let activityEpoch = requestActivityEpoch else { throw TransferFailure.interrupted }
+        try sceneActivity.require(activityEpoch)
         let checkpoint = try management.acceptUnifiedLocalIntent(peerPinHex: PeerPin.hex(authenticatedPeerPin)) {
             lock.lock(); defer { lock.unlock() }
+            try sceneActivity.require(activityEpoch)
             guard !managementSuspended, !runtimeRetired else { throw DeviceManagementAuthority.Failure.staleLease }
             try requireOwner(authenticatedPeerPin)
         }
-        return UnifiedLocalControllerOwner(server: self, commonRootID: commonRootID, peerPin: authenticatedPeerPin, checkpoint: checkpoint)
+        return UnifiedLocalControllerOwner(server: self, commonRootID: commonRootID, peerPin: authenticatedPeerPin, checkpoint: checkpoint, activityEpoch: activityEpoch)
     }
 
     private func isApprovedPeer(_ peerPin: [UInt8]?) -> Bool {

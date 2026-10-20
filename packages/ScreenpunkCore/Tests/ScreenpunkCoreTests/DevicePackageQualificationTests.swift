@@ -53,6 +53,58 @@ final class DevicePackageQualificationTests: XCTestCase {
             XCTAssertFalse(String(decoding: result.canonicalManifestBytes, as: UTF8.self).contains("\"digest\""))
         }
     }
+    func testBoundedLegacyDashboardIdentifierAndPublicPreflightParity() throws {
+        let base = try fixture()
+        for identifier in [dashboardID, "google-tv-test", "A", "a.b_c-9", String(repeating: "a", count: 100)] {
+            let pair = try changed(base) { $0.dashboardId = identifier }
+            let result = try qualify(pair)
+            XCTAssertEqual(result.manifest.dashboardId, identifier)
+            XCTAssertEqual(result.originalManifestBytes, pair.0.manifest)
+            XCTAssertNoThrow(try DevicePackageCompatibilityPreflight.validate(revision: pair.1.revision,
+                manifest: pair.0.manifest, files: Dictionary(uniqueKeysWithValues: pair.0.files.map { ($0.path, $0.bytes) }),
+                profile: pair.1.target, profileID: pair.1.profileID))
+        }
+        for identifier in ["", ".x", "_x", "-x", "../x", "x/y", "x\\y", "x y", "x\t", "x\n", "é", String(repeating: "a", count: 101)] {
+            let pair = try changed(base) { $0.dashboardId = identifier }
+            XCTAssertThrowsError(try qualify(pair), identifier) { XCTAssertEqual($0 as? DevicePackageQualificationError, .invalidExpectation) }
+            XCTAssertThrowsError(try DevicePackageCompatibilityPreflight.validate(revision: pair.1.revision,
+                manifest: pair.0.manifest, files: Dictionary(uniqueKeysWithValues: pair.0.files.map { ($0.path, $0.bytes) }),
+                profile: pair.1.target, profileID: pair.1.profileID)) { XCTAssertEqual($0 as? DevicePackageQualificationError, .invalidExpectation) }
+        }
+        let legacy = try changed(base) { $0.dashboardId = "google-tv-test" }
+        var wrong = legacy.1.revision; wrong.revision = "legacy-revision"
+        XCTAssertThrowsError(try DevicePackageCompatibilityPreflight.validate(revision: wrong,
+            manifest: legacy.0.manifest, files: Dictionary(uniqueKeysWithValues: legacy.0.files.map { ($0.path, $0.bytes) }),
+            profile: legacy.1.target, profileID: legacy.1.profileID)) { XCTAssertEqual($0 as? DevicePackageQualificationError, .invalidExpectation) }
+        for edit in [{ (m: inout DashboardManifest) in m.dashboardId = "different-legacy-id" }, { $0.target.profileId = "foreign-device" }] {
+            let changed = try changed(legacy, edit)
+            XCTAssertThrowsError(try DevicePackageCompatibilityPreflight.validate(revision: legacy.1.revision,
+                manifest: changed.0.manifest, files: Dictionary(uniqueKeysWithValues: changed.0.files.map { ($0.path, $0.bytes) }),
+                profile: legacy.1.target, profileID: legacy.1.profileID))
+        }
+    }
+    func testPublicPreflightRejectsBoundsBeforeByteQualification() throws {
+        let pair = try fixture()
+        let profile = pair.1.target, revision = pair.1.revision
+        let tooMany = Dictionary(uniqueKeysWithValues: (0...PackageLimits.maxFiles).map { ("asset-\($0).js", Data([1])) })
+        for (manifest, files) in [(Data(), ["index.html": Data([1])]),
+            (Data(repeating: 0, count: DevicePackageQualifier.manifestLimit + 1), ["index.html": Data([1])]),
+            (pair.0.manifest, [:]), (pair.0.manifest, tooMany),
+            (pair.0.manifest, [String(repeating: "a", count: 1025): Data([1])])] {
+            XCTAssertThrowsError(try DevicePackageCompatibilityPreflight.validate(revision: revision, manifest: manifest,
+                files: files, profile: profile, profileID: pair.1.profileID)) {
+                XCTAssertEqual($0 as? DevicePackageQualificationError, .sizeLimit)
+            }
+        }
+        let files = Dictionary(uniqueKeysWithValues: pair.0.files.map { ($0.path, Data([7])) })
+        var internalFailure: DevicePackageQualificationError?
+        do { _ = try DevicePackageQualifier.qualify(.init(manifest: pair.0.manifest,
+            files: files.map { .init(path: $0.key, bytes: $0.value) }), expected: pair.1) }
+        catch { internalFailure = error as? DevicePackageQualificationError }
+        XCTAssertNotNil(internalFailure)
+        XCTAssertThrowsError(try DevicePackageCompatibilityPreflight.validate(revision: revision, manifest: pair.0.manifest,
+            files: files, profile: profile, profileID: pair.1.profileID)) { XCTAssertEqual($0 as? DevicePackageQualificationError, internalFailure) }
+    }
     func testCommittedNativeCanonicalFixtureParity() throws {
         let corpus = try JSONSerialization.jsonObject(with: Data(contentsOf: repository.appendingPathComponent("sdk/test/fixtures/native-package/CORPUS.json"))) as! [String: Any]
         let chosen: Set<String> = ["minimal-resolved-gallery", "nested-keys-forward", "nested-keys-reversed", "ascii-file-order", "unicode-composed", "unicode-decomposed", "unicode-supplementary-escaping", "unicode-dictionary-order", "optional-empty-behavior", "optional-explicit-false", "double-fraction", "double-precision", "double-negative-zero"]

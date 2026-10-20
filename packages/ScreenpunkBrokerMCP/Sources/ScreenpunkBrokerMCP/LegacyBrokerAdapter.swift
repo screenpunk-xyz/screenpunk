@@ -291,6 +291,9 @@ public final class LegacyBrokerAdapter {
                     arguments: arguments, error: error, submitted: submitted) {
                     return (uncertain, true)
                 }
+                if let failure = error as? WorkbenchIPCError {
+                    return (Self.deploymentFailureText(failure), true)
+                }
                 return ("workbench_deployment_unavailable: \(error.localizedDescription)", true)
             }
         }
@@ -319,6 +322,16 @@ public final class LegacyBrokerAdapter {
                 if mutating, let uncertain = LegacyMutationOutcome.uncertain(name: name,
                     arguments: arguments, error: error, submitted: submitted) {
                     return (uncertain, true)
+                }
+                if let failure = error as? WorkbenchIPCError {
+                    let code: String?
+                    switch failure.code {
+                    case .buildNotFound: code = "build_not_found"
+                    case .buildConfigurationInvalid: code = "build_configuration_invalid"
+                    case .buildPackageInvalid: code = "build_package_invalid"
+                    default: code = nil
+                    }
+                    if let code { return ("\(code): \(failure.message)", true) }
                 }
                 return ("workbench_authoring_unavailable: \(error.localizedDescription)", true)
             }
@@ -757,6 +770,21 @@ public final class LegacyBrokerAdapter {
                  "additionalProperties": .bool(false)])
     }
 
+    static func deploymentFailureText(_ failure: WorkbenchIPCError) -> String {
+        let code: String
+        switch failure.code {
+        case .deploymentPreflightUnavailable: code = "deployment_preflight_unavailable"
+        case .deploymentPackageInvalid: code = "deployment_package_invalid"
+        case .deploymentTargetMismatch: code = "deployment_target_mismatch"
+        case .deploymentIdentityInvalid: code = "deployment_identity_invalid"
+        case .workspaceConflict: return "deployment_context_changed: Refresh the selected workspace and device screen set, then prepare and review a new plan. Keep existing Screen IDs."
+        case .invalidRequest: return "deployment_request_invalid: Inspect the tool schema and prepared package identities, then prepare and review a valid plan."
+        case .confirmationRequired: return "deployment_review_required: Review the exact current plan and obtain approval before applying it."
+        default: return "workbench_deployment_unavailable: \(failure.message)"
+        }
+        return "\(code): \(failure.message)"
+    }
+
     static func deploymentParams(name: String, arguments: [String: Any]) throws -> [String: Any] {
         guard let method = deploymentTools[name], arguments["schemaVersion"] == nil else {
             throw WorkbenchIPCError(.invalidRequest)
@@ -791,21 +819,28 @@ public final class LegacyBrokerAdapter {
 
     static func deploymentSchema(_ name: String) -> JSONValue {
         func string() -> JSONValue { .object(["type": .string("string")]) }
+        func screenID() -> JSONValue { .object([
+            "type": .string("string"), "minLength": .int(1), "maxLength": .int(100),
+            "pattern": .string("^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"),
+            "description": .string("Existing Screen ID from the library, including legacy IDs such as google-tv-test. Preserve this ID; do not replace it with a UUID.")]) }
+        func preparedRevision() -> JSONValue { .object([
+            "type": .string("string"), "format": .string("uuid"),
+            "description": .string("Exact prepared revision returned by prepare_deployment for this device and orientation.")]) }
         var fields: [String: JSONValue] = [:]
         var required: [String] = []
         switch deploymentTools[name] {
         case .prepare:
-            fields = ["deviceId": string(), "dashboardId": string(), "sourceRevision": string(),
+            fields = ["deviceId": string(), "dashboardId": screenID(), "sourceRevision": string(),
                       "orientation": .object(["type": .string("string"), "enum": .array([.string("portrait"), .string("landscape")])])]
             required = ["deviceId", "dashboardId", "sourceRevision", "orientation"]
         case .plan:
             let package = JSONValue.object(["type": .string("object"), "properties": .object([
-                "dashboardId": string(), "sourceRevision": string(), "revision": string(), "dataDescription": string()]),
+                "dashboardId": screenID(), "sourceRevision": string(), "revision": preparedRevision(), "dataDescription": string()]),
                 "required": .array([.string("dashboardId"), .string("sourceRevision"), .string("revision"), .string("dataDescription")]),
                 "additionalProperties": .bool(false)])
             fields = ["deviceId": string(), "packages": .object(["type": .string("array"), "items": package,
-                "minItems": .int(1), "maxItems": .int(12)]), "selectedDashboardId": string(),
-                "removedDashboardIds": .object(["type": .string("array"), "items": string(), "maxItems": .int(12)]),
+                "minItems": .int(1), "maxItems": .int(12)]), "selectedDashboardId": screenID(),
+                "removedDashboardIds": .object(["type": .string("array"), "items": screenID(), "maxItems": .int(12)]),
                 "bindingIds": .object(["type": .string("array"), "items": string(), "maxItems": .int(32)]),
                 "lifetimeSeconds": .object(["type": .string("integer"), "minimum": .int(1), "maximum": .int(86_400)])]
             required = ["deviceId", "packages", "selectedDashboardId", "removedDashboardIds", "bindingIds", "lifetimeSeconds"]

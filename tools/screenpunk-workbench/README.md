@@ -14,4 +14,22 @@ Global options include `--json`, `--no-input`, `--workspace PATH`, `--home PATH`
 
 For an authenticated standalone release, installation verifies the signed manifest and native executable identities, then accepts its measured signed catalog and imports embedded authoring kits before selecting the service. The installed service registers that same compiled signer, channel, and exact publisher policy only when its running executable matches the verified selected release. A missing required kit can be reimported from that retained release without network access, subject to the signed catalog pin, archive hash, strict inventory, and native signature checks.
 
+## Screen syncing
+
+Connect the CLI account, inspect available cloud workspaces, then explicitly enable Screen syncing:
+
+```sh
+screenpunk cloud login
+screenpunk cloud status
+screenpunk cloud sync enable CLOUD_WORKSPACE_ID
+screenpunk cloud sync status
+screenpunk cloud sync disable
+```
+
+`cloud sync enable` uses the selected local workspace. To explicitly create/select a new local workspace during setup, append `--create-local-workspace /absolute/path`. The global `--workspace /absolute/path` remains a local workspace assertion; it is never a cloud workspace ID. Signing in alone does not enable syncing.
+
+Enabling saves consent and a durable request for the persistent service. Local Screens and cloud Screens are discovered automatically without name matching or manual pairing. Existing linked identities remain linked, and retries reuse their recorded identities. Syncing source does not apply Screens to devices. Concurrent edits are preserved as conflicts rather than silently overwritten.
+
+`cloud sync status` reads local sync progress, including per-Screen messages and last successful sync times. `cloud sync disable` changes local consent and retains source and credentials. These two commands do not discover OAuth configuration or make cloud requests. Old explicit `cloud link`, `cloud sync LOCAL_ID`, and related commands remain available for compatibility; simplified setup does not require them. `cloud screens` lists cloud Screens (`cloud projects` remains an alias for scripts).
+
 Build and test with private scratch paths. The repository's focused CLI tests use private `/private/tmp` workspaces, homes and Unix sockets. Full service-start tests may skip their live-owner branch if another legacy writer holds the production owner boundary; such skips are not runtime acceptance. The Mac GUI preview remains available through its separate compatibility path, and optional screenshot tools report unavailability when a compatible verified helper is absent.

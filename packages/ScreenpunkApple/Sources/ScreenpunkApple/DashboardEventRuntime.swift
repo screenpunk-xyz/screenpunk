@@ -10,6 +10,7 @@ final class DashboardEventRuntime {
     private let connections: ConnectionRuntime?
     private let managedRuntime: DeviceUnifiedManagedRuntime?
     private let revision: String
+    private let presentationAllowed: @Sendable () -> Bool
     private var engine: EventNavigationEngine
     private var settings: DeviceSettings
     private var tasks: [Task<Void, Never>] = []
@@ -23,7 +24,8 @@ final class DashboardEventRuntime {
     var onHealth: ((Bool) -> Void)?
 
     init(manifest: DashboardManifest, revision: String, settings: DeviceSettings,
-         homeAssistant: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime?, managedRuntime: DeviceUnifiedManagedRuntime? = nil) throws {
+         homeAssistant: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime?, managedRuntime: DeviceUnifiedManagedRuntime? = nil, presentationAllowed: @escaping @Sendable () -> Bool = { true }) throws {
+        self.presentationAllowed = presentationAllowed
         self.manifest = manifest; self.revision = revision
         self.homeAssistant = homeAssistant; self.connections = connections; self.managedRuntime = managedRuntime
         let reconciled = Self.reconciled(settings, manifest: manifest)
@@ -43,6 +45,7 @@ final class DashboardEventRuntime {
     }
 
     func update(settings value: DeviceSettings) {
+        guard presentationIsOpen() else { stop(); return }
         let reconciled = Self.reconciled(value, manifest: manifest)
         settingsApplied = Self.navigationPreferencesEqual(value, reconciled, dashboardId: manifest.dashboardId)
         let previousRules = settings.eventRuleOverrides[manifest.dashboardId] ?? [:]
@@ -81,7 +84,7 @@ final class DashboardEventRuntime {
     }
 
     func start() {
-        guard !running else { return }; running = true; epoch = UUID()
+        guard presentationIsOpen(), !running else { return }; running = true; epoch = UUID()
         let currentEpoch = epoch
         // Share one subscription across rules for the same source, so condition
         // filters cannot replace each other's underlying socket.
@@ -111,17 +114,25 @@ final class DashboardEventRuntime {
     }
 
     @discardableResult func open(pageId: String) -> Bool {
-        guard manifest.resolvedPages.contains(where: { $0.id == pageId }) else { return false }
+        guard presentationIsOpen(), manifest.resolvedPages.contains(where: { $0.id == pageId }) else { return false }
         let changed = engine.manualNavigate(pageId: pageId)
         publish(changed: changed); return true
     }
 
     func manualNavigation(pageId: String) {
+        guard presentationIsOpen() else { return }
         _ = engine.manualNavigate(pageId: pageId)
         publish(changed: false)
     }
 
-    private func isCurrent(_ value: UUID) -> Bool { running && epoch == value && !Task.isCancelled }
+    private func presentationIsOpen() -> Bool {
+        guard presentationAllowed() else { stop(); return false }
+        return true
+    }
+    private func isCurrent(_ value: UUID) -> Bool {
+        guard presentationIsOpen() else { stop(); return false }
+        return running && epoch == value && !Task.isCancelled
+    }
 
     private func poll(_ source: EventSource, rules: [ManifestEventRule], epoch: UUID) async {
         var baseline = true
@@ -149,12 +160,15 @@ final class DashboardEventRuntime {
                 if let managedRuntime {
                     let connectedAt = Date()
                     var needsBaseline = source.alias != "home" && source.refreshOperation == nil
+                    guard isCurrent(epoch) else { return }
                     let stream = try await managedRuntime.subscribe(alias: source.alias, operation: source.operation, parameters: try parameters(source))
+                    guard isCurrent(epoch) else { return }
                     if source.alias != "home", let operation = source.refreshOperation {
                         let result = try await read(source, operation: operation, alias: source.refreshAlias ?? source.alias)
                         guard !result.stale, isCurrent(epoch) else { throw ConnectionFailure.deviceOffline }
                         consume(result.body, rules: rules, baseline: true)
                     }
+                    guard isCurrent(epoch) else { return }
                     for try await update in stream {
                         guard isCurrent(epoch) else { return }
                         retrySeconds = 1; reportHealth(source, healthy: true)
@@ -163,8 +177,10 @@ final class DashboardEventRuntime {
                         needsBaseline = false
                     }
                 } else if source.alias == "home", let homeAssistant {
+                    guard isCurrent(epoch) else { return }
                     let stream = try await homeAssistant.subscribeStates(revision: revision, alias: source.alias,
                         operation: source.operation, parameters: try parameters(source))
+                    guard isCurrent(epoch) else { return }
                     for try await update in stream {
                         guard isCurrent(epoch) else { return }
                         retrySeconds = 1; reportHealth(source, healthy: true)
@@ -177,6 +193,7 @@ final class DashboardEventRuntime {
                     let consumer = "navigation:" + (try encoder.encode(source)).base64EncodedString()
                     let id = try await connections.subscribe(alias: source.alias, operation: source.operation, parameters: try parameters(source), consumer: consumer)
                     do {
+                        guard isCurrent(epoch) else { await connections.unsubscribe(id: id); return }
                         if let operation = source.refreshOperation {
                             let result = try await read(source, operation: operation, alias: source.refreshAlias ?? source.alias)
                             guard !result.stale else { throw ConnectionFailure.deviceOffline }
@@ -207,6 +224,7 @@ final class DashboardEventRuntime {
     }
 
     private func read(_ source: EventSource, operation: String, alias: String? = nil) async throws -> ConnectionHTTPResult {
+        guard presentationIsOpen(), running, !Task.isCancelled else { throw CancellationError() }
         let alias = alias ?? source.alias
         if let managedRuntime { return try await managedRuntime.request(alias: alias, operation: operation, parameters: try parameters(source), readOnly: true) }
         if alias == "home", let homeAssistant {
@@ -229,6 +247,7 @@ final class DashboardEventRuntime {
     }
 
     private func consume(_ data: Data, rules: [ManifestEventRule], baseline: Bool, homeStates: Bool = false, notBefore: Date? = nil) {
+        guard presentationIsOpen() else { return }
         guard data.count <= 1024 * 1024, let object = try? JSONSerialization.jsonObject(with: data) else { return }
         let payloads: [[String: Any]]
         if homeStates, let states = object as? [[String: Any]] {
@@ -249,6 +268,7 @@ final class DashboardEventRuntime {
     }
 
     private func reportHealth(_ source: EventSource, healthy: Bool) {
+        guard presentationIsOpen() else { return }
         guard manifest.connections.first(where: { $0.alias == source.alias })?.required == true else { return }
         let key = source.alias + ":" + source.operation
         if healthy { unhealthySources.remove(key) } else { unhealthySources.insert(key) }
@@ -256,13 +276,14 @@ final class DashboardEventRuntime {
     }
 
     private func publish(changed: Bool) {
+        guard presentationIsOpen() else { return }
         if changed { onPage?(page) }
         onStatus?(status); scheduleReturn()
     }
 
     private func scheduleReturn() {
         timer?.cancel(); timer = nil
-        guard running, let date = engine.returnAt else { return }
+        guard presentationIsOpen(), running, let date = engine.returnAt else { return }
         let generation = engine.generation, expectedEpoch = epoch
         timer = Task { [weak self] in
             let delay = max(0, date.timeIntervalSinceNow)

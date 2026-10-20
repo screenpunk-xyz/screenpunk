@@ -19,12 +19,22 @@ final class DeviceMixedInventoryStore {
             self.issuer = issuer; snapshot = state; self.bytes = bytes
         }
     }
+    enum CommitBoundary { case intentInstalled, currentInstalled, receiptInstalled }
+    private let commitBoundary: (CommitBoundary) throws -> Void
     let root: URL
     let rootID: UUID
     private let mutex = NSLock()
     private struct Binding: Codable, Equatable { let rootID: UUID; let path: String; let device: UInt64; let inode: UInt64; let lockDevice: UInt64; let lockInode: UInt64 }
     private var borrowedRoot: Int32?
-    init(root: URL, rootID: UUID) { self.root = Self.physicalParentPath(root); self.rootID = rootID }
+    private let filesystemContextFactory: (URL, Int32, URL?) throws -> DevicePersistedFilesystemContext
+    private var activeFilesystemContext: DevicePersistedFilesystemContext?
+    private var originalBindingBytes: Data?
+    init(root: URL, rootID: UUID,
+        filesystemContextFactory: @escaping (URL, Int32, URL?) throws -> DevicePersistedFilesystemContext = { try .capture(currentRoot: $0, heldRoot: $1, plannedPublicationRoot: $2) },
+        commitBoundary: @escaping (CommitBoundary) throws -> Void = { _ in }) {
+        self.root = Self.physicalParentPath(root); self.rootID = rootID
+        self.filesystemContextFactory = filesystemContextFactory; self.commitBoundary = commitBoundary
+    }
     private static func physicalParentPath(_ value: URL) -> URL {
         value.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(value.lastPathComponent,
             isDirectory: true).standardizedFileURL
@@ -50,10 +60,11 @@ final class DeviceMixedInventoryStore {
     func initializeExplicit(recordedFinalRoot: URL? = nil) throws {
         try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
         mutex.lock(); defer { mutex.unlock() }
-        try withRoot { descriptor in
+        try withRoot(plannedPublicationRoot: recordedFinalRoot.map { Self.physicalParentPath($0) }) { descriptor in
             let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
             if let bytes = try read(descriptor, "mixed-root.json", maximum: 8192) {
-                guard try decode(Binding.self, bytes, maximum: 8192) == binding(descriptor, recordedPath: recordedFinalRoot.map { Self.physicalParentPath($0).path }) else { throw Failure.unsafeRoot }
+                try requireBindingBytes(bytes, descriptor: descriptor,
+                    recordedPath: recordedFinalRoot.map { Self.physicalParentPath($0).path })
                 try validateNames(names); return
             }
             guard names.isEmpty || names == ["mixed.lock"] else { throw Failure.unsafeRoot }
@@ -80,12 +91,65 @@ final class DeviceMixedInventoryStore {
     /// and identical uncertain-write retries never regenerate a generation.
     func commitExact(operationID: UUID, previous: Capture?, candidate: DeviceMixedStructuralState,
         admissionEnabled: Bool, permit: DeviceLocalResourcePermit) throws -> (Capture, Receipt) {
+        try commitInventoryExact(operationID: operationID, previous: previous, candidate: candidate,
+            admissionEnabled: admissionEnabled, attachmentTransition: false, permit: permit)
+    }
+    func beginCloudDetachmentExact(operationID: UUID, previous: Capture, candidate: DeviceMixedStructuralState,
+        retirement: NativeCloudCredentialRetirement, permit: DeviceLocalResourcePermit) throws -> (Capture, Receipt) {
+        guard previous.snapshot.detachment == nil, previous.snapshot.logoutIntent == nil,
+            retirement.installationID == previous.snapshot.installationOwner.installationID,
+            candidate.installationOwner == previous.snapshot.installationOwner, candidate.detachment == nil,
+            candidate.logoutIntent?.retirementMetadata == retirement.canonicalMetadata,
+            candidate.cloudObservationEpoch == previous.snapshot.cloudObservationEpoch,
+            (previous.snapshot.legacyLocalRoots == nil || candidate.legacyLocalRoots == previous.snapshot.legacyLocalRoots),
+            candidate.entries == previous.snapshot.entries, candidate.configuredEntryID == previous.snapshot.configuredEntryID else { throw Failure.staleGeneration }
+        return try commitInventoryExact(operationID: operationID, previous: previous, candidate: candidate,
+            admissionEnabled: true, attachmentTransition: true, permit: permit)
+    }
+    func commitCloudDetachmentExact(operationID: UUID, previous: Capture, candidate: DeviceMixedStructuralState,
+        revocation: NativeConfirmedCloudRevocation, permit: DeviceLocalResourcePermit) throws -> (Capture, Receipt) {
+        guard let accepted = previous.snapshot.logoutIntent,
+            operationID == accepted.detachOperationID, candidate.generationID == accepted.detachGenerationID,
+            candidate.logoutIntent == nil, candidate.detachment?.retirementMetadata == accepted.retirementMetadata,
+            revocation.installationOwner == previous.snapshot.installationOwner,
+            candidate.legacyLocalRoots == previous.snapshot.legacyLocalRoots,
+            candidate.cloudObservationEpoch == previous.snapshot.cloudObservationEpoch,
+            previous.snapshot.detachment == nil, candidate.installationOwner == previous.snapshot.installationOwner,
+            candidate.detachment?.revokedAt == revocation.revokedAt,
+            candidate.entries == previous.snapshot.entries.filter({ if case .retainedLocal = $0 { return true }; return false }) else { throw Failure.staleGeneration }
+        return try commitInventoryExact(operationID: operationID, previous: previous, candidate: candidate,
+            admissionEnabled: true, attachmentTransition: true, permit: permit)
+    }
+    func commitCloudCleanupExact(operationID: UUID, previous: Capture, candidate: DeviceMixedStructuralState,
+        receipt: NativeConfirmedCloudCleanup, permit: DeviceLocalResourcePermit) throws -> (Capture, Receipt) {
+        guard let old = previous.snapshot.detachment, let next = candidate.detachment, !old.cleanupCompleted, next.cleanupCompleted,
+            receipt.canonicalRetirementMetadata == old.retirementMetadata, next.retirementMetadata == old.retirementMetadata,
+            next.revokedAt == old.revokedAt, candidate.installationOwner == previous.snapshot.installationOwner,
+            candidate.entries == previous.snapshot.entries, candidate.configuredEntryID == previous.snapshot.configuredEntryID,
+            candidate.legacyLocalRoots == previous.snapshot.legacyLocalRoots, candidate.cloudObservationEpoch == previous.snapshot.cloudObservationEpoch,
+            candidate.logoutIntent == nil else { throw Failure.staleGeneration }
+        return try commitInventoryExact(operationID: operationID, previous: previous, candidate: candidate,
+            admissionEnabled: true, attachmentTransition: true, permit: permit)
+    }
+    func commitCloudAttachmentExact(operationID: UUID, previous: Capture, candidate: DeviceMixedStructuralState,
+        permit: DeviceLocalResourcePermit) throws -> (Capture, Receipt) {
+        guard previous.snapshot.detachment?.cleanupCompleted == true, candidate.detachment == nil,
+            candidate.installationOwner.installationID != previous.snapshot.installationOwner.installationID,
+            candidate.cloudObservationEpoch == candidate.installationOwner.installationID,
+            candidate.legacyLocalRoots == previous.snapshot.legacyLocalRoots,
+            candidate.entries == previous.snapshot.entries,
+            candidate.configuredEntryID == previous.snapshot.configuredEntryID else { throw Failure.staleGeneration }
+        return try commitInventoryExact(operationID: operationID, previous: previous, candidate: candidate,
+            admissionEnabled: true, attachmentTransition: true, permit: permit)
+    }
+    private func commitInventoryExact(operationID: UUID, previous: Capture?, candidate: DeviceMixedStructuralState,
+        admissionEnabled: Bool, attachmentTransition: Bool, permit: DeviceLocalResourcePermit) throws -> (Capture, Receipt) {
         try permit.beginRead(ObjectIdentifier(self)); defer { permit.endRead() }
         guard admissionEnabled else { throw Failure.disabled }
         guard let descriptor = borrowedRoot else { throw DeviceLocalResourceGateFailure.invalidScope }
         if let previous {
             guard previous.issuer == ObjectIdentifier(self), candidate.generationID != previous.snapshot.generationID,
-                  candidate.installationOwner == previous.snapshot.installationOwner else { throw Failure.staleGeneration }
+                  (attachmentTransition || (candidate.installationOwner == previous.snapshot.installationOwner && candidate.detachment == previous.snapshot.detachment && candidate.legacyLocalRoots == previous.snapshot.legacyLocalRoots && candidate.cloudObservationEpoch == previous.snapshot.cloudObservationEpoch && previous.snapshot.logoutIntent == nil && candidate.logoutIntent == nil)) else { throw Failure.staleGeneration }
         }
         let bytes = try DeviceMixedStructuralStateCodec.encode(candidate)
         let intent = Intent(operationID: operationID, previous: previous?.bytes, candidate: bytes)
@@ -101,9 +165,10 @@ final class DeviceMixedInventoryStore {
             // Never discard history to permit a reused command. Bounded exhaustion requires review.
             guard names.filter({ $0.hasSuffix(".mixed-intent.json") }).count < 256 else { throw Failure.needsReview }
             try replace(descriptor, intentName, bytes: encodedIntent)
+            try commitBoundary(.intentInstalled)
         }
         guard current?.bytes == previous?.bytes || current?.bytes == bytes else { throw Failure.staleGeneration }
-        if current?.bytes != bytes { try replace(descriptor, "mixed-current.json", bytes: bytes) }
+        if current?.bytes != bytes { try replace(descriptor, "mixed-current.json", bytes: bytes); try commitBoundary(.currentInstalled) }
         let receipt = Receipt(operationID: operationID, generationID: candidate.generationID, digest: try DeviceNativeDeliveryAttachmentCodec.hash(bytes))
         let receiptBytes = try encode(receipt, maximum: 8192)
         if let recorded = try read(descriptor, receiptName, maximum: 8192) {
@@ -286,26 +351,34 @@ final class DeviceMixedInventoryStore {
     func mountedExact() throws -> MountedFrame? {
         try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
         mutex.lock(); defer { mutex.unlock() }
-        return try withRoot { descriptor in
-            _ = try checkedCurrent(descriptor)
-            guard let bytes = try read(descriptor, "mixed-mounted.json", maximum: 8192) else { return nil }
-            let frame = try decode(MountedFrame.self, bytes, maximum: 8192)
-            for name in try FileManager.default.contentsOfDirectory(atPath: root.path) where name.hasSuffix(".mixed-intent.json") {
-                guard let intentBytes = try read(descriptor, name, maximum: 384 * 1024) else { throw Failure.corruptHistory }
-                let state = try DeviceMixedStructuralStateCodec.decode(decode(Intent.self, intentBytes, maximum: 384 * 1024).candidate)
-                guard state.generationID == frame.generationID else { continue }
-                guard state.configuredEntryID == frame.entryID else { throw Failure.corruptHistory }
-                if frame.entryID == nil {
-                    guard frame.manifestDigest == nil else { throw Failure.corruptHistory }; return frame
-                }
-                guard let entry = state.entries.first(where: { $0.entryID == frame.entryID }) else { throw Failure.corruptHistory }
-                let digest: String
-                switch entry { case .retainedLocal(let local): digest = local.entry.revision.digest
-                case .cloud(let cloud, _): digest = cloud.package.manifestDigest.text }
-                guard frame.manifestDigest == digest else { throw Failure.corruptHistory }; return frame
+        return try withRoot { descriptor in try checkedMounted(descriptor) }
+    }
+    /// Reuses the ordinary mounted-history validator in an already held common
+    /// root scope. Scope exit retains its existing physical/context checks.
+    func mountedExact(permit: DeviceLocalResourcePermit) throws -> MountedFrame? {
+        try permit.beginRead(ObjectIdentifier(self)); defer { permit.endRead() }
+        guard let descriptor = borrowedRoot else { throw DeviceLocalResourceGateFailure.invalidScope }
+        return try checkedMounted(descriptor)
+    }
+    private func checkedMounted(_ descriptor: Int32) throws -> MountedFrame? {
+        _ = try checkedCurrent(descriptor)
+        guard let bytes = try read(descriptor, "mixed-mounted.json", maximum: 8192) else { return nil }
+        let frame = try decode(MountedFrame.self, bytes, maximum: 8192)
+        for name in try FileManager.default.contentsOfDirectory(atPath: root.path) where name.hasSuffix(".mixed-intent.json") {
+            guard let intentBytes = try read(descriptor, name, maximum: 384 * 1024) else { throw Failure.corruptHistory }
+            let state = try DeviceMixedStructuralStateCodec.decode(decode(Intent.self, intentBytes, maximum: 384 * 1024).candidate)
+            guard state.generationID == frame.generationID else { continue }
+            guard state.configuredEntryID == frame.entryID else { throw Failure.corruptHistory }
+            if frame.entryID == nil {
+                guard frame.manifestDigest == nil else { throw Failure.corruptHistory }; return frame
             }
-            throw Failure.corruptHistory
+            guard let entry = state.entries.first(where: { $0.entryID == frame.entryID }) else { throw Failure.corruptHistory }
+            let digest: String
+            switch entry { case .retainedLocal(let local): digest = local.entry.revision.digest
+            case .cloud(let cloud, _): digest = cloud.package.manifestDigest.text }
+            guard frame.manifestDigest == digest else { throw Failure.corruptHistory }; return frame
         }
+        throw Failure.corruptHistory
     }
     private struct CloudAcceptedFrame: Codable { let command: Data; let plan: Data; let previous: Data; var nativeOperationID: UUID? = nil; var journalRootID: UUID? = nil }
     func retainCloudAcceptedExact(binding: DeviceNativeDeliveryCommandBinding, previous: Capture, permit: DeviceLocalResourcePermit) throws {
@@ -348,7 +421,8 @@ final class DeviceMixedInventoryStore {
         try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
         mutex.lock(); defer { mutex.unlock() }
         return try withRoot { descriptor in
-            _ = try checkedCurrent(descriptor)
+            guard let active = try checkedCurrent(descriptor), active.snapshot.detachment == nil,
+                active.snapshot.logoutIntent == nil else { return [] }
             var result: [CloudRejection] = []
             for name in try FileManager.default.contentsOfDirectory(atPath: root.path) where name.hasSuffix(".mixed-rejection-outcome.json") {
                 let prefix = String(name.prefix(36))
@@ -358,6 +432,7 @@ final class DeviceMixedInventoryStore {
                 let frame = try decode(CloudAcceptedFrame.self, bytes, maximum: 256 * 1024)
                 guard let operation = frame.nativeOperationID, let journal = frame.journalRootID else { throw Failure.needsReview }
                 let state = try DeviceMixedStructuralStateCodec.decode(frame.previous)
+                if state.installationOwner != active.snapshot.installationOwner { continue }
                 let capture = Capture(ObjectIdentifier(self), state, frame.previous)
                 let object = try JSONSerialization.jsonObject(with: frame.command) as? [String: Any]
                 let fields: Set<String> = ["schemaVersion", "operationId", "planId", "planDigest", "planByteLength", "installationId", "accountId", "locationId", "transitionId"]
@@ -375,7 +450,7 @@ final class DeviceMixedInventoryStore {
             return result.sorted { $0.binding.sequence < $1.binding.sequence }
         }
     }
-    struct LocalSourceRoot: Codable, Equatable { let rootID: UUID; let path: String }
+    struct LocalSourceRoot: Codable, Equatable, Sendable { let rootID: UUID; let path: String }
     struct LocalSourceFrame: Codable, Equatable { let operationID: UUID; let candidate: Data; let roots: [LocalSourceRoot] }
     func retainLocalSourceExact(operationID: UUID, candidate: DeviceMixedStructuralState,
         descriptors: [DeviceLocalResourceDescriptor], permit: DeviceLocalResourcePermit) throws {
@@ -444,13 +519,16 @@ final class DeviceMixedInventoryStore {
         try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
         mutex.lock(); defer { mutex.unlock() }
         return try withRoot { descriptor in
-            _ = try checkedCurrent(descriptor)
+            guard let active = try checkedCurrent(descriptor), active.snapshot.detachment == nil,
+                active.snapshot.logoutIntent == nil else { return [] }
             let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
             var outcomes: [PendingOutcome] = []
             for name in names where name.hasSuffix(".mixed-static-grant.json") {
                 guard let id = UUID(uuidString: String(name.prefix(36))) else { throw Failure.corruptHistory }
                 let prefix = id.uuidString.lowercased()
-                guard try read(descriptor, prefix + ".mixed-intent.json", maximum: 384 * 1024) != nil else { continue }
+                guard let intentBytes = try read(descriptor, prefix + ".mixed-intent.json", maximum: 384 * 1024) else { continue }
+                let intent = try decode(Intent.self, intentBytes, maximum: 384 * 1024)
+                if try DeviceMixedStructuralStateCodec.decode(intent.candidate).installationOwner != active.snapshot.installationOwner { continue }
                 if try read(descriptor, prefix + ".mixed-http-acknowledgment.json", maximum: 16384) != nil || read(descriptor, prefix + ".mixed-http-failedAcknowledgment.json", maximum: 16384) != nil { continue }
                 guard let request = try read(descriptor, prefix + ".mixed-http-request.json", maximum: 16384),
                     let authorization = try read(descriptor, prefix + ".mixed-http-authorization.json", maximum: 16384) else { throw Failure.corruptHistory }
@@ -477,18 +555,37 @@ final class DeviceMixedInventoryStore {
         let generationID: UUID
         let exactBody: Data
     }
+    private func cloudOutboxName(_ descriptor: Int32) throws -> String {
+        guard let current = try checkedCurrent(descriptor), current.snapshot.detachment == nil,
+            current.snapshot.logoutIntent == nil else { throw Failure.needsReview }
+        if let epoch = current.snapshot.cloudObservationEpoch { return "mixed-cloud-observations." + epoch.uuidString.lowercased() + ".json" }
+        return "mixed-cloud-observations.json"
+    }
     private struct CloudOutbox: Codable { var knownGenerationID: UUID; var pending: [CloudObservation]; var issuedHeadGenerationID: UUID? = nil }
     /// Initial Cloud generation is supplied by an authenticated exact baseline receipt.
     /// Reopening cannot silently reset this durable synchronization checkpoint.
     func initializeCloudObservationCheckpointExact(_ generationID: UUID, permit: DeviceLocalResourcePermit) throws {
         try permit.beginRead(ObjectIdentifier(self)); defer { permit.endRead() }
         guard let descriptor = borrowedRoot else { throw DeviceLocalResourceGateFailure.invalidScope }
-        if let bytes = try read(descriptor, "mixed-cloud-observations.json", maximum: 8 * 1024 * 1024) {
+        if let bytes = try read(descriptor, try cloudOutboxName(descriptor), maximum: 8 * 1024 * 1024) {
             let original = try decode(CloudOutbox.self, bytes, maximum: 8 * 1024 * 1024)
             guard original.knownGenerationID == generationID else { throw Failure.staleGeneration }
             try validateOutbox(original); return
         }
-        try replace(descriptor, "mixed-cloud-observations.json", bytes: encode(CloudOutbox(knownGenerationID: generationID, pending: []), maximum: 8 * 1024 * 1024))
+        try replace(descriptor, try cloudOutboxName(descriptor), bytes: encode(CloudOutbox(knownGenerationID: generationID, pending: []), maximum: 8 * 1024 * 1024))
+    }
+    /// Continues the existing authenticated checkpoint; it never creates or
+    /// resets one from a caller-supplied generation.
+    func ensureCurrentCloudObservationExact(_ capture: Capture, stateBytes: Data, permit: DeviceLocalResourcePermit) throws {
+        try permit.beginRead(ObjectIdentifier(self))
+        do {
+            defer { permit.endRead() }
+            guard let descriptor = borrowedRoot, capture.issuer == ObjectIdentifier(self),
+                try checkedCurrent(descriptor)?.bytes == capture.bytes else { throw Failure.staleGeneration }
+            let outbox = try readOutbox(descriptor)
+            if outbox.knownGenerationID == capture.snapshot.generationID, outbox.pending.isEmpty { return }
+        }
+        _ = try enqueueCloudObservationExact(capture, stateBytes: stateBytes, permit: permit)
     }
     /// The fixed mixed observation encoder supplies the complete canonical state.
     /// Exact previous generation and body are persisted together before network IO.
@@ -516,7 +613,7 @@ final class DeviceMixedInventoryStore {
         let body = try JSONSerialization.data(withJSONObject: ["previousGenerationId": previous.uuidString.lowercased(), "state": state], options: [.sortedKeys])
         let pending = CloudObservation(previousGenerationID: previous, generationID: capture.snapshot.generationID, exactBody: body)
         outbox.pending.append(pending); try validateOutbox(outbox)
-        try replace(descriptor, "mixed-cloud-observations.json", bytes: encode(outbox, maximum: 8 * 1024 * 1024))
+        try replace(descriptor, try cloudOutboxName(descriptor), bytes: encode(outbox, maximum: 8 * 1024 * 1024))
         return pending
     }
     func verifyPendingCloudObservationHistoryExact(_ original: CloudObservation,
@@ -544,7 +641,7 @@ final class DeviceMixedInventoryStore {
             guard let head = outbox.pending.first else { return nil }
             if outbox.issuedHeadGenerationID == nil {
                 outbox.issuedHeadGenerationID = head.generationID
-                try replace(descriptor, "mixed-cloud-observations.json", bytes: encode(outbox, maximum: 8 * 1024 * 1024))
+                try replace(descriptor, try cloudOutboxName(descriptor), bytes: encode(outbox, maximum: 8 * 1024 * 1024))
             }
             return head
         }
@@ -560,11 +657,11 @@ final class DeviceMixedInventoryStore {
             if outbox.knownGenerationID == original.generationID, outbox.pending.first != original { return }
             guard outbox.pending.first == original, outbox.knownGenerationID == original.previousGenerationID else { throw Failure.staleGeneration }
             outbox.pending.removeFirst(); outbox.knownGenerationID = original.generationID; outbox.issuedHeadGenerationID = nil
-            try replace(descriptor, "mixed-cloud-observations.json", bytes: encode(outbox, maximum: 8 * 1024 * 1024))
+            try replace(descriptor, try cloudOutboxName(descriptor), bytes: encode(outbox, maximum: 8 * 1024 * 1024))
         }
     }
     private func readOutbox(_ descriptor: Int32) throws -> CloudOutbox {
-        guard let bytes = try read(descriptor, "mixed-cloud-observations.json", maximum: 8 * 1024 * 1024) else { throw Failure.needsReview }
+        guard let bytes = try read(descriptor, try cloudOutboxName(descriptor), maximum: 8 * 1024 * 1024) else { throw Failure.needsReview }
         let outbox = try decode(CloudOutbox.self, bytes, maximum: 8 * 1024 * 1024)
         try validateOutbox(outbox); return outbox
     }
@@ -623,10 +720,69 @@ final class DeviceMixedInventoryStore {
         return try bytes.map { .init(ObjectIdentifier(self), try DeviceMixedStructuralStateCodec.decode($0), $0) }
     }
 
+    /// Complete only a fully written explicit attachment CAS intent. This never
+    /// invents a revoke receipt or changes its recorded predecessor/candidate.
+    func recommitPendingCloudAttachmentExact() throws {
+        try DeviceLocalResourceRegistry.beginOrdinary(); defer { DeviceLocalResourceRegistry.endOrdinary() }
+        mutex.lock(); defer { mutex.unlock() }
+        try withRoot { descriptor in
+            try requireBinding(descriptor)
+            let names = try FileManager.default.contentsOfDirectory(atPath: root.path); try validateNames(names)
+            var pending: [Intent] = []
+            for name in names where name.hasSuffix(".mixed-intent.json") {
+                guard let bytes = try read(descriptor, name, maximum: 384 * 1024) else { throw Failure.corruptHistory }
+                let intent = try decode(Intent.self, bytes, maximum: 384 * 1024)
+                if try read(descriptor, intent.operationID.uuidString.lowercased() + ".mixed-receipt.json", maximum: 8192) == nil { pending.append(intent) }
+            }
+            guard pending.count <= 1 else { throw Failure.corruptHistory }
+            guard let intent = pending.first else { _ = try checkedCurrent(descriptor); return }
+            guard let previousBytes = intent.previous else { throw Failure.needsReview }
+            let previous = try DeviceMixedStructuralStateCodec.decode(previousBytes)
+            let candidate = try DeviceMixedStructuralStateCodec.decode(intent.candidate)
+            guard candidate.generationID != previous.generationID else { throw Failure.corruptHistory }
+            let sameOwner = candidate.installationOwner == previous.installationOwner
+            let sameLocal = candidate.entries == previous.entries.filter({ if case .retainedLocal = $0 { return true }; return false })
+            let start = previous.detachment == nil && previous.logoutIntent == nil && candidate.detachment == nil
+                && candidate.logoutIntent != nil && sameOwner && candidate.cloudObservationEpoch == previous.cloudObservationEpoch
+                && (previous.legacyLocalRoots == nil || candidate.legacyLocalRoots == previous.legacyLocalRoots) && candidate.entries == previous.entries && candidate.configuredEntryID == previous.configuredEntryID
+            let detach = previous.logoutIntent.map { accepted in
+                candidate.logoutIntent == nil && candidate.detachment?.retirementMetadata == accepted.retirementMetadata
+                    && candidate.detachment != nil && intent.operationID == accepted.detachOperationID
+                    && candidate.generationID == accepted.detachGenerationID && sameOwner && sameLocal
+                    && candidate.legacyLocalRoots == previous.legacyLocalRoots && candidate.cloudObservationEpoch == previous.cloudObservationEpoch
+            } ?? false
+            let cleanup = previous.detachment.map { old in
+                candidate.detachment.map { next in
+                    !old.cleanupCompleted && next.cleanupCompleted && next.retirementMetadata == old.retirementMetadata
+                        && next.revokedAt == old.revokedAt && sameOwner && candidate.entries == previous.entries
+                        && candidate.configuredEntryID == previous.configuredEntryID && candidate.legacyLocalRoots == previous.legacyLocalRoots
+                        && candidate.cloudObservationEpoch == previous.cloudObservationEpoch && candidate.logoutIntent == nil
+                } ?? false
+            } ?? false
+            let attach = previous.detachment?.cleanupCompleted == true && candidate.detachment == nil && candidate.logoutIntent == nil
+                && !sameOwner && candidate.installationOwner.installationID != previous.installationOwner.installationID
+                && candidate.cloudObservationEpoch == candidate.installationOwner.installationID && candidate.legacyLocalRoots == previous.legacyLocalRoots
+                && candidate.entries == previous.entries && candidate.configuredEntryID == previous.configuredEntryID
+            guard start || detach || cleanup || attach else { throw Failure.needsReview }
+            let current = try checkedCurrent(descriptor, allowPending: intent.operationID)
+            guard current?.bytes == previousBytes || current?.bytes == intent.candidate else { throw Failure.corruptHistory }
+            if current?.bytes != intent.candidate { try replace(descriptor, "mixed-current.json", bytes: intent.candidate) }
+            let receipt = Receipt(operationID: intent.operationID, generationID: candidate.generationID,
+                digest: try DeviceNativeDeliveryAttachmentCodec.hash(intent.candidate))
+            try replace(descriptor, intent.operationID.uuidString.lowercased() + ".mixed-receipt.json", bytes: encode(receipt, maximum: 8192))
+            guard try checkedCurrent(descriptor)?.bytes == intent.candidate else { throw Failure.persistence }
+        }
+    }
     private func validateNames(_ names: [String]) throws {
         guard names.count <= 2308 else { throw Failure.corruptHistory }
         for name in names {
             if ["mixed.lock", "mixed-root.json", "mixed-current.json", "mixed-cloud-observations.json", "mixed-mounted.json", "mixed-mount-failure.json", "mixed-automation.json"].contains(name) { continue }
+            let epochPrefix = "mixed-cloud-observations."
+            if name.hasPrefix(epochPrefix), name.hasSuffix(".json") {
+                let raw = String(name.dropFirst(epochPrefix.count).dropLast(5))
+                guard let id = UUID(uuidString: raw), id.uuidString.lowercased() == raw else { throw Failure.corruptHistory }
+                continue
+            }
             let suffix: String
             if name.hasSuffix(".mixed-intent.json") { suffix = ".mixed-intent.json" }
             else if name.hasSuffix(".mixed-receipt.json") { suffix = ".mixed-receipt.json" }
@@ -645,18 +801,42 @@ final class DeviceMixedInventoryStore {
         }
     }
     private func requireBinding(_ descriptor: Int32) throws {
-        guard let bytes = try read(descriptor, "mixed-root.json", maximum: 8192),
-              try decode(Binding.self, bytes, maximum: 8192) == binding(descriptor) else { throw Failure.unsafeRoot }
+        guard let bytes = try read(descriptor, "mixed-root.json", maximum: 8192) else { throw Failure.unsafeRoot }
+        try requireBindingBytes(bytes, descriptor: descriptor)
+    }
+    private func requireBindingBytes(_ bytes: Data, descriptor: Int32, recordedPath: String? = nil) throws {
+        if let originalBindingBytes { guard bytes == originalBindingBytes else { throw Failure.unsafeRoot } }
+        // Retain the exact historical bytes and decoded identities. Current raw
+        // descriptor identities are separate, never substituted into this proof.
+        guard try bindingMatches(decode(Binding.self, bytes, maximum: 8192),
+            binding(descriptor, recordedPath: recordedPath)) else { throw Failure.unsafeRoot }
+        originalBindingBytes = bytes
+    }
+    static func recordedRoots(_ recorded: [LocalSourceRoot], matchCurrent current: [LocalSourceRoot]) -> Bool {
+        recorded.count == current.count && zip(recorded, current).allSatisfy {
+            $0.rootID == $1.rootID && DeviceFilesystemTraversal.recordedPath($0.path, matchesCurrentPath: $1.path)
+        }
+    }
+    private func bindingMatches(_ recorded: Binding, _ current: Binding) -> Bool {
+        guard let context = activeFilesystemContext else { return false }
+        let sameBindingMount = recorded.device == recorded.lockDevice ||
+            (recorded.device == current.device && recorded.lockDevice == current.lockDevice)
+        return recorded.rootID == current.rootID && sameBindingMount &&
+            context.matchesDurableIdentity(recordedDevice: recorded.device, recordedInode: recorded.inode,
+                observedDevice: current.device, observedInode: current.inode) &&
+            context.matchesDurableIdentity(recordedDevice: recorded.lockDevice, recordedInode: recorded.lockInode,
+                observedDevice: current.lockDevice, observedInode: current.lockInode) &&
+            context.matchesRecordedRootPath(recorded.path)
     }
     private func binding(_ descriptor: Int32, recordedPath: String? = nil) throws -> Binding {
         var value = stat(); guard fstat(descriptor, &value) == 0 else { throw Failure.unsafeRoot }
         var lock = stat()
         guard fstatat(descriptor, "mixed.lock", &lock, AT_SYMLINK_NOFOLLOW) == 0,
               lock.st_mode & S_IFMT == S_IFREG else { throw Failure.unsafeRoot }
-        return .init(rootID: rootID, path: recordedPath ?? root.path, device: UInt64(value.st_dev), inode: UInt64(value.st_ino),
-            lockDevice: UInt64(lock.st_dev), lockInode: UInt64(lock.st_ino))
+        return .init(rootID: rootID, path: recordedPath ?? root.path, device: UInt64(truncatingIfNeeded: value.st_dev), inode: UInt64(value.st_ino),
+            lockDevice: UInt64(truncatingIfNeeded: lock.st_dev), lockInode: UInt64(lock.st_ino))
     }
-    private func withRoot<T>(_ body: (Int32) throws -> T) throws -> T {
+    private func withRoot<T>(plannedPublicationRoot: URL? = nil, _ body: (Int32) throws -> T) throws -> T {
         let descriptor = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard descriptor >= 0 else { throw Failure.unsafeRoot }; defer { close(descriptor) }
         var original = stat(), named = stat()
@@ -669,7 +849,18 @@ final class DeviceMixedInventoryStore {
               fstatat(descriptor, "mixed.lock", &namedLock, AT_SYMLINK_NOFOLLOW) == 0,
               namedLock.st_dev == lockStat.st_dev, namedLock.st_ino == lockStat.st_ino else { throw Failure.unsafeRoot }
         guard flock(lock, LOCK_EX) == 0 else { throw Failure.persistence }; defer { flock(lock, LOCK_UN) }
+        let context: DevicePersistedFilesystemContext
+        do { context = try filesystemContextFactory(root, descriptor, plannedPublicationRoot) }
+        catch { throw Failure.unsafeRoot }
+        guard context.acceptsCurrentDevice(UInt64(truncatingIfNeeded: original.st_dev)),
+            context.acceptsCurrentDevice(UInt64(truncatingIfNeeded: lockStat.st_dev)) else { throw Failure.unsafeRoot }
+        let previousContext = activeFilesystemContext, previousBindingBytes = originalBindingBytes
+        activeFilesystemContext = context; originalBindingBytes = nil
+        defer { activeFilesystemContext = previousContext; originalBindingBytes = previousBindingBytes }
         let result = try body(descriptor)
+        if let originalBindingBytes {
+            guard try read(descriptor, "mixed-root.json", maximum: 8192) == originalBindingBytes else { throw Failure.unsafeRoot }
+        }
         guard fstatat(descriptor, "mixed.lock", &namedLock, AT_SYMLINK_NOFOLLOW) == 0,
               namedLock.st_mode & S_IFMT == S_IFREG, namedLock.st_dev == lockStat.st_dev,
               namedLock.st_ino == lockStat.st_ino else { throw Failure.unsafeRoot }
@@ -682,6 +873,7 @@ final class DeviceMixedInventoryStore {
         if descriptor < 0 { if errno == ENOENT { return nil }; throw Failure.persistence }; defer { close(descriptor) }
         var value = stat(); guard fstat(descriptor, &value) == 0, value.st_mode & S_IFMT == S_IFREG,
               value.st_size >= 0, value.st_size <= maximum else { throw Failure.corruptHistory }
+        guard activeFilesystemContext?.acceptsCurrentDevice(UInt64(truncatingIfNeeded: value.st_dev)) == true else { throw Failure.unsafeRoot }
         var result = Data(count: Int(value.st_size))
         let count = result.withUnsafeMutableBytes { pointer in
             #if canImport(Darwin)
@@ -701,6 +893,9 @@ final class DeviceMixedInventoryStore {
         let descriptor = openat(parent, temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard descriptor >= 0 else { throw Failure.persistence }
         defer { close(descriptor); unlinkat(parent, temp, 0) }
+        var created = stat()
+        guard fstat(descriptor, &created) == 0, created.st_mode & S_IFMT == S_IFREG,
+            activeFilesystemContext?.acceptsCurrentDevice(UInt64(truncatingIfNeeded: created.st_dev)) == true else { throw Failure.unsafeRoot }
         let count = bytes.withUnsafeBytes { pointer in
             #if canImport(Darwin)
             Darwin.write(descriptor, pointer.baseAddress, pointer.count)

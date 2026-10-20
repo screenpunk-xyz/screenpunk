@@ -310,6 +310,39 @@ final class WorkbenchM4DeploymentDomainTests: XCTestCase {
         XCTAssertEqual(peer.calls, 4)
         XCTAssertEqual(try client.performDeployment(method: .reconcile,
             params: fields(["operationId": uncertain.operationId])).operation?.state, .unknown)
+
+        // The public broker must not hide a proven pre-frame rejection behind
+        // a successful apply result. Its durable reason survives lookup/reopen.
+        peer.acceptThenDrop = false
+        let unsentPlan = try XCTUnwrap(client.performDeployment(method: .plan,
+            params: planFields(nextPrepared)).review)
+        let unsentParams = fields(["planId": unsentPlan.plan.planId,
+            "expectedPlanHash": unsentPlan.planHash,
+            "expectedAuthorizationContextHash": unsentPlan.authorizationContextHash!,
+            "idempotencyKey": "late-profile-change", "approved": true])
+        let originalProfile = peer.profile
+        peer.sendPreparationHook = { peer.profile.width += 1 }
+        XCTAssertThrowsError(try client.performDeployment(method: .apply, params: unsentParams)) {
+            XCTAssertEqual(($0 as? WorkbenchIPCError)?.code, .workspaceConflict)
+        }
+        peer.sendPreparationHook = nil; peer.profile = originalProfile
+        try client.connect() // Expected IPC errors retire the connection.
+        let unsent = try XCTUnwrap(client.performDeployment(method: .lookup,
+            params: fields(["planId": unsentPlan.plan.planId])).operation)
+        XCTAssertEqual(unsent.state, .failed)
+        XCTAssertFalse(unsent.sendAttempted)
+        XCTAssertEqual(unsent.preSendRejection, .contextChanged)
+        XCTAssertEqual(try ledger.status(unsent.operationId).preSendRejection, .contextChanged)
+        XCTAssertThrowsError(try client.performDeployment(method: .apply, params: unsentParams)) {
+            XCTAssertEqual(($0 as? WorkbenchIPCError)?.code, .workspaceConflict)
+        }
+        XCTAssertEqual(peer.calls, 4, "No deploy frame after local rejection")
+        try client.connect()
+        let stillUnknown = try XCTUnwrap(client.performDeployment(method: .reconcile,
+            params: fields(["operationId": uncertain.operationId])).operation)
+        XCTAssertEqual(stillUnknown.state, .unknown)
+        XCTAssertTrue(stillUnknown.sendAttempted)
+        XCTAssertNil(stillUnknown.preSendRejection)
     }
 
     private final class Fixture {
@@ -334,10 +367,10 @@ final class WorkbenchM4DeploymentDomainTests: XCTestCase {
                 peer: peer, boundary: boundary, currentContext: { [unowned self] _, _ in self.context },
                 clock: { [unowned self] in self.clock }, dispatchEnabled: true)
         }
-        func screen(_ name: String, behavior: DeviceBehavior? = nil,
+        func screen(_ name: String, dashboardId: String? = nil, behavior: DeviceBehavior? = nil,
                     connections: [ManifestConnection] = []) throws -> WorkbenchFrozenScreen {
             let store = try DashboardPackageStore(root: root.appendingPathComponent("package-" + UUID().uuidString.lowercased()))
-            let record = try store.putDashboard(dashboardId: nil, name: name, baseRevision: nil,
+            let record = try store.putDashboard(dashboardId: dashboardId, name: name, baseRevision: nil,
                 target: ManifestTarget(profileId: "device-1", width: peer.profile.width,
                     height: peer.profile.height, scale: 3, orientation: "portrait"),
                 connections: connections, files: [htmlFile(name)], deviceBehavior: behavior)
@@ -478,6 +511,38 @@ final class WorkbenchM4DeploymentDomainTests: XCTestCase {
         XCTAssertEqual(try fixture.domain.reconcile(operationId: second.operationId, review: reapplied).state, .received)
         fixture.peer.activeGenerationId = second.operationId
         XCTAssertEqual(try fixture.domain.reconcile(operationId: second.operationId, review: reapplied).state, .active)
+    }
+
+    func testUnifiedLegacySlugPreflightAndInvalidRevisionNeverSend() throws {
+        let fixture = try Fixture(); defer { fixture.cleanup() }
+        fixture.peer.generation = UUID().uuidString.lowercased(); fixture.peer.commonEntries = []
+        let screen = try fixture.screen("Legacy Google TV", dashboardId: "google-tv-test")
+        let review = try fixture.prepare([screen], selected: "google-tv-test")
+        XCTAssertEqual(review.plan.packages.first?.dashboardId, "google-tv-test")
+        XCTAssertEqual(fixture.peer.unifiedCalls, 0)
+
+        // Keep all declared hashes internally consistent, but supply an invalid
+        // revision. The exact device qualifier must reject it before admission.
+        var item = screen.item
+        item.deployment.revision.revision = "legacy-revision"
+        item.deployment.deployment.revision = "legacy-revision"
+        let index = try XCTUnwrap(item.deployment.files.firstIndex { $0.path == "manifest.json" })
+        var manifest = try JSONDecoder().decode(DashboardManifest.self,
+            from: XCTUnwrap(Data(base64Encoded: item.deployment.files[index].dataBase64)))
+        manifest.revision = "legacy-revision"
+        manifest.digest = try DeploymentDigest.digest(for: manifest)
+        item.deployment.revision.digest = try XCTUnwrap(manifest.digest)
+        let bytes = try JSONEncoder().encode(manifest)
+        item.deployment.files[index] = .init(path: "manifest.json",
+            sha256: DeploymentDigest.sha256Hex(bytes), dataBase64: bytes.base64EncodedString())
+        let invalid = WorkbenchFrozenScreen(sourceRevision: screen.sourceRevision,
+            dataDescription: screen.dataDescription, item: item)
+        XCTAssertThrowsError(try fixture.prepare([invalid], selected: "google-tv-test")) {
+            XCTAssertEqual($0 as? WorkbenchDeploymentError, .packageIdentityInvalid)
+        }
+        XCTAssertEqual(fixture.peer.unifiedCalls, 0)
+        XCTAssertEqual(fixture.peer.calls, 0)
+        XCTAssertNil(try fixture.domain.lookup(planId: review.plan.planId, workspaceId: "workspace-1"))
     }
 
     func testCommonGenerationChangeAfterReviewPreventsFirstSend() throws {

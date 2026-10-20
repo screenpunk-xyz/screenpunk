@@ -5,6 +5,7 @@ import ScreenpunkController
 enum WorkbenchCloudCLI {
     enum Action: Equatable {
         case login, logout, status, projects
+        case syncEnable(String, String?), syncDisable, syncStatus
         case workspace(String), link(String, String), sync(String), resolve(String, Bool), unlink(String)
         case restore(String, String), create(String, String)
         case reviewDeployment(String, String), applyDeployment, deviceStatus(String)
@@ -16,6 +17,19 @@ enum WorkbenchCloudCLI {
         case ["logout"]: return .logout
         case ["status"]: return .status
         case ["projects"]: return .projects
+        case ["screens"]: return .projects
+        case ["sync", "disable"]: return .syncDisable
+        case ["sync", "status"]: return .syncStatus
+        case let values where values.count == 3 && values[0] == "sync" && values[1] == "enable":
+            guard WorkspaceValidation.id(values[2]) else { throw Options.usage("Choose a valid cloud workspace ID from cloud status.") }
+            return .syncEnable(values[2], nil)
+        case let values where values.count == 5 && values[0] == "sync" && values[1] == "enable" && values[3] == "--create-local-workspace":
+            guard WorkspaceValidation.id(values[2]), WorkspacePath.isAbsolute(values[4]) else {
+                throw Options.usage("Screen syncing requires a cloud workspace ID and an absolute local workspace path.")
+            }
+            return .syncEnable(values[2], values[4])
+        case ["sync", "enable"]:
+            throw Options.usage("Use cloud sync enable CLOUD_WORKSPACE_ID. List workspaces with cloud status.")
         case let values where values.count == 2 && values[0] == "publish": return .publish(values[1])
         case ["deploy", "apply"]: return .applyDeployment
         case let values where values.count == 4 && values[0] == "deploy" && values[1] == "review": return .reviewDeployment(values[2], values[3])
@@ -30,12 +44,27 @@ enum WorkbenchCloudCLI {
         case let values where values.count == 3 && values[0] == "restore": return .restore(values[1], values[2])
         case let values where values.count == 3 && values[0] == "create" && ["html", "react"].contains(values[2]):
             return .create(values[1], values[2])
-        default: throw Options.usage("cloud requires login|logout|status|projects|workspace select ID|link LOCAL_ID CLOUD_ID|sync LOCAL_ID|resolve LOCAL_ID local|remote|unlink LOCAL_ID|restore CLOUD_ID NAME|create NAME html|react.")
+        default: throw Options.usage("Use cloud login, cloud status, cloud sync enable CLOUD_WORKSPACE_ID, cloud sync disable, cloud sync status, or cloud screens.")
         }
     }
     static func run(words: [String], options: Options, client: WorkbenchBrokerClient, machineRoot: URL,
                     environment: [String: String], presentation: Presentation) throws {
         let action = try parse(words)
+        if action == .syncStatus || action == .syncDisable {
+            // Resolve only the trusted origin; never discover OAuth or construct a session.
+            let origin = try deploymentEnvironment(environment)["SCREENPUNK_CLOUD_BASE_URL"]
+            guard let origin, let base = URL(string: origin) else {
+                throw CommandFailure("cloud_not_configured", "This CLI installation has no configured cloud origin.", 8)
+            }
+            let result = try wait {
+                if action == .syncDisable {
+                    try await ControllerCloudWorkbench.disableScreenSync(baseURL: base, client: client, machineRoot: machineRoot)
+                }
+                return try encode(await ControllerCloudWorkbench.localScreenSyncStatus(baseURL: base, client: client, machineRoot: machineRoot))
+            }
+            presentation.success(result, human: human(result))
+            return
+        }
         let configuration: ControllerCloudConfiguration
         do { configuration = try wait { try await .deployment(environment: deploymentEnvironment(environment), machineRoot: machineRoot) } }
         catch {
@@ -52,6 +81,14 @@ enum WorkbenchCloudCLI {
                 return try encode(await cloud.status())
             case .logout: try await cloud.signOut(); return ["state": "signed_out", "localProjectsPreserved": true]
             case .status: return try encode(await cloud.status())
+            case .syncStatus, .syncDisable:
+                throw Options.usage("Screen sync status and disable use the local-only route.")
+            case .syncEnable(let workspace, let path):
+                try await cloud.setScreenSyncEnabled(true, workspaceId: workspace, creatingLocalWorkspaceAt: path)
+                guard let origin = try deploymentEnvironment(environment)["SCREENPUNK_CLOUD_BASE_URL"],
+                      let base = URL(string: origin) else { throw ControllerCloudError.invalidConfiguration }
+                return try encode(await ControllerCloudWorkbench.localScreenSyncStatus(
+                    baseURL: base, client: client, machineRoot: machineRoot))
             case .workspace(let id): try await cloud.selectWorkspace(id); return ["selectedWorkspaceId": id]
             case .projects: return ["items": try await cloud.projects().map { try encode($0) }]
             case .link(let local, let remote): try await cloud.link(localProjectId: local, cloudProjectId: remote); return ["localProjectId": local, "cloudProjectId": remote, "state": "linked"]
@@ -81,7 +118,7 @@ enum WorkbenchCloudCLI {
            let review = try? JSONDecoder().decode(ControllerCloudDeploymentReview.self, from: bytes) {
             return review.summary + "\nReview this exact inventory; apply with --file ABS_REVIEW_JSON --approved."
         }
-        if let status = result["status"] as? String { return "Cloud project: \(status)." }
+        if let status = result["status"] as? String { return "Screen sync: \(status)." }
         if let state = result["state"] as? String {
             var lines = ["Cloud: \(state)."]
             if let origin = result["activeScreenOrigin"] as? String { lines.append("Active screen origin: " + origin) }
@@ -94,7 +131,19 @@ enum WorkbenchCloudCLI {
         if let items = result["items"] as? [[String: Any]] { return items.map { "\($0["id"] ?? "")  \($0["name"] ?? "")" }.joined(separator: "\n") }
         if let workspaces = result["workspaces"] as? [[String: Any]] {
             let selected = result["selectedWorkspaceId"] as? String
-            return "Cloud account connected.\n" + workspaces.map { "\($0["id"] ?? "")  \($0["name"] ?? "")" + (($0["id"] as? String) == selected ? " (selected)" : "") }.joined(separator: "\n")
+            return "Cloud account connected.\nScreen syncing: " + ((result["screenSyncEnabled"] as? Bool == true) ? "on" : "off") + ".\n" + workspaces.map { "\($0["id"] ?? "")  \($0["name"] ?? "")" + (($0["id"] as? String) == selected ? " (selected)" : "") }.joined(separator: "\n")
+        }
+        if let enabled = result["screenSyncEnabled"] as? Bool {
+            var lines = ["Screen syncing: " + (enabled ? "on." : "off.")]
+            if let workspace = result["selectedWorkspaceId"] as? String { lines.append("Cloud workspace: " + workspace) }
+            if let screens = result["screenSyncScreens"] as? [String: [String: Any]] {
+                for id in screens.keys.sorted() {
+                    let screen = screens[id]!
+                    lines.append("\(id): \(screen["message"] as? String ?? screen["state"] as? String ?? "Status unavailable")")
+                    if let time = screen["lastSuccessfulSyncAt"] as? String { lines.append("  Last successful sync: " + time) }
+                }
+            }
+            return lines.joined(separator: "\n")
         }
         return "Cloud operation completed."
     }
@@ -129,16 +178,7 @@ enum WorkbenchCloudCLI {
         return result
     }
     static func deploymentEnvironment(_ environment: [String: String]) throws -> [String: String] {
-        if let root = WorkbenchProductionTrust.homebrewRoot() {
-            _ = try WorkbenchProductionTrust.verifyPackage(root)
-            let data = try Data(contentsOf: root.appendingPathComponent("Resources/Cloud/controller.json"))
-            guard let config = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  config["schemaVersion"] as? Int == 1,
-                  let origin = config["apiOrigin"] as? String else { throw ControllerCloudError.invalidConfiguration }
-            // Installed releases trust their signed origin configuration, never ambient endpoint overrides.
-            return ["SCREENPUNK_CLOUD_BASE_URL": origin]
-        }
-        return environment
+        try WorkbenchCloudOriginResolver.deploymentEnvironment(environment)
     }
     private final class ResultBox<Value>: @unchecked Sendable {
         let lock = NSLock(); var result: Result<Value, Error>?

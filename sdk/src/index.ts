@@ -106,7 +106,8 @@ export interface DashboardSDK {
     request(
       alias: string,
       operation: string,
-      parameters: Record<string, unknown>
+      parameters: Record<string, unknown>,
+      options?: { signal?: AbortSignal }
     ): Promise<unknown>;
     subscribe(
       alias: string,

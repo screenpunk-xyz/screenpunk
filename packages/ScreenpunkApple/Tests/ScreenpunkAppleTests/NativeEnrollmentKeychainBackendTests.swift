@@ -1,14 +1,17 @@
 import XCTest
 import Security
-@_spi(NativeInstallation) import ScreenpunkCore
+@_spi(NativeInstallation) @_spi(DeviceGrantTransport) import ScreenpunkCore
 @_spi(NativeInstallation) @testable import ScreenpunkApple
 
 final class NativeEnrollmentKeychainBackendTests: XCTestCase {
     final class API: NativeEnrollmentSecurityAPI {
         var queries: [[String: Any]] = [], adds: [[String: Any]] = []
         var result: (OSStatus, CFTypeRef?) = (errSecItemNotFound, nil)
+        var responses: [(OSStatus, CFTypeRef?)] = []
         var addResult: (OSStatus, CFTypeRef?) = (errSecSuccess, Data("persistent-original".utf8) as CFData)
-        func copyMatching(_ query: CFDictionary) -> (OSStatus, CFTypeRef?) { queries.append(query as! [String: Any]); return result }
+        func copyMatching(_ query: CFDictionary) -> (OSStatus, CFTypeRef?) {
+            queries.append(query as! [String: Any]); return responses.isEmpty ? result : responses.removeFirst()
+        }
         func add(_ query: CFDictionary) -> (OSStatus, CFTypeRef?) { adds.append(query as! [String: Any]); return addResult }
         func random48() throws -> Data { Data(repeating: 17, count: 48) }
     }
@@ -17,6 +20,32 @@ final class NativeEnrollmentKeychainBackendTests: XCTestCase {
          kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
          kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
          kSecValueData as String: Data(repeating: 7, count: count), kSecValuePersistentRef as String: Data("original-ref".utf8)]
+    }
+    func testDeniedNativeCredentialOperationsHaveFixedDiagnosticLabelsWithoutStatusOrMutation() throws {
+        let cases: [(OSStatus, NativeEnrollmentKeychainBackend.FailureDiagnostic.Reason)] = [
+            (errSecInteractionNotAllowed, .locked), (errSecMissingEntitlement, .entitlement),
+            (errSecNotAvailable, .unavailable), (errSecAuthFailed, .authorization),
+            (errSecParam, .invalidParameter), (errSecDecode, .malformedResult), (-1234567, .other)
+        ]
+        for (status, expected) in cases {
+            let api = API(), backend = NativeEnrollmentKeychainBackend(api: api)
+            api.result = (status, nil)
+            XCTAssertThrowsError(try backend.enumerateBounded(maximum: 193)) { error in
+                let diagnostic = NativeEnrollmentKeychainBackend.diagnostic(for: error)
+                XCTAssertEqual(diagnostic?.domain, .nativeEnrollmentCredential)
+                XCTAssertEqual(diagnostic?.reason, expected)
+                XCTAssertFalse(diagnostic?.reason.rawValue.contains(String(status)) == true)
+            }
+            XCTAssertEqual(api.queries.count, 1)
+            XCTAssertTrue(api.adds.isEmpty)
+            let grant = NativeEnrollmentKeychainBackend.diagnostic(for: DeviceGrantCredentialTransportFailure.inaccessible(status))
+            XCTAssertEqual(grant?.domain, .grantCredential)
+            XCTAssertEqual(grant?.reason, expected)
+        }
+        XCTAssertEqual(NativeEnrollmentKeychainBackend.diagnostic(for: NativeEnrollmentKeychainBackend.Failure.malformedResult)?.reason, .malformedResult)
+        XCTAssertEqual(NativeEnrollmentKeychainBackend.diagnostic(for: DeviceGrantCredentialTransportFailure.changedInventory)?.reason, .changedInventory)
+        XCTAssertEqual(NativeEnrollmentKeychainBackend.diagnostic(for: DeviceGrantCredentialTransportFailure.duplicateItem)?.reason, .duplicate)
+        XCTAssertNil(NativeEnrollmentKeychainBackend.diagnostic(for: NSError(domain: "private-token-message", code: 17)))
     }
     func testFixedAddOnlyAttributesAndNoDuplicateAdoption() throws {
         let api = API(), backend = NativeEnrollmentKeychainBackend(api: api)
@@ -58,6 +87,48 @@ final class NativeEnrollmentKeychainBackendTests: XCTestCase {
         #else
         XCTAssertTrue(api.queries.allSatisfy { $0[kSecUseDataProtectionKeychain as String] == nil })
         #endif
+    }
+    func testPhysicalNumericZeroNonsyncQualifiesBothNamespacesAndExactReferencesWithoutAdd() throws {
+        let api = API(), backend = NativeEnrollmentKeychainBackend(api: api)
+        var final = item(account: "native.original"), stage = item(service: NativeEnrollmentKeychainBackend.stageService, account: "stage.original", count: 512)
+        // Actual iPad attrs-only probe: CFArray for numeric limits, CFNumber zero
+        // for synchronizable. Payloads/references below are synthetic fixtures.
+        let zero = NSNumber(value: 0)
+        XCTAssertEqual(CFGetTypeID(zero), CFNumberGetTypeID())
+        final[kSecAttrSynchronizable as String] = zero
+        stage[kSecAttrSynchronizable as String] = zero
+        stage[kSecValuePersistentRef as String] = Data("stage-ref".utf8)
+        api.responses = [(errSecSuccess, [final] as CFArray), (errSecSuccess, [final] as CFArray),
+            (errSecSuccess, [stage] as CFArray), (errSecSuccess, [stage] as CFArray)]
+        let inventory = try backend.enumerateBounded(maximum: 193)
+        XCTAssertEqual(inventory.count, 2)
+        XCTAssertEqual(api.queries.map { $0[kSecMatchLimit as String] as? Int }, [193, 2, 192, 2])
+        for (row, reference) in [(final, Data("original-ref".utf8)), (stage, Data("stage-ref".utf8))] {
+            api.result = (errSecSuccess, [row] as CFArray)
+            let observed = try XCTUnwrap(backend.readExactPersistentReference(reference))
+            XCTAssertEqual(String(describing: observed), "NativeEnrollmentStoredCredential(redacted)")
+        }
+        XCTAssertTrue(api.responses.isEmpty)
+        XCTAssertEqual(api.queries.count, 6)
+        XCTAssertTrue(api.adds.isEmpty)
+    }
+    func testOnlyCanonicalFalseOrExactNumericZeroPassNonsyncPolicy() throws {
+        let rejected: [Any] = [kCFBooleanTrue as Any, NSNumber(value: 1), NSNumber(value: -1),
+            NSNumber(value: 0.5), NSNumber(value: Double.leastNonzeroMagnitude),
+            NSNumber(value: Double.nan), NSNumber(value: Double.infinity), "0", "false", Data([0])]
+        for sync in rejected {
+            let api = API(), backend = NativeEnrollmentKeychainBackend(api: api)
+            var row = item(); row[kSecAttrSynchronizable as String] = sync
+            api.result = (errSecSuccess, [row] as CFArray)
+            XCTAssertThrowsError(try backend.enumerateBounded(maximum: 193)) { error in
+                XCTAssertEqual(error as? NativeEnrollmentKeychainBackend.Failure, .malformedResult)
+            }
+            XCTAssertThrowsError(try backend.readExactPersistentReference(Data("original-ref".utf8))) { error in
+                XCTAssertEqual(error as? NativeEnrollmentKeychainBackend.Failure, .malformedResult)
+            }
+            XCTAssertEqual(api.queries.count, 2)
+            XCTAssertTrue(api.adds.isEmpty)
+        }
     }
     func testOverflowAndSynchronizableImpostorRejectBeforeAnyAdd() throws {
         let api = API(), backend = NativeEnrollmentKeychainBackend(api: api)

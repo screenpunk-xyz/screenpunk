@@ -1,4 +1,8 @@
+import Foundation
 import XCTest
+#if canImport(Security)
+import Security
+#endif
 @_spi(ManagedRender) @_spi(NativeInstallation) @_spi(DeviceGrantTransport) import ScreenpunkCore
 @_spi(NativeInstallation) @testable import ScreenpunkApple
 #if canImport(Network)
@@ -7,17 +11,209 @@ import Network
 
 #if canImport(Network) && canImport(Security)
 final class LANTransferTests: XCTestCase {
+    /// Exact synthetic test-owned items only; never persistent app tags or an identity scan.
+    private func ownedTLSIdentity(role: PairingRole) throws -> (identity: TLSIdentityMaterial, close: () -> Void) {
+        let tag = "xyz.screenpunk.test.legacy-lan.\(role.rawValue).\(UUID().uuidString)"
+        let keyQuery: [String: Any] = [kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: Data(tag.utf8), kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom]
+        let certQuery: [String: Any] = [kSecClass as String: kSecClassCertificate, kSecAttrLabel as String: tag]
+        guard SecItemCopyMatching(keyQuery as CFDictionary, nil) == errSecItemNotFound,
+              SecItemCopyMatching(certQuery as CFDictionary, nil) == errSecItemNotFound else {
+            XCTFail("Owned TLS fixture stopped: stage=preabsence")
+            throw TransferFailure.validationFailed
+        }
+        var createdKey = false, createdCertificate = false
+        let cleanup = {
+            if createdCertificate { XCTAssertEqual(SecItemDelete(certQuery as CFDictionary), errSecSuccess) }
+            if createdKey { XCTAssertEqual(SecItemDelete(keyQuery as CFDictionary), errSecSuccess) }
+            XCTAssertEqual(SecItemCopyMatching(certQuery as CFDictionary, nil), errSecItemNotFound)
+            XCTAssertEqual(SecItemCopyMatching(keyQuery as CFDictionary, nil), errSecItemNotFound)
+        }
+        var completed = false
+        defer { if !completed { cleanup() } }
+        var error: Unmanaged<CFError>?
+        guard let key = SecKeyCreateRandomKey([kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits as String: 256, kSecPrivateKeyAttrs as String: [kSecAttrIsPermanent as String: true,
+                kSecAttrLabel as String: tag, kSecAttrApplicationTag as String: Data(tag.utf8),
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]] as CFDictionary, &error) else {
+            let status = error.map { CFErrorGetCode($0.takeRetainedValue()) }
+            XCTFail("Owned TLS fixture stopped: stage=keyCreation status=\(status.map(String.init) ?? "unknown")")
+            throw TransferFailure.validationFailed
+        }
+        createdKey = true
+        let publicKey = try XCTUnwrap(SecKeyCopyPublicKey(key))
+        let publicBytes = try XCTUnwrap(SecKeyCopyExternalRepresentation(publicKey, nil) as Data?)
+        let der = try SelfSignedCertificate.make(commonName: tag, publicPoint: Array(publicBytes), privateKey: key)
+        let certificate = try XCTUnwrap(SecCertificateCreateWithData(nil, der as CFData))
+        let addStatus = SecItemAdd([kSecClass as String: kSecClassCertificate, kSecValueRef as String: certificate,
+            kSecAttrLabel as String: tag] as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            XCTFail("Owned TLS fixture stopped: stage=certificateAdd status=\(addStatus)")
+            throw TransferFailure.validationFailed
+        }
+        createdCertificate = true
+        #if os(macOS)
+        var exactIdentity: SecIdentity?
+        let identityStatus = SecIdentityCreateWithCertificate(nil, certificate, &exactIdentity)
+        guard identityStatus == errSecSuccess, let identity = exactIdentity else {
+            XCTFail("Owned TLS fixture stopped: stage=exactIdentity status=\(identityStatus)")
+            throw TransferFailure.validationFailed
+        }
+        #else
+        var item: CFTypeRef?
+        let identityStatus = SecItemCopyMatching([kSecClass as String: kSecClassIdentity,
+            kSecAttrLabel as String: tag, kSecReturnRef as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne] as CFDictionary, &item)
+        guard identityStatus == errSecSuccess, let item, CFGetTypeID(item) == SecIdentityGetTypeID() else {
+            XCTFail("Owned TLS fixture stopped: stage=exactIdentity status=\(identityStatus)")
+            throw TransferFailure.validationFailed
+        }
+        let identity = item as! SecIdentity
+        #endif
+        var identityCertificate: SecCertificate?
+        guard SecIdentityCopyCertificate(identity, &identityCertificate) == errSecSuccess,
+              identityCertificate.map({ SecCertificateCopyData($0) as Data }) == der else {
+            XCTFail("Owned TLS fixture stopped: stage=certificateBinding")
+            throw TransferFailure.validationFailed
+        }
+        completed = true
+        return (.init(identity: identity, pin: PeerPin.sha256(publicBytes), role: role), cleanup)
+    }
+    func testRetainedSceneGateDrainsWholeAdmissionsAndRejectsStaleEpochs() async throws {
+        let gate = DeviceRetainedSceneActivityGate()
+        let old = try gate.begin()
+        let paused = try XCTUnwrap(gate.pause())
+        XCTAssertFalse(gate.isAllowed())
+        XCTAssertThrowsError(try gate.begin())
+        XCTAssertThrowsError(try gate.require(old.epoch))
+        XCTAssertFalse(gate.activate(paused), "A pause cannot reopen before full admission drain")
+        let started = expectation(description: "drain entered")
+        let drained = expectation(description: "whole admission ended")
+        let task = Task.detached {
+            started.fulfill()
+            try gate.drain(paused)
+            drained.fulfill()
+        }
+        await fulfillment(of: [started], timeout: 2)
+        // A live admission prevents activation even if the drain worker has started.
+        XCTAssertFalse(gate.activate(paused))
+        gate.end(old)
+        try await task.value
+        await fulfillment(of: [drained], timeout: 2)
+        XCTAssertTrue(gate.activate(paused))
+        XCTAssertThrowsError(try gate.begin(expected: old.epoch))
+        let current = try gate.begin(expected: paused)
+        gate.end(current)
+        let next = try XCTUnwrap(gate.pause())
+        XCTAssertThrowsError(try gate.drain(paused))
+        XCTAssertFalse(gate.activate(paused))
+        try gate.drain(next)
+        gate.retire()
+        XCTAssertFalse(gate.activate(next))
+        XCTAssertNil(gate.pause())
+        XCTAssertThrowsError(try gate.begin())
+    }
+
+    @MainActor
+    func testRetainedHostPauseFencesAuthenticatedSelectionAndResumesSamePairing() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let device = try ownedTLSIdentity(role: .device); defer { device.close() }
+        let controller = try ownedTLSIdentity(role: .controller); defer { controller.close() }
+        let stateRoot = fixture.parent.appendingPathComponent("retained-pause-device-state", isDirectory: true)
+        let context = try fixture.authority.makeConcurrentLocalContext(context: fixture.context, session: fixture.common)
+        let profile = DeviceProfile(deviceId: "retained-pause-device", name: "Retained pause")
+        let host = try DeviceLANHost(runtime: .init(identity: device.identity.pairingIdentity, profile: profile,
+            advertisement: .init(deviceId: profile.deviceId, host: "127.0.0.1", port: 0, source: .advertised)),
+            management: context, store: DeviceStateStore(root: stateRoot), identityProvider: { device.identity },
+            homeAssistantVault: .init(store: MemoryCredentialStore()),
+            genericConnectionVault: .init(store: MemoryCredentialStore()))
+        defer { host.retireForReset() }
+        let activityCheck = host.retainedSceneActivityCheck()
+        XCTAssertTrue(activityCheck(), "Initial mount remains eligible before an explicit pause")
+        let server = try XCTUnwrap(host.server)
+        try server.attachUnifiedLocalSession(fixture.common)
+        try await Task.detached { try server.start() }.value
+        let client = ControllerLANClient(identity: controller.identity)
+        defer { client.cancel() }
+        try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.identity.pin)
+        _ = try client.hello()
+        let pairing = try client.beginPairing(nonce: PairingIdentityFactory.nonce())
+        try server.confirmLocally()
+        try client.confirmPairing(code: pairing.code)
+        let baseline = try client.queryActiveState()
+        let generation = try XCTUnwrap(baseline.stateGenerationId)
+        let dashboard = try XCTUnwrap(baseline.screens?.first?.dashboardId)
+        let association = try fixture.common.validatedAssociation()
+        let entered = expectation(description: "authenticated selection reached fixed dispatch")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        server.managementBoundary = { boundary in
+            guard boundary == .unifiedDispatchWillEnter else { return }
+            entered.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 10), .success)
+        }
+        let change = LANScreenManagementChange(operationId: UUID().uuidString.lowercased(),
+            expectedGenerationId: generation, dashboardId: dashboard)
+        let request = Task.detached { Result { try client.selectUnifiedScreen(change) } }
+        await fulfillment(of: [entered], timeout: 10)
+        let token = try XCTUnwrap(host.pauseRetainingRuntime())
+        XCTAssertFalse(host.isRetainedSceneActivityAllowed())
+        XCTAssertFalse(activityCheck())
+        XCTAssertFalse(host.activateRetainedResume(token), "Activation requires worker stop and whole-request drain")
+        let drain = Task { try await host.drainRetainedPause(token) }
+        release.signal()
+        if case .success = await request.value { XCTFail("Paused fixed dispatch must not change common inventory") }
+        try await drain.value
+        server.managementBoundary = nil
+        // Admission may have recorded an intent. No accepted intent is rolled back;
+        // the fixed resource CAS itself must not have run after pause won.
+        let common = fixture.common
+        let current = try await Task.detached {
+            try context.validate()
+            return try common.validatedAssociation()
+        }.value
+        XCTAssertEqual(current.commonRootID, association.commonRootID)
+        XCTAssertEqual(current.generationID, association.generationID)
+        XCTAssertEqual(current.configuredEntryID, association.configuredEntryID)
+        XCTAssertEqual(current.entries.map(\.entryID), association.entries.map(\.entryID))
+        XCTAssertEqual(server.approvedLocalControllers, [controller.identity.pairingIdentity])
+        XCTAssertTrue(host.activateRetainedResume(token))
+        XCTAssertTrue(host.isRetainedSceneActivityAllowed())
+        XCTAssertTrue(activityCheck())
+        // Listener readiness is deliberately worker-owned; no synchronous MainActor join.
+        let deadline = Date().addingTimeInterval(10)
+        while server.port == 0 && Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertNotEqual(server.port, 0)
+        client.cancel()
+        try client.connect(host: "127.0.0.1", port: server.port, pinnedDevice: device.identity.pin)
+        _ = try client.hello()
+        let resumed = try client.queryActiveState()
+        XCTAssertEqual(resumed.stateGenerationId, generation)
+        XCTAssertEqual(resumed.commonEntries, baseline.commonEntries)
+        XCTAssertEqual(resumed.controllerApproved, true)
+        let next = try XCTUnwrap(host.pauseRetainingRuntime())
+        XCTAssertFalse(host.activateRetainedResume(token), "An old completion cannot activate a new pause")
+        try await host.drainRetainedPause(next)
+        host.retireForReset()
+        XCTAssertFalse(host.activateRetainedResume(next), "Terminal retirement cannot be undone by retained resume")
+        XCTAssertFalse(host.isRetainedSceneActivityAllowed())
+        XCTAssertFalse(activityCheck(), "A retained queued closure cannot outlive terminal retirement")
+    }
+
     func testTwoApprovedTLSControllersSelectCloudInventoryAndRejectStaleChanges() async throws {
         let fixture = try await GenuineUnifiedInventoryFixture.make()
         defer { fixture.close() }
-        let identity = try TLSIdentity.make(role: .device, commonName: "common-device")
-        let first = try TLSIdentity.make(role: .controller, commonName: "common-first")
-        let second = try TLSIdentity.make(role: .controller, commonName: "common-second")
+        let ownedDevice = try ownedTLSIdentity(role: .device); defer { ownedDevice.close() }
+        let ownedFirst = try ownedTLSIdentity(role: .controller); defer { ownedFirst.close() }
+        let ownedSecond = try ownedTLSIdentity(role: .controller); defer { ownedSecond.close() }
+        let identity = ownedDevice.identity, first = ownedFirst.identity, second = ownedSecond.identity
         let context = try fixture.authority.makeConcurrentLocalContext(context: fixture.context, session: fixture.common)
         let profile = DeviceProfile(deviceId: "common-test", name: "Common")
         let server = try DeviceLANServer(management: context, runtime: .init(identity: identity.pairingIdentity,
             profile: profile, advertisement: .init(deviceId: profile.deviceId, host: "127.0.0.1", port: 0, source: .advertised)),
-            identity: identity, homeAssistantVault: .init(store: MemoryCredentialStore()))
+            identity: identity, store: DeviceStateStore(root: fixture.parent.appendingPathComponent("two-controller-device-state", isDirectory: true)),
+            homeAssistantVault: .init(store: MemoryCredentialStore()), genericConnectionVault: .init(store: MemoryCredentialStore()))
         server.prepareIncomingLocalScreens = { operation, peer, screens, selected, validate in
             let ids = try NativeManagedLocalRootIDs(package: UUID(), grant: UUID(), structural: UUID(), provisioning: UUID(), contentGenesis: UUID())
             let roots = try fixture.authority.prepareIncomingLocalInventoryRoots(context: context, operationID: operation, ids: ids)
@@ -59,7 +255,7 @@ final class LANTransferTests: XCTestCase {
         let localEntry = UUID().uuidString.lowercased()
         let localOperation = UUID().uuidString.lowercased()
         let html = Data("<html><body>Local screen</body></html>".utf8)
-        var manifest = DashboardManifest(schemaVersion: 1, dashboardId: UUID().uuidString.lowercased(), name: "Local",
+        var manifest = DashboardManifest(schemaVersion: 1, dashboardId: "google-tv-test", name: "Local",
             revision: UUID().uuidString.lowercased(), entrypoint: "index.html", sdkVersion: "1",
             target: .init(profileId: "fixture-phone", width: 390, height: 844, scale: 3, orientation: "portrait"),
             connections: [], files: [.init(path: "index.html", bytes: html.count, sha256: PeerPin.hex(PeerPin.sha256(html)))])
@@ -81,7 +277,13 @@ final class LANTransferTests: XCTestCase {
         XCTAssertEqual(installed.commonEntries?.count, 2)
         XCTAssertEqual(installed.commonEntries?.first?.origin, "cloud")
         XCTAssertEqual(installed.commonEntries?.last?.origin, "retainedLocal")
-        XCTAssertEqual(try b.installUnifiedScreens(localPlan).stateGenerationId, localOperation)
+        XCTAssertEqual(installed.commonEntries?.last?.dashboardId, "google-tv-test")
+        XCTAssertEqual(installed.commonEntries?.last?.revision, revision.revision)
+        XCTAssertEqual(installed.commonEntries?.first, applied.commonEntries?.first, "The typed Cloud entry survives the legacy Local install")
+        let replay = try b.installUnifiedScreens(localPlan)
+        XCTAssertEqual(replay.stateGenerationId, localOperation)
+        XCTAssertEqual(replay.commonEntries, installed.commonEntries)
+        XCTAssertEqual(try b.queryActiveState().commonEntries, installed.commonEntries)
         // A genuine local grant graph backs this opaque runtime. Private-call
         // admission stays with the actual mounted object through replacement.
         let oldRuntime = try await fixture.common.makeManagedRuntime(operationID: UUID(), http: URLSessionHTTPTransport(),

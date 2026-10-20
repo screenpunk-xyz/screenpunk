@@ -8,10 +8,11 @@ import Foundation
 enum WorkbenchWireJSON {
     static func object(_ data: Data, allowSourceChunk: Bool = false,
                        allowImportPayload: Bool = false,
-                       allowPackageManifest: Bool = false, allowDeviceSettings: Bool = false) throws -> [String: Any] {
+                       allowPackageManifest: Bool = false, allowDeviceSettings: Bool = false,
+                       allowMigrationPlan: Bool = false, allowWorkspacePackageChunk: Bool = false) throws -> [String: Any] {
         guard String(data: data, encoding: .utf8) != nil else { throw WorkbenchIPCError(.invalidRequest) }
         var scanner = Scanner(bytes: Array(data), allowSourceChunk: allowSourceChunk,
-            allowImportPayload: allowImportPayload, allowDeviceSettings: allowDeviceSettings, allowPackageManifest: allowPackageManifest)
+            allowImportPayload: allowImportPayload, allowMigrationPlan: allowMigrationPlan, allowWorkspacePackageChunk: allowWorkspacePackageChunk, allowDeviceSettings: allowDeviceSettings, allowPackageManifest: allowPackageManifest)
         try scanner.value(depth: 0); scanner.space()
         guard scanner.position == scanner.bytes.count else { throw WorkbenchIPCError(.invalidRequest) }
         do {
@@ -24,6 +25,8 @@ enum WorkbenchWireJSON {
         let bytes: [UInt8]
         let allowSourceChunk: Bool
         let allowImportPayload: Bool
+        let allowMigrationPlan: Bool
+        let allowWorkspacePackageChunk: Bool
         let allowDeviceSettings: Bool
         let allowPackageManifest: Bool
         var position = 0
@@ -119,7 +122,20 @@ enum WorkbenchWireJSON {
                             ? ((4 * 1024 * 1024 + 2) / 3) * 4 + 2
                             : ((allowSourceChunk || allowImportPayload) && key == "bytesBase64" && (depth == 0 || depth == 1)
                                 ? ((WorkbenchSourceChunkRequest.chunkBytes + 2) / 3) * 4 + 2 : 4096))
-                    try value(depth: depth + 1, maxStringBytes: sourceBytesLimit, path: path + [key])
+                    let packageBytes = allowWorkspacePackageChunk && key == "bytes" &&
+                        [["chunk"], ["result", "chunk"]].contains(path)
+                    if packageBytes {
+                        let base64Limit = ((64 * 1024 + 2) / 3) * 4
+                        // Account for JSON escapes, then enforce the decoded
+                        // transport limit rather than the serialized spelling.
+                        let encoded = try string(maxBytes: base64Limit * 6 + 2)
+                        guard encoded.utf8.count <= base64Limit,
+                              let chunk = Data(base64Encoded: encoded), chunk.count <= 64 * 1024 else {
+                            throw WorkbenchIPCError(.invalidRequest)
+                        }
+                    } else {
+                        try value(depth: depth + 1, maxStringBytes: sourceBytesLimit, path: path + [key])
+                    }
                     space()
                     if position < bytes.count && bytes[position] == 125 { position += 1; return }
                     try consume(44)
@@ -127,8 +143,20 @@ enum WorkbenchWireJSON {
             case 91:
                 position += 1; space(); var count = 0
                 if position < bytes.count && bytes[position] == 93 { position += 1; return }
+                // Migration preserves every revision. Only these closed response
+                // paths may exceed the ordinary collection bound; requests and
+                // unrelated response fields keep their existing limits.
+                let migrationInventory = allowMigrationPlan && [
+                    ["migrationPlan", "projectIds"],
+                    ["migrationPlan", "packageRevisions"],
+                    ["migrationPlan", "unsupportedPortablePaths"],
+                    ["result", "migrationPlan", "projectIds"],
+                    ["result", "migrationPlan", "packageRevisions"],
+                    ["result", "migrationPlan", "unsupportedPortablePaths"]
+                ].contains(path)
+                let limit = migrationInventory ? 10_000 : (allowPackageManifest ? 2_000 : 128)
                 while true {
-                    count += 1; guard count <= (allowPackageManifest ? 2_000 : 128) else {
+                    count += 1; guard count <= limit else {
                         throw WorkbenchIPCError(.invalidRequest)
                     }
                     try value(depth: depth + 1, path: path + ["*"]); space()

@@ -6,6 +6,7 @@ import CoreFoundation
 /// registered contained project and carry an expected source hash.
 public enum WorkbenchAuthoringRecoveryMethod: String, CaseIterable, Sendable {
     case projectCreate = "project.create"
+    case cloudProjectCreate = "project.cloudCreate"
     case projectClone = "project.clone"
     case projectUnregister = "project.unregister"
     case projectRelocateContained = "project.relocateContained"
@@ -14,7 +15,7 @@ public enum WorkbenchAuthoringRecoveryMethod: String, CaseIterable, Sendable {
     case projectPatch = "project.patch"
     case projectSyncSource = "project.syncSource"
     /// Private additive cloud transfer RPC; existing API1.0 clients pin the public method catalogue.
-    public static var advertisedCases: [Self] { allCases.filter { $0 != .projectSyncSource } }
+    public static var advertisedCases: [Self] { allCases.filter { $0 != .projectSyncSource && $0 != .cloudProjectCreate } }
     case projectOpenContained = "project.openContained"
     case projectSourceExport = "project.exportSource"
     case projectSourceImport = "project.importSource"
@@ -40,6 +41,7 @@ public enum WorkbenchAuthoringRecoveryRequest {
     indirect case selectionBound(request: WorkbenchAuthoringRecoveryRequest,
                                  workspaceId: String, selectionGeneration: Int)
     case projectCreate(name: String, kind: String)
+    case cloudProjectCreate(intentId: String, dashboardId: String, name: String, path: String)
     case projectClone(id: String, expectedSourceVersion: String, name: String?)
     case projectUnregister(id: String, expectedCatalogGeneration: Int)
     case projectRelocateContained(id: String, expectedSourceVersion: String,
@@ -74,6 +76,7 @@ public enum WorkbenchAuthoringRecoveryRequest {
         switch self {
         case .selectionBound(let request, _, _): return request.method
         case .projectCreate: return .projectCreate
+        case .cloudProjectCreate: return .cloudProjectCreate
         case .projectClone: return .projectClone
         case .projectUnregister: return .projectUnregister
         case .projectRelocateContained: return .projectRelocateContained
@@ -146,6 +149,12 @@ public enum WorkbenchAuthoringRecoveryRequest {
             return value
         }
         switch method {
+        case .cloudProjectCreate:
+            try keys(["schemaVersion", "intentId", "dashboardId", "name", "path"])
+            guard let name = params["name"] as? String, WorkspaceValidation.text(name), !name.isEmpty, name.utf8.count <= 120,
+                  let intent = params["intentId"] as? String, UUID(uuidString: intent) != nil,
+                  let dashboard = params["dashboardId"] as? String, UUID(uuidString: dashboard) != nil else { throw WorkbenchIPCError(.invalidRequest) }
+            return .cloudProjectCreate(intentId: intent, dashboardId: dashboard, name: name, path: try path())
         case .projectCreate:
             try keys(["schemaVersion", "name", "kind"])
             guard let name = params["name"] as? String, WorkspaceValidation.text(name),
@@ -536,7 +545,7 @@ public struct WorkbenchAuthoringRecoveryResult: Codable, Sendable {
         guard schemaVersion == 1 else { throw WorkbenchIPCError(.invalidRequest) }
         let expected: Kind
         switch method {
-        case .projectCreate, .projectClone, .projectRelocateContained, .projectUpgradeKit,
+        case .projectCreate, .cloudProjectCreate, .projectClone, .projectRelocateContained, .projectUpgradeKit,
              .projectInspect, .projectPatch, .projectSyncSource, .projectOpenContained,
              .projectSourceImport: expected = .authoringProject
         case .projectUnregister: expected = .projectUnregistered

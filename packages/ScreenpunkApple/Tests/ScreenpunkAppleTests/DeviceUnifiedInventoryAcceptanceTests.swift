@@ -4,6 +4,191 @@ import Foundation
 @_spi(NativeInstallation) @testable import ScreenpunkApple
 
 final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
+    func testPendingCloudOutcomeSurvivesLocalSelectionAndRestartWithoutRollingBack() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let delivery = try UnifiedArchiveComposition.make(fixture: fixture, changedPublication: false)
+        fixture.http.delivery = delivery.value
+        fixture.http.unavailableDeliveryPackageIDs = [delivery.retainedPackageID]
+        let pathStart = fixture.http.deliveryPaths.count
+        let command = try await NativeDeliveryCommandHTTPObservation.collect(installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        let plan = try await command.fetchPlan(current: fixture.current, origin: fixture.http.origin,
+            nativeOperationID: UUID(), configuration: fixture.http.configuration)
+        _ = try plan.acceptUnified(session: fixture.common, current: fixture.current)
+        let archives = try await plan.fetchArchives(current: fixture.current, origin: fixture.http.origin,
+            target: delivery.value.archive.target, profileID: "Fixture", revisionName: "Fixture", configuration: fixture.http.configuration)
+        try archives.prepareUnified(session: fixture.common, current: fixture.current,
+            packageRootID: UUID(), grantOperationID: UUID(), grantRevisionID: UUID())
+        let packagePaths = Array(fixture.http.deliveryPaths.dropFirst(pathStart)).filter { $0.contains("/delivery/package/") }
+        XCTAssertEqual(packagePaths.map { URL(fileURLWithPath: $0).lastPathComponent }, [delivery.incomingPackageID])
+        XCTAssertFalse(packagePaths.contains { $0.hasSuffix("/" + delivery.retainedPackageID) })
+        let activation = try fixture.common.retainCloudActivationRequest(requestID: UUID(), current: fixture.current)
+        let authorization = try await NativeDeliveryActivationHTTPObservation.collect(body: activation, installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        try fixture.common.retainCloudAuthorization(requestBody: activation, observation: authorization)
+        let outcome = try fixture.common.dispatchCloudAndRetainActivatedOutcome(current: fixture.current)
+        let cloudState = try fixture.common.validatedAssociation()
+        let priorPresentation = try fixture.common.selectedContent(operationID: UUID())
+        let localGeneration = UUID()
+        let owner = try OutcomeReplayLocalOwner(fixture: fixture)
+        try fixture.common.selectOrRemove(operationID: UUID(), generationID: localGeneration,
+            retainedEntryIDs: cloudState.entries.map(\.entryID), selected: delivery.retainedEntryID, owner: owner)
+        let localState = try fixture.common.validatedAssociation()
+        XCTAssertEqual(localState.generationID, localGeneration)
+        XCTAssertEqual(localState.configuredEntryID, delivery.retainedEntryID)
+        XCTAssertThrowsError(try fixture.common.confirmMountedLocalContent(priorPresentation))
+        XCTAssertThrowsError(try fixture.current.requireInstallationAssociation(fixture.installation))
+        let refreshedCurrent = try fixture.authority.prepareCurrentInstallationDispatch(fixture.context)
+        let retry = try XCTUnwrap(fixture.common.restorePendingCloudOutcome(current: refreshedCurrent))
+        XCTAssertEqual(retry.bytes, outcome.bytes)
+        XCTAssertEqual(try fixture.common.validatedAssociation().generationID, localGeneration)
+        let reopened = try fixture.authority.restoreUnifiedInventorySession(context: fixture.context,
+            commonRootID: fixture.commonID, native: fixture.execution)
+        let restored = try XCTUnwrap(reopened.restorePendingCloudOutcome(current: refreshedCurrent))
+        XCTAssertEqual(restored.bytes, outcome.bytes)
+        XCTAssertEqual(try reopened.validatedAssociation().generationID, localGeneration)
+        XCTAssertEqual(try reopened.selectedContent(operationID: UUID()).entryID, delivery.retainedEntryID)
+        let receipt = try await NativeDeliveryReceiptHTTPObservation.collect(body: restored, installation: fixture.installation,
+            origin: fixture.http.origin, configuration: fixture.http.configuration)
+        _ = try reopened.retainCloudOutcomeAcknowledgment(body: restored, observation: receipt)
+        XCTAssertNil(try reopened.restorePendingCloudOutcome(current: refreshedCurrent))
+        XCTAssertEqual(try reopened.validatedAssociation().generationID, localGeneration)
+    }
+
+    func testCloudDeclarationsMountAndUseOnlyExplicitLocalHomeApproval() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let before = try fixture.common.automationSourceExact().capture.snapshot
+        var home = ManifestConnection(alias: "home", required: true)
+        home.operations = [.init(name: "getStates", kind: "http", maxAgeSeconds: 10)]
+        home.serviceCalls = [.init(domain: "light", service: "turn_on", entityIds: ["light.fixture"])]
+        let delivery = try UnifiedArchiveComposition.make(fixture: fixture, changedPublication: false, connections: [home])
+        fixture.http.delivery = delivery.value
+        fixture.http.unavailableDeliveryPackageIDs = [delivery.retainedPackageID]
+        let pathStart = fixture.http.deliveryPaths.count
+        let command = try await NativeDeliveryCommandHTTPObservation.collect(installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        let plan = try await command.fetchPlan(current: fixture.current, origin: fixture.http.origin,
+            nativeOperationID: UUID(), configuration: fixture.http.configuration)
+        _ = try plan.acceptUnified(session: fixture.common, current: fixture.current)
+        let archives = try await plan.fetchArchives(current: fixture.current, origin: fixture.http.origin,
+            target: delivery.value.archive.target, profileID: "Fixture", revisionName: "Fixture", configuration: fixture.http.configuration)
+        try archives.prepareUnified(session: fixture.common, current: fixture.current,
+            packageRootID: UUID(), grantOperationID: UUID(), grantRevisionID: UUID())
+        let packagePaths = Array(fixture.http.deliveryPaths.dropFirst(pathStart)).filter { $0.contains("/delivery/package/") }
+        XCTAssertEqual(packagePaths.map { URL(fileURLWithPath: $0).lastPathComponent }, [delivery.incomingPackageID])
+        XCTAssertFalse(packagePaths.contains { $0.hasSuffix("/" + delivery.retainedPackageID) })
+        let activation = try fixture.common.retainCloudActivationRequest(requestID: UUID(), current: fixture.current)
+        let authorization = try await NativeDeliveryActivationHTTPObservation.collect(body: activation, installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        try fixture.common.retainCloudAuthorization(requestBody: activation, observation: authorization)
+        _ = try fixture.common.dispatchCloudAndRetainActivatedOutcome(current: fixture.current)
+        let after = try fixture.common.automationSourceExact().capture.snapshot
+        XCTAssertEqual(after.entries.count, 2)
+        XCTAssertEqual(after.entries.first { $0.entryID == delivery.retainedEntryID }, before.entries.first { $0.entryID == delivery.retainedEntryID },
+            "Retention preserves the complete existing package, grant and resource identities")
+        XCTAssertEqual(after.configuredEntryID, delivery.incomingEntryID)
+        XCTAssertNotEqual(after.generationID, before.generationID)
+        let approvals = DeviceCloudHomeAssistantStore(store: MemoryCredentialStore())
+        let http = CloudHomeHTTP()
+        let runtime = try await fixture.common.makeManagedRuntime(operationID: UUID(), http: http,
+            webSocket: URLSessionWebSocketTransport(), resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock(),
+            cloudHomeAssistant: { try approvals.configuration(installationID: $0, manifest: $1) })
+        do { _ = try await runtime.request(alias: "home", operation: "getStates", parameters: [:]); XCTFail("Unmounted content cannot execute") } catch { }
+        XCTAssertEqual(http.requests, 0)
+        try fixture.common.confirmMountedLocalContent(runtime.content)
+        do { _ = try await runtime.request(alias: "home", operation: "getStates", parameters: [:]); XCTFail("Declaration is not approval") } catch { }
+        XCTAssertEqual(http.requests, 0)
+        try approvals.approve(installationID: fixture.activation.installationId, manifest: runtime.manifest,
+            origin: "http://192.168.1.40", token: "synthetic-token", allowInsecureHTTP: true)
+        _ = try await runtime.request(alias: "home", operation: "getStates", parameters: [:])
+        _ = try await runtime.request(alias: "home", operation: "callService", parameters: ["call": #"{"domain":"light","service":"turn_on","target":{"entity_id":"light.fixture"},"serviceData":{}}"#])
+        XCTAssertEqual(http.requests, 2)
+        do { _ = try await runtime.request(alias: "home", operation: "callService", parameters: ["call": #"{"domain":"light","service":"turn_on","target":{"entity_id":"light.other"},"serviceData":{}}"#]); XCTFail("Undeclared entity") } catch { }
+        XCTAssertEqual(http.requests, 2)
+        try approvals.revoke(installationID: fixture.activation.installationId)
+        do { _ = try await runtime.request(alias: "home", operation: "getStates", parameters: [:]); XCTFail("Revoked grant") } catch { }
+        XCTAssertEqual(http.requests, 2)
+        await runtime.cancel()
+        let reopened = try fixture.authority.restoreUnifiedInventorySession(context: fixture.context, commonRootID: fixture.commonID, native: fixture.execution)
+        let restored = try await reopened.makeManagedRuntime(operationID: UUID(), http: http,
+            webSocket: URLSessionWebSocketTransport(), resolver: LiteralOrResolvedDestinationResolver(), clock: SystemClock())
+        XCTAssertEqual(restored.manifest.connections, [home])
+        XCTAssertEqual(restored.content.entryID, runtime.content.entryID)
+    }
+
+    func testUnifiedArchiveCollectionReusesExactRetainedCloudAndFetchesOnlyNewPackage() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let before = try fixture.common.automationSourceExact().capture.snapshot
+        let delivery = try UnifiedArchiveComposition.make(fixture: fixture, changedPublication: false)
+        fixture.http.delivery = delivery.value
+        fixture.http.unavailableDeliveryPackageIDs = [delivery.retainedPackageID]
+        let pathStart = fixture.http.deliveryPaths.count
+        let command = try await NativeDeliveryCommandHTTPObservation.collect(installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        let plan = try await command.fetchPlan(current: fixture.current, origin: fixture.http.origin,
+            nativeOperationID: UUID(), configuration: fixture.http.configuration)
+        _ = try plan.acceptUnified(session: fixture.common, current: fixture.current)
+        let archives = try await plan.fetchArchives(current: fixture.current, origin: fixture.http.origin,
+            target: delivery.value.archive.target, profileID: "Fixture", revisionName: "Fixture", configuration: fixture.http.configuration)
+        try archives.prepareUnified(session: fixture.common, current: fixture.current,
+            packageRootID: UUID(), grantOperationID: UUID(), grantRevisionID: UUID())
+        let packagePaths = Array(fixture.http.deliveryPaths.dropFirst(pathStart)).filter { $0.contains("/delivery/package/") }
+        XCTAssertEqual(packagePaths.map { URL(fileURLWithPath: $0).lastPathComponent }, [delivery.incomingPackageID])
+        XCTAssertFalse(packagePaths.contains { $0.hasSuffix("/" + delivery.retainedPackageID) })
+        let activation = try fixture.common.retainCloudActivationRequest(requestID: UUID(), current: fixture.current)
+        let authorization = try await NativeDeliveryActivationHTTPObservation.collect(body: activation, installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        try fixture.common.retainCloudAuthorization(requestBody: activation, observation: authorization)
+        _ = try fixture.common.dispatchCloudAndRetainActivatedOutcome(current: fixture.current)
+        let after = try fixture.common.automationSourceExact().capture.snapshot
+        XCTAssertEqual(after.entries.count, 2)
+        XCTAssertEqual(after.entries.first { $0.entryID == delivery.retainedEntryID }, before.entries.first { $0.entryID == delivery.retainedEntryID },
+            "Retention preserves the complete existing package, grant and resource identities")
+        XCTAssertEqual(after.configuredEntryID, delivery.incomingEntryID)
+        XCTAssertNotEqual(after.generationID, before.generationID)
+    }
+    func testUnifiedArchiveCollectionDoesNotRetainChangedDescriptorAtSameEntry() async throws {
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let before = try fixture.common.automationSourceExact().capture.snapshot
+        let delivery = try UnifiedArchiveComposition.make(fixture: fixture, changedPublication: true)
+        fixture.http.delivery = delivery.value
+        fixture.http.unavailableDeliveryPackageIDs = [delivery.retainedPackageID]
+        let pathStart = fixture.http.deliveryPaths.count
+        let command = try await NativeDeliveryCommandHTTPObservation.collect(installation: fixture.installation,
+            current: fixture.current, origin: fixture.http.origin, configuration: fixture.http.configuration)
+        let plan = try await command.fetchPlan(current: fixture.current, origin: fixture.http.origin,
+            nativeOperationID: UUID(), configuration: fixture.http.configuration)
+        _ = try plan.acceptUnified(session: fixture.common, current: fixture.current)
+        do {
+            _ = try await plan.fetchArchives(current: fixture.current, origin: fixture.http.origin,
+                target: delivery.value.archive.target, profileID: "Fixture", revisionName: "Fixture", configuration: fixture.http.configuration)
+            XCTFail("Changed publication at the same entry/package/content identity still requires its exact archive")
+        } catch {
+            XCTAssertEqual(error as? NativeOperationalTransportFailure, .invalidResponse)
+        }
+        let packagePaths = Array(fixture.http.deliveryPaths.dropFirst(pathStart)).filter { $0.contains("/delivery/package/") }
+        XCTAssertEqual(packagePaths.map { URL(fileURLWithPath: $0).lastPathComponent }, [delivery.retainedPackageID])
+        XCTAssertEqual(try fixture.common.automationSourceExact().capture.snapshot, before)
+    }
+    func testExclusiveFirstDeliveryStillFetchesAndPreparesItsCloudArchive() async throws {
+        // The genuine factory performs fixed command/plan/archive IO, exclusive
+        // preparation, authorization and CAS before migrating the installed A.
+        let fixture = try await GenuineUnifiedInventoryFixture.make()
+        defer { fixture.close() }
+        let delivery = try XCTUnwrap(fixture.http.delivery)
+        let package = try UnifiedArchiveComposition.packageID(in: delivery.command)
+        XCTAssertEqual(fixture.http.deliveryPaths.filter { $0.contains("/delivery/package/") }.map { URL(fileURLWithPath: $0).lastPathComponent }, [package])
+        let installed = try fixture.common.automationSourceExact().capture.snapshot
+        XCTAssertEqual(installed.entries.count, 1)
+        XCTAssertEqual(installed.configuredEntryID, delivery.archive.entryID)
+        let content = try fixture.common.selectedContent(operationID: UUID())
+        XCTAssertEqual(content.entryID, delivery.archive.entryID)
+        XCTAssertTrue(content.assets.contains { $0.path == "index.html" })
+    }
     func testGenuineMountRequiresExactPresentationAndPersistsFailureAndRecovery() async throws {
         let fixture = try await GenuineUnifiedInventoryFixture.make()
         defer { fixture.close() }
@@ -81,88 +266,79 @@ final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
     }
 }
 
-/// One uptime source for the genuine fixture's cloud lease and status observation.
-/// It stays still until `advance`, so a stalled runner cannot age a fresh lease past 30s.
-final class GenuineInventoryClock: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: TimeInterval = 1_000
-    func now() -> TimeInterval { lock.lock(); defer { lock.unlock() }; return value }
-    func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; value += seconds }
+enum UnifiedArchiveComposition {
+    struct Delivery {
+        let value: AuthorityStaticDeliveryFixture.Value
+        let retainedEntryID: UUID, incomingEntryID: UUID
+        let retainedPackageID: String, incomingPackageID: String
+    }
+    static func object(_ bytes: Data) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+    }
+    static func entries(in command: Data) throws -> [[String: Any]] {
+        let body = try object(command), set = try XCTUnwrap(body["resultingSet"] as? [String: Any])
+        return try XCTUnwrap(set["entries"] as? [[String: Any]])
+    }
+    static func packageID(in command: Data) throws -> String {
+        let entry = try XCTUnwrap(entries(in: command).first)
+        let provenance = try XCTUnwrap(entry["provenance"] as? [String: Any])
+        return try XCTUnwrap((provenance["package"] as? [String: Any])?["packageId"] as? String)
+    }
+    static func make(fixture: GenuineUnifiedInventoryFixture, changedPublication: Bool, connections: [ManifestConnection] = [], dashboard: UUID = UUID(), revision: UUID = UUID()) throws -> Delivery {
+        let original = try XCTUnwrap(fixture.http.delivery)
+        let state = try fixture.common.validatedAssociation()
+        let next = try AuthorityStaticDeliveryFixture.make(state: ["installationId": fixture.activation.installationId.uuidString.lowercased(),
+            "transitionId": fixture.activation.transitionId.uuidString.lowercased(), "generationId": state.generationID.uuidString.lowercased()], activation: fixture.activation, connections: connections, dashboard: dashboard, revision: revision)
+        var retained = try XCTUnwrap(entries(in: original.command).first)
+        let retainedID = try XCTUnwrap(UUID(uuidString: XCTUnwrap(retained["entryId"] as? String)))
+        let retainedPackage = try packageID(in: original.command)
+        let incoming = try XCTUnwrap(entries(in: next.command).first)
+        var body = try object(next.command)
+        let result: [String: Any]
+        if changedPublication {
+            var provenance = try XCTUnwrap(retained["provenance"] as? [String: Any])
+            var package = try XCTUnwrap(provenance["package"] as? [String: Any])
+            package["publicationId"] = UUID().uuidString.lowercased()
+            provenance["package"] = package; retained["provenance"] = provenance
+            result = ["schemaVersion": 1, "entries": [retained], "configuredEntryId": retainedID.uuidString.lowercased()]
+        } else {
+            result = ["schemaVersion": 1, "entries": [retained, incoming], "configuredEntryId": next.archive.entryID.uuidString.lowercased()]
+        }
+        body["sequence"] = "2"; body["removeEntryIds"] = [] as [String]; body["resultingSet"] = result
+        body["resultingSetDigest"] = try DeviceDeliveryCandidateCodec.resultingSetDigest(
+            DeviceDeliveryCandidateJSONDecoder.decodeResultingSet(JSONSerialization.data(withJSONObject: result)))
+        return .init(value: .init(command: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys, .withoutEscapingSlashes]),
+            header: next.header, plan: next.plan, archive: changedPublication ? original.archive : next.archive),
+            retainedEntryID: retainedID, incomingEntryID: next.archive.entryID,
+            retainedPackageID: retainedPackage, incomingPackageID: try packageID(in: next.command))
+    }
 }
 
-struct GenuineUnifiedInventoryFixture {
+// Substitutes the already-approved LAN peer boundary only; production authority
+// still admits the Local intent and performs its fixed inventory mutation.
+final class OutcomeReplayLocalOwner: NativeUnifiedLocalInventoryOwner {
+    let commonRootID: UUID
+    let peerPinHex = String(repeating: "7", count: 64)
     let authority: DeviceManagementAuthority
-    let context: DeviceManagementAuthority.CloudInstallationContext
-    let current: NativeCurrentInstallationDispatch
-    let common: DeviceUnifiedInventorySession
-    let execution: NativeDeliveryExecutionSession
-    let parent: URL
-    let commonID: UUID
-    let generation: UUID
-    let storage: FreshCredentialStorage
-    let http: FreshOwnerHTTP
-    func close() { http.close(); try? FileManager.default.removeItem(at: parent) }
-    static func make(clock: GenuineInventoryClock = GenuineInventoryClock()) async throws -> Self {
-        let now: () -> TimeInterval = { clock.now() }
-        let parent = testPhysicalTemporaryDirectory().appendingPathComponent(UUID().uuidString)
-        var completed = false
-        defer { if !completed { try? FileManager.default.removeItem(at: parent) } }
-        let anchor = parent.appendingPathComponent("Application Support")
-        try FileManager.default.createDirectory(at: anchor, withIntermediateDirectories: true)
-        let authority = DeviceManagementAuthority(journal: AuthorityJournal(), credentials: .init(backend: AuthorityBackend(), random: { Data() }),
-            reset: ManagementTestResetEvidence(), managedNamespace: try .fixture(existingPhysicalAnchor: anchor),
-            supportAnchorSetup: try .fixture(existingPhysicalParent: parent), commandIntents: .init(root: parent.appendingPathComponent("command-intents")), concurrentControlQualified: true)
-        authority.adoptCloudClock(now)
-        try authority.prepareProductionSupportAnchor(); try authority.enterCloudForeground()
-        let claim = try NativeClaimInput(requestId: UUID(), transitionId: UUID(), accountId: UUID(), locationId: nil, name: "Fixture", profile: "Fixture")
-        let binding = try DeviceManagementFormatHistory.Binding(credentialGenerationID: UUID(), transitionID: claim.transitionId,
-            credentialReference: "native." + UUID().uuidString, format: .nativeInstallationV1)
-        let proposal = try NativeFirstEnrollmentPreparation(preparationId: UUID(), enrollmentId: UUID(), stageReference: "stage." + UUID().uuidString,
-            binding: binding, claimInput: claim)
-        let roots = try authority.prepareFreshCloudEnrollmentRoots(claim: claim)
-        let protection = NativeManagedProtectedRoots(legacyState: parent.appendingPathComponent("local"), legacyArchive: parent.appendingPathComponent("archive"),
-            reset: parent.appendingPathComponent("reset"), cloudEnrollment: roots.journalRoot,
-            management: parent.appendingPathComponent("management"), preferences: parent.appendingPathComponent("preferences"))
-        let stores = try NativeFirstManagedStores(namespace: roots.namespace, ids: roots.localIDs, protectedRoots: protection,
-            grantTransport: FreshGrantTransport(rootID: roots.localIDs.grant))
-        let storage = FreshCredentialStorage()
-        let enrollment = try authority.makeFirstEnrollmentSession(roots: roots, proposal: proposal, excludedLocalResetRoot: protection.reset, storage: storage)
-        let http = FreshOwnerHTTP(claim: claim)
-        defer { if !completed { http.close() } }
-        let result = try await enrollment.enroll(origin: http.origin, tokenProvider: FreshOwnerTokens(),
-            activationRequestID: http.activationRequestID, associationAttemptID: UUID(), stores: stores, configuration: http.configuration)
-        let context = try authority.bindOperationalInstallation(installation: result.installation, activation: result.activation, origin: http.origin)
-        let status = try authority.prepareCloudStatusRequest(context)
-        try authority.beginCloudStatusRequest(context, requestID: status.requestID)
-        try authority.acceptCloudStatus(await status.performFixedTransport(origin: http.origin, configuration: http.configuration, clock: now), context: context)
-        let current = try authority.prepareCurrentInstallationDispatch(context)
-        let execution = try result.installation.makeDeliveryExecutionSession(current: current)
-        let stateBody = try execution.freshGenesisObservation(current: current)
-        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: stateBody.bytes) as? [String: Any])
-        let delivery = try AuthorityStaticDeliveryFixture.make(state: state, activation: result.activation); http.delivery = delivery
-        let stateACK = try await NativeDeliveryStateHTTPObservation.collect(body: stateBody, installation: result.installation,
-            current: current, origin: http.origin, configuration: http.configuration)
-        try stateACK.requireOriginal(body: stateBody, installation: result.installation)
-        let command = try await NativeDeliveryCommandHTTPObservation.collect(installation: result.installation, current: current,
-            origin: http.origin, configuration: http.configuration)
-        let plan = try await command.fetchPlan(current: current, origin: http.origin, nativeOperationID: UUID(), configuration: http.configuration)
-        let archives = try await plan.fetchArchives(current: current, origin: http.origin, target: delivery.archive.target,
-            profileID: "Fixture", revisionName: "Fixture", configuration: http.configuration)
-        try archives.prepare(session: execution, grantOperationID: UUID(), grantRevisionID: UUID())
-        let activationBody = try execution.retainActivationRequest(requestID: UUID())
-        let authorization = try await NativeDeliveryActivationHTTPObservation.collect(body: activationBody, installation: result.installation,
-            current: current, origin: http.origin, configuration: http.configuration)
-        try execution.retainAuthorization(requestBody: activationBody, observation: authorization)
-        let outcome = try execution.dispatchAndRetainActivatedOutcome(current: current)
-        let receipt = try await NativeDeliveryReceiptHTTPObservation.collect(body: outcome, installation: result.installation,
-            origin: http.origin, configuration: http.configuration)
-        _ = try execution.retainOutcomeAcknowledgment(body: outcome, observation: receipt)
-        let commonID = UUID()
-        let common = try authority.makeUnifiedInventorySession(context: context, current: current, commonRootID: commonID, native: execution)
-        let generation = UUID()
-        try common.migrate(current: current, operationID: UUID(), generationID: generation,
-            admissionEnabled: authority.qualifiedConcurrentControl(context: context))
-        completed = true
-        return .init(authority: authority, context: context, current: current, common: common, execution: execution, parent: parent, commonID: commonID, generation: generation, storage: storage, http: http)
+    let checkpoint: DeviceCommandIntentCoordinator.Checkpoint?
+    init(fixture: GenuineUnifiedInventoryFixture) throws {
+        commonRootID = fixture.commonID; authority = fixture.authority
+        checkpoint = try authority.acceptUnifiedLocalIntent(peerPinHex: peerPinHex, validateApproved: {})
+    }
+    func performFixedUnifiedLocalDispatch(command: NativeInstallationUnifiedLocalDispatchCommand) throws -> NativeInstallationUnifiedLocalDispatchResult {
+        try authority.performFixedUnifiedLocalDispatch(command: command, peerPinHex: peerPinHex, checkpoint: checkpoint) {
+            try command.performDuringFixedOwner()
+        }
+    }
+}
+
+private final class CloudHomeHTTP: HTTPTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var requests: Int { lock.lock(); defer { lock.unlock() }; return count }
+    private func record() { lock.lock(); count += 1; lock.unlock() }
+    func send(_ request: AuthorizedHTTPRequest) async throws -> HTTPTransportResponse {
+        record()
+        return .init(status: 200, body: Data("[]".utf8), headers: [:])
     }
 }

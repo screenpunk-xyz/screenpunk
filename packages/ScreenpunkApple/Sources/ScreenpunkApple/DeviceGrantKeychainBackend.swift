@@ -166,7 +166,7 @@ final class DeviceGrantKeychainBackend: DeviceGrantCredentialTransport, CustomSt
         }
         guard try string(value(dictionary,kSecAttrService),maximum:128).utf8.elementsEqual(namespace.service.utf8),
               try string(value(dictionary,kSecAttrAccessible),maximum:128).utf8.elementsEqual((kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String).utf8),
-              try !boolean(value(dictionary,kSecAttrSynchronizable),defaultValue:false) else { throw DeviceGrantCredentialTransportFailure.invalidObservation }
+              DeviceKeychainNonsynchronizableFlag.matches(value(dictionary,kSecAttrSynchronizable)) else { throw DeviceGrantCredentialTransportFailure.invalidObservation }
         let account = try string(value(dictionary,kSecAttrAccount),maximum:47), parsed = try DeviceGrantCredentialAccount(validating:account)
         let metadata = try data(value(dictionary,kSecAttrGeneric),maximum:42,nonempty:true)
         guard metadata.count == 42 else { throw DeviceGrantCredentialTransportFailure.invalidObservation }
@@ -197,10 +197,6 @@ final class DeviceGrantKeychainBackend: DeviceGrantCredentialTransport, CustomSt
         var bytes: [UInt8] = []
         for index in 0..<count { let code = CFStringGetCharacterAtIndex(string,index); guard code > 0 && code < 128 else { throw DeviceGrantCredentialTransportFailure.invalidObservation }; bytes.append(UInt8(code)) }
         return String(decoding:bytes,as:UTF8.self)
-    }
-    private func boolean(_ value: CFTypeRef?, defaultValue: Bool) throws -> Bool {
-        guard let value else { return defaultValue }
-        guard CFGetTypeID(value) == CFBooleanGetTypeID() else { throw DeviceGrantCredentialTransportFailure.invalidObservation }; return CFBooleanGetValue(unsafeBitCast(value,to:CFBoolean.self))
     }
     private func data(_ value: CFTypeRef?, maximum: Int, nonempty: Bool) throws -> Data {
         guard let value, CFGetTypeID(value) == CFDataGetTypeID() else { throw DeviceGrantCredentialTransportFailure.invalidObservation }

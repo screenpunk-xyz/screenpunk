@@ -1,5 +1,9 @@
 // swift-tools-version: 5.9
 import PackageDescription
+import Foundation
+
+let ownershipInfo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("OwnershipInfo.plist").path
+let ownershipLinkerSettings: [LinkerSetting] = [.unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", ownershipInfo])]
 
 let package = Package(
     name: "ScreenpunkWorkbench",
@@ -16,9 +20,9 @@ let package = Package(
                    .package(path: "../screenpunk-distribution")],
     targets: [
         .target(name: "WorkbenchCommand", dependencies: ["ScreenpunkController", "ScreenpunkApple", "ScreenpunkCore", "ScreenpunkBrokerMCP", .product(name: "ScreenpunkDistribution", package: "screenpunk-distribution")]),
-        .executableTarget(name: "screenpunk", dependencies: ["WorkbenchCommand"]),
-        .executableTarget(name: "screenpunk-service", dependencies: ["WorkbenchCommand"]),
-        .executableTarget(name: "screenpunk-mcp", dependencies: ["WorkbenchCommand"]),
+        .executableTarget(name: "screenpunk", dependencies: ["WorkbenchCommand"], linkerSettings: ownershipLinkerSettings),
+        .executableTarget(name: "screenpunk-service", dependencies: ["WorkbenchCommand"], linkerSettings: ownershipLinkerSettings),
+        .executableTarget(name: "screenpunk-mcp", dependencies: ["WorkbenchCommand"], linkerSettings: ownershipLinkerSettings),
         .testTarget(name: "WorkbenchCommandTests", dependencies: ["WorkbenchCommand", .product(name: "ScreenpunkDistribution", package: "screenpunk-distribution")])
     ]
 )

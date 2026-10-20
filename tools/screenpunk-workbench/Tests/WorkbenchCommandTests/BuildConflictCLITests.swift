@@ -1,6 +1,7 @@
 import XCTest
 import Foundation
 import ScreenpunkController
+import ScreenpunkBrokerMCP
 @testable import WorkbenchCommand
 
 final class BuildConflictCLITests: XCTestCase {
@@ -51,7 +52,43 @@ final class BuildConflictCLITests: XCTestCase {
         let created = try XCTUnwrap(result(["project", "create", "Phone"])["project"] as? [String: Any])
         let project = try XCTUnwrap(created["project"] as? [String: Any])
         let id = try XCTUnwrap(project["projectId"] as? String)
-        let oldSource = try XCTUnwrap(created["sourceVersion"] as? String)
+        var oldSource = try XCTUnwrap(created["sourceVersion"] as? String)
+        let noHead = try XCTUnwrap(run(["build", "head", id], status: 6)["error"] as? [String: Any])
+        XCTAssertEqual(noHead["code"] as? String, "build_not_found")
+        let client = WorkbenchBrokerClient(environment: try WorkbenchBrokerEnvironment(runtimeDirectory: runtime))
+        try client.connect(); defer { client.close() }
+        let adapter = try LegacyBrokerAdapter(client: client, expectedControllerHomePath: home.path)
+        let missingHead = adapter.call(name: "get_workspace_build", arguments: ["projectId": id])
+        XCTAssertTrue(missingHead.isError)
+        XCTAssertTrue(missingHead.text.contains("build_not_found"))
+        XCTAssertTrue(missingHead.text.contains("without a base revision"))
+        for (config, expected) in [
+            (#"{"name":"Phone","target":{"width":1024,"height":768,"orientation":"landscape","profileId":"test"}}"#, "build_configuration_invalid"),
+            (#"{"name":"Phone","target":{"width":1024,"height":768,"scale":2,"orientation":"diagonal","profileId":"test"}}"#, "build_package_invalid")
+        ] {
+            let path = root.appendingPathComponent("screen-input.json")
+            try Data(config.utf8).write(to: path)
+            let edited = try XCTUnwrap(result(["project", "edit", id, oldSource,
+                "screen.json", path.path])["project"] as? [String: Any])
+            oldSource = try XCTUnwrap(edited["sourceVersion"] as? String)
+            let failure = try XCTUnwrap(run(["build", "run", id, oldSource], status: 6)["error"] as? [String: Any])
+            XCTAssertEqual(failure["code"] as? String, expected)
+            try client.connect()
+            let reply = adapter.call(name: "run_workspace_build", arguments: [
+                "projectId": id, "expectedSourceVersion": oldSource])
+            XCTAssertTrue(reply.isError)
+            XCTAssertTrue(reply.text.hasPrefix(expected + ":"), reply.text)
+            XCTAssertFalse(reply.text.contains("outcome_unknown"))
+            if expected == "build_configuration_invalid" {
+                XCTAssertTrue(reply.text.contains("screen.json"))
+                XCTAssertTrue(reply.text.contains("scale"))
+            }
+        }
+        let restoredConfig = root.appendingPathComponent("screen-input.json")
+        try Data(#"{"name":"Phone"}"#.utf8).write(to: restoredConfig)
+        let restored = try XCTUnwrap(result(["project", "edit", id, oldSource,
+            "screen.json", restoredConfig.path])["project"] as? [String: Any])
+        oldSource = try XCTUnwrap(restored["sourceVersion"] as? String)
         let first = try XCTUnwrap(result(["build", "run", id, oldSource])["build"] as? [String: Any])
         let base = try XCTUnwrap(first["revision"] as? String)
         let input = root.appendingPathComponent("formatted.html")

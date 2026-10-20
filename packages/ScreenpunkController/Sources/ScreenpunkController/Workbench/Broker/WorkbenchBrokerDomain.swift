@@ -294,7 +294,11 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                 }
                 try budget.check()
                 try result.validate(for: request.method)
-                _ = try WorkbenchWireJSON.object(WorkbenchSocket.encode(result))
+                // Validate the actual envelope: fractional brightness is permitted only
+                // at settings paths and only for the two settings methods.
+                let response = WorkbenchWireResponse(requestId: "device-validation", deviceAction: result)
+                _ = try WorkbenchWireJSON.object(WorkbenchSocket.encode(response),
+                    allowDeviceSettings: request.method == .settingsGet || request.method == .settingsSet)
                 return result
             } catch let error as WorkbenchIPCError { throw error }
             catch { throw WorkbenchIPCError(.unavailable) }
@@ -786,11 +790,12 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                       selected.selectionGeneration == request.selection.generation else {
                     throw WorkbenchIPCError(.workspaceConflict)
                 }
-                let packages = WorkbenchPortablePackages(workspace: workspace,
+                let packages = WorkbenchPortablePackages(workspace: workspace, requestOverview: selected,
                     localReadTimeout: localReadTimeout)
                 let result: WorkbenchWorkspacePackageResult
                 switch request {
                 case .list(_, _, let cursorValue):
+                    let hidden = try packages.migratedHiddenRevisions(deadline: deadline, cancelled: cancelled)
                     let cursor = try cursorValue.map(WorkbenchWorkspacePackageCursor.parse)
                     if let cursor {
                         guard cursor.workspaceId == selected.descriptor.workspaceId,
@@ -812,16 +817,19 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                         request.selection.generation,
                         packages: try page.manifests.map {
                             try WorkbenchWorkspacePackageSummary($0,
-                                visibleInLibrary: !selected.catalog.archivedDashboardIds.contains($0.dashboardId))
+                                visibleInLibrary: !selected.catalog.archivedDashboardIds.contains($0.dashboardId) &&
+                                    !hidden.contains($0.dashboardId + "/" + $0.revision))
                         },
                         hasMore: page.hasMore, nextCursor: nextCursor)
                 case .get(_, _, let dashboardId, let revision):
+                    let hidden = try packages.migratedHiddenRevisions(deadline: deadline, cancelled: cancelled)
                     let package = try packages.get(dashboardId: dashboardId, revision: revision,
                         deadline: deadline, cancelled: cancelled)
                     result = try .init(.get, selected.descriptor.workspaceId,
                         request.selection.generation,
                         package: WorkbenchWorkspacePackageSummary(package.manifest,
-                            visibleInLibrary: !selected.catalog.archivedDashboardIds.contains(dashboardId)))
+                            visibleInLibrary: !selected.catalog.archivedDashboardIds.contains(dashboardId) &&
+                                !hidden.contains(dashboardId + "/" + revision)))
                 case .file(_, _, let dashboardId, let revision, let path, let offset):
                     let package = try packages.get(dashboardId: dashboardId, revision: revision,
                         deadline: deadline, cancelled: cancelled)
@@ -1055,6 +1063,7 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                             guard error == .invalidApproval else { throw error }
                         }
                         if let existing = previous {
+                            try existing.throwIfRejectedBeforeSend()
                             return .init(.apply, workspaceId: id, generation: generation,
                                 operation: existing)
                         }
@@ -1064,6 +1073,7 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                         let operation: WorkbenchDeploymentOperationRecord
                         do { operation = try domain.dispatch(operationId: admitted.operationId, review: review) }
                         catch { operation = try domain.status(admitted.operationId) }
+                        try operation.throwIfRejectedBeforeSend()
                         return .init(.apply, workspaceId: id, generation: generation,
                             operation: operation)
                     case .status(_, _, let operationId):
@@ -1101,6 +1111,9 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
             } catch let error as WorkbenchIPCError { throw error }
             catch let error as WorkbenchDeploymentError {
                 switch error {
+                case .packageIncompatible: throw WorkbenchIPCError(.deploymentPackageInvalid)
+                case .packageTargetMismatch: throw WorkbenchIPCError(.deploymentTargetMismatch)
+                case .packageIdentityInvalid: throw WorkbenchIPCError(.deploymentIdentityInvalid)
                 case .invalidPlan: throw WorkbenchIPCError(.invalidRequest)
                 case .invalidApproval, .expired: throw WorkbenchIPCError(.confirmationRequired)
                 case .staleContext, .conflict, .cancelled, .alreadySent: throw WorkbenchIPCError(.workspaceConflict)
@@ -1176,7 +1189,8 @@ public final class WorkbenchBrokerDomain: @unchecked Sendable {
                 try handler.perform(request, cancelled: cancelled, progress: progress)
             }
             try result.validate(for: request.method)
-            _ = try WorkbenchWireJSON.object(WorkbenchSocket.encode(result))
+            _ = try WorkbenchWireJSON.object(WorkbenchSocket.encode(result),
+                allowMigrationPlan: [.migrationPlan, .migrationReview].contains(request.method))
             return result
         }
     }

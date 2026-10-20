@@ -5,15 +5,28 @@ import SwiftUI
 @MainActor public final class DeviceRuntimeLifetime {
     public nonisolated let generation = UUID()
     public private(set) var isRetired = false
+    private var suspensions: [UUID: () -> Void] = [:]
     private var retirements: [UUID: () -> Void] = [:]
     public nonisolated init() {}
 
     public func retire() {
         guard !isRetired else { return }
         isRetired = true
+        suspensions.removeAll()
         let actions = Array(retirements.values); retirements.removeAll()
         for action in actions { action() }
     }
+    /// Closes presentation epochs synchronously without retiring the retained runtime.
+    public func suspendPresentation() {
+        guard !isRetired else { return }
+        let actions = Array(suspensions.values)
+        for action in actions { action() }
+    }
+    @discardableResult func registerSuspension(_ action: @escaping () -> Void) -> UUID? {
+        guard !isRetired else { return nil }
+        let id = UUID(); suspensions[id] = action; return id
+    }
+    func unregisterSuspension(_ id: UUID?) { if let id { suspensions.removeValue(forKey: id) } }
     @discardableResult func register(_ action: @escaping () -> Void) -> UUID? {
         guard !isRetired else { action(); return nil }
         let id = UUID(); retirements[id] = action; return id

@@ -73,11 +73,11 @@ struct CloudNativeProviderButtons: View {
     let apple: () -> Void
     let google: () -> Void
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             AppleControl(dark: colorScheme == .dark, enabled: enabled, action: apple)
-                .frame(height: 52).id(colorScheme)
+                .frame(height: 52).id(colorScheme).recordCloudJourneyBounds(.appleCTA)
             googleButton
-                .frame(height: 52)
+                .frame(height: 52).recordCloudJourneyBounds(.googleCTA)
         }.frame(maxWidth: .infinity).disabled(!enabled)
     }
     private struct AppleControl: UIViewRepresentable {

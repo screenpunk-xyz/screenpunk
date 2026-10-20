@@ -11,7 +11,8 @@ public struct DeviceLocalResetScope: Sendable {
     }
     public enum Failure: Error { case invalidPath, symlink, overlap, invalidCredentialBinding }
     static var allowedCredentialItems: [CredentialItem] {
-        [.init(service: GoogleCalendarDeviceService.storageService, account: GoogleCalendarDeviceService.storageKey),
+        [.init(service: DeviceCloudHomeAssistantStore.storageService, account: DeviceCloudHomeAssistantStore.storageKey),
+         .init(service: GoogleCalendarDeviceService.storageService, account: GoogleCalendarDeviceService.storageKey),
          .init(service: GenericConnectionDeviceVault.storageService, account: GenericConnectionDeviceVault.storageKey)] +
         HomeAssistantDeviceVault.storageKeys.map { .init(service: HomeAssistantDeviceVault.storageService, account: $0) }
     }

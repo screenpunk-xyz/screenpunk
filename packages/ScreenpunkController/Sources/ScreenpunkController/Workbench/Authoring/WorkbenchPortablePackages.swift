@@ -25,9 +25,67 @@ struct WorkbenchPortablePackagePage {
 /// this boundary accepts measured bytes, never archive paths or executable claims.
 public final class WorkbenchPortablePackages {
     private let workspace: WorkspaceStore
+    private let requestOverview: WorkspaceOverview?
     private let localReadTimeout: TimeInterval
     public init(workspace: WorkspaceStore, localReadTimeout: TimeInterval = 15) {
-        self.workspace = workspace; self.localReadTimeout = localReadTimeout
+        self.workspace = workspace; self.localReadTimeout = localReadTimeout; self.requestOverview = nil
+    }
+
+    /// Reuse the overview validated by the serialized broker request. Never retain
+    /// this reader across requests: each request must revalidate selection and disk state.
+    init(workspace: WorkspaceStore, requestOverview: WorkspaceOverview, localReadTimeout: TimeInterval) {
+        self.workspace = workspace; self.requestOverview = requestOverview
+        self.localReadTimeout = localReadTimeout
+    }
+
+    /// Old device copies and superseded drafts remain retrievable history,
+    /// while the library keeps the user's original selected draft per screen.
+    func migratedHiddenRevisions(deadline: TimeInterval? = nil,
+                                 cancelled: @escaping () -> Bool = { false }) throws -> Set<String> {
+        let budget = readBudget(deadline: deadline, cancelled: cancelled)
+        let overview = try current(budget: budget)
+        let root = try WorkspaceFiles(path: overview.path)
+        let workbench = try root.directory(["Workbench"]); defer { close(workbench) }
+        guard try root.exists(workbench, "Migrations") else { return [] }
+        let folder = try root.directory(["Workbench", "Migrations"]); defer { close(folder) }
+        let copy = dup(folder)
+        guard copy >= 0, let stream = fdopendir(copy) else {
+            if copy >= 0 { close(copy) }; throw WorkspaceError.unavailable
+        }
+        defer { closedir(stream) }
+        var hidden = Set<String>(), records = 0
+        while true {
+            try budget.check(); errno = 0
+            guard let entry = readdir(stream) else {
+                guard errno == 0 else { throw WorkspaceError.unavailable }; break
+            }
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: 256) { String(cString: $0) }
+            }
+            if name == "." || name == ".." { continue }
+            records += 1
+            guard records <= 128, WorkspaceValidation.id(name) else { throw WorkspaceError.limitExceeded }
+            let recordFolder = try root.directory(["Workbench", "Migrations", name])
+            defer { close(recordFolder) }
+            let bytes = try root.read(recordFolder, "record.json", maxBytes: 5 * 1024 * 1024, readBudget: budget)
+            _ = try WorkspaceJSON.object(from: bytes)
+            let record = try JSONDecoder().decode(MigrationPortableRecord.self, from: bytes)
+            guard record.schemaVersion == 1, record.migrationId == name, record.originalsPreserved,
+                  record.packageRevisions.count <= 10_000,
+                  record.legacyDraftHeads.allSatisfy({ WorkspaceValidation.id($0.key) && WorkspaceValidation.id($0.value) }) else {
+                throw WorkspaceError.invalidSchema
+            }
+            let currentHeads = Set(record.legacyDraftHeads.map { $0.key + "/" + $0.value })
+            for key in record.packageRevisions {
+                let parts = key.split(separator: "/").map(String.init)
+                guard parts.count == 2, parts.allSatisfy(WorkspaceValidation.id) else { throw WorkspaceError.invalidSchema }
+                if !currentHeads.contains(key) &&
+                    (record.legacyDraftHeads[parts[0]] != nil || record.cacheOnlyRevisions.contains(key)) {
+                    hidden.insert(key)
+                }
+            }
+        }
+        return hidden
     }
 
     @discardableResult public func importVerified(_ package: WorkbenchPortablePackage,
@@ -253,6 +311,8 @@ public final class WorkbenchPortablePackages {
         try current(budget: readBudget(deadline: nil, cancelled: { false }))
     }
     private func current(budget: WorkspaceReadBudget) throws -> WorkspaceOverview {
+        try budget.check()
+        if let requestOverview { return requestOverview }
         guard let value = try workspace.current(readBudget: budget) else { throw WorkspaceError.unavailable }
         return value
     }

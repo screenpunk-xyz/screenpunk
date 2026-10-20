@@ -46,6 +46,159 @@ final class DevicePackagePreparationTests: XCTestCase {
     private func store(_ environment: (URL, DevicePackageProtectedScope), boundary: @escaping (DevicePackagePreparationStore.Boundary) throws -> Void = { _ in }) -> DevicePackagePreparationStore {
         .init(root: environment.0, rootID: rootID, protectedScope: environment.1, boundary: boundary)
     }
+    private func homeStore(_ env: (URL, DevicePackageProtectedScope),
+        boundary: @escaping (DevicePackagePreparationStore.Boundary) throws -> Void = { _ in }) -> DevicePackagePreparationStore {
+        let home = env.0.deletingLastPathComponent()
+        return .init(root: env.0, rootID: rootID, protectedScope: env.1,
+            contextFactory: { root, fd in
+                try .syntheticCurrentAppHomeForTesting(currentRoot: root, heldRoot: fd,
+                    systemHome: home.path, physicalHome: home.path)
+            }, boundary: boundary)
+    }
+    /// Real descriptors and ordinary writer identities only; epoch changes are qualified by the
+    /// separately owned APFS-remount composition case, never by rewriting issued proof graphs here.
+    func testFilesystemContextCaptureFailureUsesPackageUnsafeBindingWithoutEffects() throws {
+        enum CaptureFailure: Error { case expected }
+        let env = try environment()
+        let store = DevicePackagePreparationStore(root: env.0, rootID: rootID, protectedScope: env.1,
+            contextFactory: { _, _ in throw CaptureFailure.expected })
+        XCTAssertThrowsError(try store.initializeExplicit()) { error in
+            XCTAssertEqual(error as? DevicePackagePreparationError, .unsafeBinding)
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: env.0.path), [])
+    }
+    private final class BoundPreflightBackend: DeviceGrantCredentialBackend, @unchecked Sendable {
+        var values: [String: DeviceGrantCredentialValue] = [:]
+        var adds = 0
+        func inventory(service: String, maximum: Int, visit: (DeviceGrantCredentialItem) throws -> Void) throws {
+            for key in values.keys.sorted() { try visit(values[key]!.item) }
+        }
+        func read(service: String, account: String, maximumBytes: Int) throws -> DeviceGrantCredentialValue? {
+            guard let value = values[account] else { return nil }
+            guard value.bytes.count <= maximumBytes else { throw DeviceGrantPreparationError.sizeLimit }
+            return value
+        }
+        func add(service: String, account: String, bytes: Data) throws -> DeviceGrantCredentialItem {
+            guard values[account] == nil else { throw DeviceGrantPreparationError.conflict }
+            adds += 1
+            let item = DeviceGrantCredentialItem(account: account, persistentReference: Data(UUID().uuidString.utf8), byteCount: bytes.count)
+            values[account] = .init(item: item, bytes: bytes)
+            return item
+        }
+    }
+    func testInterruptedNestedDirectorySameOwnerBoundPreflightProjectsOnlyCapturedNilSlot() throws {
+        for replaceCapturedDirectory in [false, true] {
+            let env = try environment(), home = env.0.deletingLastPathComponent()
+            let grantRoot = home.appendingPathComponent("bound-grants"), journalRoot = home.appendingPathComponent("bound-journal")
+            for root in [grantRoot, journalRoot] { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false) }
+            let backend = BoundPreflightBackend(), grantID = id(810), journalID = id(811), structuralID = id(812)
+            let grants = DeviceGrantPreparationStore(root: grantRoot, rootID: grantID, protectedScope: env.1, backend: backend)
+            let journal = DeviceLocalProvisioningIntentStore(root: journalRoot, rootID: journalID, protectedRoots: [env.0])
+            var armed = false, creates = 0
+            let packages = homeStore(env) { boundary in
+                if armed && boundary == .afterCreate(.directory) {
+                    creates += 1
+                    if creates == 2 { armed = false; throw DevicePackagePreparationError.io(EIO) }
+                }
+            }
+            let first = try request(81, files: [
+                .init(path: "index.html", bytes: Data("<html>nested preflight</html>".utf8)),
+                .init(path: "assets/nested/app.js", bytes: Data("nested".utf8))
+            ])
+            let entryID = id(813), owner = PairingIdentity(role: .controller, publicKey: [UInt8](repeating: 7, count: 32))
+            let reference = try PackagePreparationCodec.expectedReference(first, rootID: rootID)
+            let grantInput = DeviceGrantRevisionInput(schemaVersion: 1, identity: .init(rootID: grantID, revisionID: id(814)),
+                owner: owner, entries: [.init(entryID: entryID, revision: first.package.revision,
+                    generic: nil, homeAssistant: nil, publicReads: nil, credentialReferences: [])], credentials: [], retainedRevisions: [])
+            let expected = [DeviceGrantEntryExpectation(entryID: entryID, package: first.package)]
+            let inputs: [DeviceProvisioningPackageInput] = [.supplied(entryID: entryID, operationID: first.operationID, package: first.package)]
+            let request = DeviceProvisioningPlanRequest(roots: .init(journalID: journalID, structuralID: structuralID, packageID: rootID, grantID: grantID),
+                operationID: id(815), grantOperationID: id(816), expectedGenerationID: nil, baseline: .initialExplicit(legacyGrantSet: "opaque"),
+                snapshot: .init(generationID: id(817), entries: [.init(entryID: entryID, displayName: "Nested", revision: first.package.revision,
+                    packageDirectory: reference.directory)], configuredEntryID: entryID, contentOwner: owner, grantSet: "opaque"),
+                owner: owner, packages: inputs, grantInput: grantInput,
+                qualifiedGrant: try DeviceGrantRevisionQualifier.qualify(grantInput, expectedEntries: expected))
+            let plan = try DeviceProvisioningPlanner.qualify(request)
+            try packages.initializeExplicit(); try grants.initializeExplicit(); try journal.initializeExplicit()
+            let receipt = try journal.stageExact(plan)
+            let anchor = try DeviceBoundGrantAttemptCoordinator(journal: journal, grants: grants).stageExact(request, plan: plan, journalReceipt: receipt)
+            let coordinator = DeviceBoundPackagePreparationCoordinator(journal: journal, grants: grants, packages: packages)
+            armed = true
+            XCTAssertThrowsError(try coordinator.preparePackagesExact(plan: plan, journalReceipt: receipt, privateAnchor: anchor, packages: inputs))
+            XCTAssertEqual(creates, 2)
+            let recordURL = env.0.appendingPathComponent("operations/" + first.operationID.uuidString.lowercased() + ".json")
+            let recorded = try PackagePreparationCodec.record(Data(contentsOf: recordURL))
+            XCTAssertNil(recorded.directoryIdentities[try XCTUnwrap(recorded.plan.directories.firstIndex(of: "assets"))])
+            if replaceCapturedDirectory {
+                let captured = env.0.appendingPathComponent(recorded.plan.stage + "/assets")
+                try FileManager.default.moveItem(at: captured, to: captured.appendingPathExtension("displaced"))
+                try FileManager.default.createDirectory(at: captured, withIntermediateDirectories: false)
+                let unchanged = try Data(contentsOf: recordURL)
+                XCTAssertThrowsError(try coordinator.preparePackagesExact(plan: plan, journalReceipt: receipt, privateAnchor: anchor, packages: inputs))
+                XCTAssertEqual(try Data(contentsOf: recordURL), unchanged)
+            } else {
+                // Calls inspectBoundPackages → matchBoundItems → validatePendingResources,
+                // unlike direct recommitExact. V1 failed traversing assets/nested at this point.
+                let batch = try coordinator.preparePackagesExact(plan: plan, journalReceipt: receipt, privateAnchor: anchor, packages: inputs)
+                try coordinator.verifyPreparedSet(batch)
+                let installed = env.0.appendingPathComponent(reference.directory)
+                XCTAssertEqual(try Data(contentsOf: installed.appendingPathComponent("assets/nested/app.js")), Data("nested".utf8))
+                XCTAssertEqual(batch.packages.count, 1)
+            }
+            XCTAssertEqual(backend.adds, 1) // Original private intent only; preflight adds nothing.
+        }
+    }
+    func testSyntheticCurrentHomeReopenAndAppendPreserveHistoricalPackageBytes() throws {
+        let env = try environment(), first = try request(71), second = try request(72)
+        let initial = homeStore(env); try initial.initializeExplicit()
+        let original = try initial.prepareExact(first)
+        let bindingURL = env.0.appendingPathComponent("root-binding.json")
+        let recordURL = env.0.appendingPathComponent("operations/" + first.operationID.uuidString.lowercased() + ".json")
+        let binding = try Data(contentsOf: bindingURL), record = try Data(contentsOf: recordURL)
+        let reopened = homeStore(env); try reopened.initializeExplicit()
+        let restored = try reopened.recommitExact(first)
+        XCTAssertEqual(try reopened.verify(restored).package, first.package)
+        let added = try reopened.prepareExact(second)
+        XCTAssertEqual(try reopened.verify(added).package, second.package)
+        XCTAssertEqual(try Data(contentsOf: bindingURL), binding)
+        XCTAssertEqual(try Data(contentsOf: recordURL), record)
+        let third = homeStore(env); try third.initializeExplicit()
+        _ = try third.recommitExact(second)
+        let retained = try third.inspectRetainedTerminalExact([original.reference])
+        XCTAssertEqual(retained.count, 1)
+        XCTAssertEqual(try Data(contentsOf: env.0.appendingPathComponent(original.reference.directory + "/manifest.json")), first.package.originalManifestBytes)
+        XCTAssertEqual(try Data(contentsOf: bindingURL), binding)
+        XCTAssertEqual(try Data(contentsOf: recordURL), record)
+    }
+    func testSyntheticCurrentHomeRejectsIncoherentRootBindingBeforePackageEffects() throws {
+        let env = try environment(), initial = homeStore(env)
+        try initial.initializeExplicit() // No content/terminal proof has been issued.
+        let url = env.0.appendingPathComponent("root-binding.json")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var lock = try XCTUnwrap(object["lockIdentity"] as? [String: Any])
+        let device = try XCTUnwrap(lock["device"] as? NSNumber).uint64Value
+        lock["device"] = NSNumber(value: device ^ 1); object["lockIdentity"] = lock
+        let malformed = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        try malformed.write(to: url)
+        XCTAssertThrowsError(try homeStore(env).initializeExplicit()) { error in
+            XCTAssertEqual(error as? DevicePackagePreparationError, .unsafeBinding)
+        }
+        XCTAssertEqual(try Data(contentsOf: url), malformed)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: env.0.appendingPathComponent("operations").path), [])
+    }
+    func testSyntheticCurrentHomeStillRejectsCapturedLiveRootReplacement() throws {
+        let env = try environment(); var armed = false
+        let store = homeStore(env) { boundary in
+            if armed && boundary == .afterFileSync(.file) {
+                armed = false
+                let displaced = env.0.appendingPathExtension("displaced")
+                try FileManager.default.moveItem(at: env.0, to: displaced)
+                try FileManager.default.copyItem(at: displaced, to: env.0)
+            }
+        }
+        try store.initializeExplicit(); armed = true
+        XCTAssertThrowsError(try store.prepareExact(try request(73)))
+    }
     func testExactPreparationOriginalManifestIdentityAndOldReplayPreserveLaterContent() throws {
         let env = try environment(); let store = store(env)
         try store.initializeExplicit(); let first = try request(1)
@@ -70,6 +223,46 @@ final class DevicePackagePreparationTests: XCTestCase {
         let newOperation = DevicePackagePreparationRequest(operationID: id(3), package: reformatted.package)
         let reformattedReceipt = try store.prepareExact(newOperation)
         XCTAssertNotEqual(receipt.reference.contentID, reformattedReceipt.reference.contentID)
+    }
+    func testLegacyDashboardLandscapePreparationReopensAndReadsExactOriginalBytes() throws {
+        let env = try environment(), firstStore = store(env)
+        let html = Data("<html><body>Legacy Local shape</body></html>".utf8)
+        var manifest = DashboardManifest(schemaVersion: 1, dashboardId: "google-tv-test", name: "Legacy Local",
+            revision: id(9001).uuidString.lowercased(), entrypoint: "index.html", sdkVersion: "1",
+            target: .init(profileId: "device-synthetic-local", width: 1024, height: 768, scale: 2, orientation: "landscape"),
+            connections: [], files: [.init(path: "index.html", bytes: html.count, sha256: hash(html))])
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        manifest.digest = hash(try encoder.encode(manifest))
+        let bytes = try encoder.encode(manifest)
+        let revision = StoredRevision(revision: manifest.revision, dashboardId: manifest.dashboardId, name: manifest.name,
+            digest: manifest.digest!, orientation: .landscape, width: 1024, height: 768)
+        let profile = DeviceProfile(deviceId: manifest.target.profileId, name: "Synthetic", width: 768, height: 1024)
+        try DevicePackageCompatibilityPreflight.validate(revision: revision, manifest: bytes, files: ["index.html": html],
+            profile: profile, profileID: profile.deviceId)
+        let package = try DevicePackageQualifier.qualify(.init(manifest: bytes, files: [.init(path: "index.html", bytes: html)]),
+            expected: .init(revision: revision, target: profile, profileID: profile.deviceId))
+        let request = DevicePackagePreparationRequest(operationID: id(9002), package: package)
+        try firstStore.initializeExplicit()
+        let receipt = try firstStore.prepareExact(request)
+        XCTAssertEqual(try firstStore.verify(receipt).package, package)
+        let reopened = store(env)
+        let replay = try reopened.recommitExact(request)
+        let readback = try reopened.verify(replay)
+        XCTAssertEqual(readback.package.originalManifestBytes, bytes)
+        XCTAssertEqual(readback.package.manifest.dashboardId, "google-tv-test")
+        XCTAssertEqual(readback.package.deploymentDigest, manifest.digest)
+        XCTAssertEqual(replay.reference, receipt.reference)
+        XCTAssertEqual(try Data(contentsOf: env.0.appendingPathComponent(replay.reference.directory).appendingPathComponent("manifest.json")), bytes)
+        let plan = try PackagePreparationCodec.makePlan(request, rootID: rootID, ordinal: 1)
+        // Persisted metadata retains bounded IDs and UUID revisions when it is reopened.
+        for (key, value) in [("dashboardId", "../legacy"), ("dashboardId", String(repeating: "a", count: 101)),
+            ("revision", "legacy-revision")] {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(plan)) as? [String: Any])
+            var storedRevision = try XCTUnwrap(object["revision"] as? [String: Any])
+            storedRevision[key] = value; object["revision"] = storedRevision
+            let badPlan = try JSONDecoder().decode(PreparationPlan.self, from: JSONSerialization.data(withJSONObject: object))
+            XCTAssertThrowsError(try PackagePreparationCodec.validate(badPlan)) { XCTAssertEqual($0 as? DevicePackagePreparationError, .invalidMetadata) }
+        }
     }
     func testFaultBoundariesRequireExactRecommitAcrossRestart() throws {
         var points: [DevicePackagePreparationStore.Boundary] = []

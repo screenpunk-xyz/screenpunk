@@ -1,5 +1,10 @@
 import Foundation
 import XCTest
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 @testable import ScreenpunkCore
 
 final class DeviceMixedInventoryStoreTests: XCTestCase {
@@ -160,4 +165,115 @@ final class DeviceMixedInventoryStoreTests: XCTestCase {
         try Data("{}".utf8).write(to: root.appendingPathComponent(operation.uuidString.lowercased() + ".mixed-receipt.json"))
         XCTAssertThrowsError(try reopened.readCurrent())
     }
+    private struct HistoricalMixedBinding: Codable {
+        var rootID: UUID, path: String, device: UInt64, inode: UInt64, lockDevice: UInt64, lockInode: UInt64
+    }
+    private typealias SyntheticFilesystemFactory = (URL, Int32, URL?) throws -> DevicePersistedFilesystemContext
+    private func legacyMountFixture<T>(_ body: (URL, UUID, @escaping SyntheticFilesystemFactory) throws -> T) throws -> T {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true).resolvingSymlinksInPath()
+        let root = home.appendingPathComponent("Library/mixed", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let factory: SyntheticFilesystemFactory = { current, fd, publication in
+            try DevicePersistedFilesystemContext.syntheticCurrentAppHomeForTesting(currentRoot: current, heldRoot: fd,
+                systemHome: home.path, physicalHome: home.path, plannedPublicationRoot: publication)
+        }
+        return try body(root, UUID(), factory)
+    }
+    private func historicalBinding(_ root: URL) throws -> HistoricalMixedBinding {
+        try JSONDecoder().decode(HistoricalMixedBinding.self, from: Data(contentsOf: root.appendingPathComponent("mixed-root.json")))
+    }
+    private func writeHistoricalBinding(_ value: HistoricalMixedBinding, root: URL) throws -> Data {
+        let bytes = try DeviceLocalCompleteSetBounds.encode(value, maximum: 8192)
+        try bytes.write(to: root.appendingPathComponent("mixed-root.json"))
+        return bytes
+    }
+    func testHistoricalMountBindingPreservesCanonicalCASAndExactReplay() throws {
+        try legacyMountFixture { root, id, factory in
+            let store = DeviceMixedInventoryStore(root: root, rootID: id, filesystemContextFactory: factory)
+            try store.initializeExplicit()
+            // Explicit synthetic legacy binding, not a rewrite of an issued
+            // completed graph. All actual nodes/inodes remain untouched.
+            var legacy = try historicalBinding(root)
+            legacy.device = legacy.device &+ 1; legacy.lockDevice = legacy.device
+            let historicalBytes = try writeHistoricalBinding(legacy, root: root)
+            #if !os(iOS)
+            XCTAssertThrowsError(try DeviceMixedInventoryStore(root: root, rootID: id).readCurrent(), "Non-iOS production remains strict")
+            #endif
+            let owner = DeviceNativeInstallationContentOwner(installationID: UUID(), accountID: UUID(), locationID: nil, transitionID: UUID())
+            let first = try DeviceMixedStructuralState.validating(generationID: UUID(), installationOwner: owner, entries: [], configuredEntryID: nil)
+            let firstOperation = UUID()
+            let initial = try scope(store) { try store.commitExact(operationID: firstOperation, previous: nil,
+                candidate: first, admissionEnabled: true, permit: $0) }
+            let intentURL = root.appendingPathComponent(firstOperation.uuidString.lowercased() + ".mixed-intent.json")
+            let receiptURL = root.appendingPathComponent(firstOperation.uuidString.lowercased() + ".mixed-receipt.json")
+            let firstIntent = try Data(contentsOf: intentURL), firstReceipt = try Data(contentsOf: receiptURL)
+            let reopened = DeviceMixedInventoryStore(root: root, rootID: id, filesystemContextFactory: factory)
+            let current = try XCTUnwrap(reopened.readCurrent())
+            XCTAssertEqual(current.bytes, initial.0.bytes)
+            let next = try DeviceMixedStructuralState.validating(generationID: UUID(), installationOwner: owner, entries: [], configuredEntryID: nil)
+            let operation = UUID()
+            let committed = try scope(reopened) { try reopened.commitExact(operationID: operation, previous: current,
+                candidate: next, admissionEnabled: true, permit: $0) }
+            let replay = try scope(reopened) { try reopened.commitExact(operationID: operation, previous: current,
+                candidate: next, admissionEnabled: true, permit: $0) }
+            XCTAssertEqual(committed.1, replay.1)
+            XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("mixed-root.json")), historicalBytes)
+            XCTAssertEqual(try Data(contentsOf: intentURL), firstIntent); XCTAssertEqual(try Data(contentsOf: receiptURL), firstReceipt)
+            XCTAssertEqual(try DeviceMixedInventoryStore(root: root, rootID: id, filesystemContextFactory: factory).readCurrent()?.snapshot, next)
+        }
+    }
+    func testHistoricalMountCompatibilityStillRejectsBindingAndLockReplacement() throws {
+        try legacyMountFixture { root, id, factory in
+            let store = DeviceMixedInventoryStore(root: root, rootID: id, filesystemContextFactory: factory)
+            try store.initializeExplicit()
+            var legacy = try historicalBinding(root)
+            legacy.device = legacy.device &+ 1; legacy.lockDevice = legacy.device
+            let bytes = try writeHistoricalBinding(legacy, root: root)
+            let changes: [(inout HistoricalMixedBinding) -> Void] = [
+                { $0.rootID = UUID() }, { $0.path += "-different" },
+                { $0.inode = $0.inode &+ 1 }, { $0.lockInode = $0.lockInode &+ 1 },
+                { $0.lockDevice = $0.device &+ 1 }
+            ]
+            for change in changes {
+                var invalid = legacy; change(&invalid)
+                _ = try writeHistoricalBinding(invalid, root: root)
+                XCTAssertThrowsError(try store.readCurrent())
+                try bytes.write(to: root.appendingPathComponent("mixed-root.json"))
+            }
+            XCTAssertNil(try store.readCurrent())
+            let lock = root.appendingPathComponent("mixed.lock"), held = root.appendingPathComponent("held-lock")
+            try FileManager.default.moveItem(at: lock, to: held)
+            try FileManager.default.createSymbolicLink(at: lock, withDestinationURL: held)
+            XCTAssertThrowsError(try store.readCurrent())
+            try FileManager.default.removeItem(at: lock)
+            XCTAssertTrue(FileManager.default.createFile(atPath: lock.path, contents: Data()))
+            XCTAssertThrowsError(try store.readCurrent(), "Same bytes and path cannot replace the recorded lock inode")
+            try FileManager.default.removeItem(at: lock)
+            try FileManager.default.moveItem(at: held, to: lock)
+            XCTAssertNil(try store.readCurrent())
+        }
+    }
+    func testHistoricalBindingBytesCannotChangeDuringALockedOperation() throws {
+        try legacyMountFixture { root, id, factory in
+            var replacement: Data?
+            let store = DeviceMixedInventoryStore(root: root, rootID: id, filesystemContextFactory: factory,
+                commitBoundary: { boundary in
+                    if case .intentInstalled = boundary, let replacement {
+                        try replacement.write(to: root.appendingPathComponent("mixed-root.json"))
+                    }
+                })
+            try store.initializeExplicit()
+            var legacy = try historicalBinding(root)
+            legacy.device = legacy.device &+ 1; legacy.lockDevice = legacy.device
+            _ = try writeHistoricalBinding(legacy, root: root)
+            legacy.device = legacy.device &+ 1; legacy.lockDevice = legacy.device
+            replacement = try DeviceLocalCompleteSetBounds.encode(legacy, maximum: 8192)
+            let owner = DeviceNativeInstallationContentOwner(installationID: UUID(), accountID: UUID(), locationID: nil, transitionID: UUID())
+            let candidate = try DeviceMixedStructuralState.validating(generationID: UUID(), installationOwner: owner, entries: [], configuredEntryID: nil)
+            XCTAssertThrowsError(try scope(store) { try store.commitExact(operationID: UUID(), previous: nil,
+                candidate: candidate, admissionEnabled: true, permit: $0) }, "The historical record cannot be swapped merely because both mount numbers could link to current nodes")
+        }
+    }
+
 }

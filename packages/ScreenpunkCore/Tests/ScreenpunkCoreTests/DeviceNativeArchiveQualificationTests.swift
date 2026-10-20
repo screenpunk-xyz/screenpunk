@@ -79,6 +79,34 @@ final class DeviceNativeArchiveQualificationTests:XCTestCase {
         let wrongProfile = DevicePackageExpectation(revision: deviceLabel.revision, target: deviceLabel.target, profileID: "wrong")
         XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(bytes, descriptor: approved, expected: wrongProfile))
     }
+    func testLocalLegacyCompatibilityCannotReplaceCloudDescriptorUUIDIdentity() throws {
+        let f = try fixture(), original = try zip(f.files), approved = try descriptor(original, f)
+        var legacyRevision = f.expected.revision; legacyRevision.dashboardId = "google-tv-test"
+        let legacyExpected = DevicePackageExpectation(revision: legacyRevision, target: f.expected.target, profileID: f.expected.profileID)
+        XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualify(original, descriptor: approved, expected: legacyExpected)) {
+            XCTAssertEqual($0 as? DeviceNativeArchiveQualificationError, .descriptorMismatch)
+        }
+        XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(original, descriptor: approved, expected: legacyExpected)) {
+            XCTAssertEqual($0 as? DeviceNativeArchiveQualificationError, .descriptorMismatch)
+        }
+        // Even a valid legacy manifest and matching archive hashes cannot borrow a typed Cloud UUID.
+        var manifest = try JSONDecoder().decode(DashboardManifest.self, from: f.manifest)
+        manifest.dashboardId = "google-tv-test"; manifest.digest = nil
+        manifest.digest = hash(try encode(manifest))
+        let raw = try encode(manifest), files = [("manifest.json", raw), f.files[1]]
+        let archive = try zip(files)
+        var cloudRevision = f.expected.revision; cloudRevision.digest = manifest.digest!
+        let cloudExpected = DevicePackageExpectation(revision: cloudRevision, target: f.expected.target, profileID: f.expected.profileID)
+        let mismatched = Fixture(files: files, expected: cloudExpected, manifest: raw)
+        let typed = try descriptor(archive, mismatched)
+        XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualify(archive, descriptor: typed, expected: cloudExpected)) {
+            XCTAssertEqual($0 as? DevicePackageQualificationError, .identityMismatch)
+        }
+        XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualifyApprovedManifestName(archive, descriptor: typed, expected: cloudExpected)) {
+            XCTAssertEqual($0 as? DevicePackageQualificationError, .identityMismatch)
+        }
+        XCTAssertNoThrow(try DeviceNativeArchiveQualifier.qualify(original, descriptor: approved, expected: f.expected))
+    }
     func testDescriptorHashLengthManifestAndExpandedCountMustMatchActualBytes()throws {
         let f=try fixture(),bytes=try zip(f.files)
         XCTAssertThrowsError(try DeviceNativeArchiveQualifier.qualify(bytes,descriptor:descriptor(bytes,f,archiveHash:String(repeating:"f",count:64)),expected:f.expected))
