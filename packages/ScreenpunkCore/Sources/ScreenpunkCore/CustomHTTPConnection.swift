@@ -90,6 +90,8 @@ actor DeviceCustomHTTPRuntime {
             })
         let binding = ConnectionAuthBinding(authRef: "custom", placement: d.authentication == "none" ? .none : d.authentication == "bearer" ? .bearer : .header, fieldName: d.headerName)
         try await runtime.install(grant: config.grant(alias: alias, declaration: d), binding: binding)
-        return try await runtime.request(alias: alias, operation: operation, parameters: parameters)
+        var result = try await runtime.request(alias: alias, operation: operation, parameters: parameters)
+        if result.body.isEmpty { result.body = Data("null".utf8) }
+        return result
     }
 }

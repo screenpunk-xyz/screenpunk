@@ -28,6 +28,10 @@ final class CustomHTTPConnectionTests: XCTestCase {
         XCTAssertEqual(transport.lastRequest?.method, "POST")
         do { _ = try await runtime.request(alias: "desk", operation: "power", parameters: ["state": "arbitrary"], readOnly: false); XCTFail() } catch {}
         do { _ = try await runtime.request(alias: "desk", operation: "power", parameters: ["state": "on"], readOnly: true); XCTFail() } catch {}
+        XCTAssertEqual(transport.lastRequest?.headers["Content-Type"], "application/json")
+        transport.response = .init(status: 204, body: Data())
+        let empty = try await runtime.request(alias: "desk", operation: "power", parameters: ["state": "off"], readOnly: false)
+        XCTAssertEqual(empty.body, Data("null".utf8))
         transport.response = .init(status: 302, body: Data())
         do { _ = try await runtime.request(alias: "desk", operation: "status", parameters: [:], readOnly: false); XCTFail() } catch {}
     }
