@@ -96,11 +96,14 @@ final class AppleMapPreview {
 @MainActor
 final class MapPreviewApproval {
     private var prompting = false
-    #if os(macOS)
-    private let defaults = UserDefaults(suiteName: "xyz.screenpunk.maps")!
-    #else
-    private let defaults = UserDefaults.standard
-    #endif
+    private let defaults: UserDefaults
+    init(defaults: UserDefaults? = nil) {
+        #if os(macOS)
+        self.defaults = defaults ?? UserDefaults(suiteName: "xyz.screenpunk.maps")!
+        #else
+        self.defaults = defaults ?? .standard
+        #endif
+    }
     func allowed(dashboard: String, revision: String, view: WKWebView?) -> Bool {
         let key = "appleMaps.approved." + PeerPin.hex(PeerPin.sha256(Data((dashboard + "\n" + revision).utf8)))
         if defaults.bool(forKey: key) { return true }

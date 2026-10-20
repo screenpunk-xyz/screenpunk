@@ -266,7 +266,7 @@ final class DeviceUnifiedInventoryAcceptanceTests: XCTestCase {
     }
 }
 
-private enum UnifiedArchiveComposition {
+enum UnifiedArchiveComposition {
     struct Delivery {
         let value: AuthorityStaticDeliveryFixture.Value
         let retainedEntryID: UUID, incomingEntryID: UUID
@@ -284,11 +284,11 @@ private enum UnifiedArchiveComposition {
         let provenance = try XCTUnwrap(entry["provenance"] as? [String: Any])
         return try XCTUnwrap((provenance["package"] as? [String: Any])?["packageId"] as? String)
     }
-    static func make(fixture: GenuineUnifiedInventoryFixture, changedPublication: Bool, connections: [ManifestConnection] = []) throws -> Delivery {
+    static func make(fixture: GenuineUnifiedInventoryFixture, changedPublication: Bool, connections: [ManifestConnection] = [], dashboard: UUID = UUID(), revision: UUID = UUID()) throws -> Delivery {
         let original = try XCTUnwrap(fixture.http.delivery)
         let state = try fixture.common.validatedAssociation()
         let next = try AuthorityStaticDeliveryFixture.make(state: ["installationId": fixture.activation.installationId.uuidString.lowercased(),
-            "transitionId": fixture.activation.transitionId.uuidString.lowercased(), "generationId": state.generationID.uuidString.lowercased()], activation: fixture.activation, connections: connections)
+            "transitionId": fixture.activation.transitionId.uuidString.lowercased(), "generationId": state.generationID.uuidString.lowercased()], activation: fixture.activation, connections: connections, dashboard: dashboard, revision: revision)
         var retained = try XCTUnwrap(entries(in: original.command).first)
         let retainedID = try XCTUnwrap(UUID(uuidString: XCTUnwrap(retained["entryId"] as? String)))
         let retainedPackage = try packageID(in: original.command)
@@ -316,7 +316,7 @@ private enum UnifiedArchiveComposition {
 
 // Substitutes the already-approved LAN peer boundary only; production authority
 // still admits the Local intent and performs its fixed inventory mutation.
-private final class OutcomeReplayLocalOwner: NativeUnifiedLocalInventoryOwner {
+final class OutcomeReplayLocalOwner: NativeUnifiedLocalInventoryOwner {
     let commonRootID: UUID
     let peerPinHex = String(repeating: "7", count: 64)
     let authority: DeviceManagementAuthority

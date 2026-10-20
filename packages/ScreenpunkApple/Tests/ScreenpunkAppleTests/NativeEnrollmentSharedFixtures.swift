@@ -360,9 +360,9 @@ enum AuthorityStaticDeliveryFixture {
     static func encoded<T: Encodable>(_ value: T) throws -> Data {
         let e = JSONEncoder(); e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]; return try e.encode(value)
     }
-    static func make(state: [String: Any], activation: NativeActivationReceipt, connections: [ManifestConnection] = []) throws -> Value {
+    static func make(state: [String: Any], activation: NativeActivationReceipt, connections: [ManifestConnection] = [], dashboard: UUID = UUID(), revision: UUID = UUID()) throws -> Value {
         let html = Data("<html><body>Genuine static fixture</body></html>".utf8)
-        let dashboard = UUID(), revision = UUID(), entry = UUID(), package = UUID()
+        let entry = UUID(), package = UUID()
         var manifest = DashboardManifest(schemaVersion: 1, dashboardId: dashboard.uuidString.lowercased(), name: "Fixture",
             revision: revision.uuidString.lowercased(), entrypoint: "index.html", sdkVersion: "1",
             target: .init(profileId: "Fixture", width: 390, height: 844, scale: 3, orientation: "portrait"), connections: connections,

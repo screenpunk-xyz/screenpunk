@@ -35,15 +35,18 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
     public let content: DeviceManagedStaticContent
     public let manifest: DashboardManifest
     public let publicReads: PublicReadProvisioning?
+    /// Only qualified Local provenance may use device providers keyed by legacy dashboard identity.
+    public let allowsLegacyDeviceLocalAccess: Bool
     private let generic: (any DeviceImmutableGenericOperations)?
     private let home: UnifiedHomeRuntime?
     private var cloudHome: UnifiedCloudHomeRuntime?
     private let validate: () throws -> Void
     private let validateActive: () throws -> Void
-    private init(content: DeviceManagedStaticContent, manifest: DashboardManifest, seed: DeviceUnifiedPrivateRuntimeSeed,
+    private init(content: DeviceManagedStaticContent, manifest: DashboardManifest, allowsLegacyDeviceLocalAccess: Bool, seed: DeviceUnifiedPrivateRuntimeSeed,
         generic: (any DeviceImmutableGenericOperations)?, http: any HTTPTransport, webSocket: any WebSocketTransport,
         resolver: any DestinationResolver, validate: @escaping () throws -> Void, validateActive: @escaping () throws -> Void) {
         self.content = content; self.manifest = manifest; publicReads = seed.publicReads
+        self.allowsLegacyDeviceLocalAccess = allowsLegacyDeviceLocalAccess
         self.generic = generic; self.validate = validate; self.validateActive = validateActive
         home = seed.homeAssistant.map { UnifiedHomeRuntime(configuration: $0, http: http, webSocket: webSocket, resolver: resolver, validate: validateActive) }
     }
@@ -107,7 +110,7 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
                 try session.verifyActiveRuntimePresentationExact(content, resolver: source.resolver, original: source.original,
                     store: source.store, presentation: source.capture, entryID: entry.entryID, manifestDigest: entry.manifestDigest)
             }
-            let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: content.manifest,
+            let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: content.manifest, allowsLegacyDeviceLocalAccess: false,
                 seed: .init(hasGeneric: false, homeAssistant: nil, publicReads: nil), generic: nil,
                 http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: activeValidate)
             if let provider = cloudHomeAssistant {
@@ -139,7 +142,7 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
                 generationID: source.capture.snapshot.generationID, entryID: local.entryID,
                 displayName: retained.entry.displayName, validate: source.validate)
             presentation.bind(content)
-            let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: local.package.manifest, seed: seed,
+            let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: local.package.manifest, allowsLegacyDeviceLocalAccess: true, seed: seed,
                 generic: generic, http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: activeValidate)
             if historicalMounted { try session.retainRestoredRuntimePresentationExact(content, historical: source.capture) }
             else { try session.retainRuntimePresentationExact(content, current: source.capture) }

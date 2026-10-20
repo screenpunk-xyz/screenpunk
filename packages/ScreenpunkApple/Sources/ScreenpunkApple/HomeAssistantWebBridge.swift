@@ -101,13 +101,14 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private(set) var isSuspendedForReset = false
     private let maps = AppleMapPreview()
     private let interactiveMaps = InteractiveMapController()
-    private let mapApproval = MapPreviewApproval()
+    private let mapApproval: MapPreviewApproval
+    private var allowsLegacyDeviceLocalAccess: Bool { managedRuntime?.allowsLegacyDeviceLocalAccess ?? true }
     private let mapManifest: DashboardManifest?
     let calendarService: GoogleCalendarDeviceService
     private let preferenceStore: ScreenPreferenceStore
     private let preferenceGeneration: UUID?
     private let stateReadOnly: Bool
-    private let googleTV = GoogleTVScreenConnection()
+    private let googleTV: GoogleTVScreenConnection
     private let googleTVADB = GoogleTVADBScreenConnection()
     private var voiceTapAt: TimeInterval?
     fileprivate func recordVoiceTap() { if presentationIsOpen(), !isSuspendedForReset, active { voiceTapAt = ProcessInfo.processInfo.systemUptime } }
@@ -136,9 +137,11 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
 
     init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime? = nil, managedRuntime: DeviceUnifiedManagedRuntime? = nil, navigation: DashboardEventRuntime? = nil,
          revision: String, lifetime: DeviceRuntimeLifetime? = nil, presentationAllowed: @escaping @Sendable () -> Bool = { true }, mapManifest: DashboardManifest? = nil, preferenceStore: ScreenPreferenceStore? = nil, calendarService: GoogleCalendarDeviceService? = nil, stateReadOnly: Bool = false, publicReads: PublicReadRuntime? = nil, resources: PublicRasterResources? = nil,
+         googleTV: GoogleTVScreenConnection? = nil, mapApproval: MapPreviewApproval? = nil,
          additionalQualification: (@Sendable (Bool) throws -> Void)? = nil, timing: HomeAssistantBridgeTiming = .init(),
          fixtureGoogleTVRequest: (@MainActor (String, String, [String: String]) async throws -> [String: Any])? = nil,
          observeReply: (([String: Any]) -> Void)? = nil, observeOperationCompletion: ((String, Bool) -> Void)? = nil, onHealth: @escaping (Bool) -> Void) {
+        self.googleTV = googleTV ?? GoogleTVScreenConnection(); self.mapApproval = mapApproval ?? MapPreviewApproval()
         self.presentationAllowed = presentationAllowed; self.lifetime = lifetime
         // Fixture callbacks cannot replace qualification or TV dispatch on a genuine runtime.
         precondition(managedRuntime == nil || fixtureGoogleTVRequest == nil)
@@ -159,7 +162,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
         let preferenceStore = preferenceStore ?? .shared
         self.calendarService = calendarService ?? .shared
         self.preferenceStore = preferenceStore; self.stateReadOnly = stateReadOnly
-        self.preferenceGeneration = try? preferenceStore.generation()
+        self.preferenceGeneration = managedRuntime?.allowsLegacyDeviceLocalAccess == false ? nil : try? preferenceStore.generation()
         self.revision = revision; self.onHealth = onHealth
     }
     func attach(to webView: WKWebView) { guard presentationIsOpen(), !isSuspendedForReset else { return }; self.webView = webView; cameras?.attach(webView); interactiveMaps.attach(webView)
@@ -205,7 +208,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     func status(_ value: [String: Any]) {
         guard presentationIsOpen() else { return }
         dispatch(["protocolVersion": 1, "id": "runtime-status", "kind": "event", "method": "runtime.onStatus",
-                  "value": ["active": active, "navigation": value, "homeAssistantTransport": "websocket-with-http", "homeAssistantServiceCalls": 1, "cameraPlayback": 1, "publicReadHTTP": 1, "googleCalendar": 1, "appleMaps": 1, "appleMapsInteractive": 1, "appleMapsTap": 1, "appleMapsLocation": 1, "persistentState": 1, "persistentStateWritable": stateReadOnly ? 0 : 1, "googleTVRemote": 1, "googleTVVoice": 1, "googleTVDirectChannels": 1, "googleTVDirectPower": 1, "macIsRuntimeProxy": false]])
+                  "value": ["active": active, "navigation": value, "homeAssistantTransport": "websocket-with-http", "homeAssistantServiceCalls": 1, "cameraPlayback": 1, "publicReadHTTP": 1, "googleCalendar": allowsLegacyDeviceLocalAccess ? 1 : 0, "appleMaps": allowsLegacyDeviceLocalAccess ? 1 : 0, "appleMapsInteractive": allowsLegacyDeviceLocalAccess ? 1 : 0, "appleMapsTap": allowsLegacyDeviceLocalAccess ? 1 : 0, "appleMapsLocation": allowsLegacyDeviceLocalAccess ? 1 : 0, "persistentState": allowsLegacyDeviceLocalAccess ? 1 : 0, "persistentStateWritable": stateReadOnly || !allowsLegacyDeviceLocalAccess ? 0 : 1, "googleTVRemote": allowsLegacyDeviceLocalAccess ? 1 : 0, "googleTVVoice": allowsLegacyDeviceLocalAccess ? 1 : 0, "googleTVDirectChannels": allowsLegacyDeviceLocalAccess ? 1 : 0, "googleTVDirectPower": allowsLegacyDeviceLocalAccess ? 1 : 0, "macIsRuntimeProxy": false]])
     }
 
     deinit { let cameras = cameras; let interactiveMaps = interactiveMaps; Task { @MainActor in cameras?.cancel(); interactiveMaps.cancel() } }
@@ -298,10 +301,19 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
 
     private func handleAdmittedBody(_ body: [String: Any], id: String, identity: RequestIdentity, trustedTVTap: Bool) {
         guard owns(id, identity: identity), isCurrent(identity, requiresActive: false) else { return }
-        switch body["method"] as? String {
+        let method = body["method"] as? String
+        // These legacy stores and approvals are keyed by dashboard identity, not
+        // package provenance. Cloud cannot inherit them, even with matching IDs.
+        let legacyState = ["state.get", "state.set", "state.remove"].contains(method ?? "")
+        let legacyProvider = ["connections.request", "connections.subscribe"].contains(method ?? "") &&
+            ["googleCalendar", "google-calendar", "googleTV", "appleMaps"].contains(body["alias"] as? String ?? "")
+        guard allowsLegacyDeviceLocalAccess || !(legacyState || legacyProvider) else {
+            reply(id: id, identity: identity, error: "permission_required"); return
+        }
+        switch method {
         case "runtime.ready": reply(id: id, identity: identity, value: NSNull())
         case "runtime.onStatus":
-            reply(id: id, identity: identity, value: ["publicReadHTTP": 1, "appleMaps": 1, "appleMapsInteractive": 1, "appleMapsTap": 1, "appleMapsLocation": 1, "persistentState": 1, "persistentStateWritable": stateReadOnly ? 0 : 1]); status(navigation?.status ?? [:])
+            reply(id: id, identity: identity, value: ["publicReadHTTP": 1, "appleMaps": allowsLegacyDeviceLocalAccess ? 1 : 0, "appleMapsInteractive": allowsLegacyDeviceLocalAccess ? 1 : 0, "appleMapsTap": allowsLegacyDeviceLocalAccess ? 1 : 0, "appleMapsLocation": allowsLegacyDeviceLocalAccess ? 1 : 0, "persistentState": allowsLegacyDeviceLocalAccess ? 1 : 0, "persistentStateWritable": stateReadOnly || !allowsLegacyDeviceLocalAccess ? 0 : 1]); status(navigation?.status ?? [:])
         case "navigation.get": reply(id: id, identity: identity, value: navigation?.status ?? ["pageId": "default"])
         case "navigation.open":
             guard let parameters = body["parameters"] as? [String: String], parameters.count == 1,
