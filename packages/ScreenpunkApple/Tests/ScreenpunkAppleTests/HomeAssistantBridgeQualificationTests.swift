@@ -1,6 +1,6 @@
 import XCTest
 import Foundation
-import ScreenpunkCore
+@_spi(ManagedRender) import ScreenpunkCore
 @testable import ScreenpunkApple
 
 /// No TV, Keychain, LAN, or identity operations. The additional verifier can only
@@ -14,7 +14,8 @@ import ScreenpunkCore
         verify: @escaping @Sendable (Bool) throws -> Void,
         provider: @escaping @MainActor (String, String, [String: String]) async throws -> [String: Any],
         reply: @escaping ([String: Any]) -> Void,
-        operationCompletion: ((String, Bool) -> Void)? = nil) throws -> (HomeAssistantWebBridge, URL, DeviceRuntimeLifetime) {
+        operationCompletion: ((String, Bool) -> Void)? = nil,
+        cancellableVerify: (@Sendable (Bool, DeviceRuntimeVerificationCancellation) throws -> Void)? = nil) throws -> (HomeAssistantWebBridge, URL, DeviceRuntimeLifetime) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("screenpunk-bridge-qualification-" + UUID().uuidString)
         let html = Data("<!doctype html><title>Provider fixture</title>".utf8)
         let manifest = DashboardManifest(schemaVersion: 1, dashboardId: "provider-fixture", name: "Fixture", revision: "fixture",
@@ -26,7 +27,7 @@ import ScreenpunkCore
         let bridge = HomeAssistantWebBridge(runtime: nil, connections: connections, navigation: navigation, revision: "fixture", lifetime: lifetime,
             presentationAllowed: { gate.allows() }, preferenceStore: .init(root: root),
             calendarService: .init(store: MemoryCredentialStore(), suspension: GoogleCalendarSuspensionDomain()),
-            additionalQualification: verify, timing: .init(sleep: { try await clock.sleep($0) }),
+            additionalQualification: cancellableVerify ?? { active, _ in try verify(active) }, timing: .init(sleep: { try await clock.sleep($0) }),
             fixtureGoogleTVRequest: provider, observeReply: reply, observeOperationCompletion: operationCompletion, onHealth: { _ in })
         return (bridge, root, lifetime)
     }
@@ -217,6 +218,34 @@ import ScreenpunkCore
         XCTAssertEqual(overflowCode, "size_limit"); XCTAssertEqual(held.calls, 4); XCTAssertEqual(providers, 0)
         held.release(); await fulfillment(of: [finished], timeout: 3)
         XCTAssertFalse(held.escaped)
+    }
+
+    func testDeadlineCancellationReachesCheckpointInsideDispatchedVerifier() async throws {
+        let entered = expectation(description: "verification waiting on synchronous work")
+        let drained = expectation(description: "cancelled verifier drained")
+        let checkpoint = expectation(description: "inner cancellation checkpoint threw")
+        let settled = expectation(description: "deadline settled before worker release")
+        let release = DispatchSemaphore(value: 0), clock = BridgeFixtureClock()
+        var providers = 0, replies = 0
+        let (bridge, root, _) = try fixture(clock: clock, verify: { _ in }, provider: { _, _, _ in
+            providers += 1; return [:]
+        }, reply: { value in
+            replies += 1; XCTAssertEqual(value["code"] as? String, "timeout"); settled.fulfill()
+        }, cancellableVerify: { _, cancellation in
+            defer { drained.fulfill() }
+            entered.fulfill()
+            guard release.wait(timeout: .now() + 5) == .success else { XCTFail("worker release missing"); return }
+            do { try cancellation.checkCancellation(); XCTFail("expired work passed its inner checkpoint") }
+            catch is CancellationError { checkpoint.fulfill(); throw CancellationError() }
+        })
+        defer { release.signal(); clean(bridge, root, clock) }
+        bridge.handleValidatedBody(request("cooperative"), id: "cooperative")
+        await fulfillment(of: [entered], timeout: 3)
+        clock.fire(8_000_000_000)
+        await fulfillment(of: [settled], timeout: 1)
+        release.signal()
+        await fulfillment(of: [checkpoint, drained], timeout: 3)
+        XCTAssertEqual(providers, 0); XCTAssertEqual(replies, 1)
     }
 
     func testReusedIDOldUncooperativeCompletionCannotRemoveOrCancelReplacement() async throws {

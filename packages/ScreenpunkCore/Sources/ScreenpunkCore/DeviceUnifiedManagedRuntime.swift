@@ -3,6 +3,24 @@ import Foundation
 /// Device-owned approval lookup. Neither declarations nor Cloud delivery supply credentials.
 @_spi(ManagedRender) public typealias DeviceCloudHomeAssistantProvider = @Sendable (UUID, DashboardManifest) throws -> HomeAssistantProvisioning?
 
+/// Cancellation can only deny verification; it never replaces graph checks.
+/// Explicit state also works on blocking dispatch workers without a Swift task.
+@_spi(ManagedRender) public final class DeviceRuntimeVerificationCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    public init() {}
+    public func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    public func checkCancellation() throws {
+        try Task.checkCancellation()
+        lock.lock(); let isCancelled = cancelled; lock.unlock()
+        if isCancelled { throw CancellationError() }
+    }
+    static func check(_ cancellation: DeviceRuntimeVerificationCancellation?) throws {
+        try Task.checkCancellation()
+        try cancellation?.checkCancellation()
+    }
+}
+
 struct DeviceUnifiedPrivateRuntimeSeed {
     let hasGeneric: Bool
     let homeAssistant: HomeAssistantProvisioning?
@@ -42,16 +60,21 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
     private var cloudHome: UnifiedCloudHomeRuntime?
     private let validate: () throws -> Void
     private let validateActive: () throws -> Void
+    private let validateActiveWithCancellation: (DeviceRuntimeVerificationCancellation?) throws -> Void
     private init(content: DeviceManagedStaticContent, manifest: DashboardManifest, allowsLegacyDeviceLocalAccess: Bool, seed: DeviceUnifiedPrivateRuntimeSeed,
         generic: (any DeviceImmutableGenericOperations)?, http: any HTTPTransport, webSocket: any WebSocketTransport,
-        resolver: any DestinationResolver, validate: @escaping () throws -> Void, validateActive: @escaping () throws -> Void) {
+        resolver: any DestinationResolver, validate: @escaping () throws -> Void, validateActive: @escaping (DeviceRuntimeVerificationCancellation?) throws -> Void) {
         self.content = content; self.manifest = manifest; publicReads = seed.publicReads
         self.allowsLegacyDeviceLocalAccess = allowsLegacyDeviceLocalAccess
-        self.generic = generic; self.validate = validate; self.validateActive = validateActive
-        home = seed.homeAssistant.map { UnifiedHomeRuntime(configuration: $0, http: http, webSocket: webSocket, resolver: resolver, validate: validateActive) }
+        self.generic = generic; self.validate = validate; self.validateActive = { try validateActive(nil) }; self.validateActiveWithCancellation = validateActive
+        home = seed.homeAssistant.map { UnifiedHomeRuntime(configuration: $0, http: http, webSocket: webSocket, resolver: resolver, validate: { try validateActive(nil) }) }
     }
     public func verifyResources() throws { try content.verifyResources() }
-    public func verifyActive() throws { try Task.checkCancellation(); try validateActive(); try Task.checkCancellation() }
+    public func verifyActive(cancellation: DeviceRuntimeVerificationCancellation? = nil) throws {
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
+        try validateActiveWithCancellation(cancellation)
+        try DeviceRuntimeVerificationCancellation.check(cancellation)
+    }
     public func request(alias: String, operation: String, parameters: [String: String], readOnly: Bool = false) async throws -> ConnectionHTTPResult {
         try verifyActive()
         let result: ConnectionHTTPResult
@@ -106,13 +129,14 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
         if let entry = source.capture.snapshot.entries.first(where: { $0.entryID == historicalEntryID }), case .cloud = entry {
             let content = try source.resolver.selectedStaticContentExact(source.original, store: source.store,
                 current: source.capture, operationID: operationID, historicalMounted: historicalMounted, runtime: true)
-            let activeValidate: () throws -> Void = {
+            let cancellableActiveValidate: (DeviceRuntimeVerificationCancellation?) throws -> Void = { cancellation in
                 try session.verifyActiveRuntimePresentationExact(content, resolver: source.resolver, original: source.original,
-                    store: source.store, presentation: source.capture, entryID: entry.entryID, manifestDigest: entry.manifestDigest)
+                    store: source.store, presentation: source.capture, entryID: entry.entryID, manifestDigest: entry.manifestDigest, cancellation: cancellation)
             }
+            let activeValidate: () throws -> Void = { try cancellableActiveValidate(nil) }
             let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: content.manifest, allowsLegacyDeviceLocalAccess: false,
                 seed: .init(hasGeneric: false, homeAssistant: nil, publicReads: nil), generic: nil,
-                http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: activeValidate)
+                http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: cancellableActiveValidate)
             if let provider = cloudHomeAssistant {
                 runtime.cloudHome = UnifiedCloudHomeRuntime(installationID: source.capture.snapshot.installationOwner.installationID,
                     manifest: content.manifest, provider: provider, http: http, webSocket: webSocket, resolver: resolver, validate: activeValidate)
@@ -127,11 +151,12 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
         let seed = try local.gate.makeUnifiedRuntimeSeedExact(binding: local.binding, entryID: local.entryID)
         try source.validate()
         let presentation = UnifiedRuntimePresentationBinding()
-        let activeValidate: () throws -> Void = {
+        let cancellableActiveValidate: (DeviceRuntimeVerificationCancellation?) throws -> Void = { cancellation in
             try session.verifyActiveRuntimePresentationExact(presentation.requireContent(),
                 resolver: source.resolver, original: source.original, store: source.store,
-                presentation: source.capture, entryID: local.entryID, manifestDigest: local.package.revision.digest)
+                presentation: source.capture, entryID: local.entryID, manifestDigest: local.package.revision.digest, cancellation: cancellation)
         }
+        let activeValidate: () throws -> Void = { try cancellableActiveValidate(nil) }
         let generic = seed.hasGeneric ? try await local.gate.makeGenericRuntimeExact(binding: local.binding, entryID: local.entryID,
             admission: CommonRuntimeAdmission(validate: source.validate), http: UnifiedRuntimeHTTP(delegate: http, validate: activeValidate),
             webSocket: UnifiedRuntimeSocketTransport(delegate: webSocket, validate: activeValidate), resolver: resolver, clock: clock) : nil
@@ -143,7 +168,7 @@ private final class CommonRuntimeReservation: DeviceImmutableGenericReservation,
                 displayName: retained.entry.displayName, validate: source.validate)
             presentation.bind(content)
             let runtime = DeviceUnifiedManagedRuntime(content: content, manifest: local.package.manifest, allowsLegacyDeviceLocalAccess: true, seed: seed,
-                generic: generic, http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: activeValidate)
+                generic: generic, http: http, webSocket: webSocket, resolver: resolver, validate: source.validate, validateActive: cancellableActiveValidate)
             if historicalMounted { try session.retainRestoredRuntimePresentationExact(content, historical: source.capture) }
             else { try session.retainRuntimePresentationExact(content, current: source.capture) }
             try source.validate(); return runtime

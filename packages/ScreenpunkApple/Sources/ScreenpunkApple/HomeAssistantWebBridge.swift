@@ -23,17 +23,23 @@ private final class BridgeQualificationPool: @unchecked Sendable {
 /// cancellation wait for its worker. Late worker results lose this one-shot race.
 private final class BridgeQualificationWait: @unchecked Sendable {
     private let lock = NSLock()
+    private let cancellation = DeviceRuntimeVerificationCancellation()
     private var result: Result<Void, Error>?
     private var continuation: CheckedContinuation<Void, Error>?
     private var workers: [Task<Void, Never>] = []
+    private func checkPending() throws {
+        lock.lock(); defer { lock.unlock() }
+        if result != nil { throw CancellationError() }
+    }
     private func finish(_ value: Result<Void, Error>) {
         lock.lock()
         guard result == nil else { lock.unlock(); return }
+        cancellation.cancel()
         result = value; let waiter = continuation; continuation = nil
         let pending = workers; workers = []; lock.unlock()
         pending.forEach { $0.cancel() }; waiter?.resume(with: value)
     }
-    func run(timing: HomeAssistantBridgeTiming, pool: BridgeQualificationPool, verify: @escaping @Sendable () throws -> Void) async throws {
+    func run(timing: HomeAssistantBridgeTiming, pool: BridgeQualificationPool, verify: @escaping @Sendable (DeviceRuntimeVerificationCancellation) throws -> Void) async throws {
         try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { waiter in
                 lock.lock()
@@ -42,9 +48,11 @@ private final class BridgeQualificationWait: @unchecked Sendable {
                 // Timed-out workers can still be draining store locks. Keep their
                 // slots until they actually finish, rather than allocate endlessly.
                 guard pool.begin() else { finish(.failure(ConnectionFailure.sizeLimit)); return }
-                let work = Task.detached { [self] in
+                // Verification is synchronous and can block on store locks. It
+                // must not occupy the cooperative executor used by deadlines.
+                DispatchQueue.global(qos: .userInitiated).async { [self] in
                     defer { pool.end() }
-                    do { try Task.checkCancellation(); try verify(); try Task.checkCancellation(); finish(.success(())) }
+                    do { try checkPending(); try verify(cancellation); try checkPending(); finish(.success(())) }
                     catch { finish(.failure(error)) }
                 }
                 let deadline = Task.detached { [self] in
@@ -52,8 +60,8 @@ private final class BridgeQualificationWait: @unchecked Sendable {
                     catch { }
                 }
                 lock.lock()
-                if result == nil { workers = [work, deadline]; lock.unlock() }
-                else { lock.unlock(); work.cancel(); deadline.cancel() }
+                if result == nil { workers = [deadline]; lock.unlock() }
+                else { lock.unlock(); deadline.cancel() }
             }
         }, onCancel: { self.finish(.failure(CancellationError())) })
     }
@@ -87,7 +95,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private var requestTokens: [String: RequestIdentity] = [:]
     private var requestDeadlines: [String: Task<Void, Never>] = [:]
     private var tvRequests: [String: RequestIdentity] = [:]
-    private let qualification: (@Sendable (Bool) throws -> Void)?
+    private let qualification: (@Sendable (Bool, DeviceRuntimeVerificationCancellation) throws -> Void)?
     private let qualificationPool = BridgeQualificationPool()
     private let timing: HomeAssistantBridgeTiming
     private let fixtureGoogleTVRequest: (@MainActor (String, String, [String: String]) async throws -> [String: Any])?
@@ -138,7 +146,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     init(runtime: HomeAssistantDeviceRuntime?, connections: ConnectionRuntime? = nil, managedRuntime: DeviceUnifiedManagedRuntime? = nil, navigation: DashboardEventRuntime? = nil,
          revision: String, lifetime: DeviceRuntimeLifetime? = nil, presentationAllowed: @escaping @Sendable () -> Bool = { true }, mapManifest: DashboardManifest? = nil, preferenceStore: ScreenPreferenceStore? = nil, calendarService: GoogleCalendarDeviceService? = nil, stateReadOnly: Bool = false, publicReads: PublicReadRuntime? = nil, resources: PublicRasterResources? = nil,
          googleTV: GoogleTVScreenConnection? = nil, mapApproval: MapPreviewApproval? = nil,
-         additionalQualification: (@Sendable (Bool) throws -> Void)? = nil, timing: HomeAssistantBridgeTiming = .init(),
+         additionalQualification: (@Sendable (Bool, DeviceRuntimeVerificationCancellation) throws -> Void)? = nil, timing: HomeAssistantBridgeTiming = .init(),
          fixtureGoogleTVRequest: (@MainActor (String, String, [String: String]) async throws -> [String: Any])? = nil,
          observeReply: (([String: Any]) -> Void)? = nil, observeOperationCompletion: ((String, Bool) -> Void)? = nil, onHealth: @escaping (Bool) -> Void) {
         self.googleTV = googleTV ?? GoogleTVScreenConnection(); self.mapApproval = mapApproval ?? MapPreviewApproval()
@@ -148,9 +156,9 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
         self.fixtureGoogleTVRequest = fixtureGoogleTVRequest; self.timing = timing; self.observeReply = observeReply
         self.observeOperationCompletion = observeOperationCompletion
         if let managedRuntime {
-            qualification = { requireActive in
-                if requireActive { try managedRuntime.verifyActive() } else { try managedRuntime.verifyResources() }
-                try additionalQualification?(requireActive)
+            qualification = { requireActive, cancellation in
+                if requireActive { try managedRuntime.verifyActive(cancellation: cancellation) } else { try managedRuntime.verifyResources() }
+                try additionalQualification?(requireActive, cancellation)
             }
         } else { qualification = additionalQualification }
         if let managedRuntime {
@@ -262,7 +270,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
             guard let self else { return }
             defer { self.removeAdmission(id, identity: identity) }
             do {
-                try await BridgeQualificationWait().run(timing: timing, pool: self.qualificationPool) { try qualification(requiresActive) }
+                try await BridgeQualificationWait().run(timing: timing, pool: self.qualificationPool) { try qualification(requiresActive, $0) }
                 guard self.requestTokens[id] == identity, self.isCurrent(identity, requiresActive: requiresActive) else { return }
                 self.handleAdmittedBody(body, id: id, identity: identity, trustedTVTap: trustedTVTap)
             } catch {
@@ -523,7 +531,7 @@ final class HomeAssistantWebBridge: NSObject, WKScriptMessageHandler {
     private func current(_ identity: RequestIdentity, requestID: String) async -> Bool {
         guard isCurrent(identity), owns(requestID, identity: identity) else { return false }
         guard let qualification else { return true }
-        do { try await BridgeQualificationWait().run(timing: timing, pool: qualificationPool) { try qualification(true) } }
+        do { try await BridgeQualificationWait().run(timing: timing, pool: qualificationPool) { try qualification(true, $0) } }
         catch {
             if isCurrent(identity), owns(requestID, identity: identity) {
                 reply(id: requestID, identity: identity, error: (error as? ConnectionFailure)?.rawValue ?? "permission_required")
