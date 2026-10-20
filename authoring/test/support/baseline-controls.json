@@ -3,7 +3,7 @@
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 103405,
-      "sha256": "73deb6ec6dd79b996e0dcaa44bd0f8584c004ee2d87d8ac5c5d0646c35ee7ac7"
+      "sha256": "5cab9633ef76e53a8f9ccfa74f119b22d163b3663d5fb467f0e902b6c7c81351"
     },
     {
       "path": "index.html",
@@ -20,15 +20,14 @@
     {
       "path": "screen.js",
       "bytes": 885604,
-      "sha256": "9e9f87c11cda21428d2e237ca9bce6333b7089d6aef230053277945898bdec1e"
+      "sha256": "ca9573585e0a94bffc73e2061255475b665513ab6afb409f3fa4ab13894b17a9"
     }
   ],
   "earthquakes": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 91881,
-      "sha256": "33e13d61ea6b54dd5797abc9c4f07161a54f2f05c0bf343981fc4a5bd7554092",
-      "baselineEqual": true
+      "sha256": "be368c940642b5a8b6eed1bd2e81d0bf983ff9ae9010754ab5637b7af6bafce4"
     },
     {
       "path": "index.html",
@@ -52,7 +51,7 @@
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 5771,
-      "sha256": "a12af22c9e77aa68095d24e8da97551bb00ee0862b90ca53a8de70a0769ed116"
+      "sha256": "46e2cf90d3d65133137c2a9bf5995cdd8455cd8211da9a5ea3680560d75b7173"
     },
     {
       "path": "index.html",
@@ -66,15 +65,15 @@
     },
     {
       "path": "screen.js",
-      "bytes": 745489,
-      "sha256": "ef7f3e74a1cc0b667c2a152385f0505189ccade3c0ead9bdde10550ddf6bd231"
+      "bytes": 749271,
+      "sha256": "a01f553ab7d6f82ca7906d1232dd0e941732534a68b429ed13b84472d726bdc8"
     }
   ],
   "mixed": [
     {
       "path": "THIRD-PARTY-NOTICES.txt",
       "bytes": 5771,
-      "sha256": "a12af22c9e77aa68095d24e8da97551bb00ee0862b90ca53a8de70a0769ed116"
+      "sha256": "46e2cf90d3d65133137c2a9bf5995cdd8455cd8211da9a5ea3680560d75b7173"
     },
     {
       "path": "index.html",
@@ -88,8 +87,8 @@
     },
     {
       "path": "screen.js",
-      "bytes": 745925,
-      "sha256": "f812e58185f8b2e0926d96bc13c879555fefa0303601b33ad452b66dfac5edb4"
+      "bytes": 749707,
+      "sha256": "dc081ec99bd196031c5b436fafcf6ed83023fbd66bff2b9efaf8b2c350dc7a16"
     }
   ]
 }
