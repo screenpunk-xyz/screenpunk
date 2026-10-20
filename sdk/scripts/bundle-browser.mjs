@@ -3,41 +3,35 @@
  * Compile sdk/src/client.ts to a single IIFE. Authoring-time only; devices
  * load the generated JavaScript. No Node APIs may remain in the output.
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const ts = require("typescript");
+const tsc = join(dirname(require.resolve("typescript/package.json")), "bin/tsc");
 
 const sdkRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = join(sdkRoot, "src/client.ts");
 const outDir = join(sdkRoot, "dist");
 const outPath = join(outDir, "screenpunk.js");
 
-const source = readFileSync(sourcePath, "utf8");
-const transpiled = ts.transpileModule(source, {
-  compilerOptions: {
-    target: ts.ScriptTarget.ES2020,
-    module: ts.ModuleKind.ES2015,
-    strict: true,
-    removeComments: true
-  },
-  reportDiagnostics: true,
-  fileName: "client.ts"
-});
-
-if (transpiled.diagnostics?.length) {
-  const host = {
-    getCanonicalFileName: (file) => file,
-    getCurrentDirectory: () => sdkRoot,
-    getNewLine: () => "\n"
-  };
-  throw new Error(ts.formatDiagnostics(transpiled.diagnostics, host));
+// TypeScript 7 no longer exposes the old JavaScript transpileModule API.
+// Use its compiler CLI for this isolated, type-checked emit.
+const stage = mkdtempSync(join(tmpdir(), "screenpunk-browser-"));
+let body;
+try {
+  execFileSync(process.execPath, [tsc, "--ignoreConfig", "--strict", "--skipLibCheck", "--types", "node",
+    "--moduleResolution", "Bundler",
+    "--target", "ES2020", "--module", "ES2015", "--removeComments",
+    "--outDir", stage, sourcePath], { stdio: "pipe" });
+  body = readFileSync(join(stage, "client.js"), "utf8")
+    .replace(/^export \{\};?\s*/gm, "").replace(/^export /gm, "");
+} finally {
+  rmSync(stage, { recursive: true, force: true });
 }
-
-let body = transpiled.outputText.replace(/^export \{\};?\s*/gm, "").replace(/^export /gm, "");
 if (/^\s*import\s/m.test(body) || /\brequire\s*\(/.test(body) || /\bnode:/.test(body) || /\bBuffer\b/.test(body)) {
   throw new Error("browser bundle must be standalone (no imports, require, node:, or Buffer)");
 }
