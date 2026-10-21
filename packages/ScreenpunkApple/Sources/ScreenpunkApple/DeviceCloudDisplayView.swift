@@ -1,27 +1,34 @@
 #if os(iOS)
 import SwiftUI
 import UIKit
+import Combine
 import ScreenpunkCore
 
 /// Device-only content for the existing menu. No identity or enrollment authority.
 @_spi(ManagedRender) public struct DeviceCloudMenuContent {
     let deviceName: String
+    let connectionNeedsAttention: Bool
     let connectionDescription: String
     let screenSummary: String
     let screenCount: Int?
     let installedManifests: [DashboardManifest]
+    let connectionInstallationID: UUID?
+    let connectionManifests: [DashboardManifest]
+    let activeManifest: DashboardManifest?
     let settings: AnyView
     let screens: AnyView
-    public init<Settings: View, Screens: View>(deviceName: String, connectionDescription: String,
-        screenSummary: String, screenCount: Int?, installedManifests: [DashboardManifest] = [], settings: Settings, screens: Screens) {
+    public init<Settings: View, Screens: View>(deviceName: String, connectionDescription: String, connectionNeedsAttention: Bool = false,
+        screenSummary: String, screenCount: Int?, installedManifests: [DashboardManifest] = [], connectionInstallationID: UUID? = nil, connectionManifests: [DashboardManifest] = [], activeManifest: DashboardManifest? = nil, settings: Settings, screens: Screens) {
         self.deviceName = deviceName; self.connectionDescription = connectionDescription
+        self.connectionNeedsAttention = connectionNeedsAttention
         self.screenSummary = screenSummary; self.screenCount = screenCount
         self.installedManifests = installedManifests
+        self.connectionInstallationID = connectionInstallationID; self.connectionManifests = connectionManifests; self.activeManifest = activeManifest
         self.settings = AnyView(settings); self.screens = AnyView(screens)
     }
 }
 
-@_spi(ManagedRender) public enum DeviceCloudMenuPage { case welcome, settings, cloud, screens }
+@_spi(ManagedRender) public enum DeviceCloudMenuPage { case welcome, settings, cloud, screens, homeAssistant, custom(String), googleTV, googleCalendar }
 
 /// Reuses the standard menu even while a device-only host is reconnecting.
 @_spi(ManagedRender) public struct DeviceCloudMenuView: View {
@@ -36,7 +43,7 @@ import ScreenpunkCore
         self.onUserNavigation = onUserNavigation
     }
     private var initialPage: DeviceSetupPage? {
-        switch page { case .welcome: return nil; case .settings: return .settings; case .cloud: return .cloud; case .screens: return .screens }
+        switch page { case .welcome: return nil; case .settings: return .settings; case .cloud: return .cloud; case .screens: return .screens; case .homeAssistant: return .homeAssistant; case .custom(let alias): return .custom(alias); case .googleTV: return .googleTV; case .googleCalendar: return .googleCalendar }
     }
     public var body: some View {
         DeviceSetupMenu(host: host, initialPage: initialPage, onConnectionsChanged: { host?.refresh() },
@@ -55,6 +62,14 @@ import ScreenpunkCore
     private let emptyMounted: (UUID) -> Void
     private let display: Display
     @State private var showMenu = false
+    @State private var connectionRevision = 0
+    private let connectionClock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private var missingConnection: DeviceSetupPage? {
+        _ = connectionRevision
+        guard let active = cloud.activeManifest else { return nil }
+        let cloudOwned = cloud.connectionManifests.contains { $0.digest == active.digest && $0.dashboardId == active.dashboardId }
+        return DeviceConnectorCatalog(manifests: [active], installationID: cloudOwned ? cloud.connectionInstallationID : nil).missing(for: active.dashboardId)
+    }
     @State private var page = DeviceCloudMenuPage.welcome
     @State private var automaticallyPresentedMenu = false
     // Open once for an installation. Later empty selections stay quiet and keep
@@ -84,13 +99,31 @@ import ScreenpunkCore
             // content changes when a rendered screen becomes an empty display.
             ZStack {
                 DeviceMenuHold(content: displayedContent
-                    .allowsHitTesting(!showMenu).accessibilityHidden(showMenu), open: { open(.welcome) })
+                    .allowsHitTesting(!showMenu && missingConnection == nil).accessibilityHidden(showMenu || missingConnection != nil), open: { open(.welcome) })
                     .accessibilityAction(named: "Open Screenpunk menu") { open(.welcome) }
+                if let missing = missingConnection, menuEnabled {
+                    Color.black.opacity(0.4).ignoresSafeArea()
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text("Connection setup required").font(.title2.bold())
+                        Text("Connect and approve access before using this screen. Your connection details stay on this device.")
+                        Button("Set up connection") {
+                            switch missing {
+                            case .homeAssistant: open(.homeAssistant)
+                            case .custom(let alias): open(.custom(alias))
+                            case .googleTV: open(.googleTV)
+                            case .googleCalendar: open(.googleCalendar)
+                            default: open(.settings)
+                            }
+                        }.buttonStyle(.borderedProminent).accessibilityIdentifier("device.connection.setup")
+                        Button("Your screens") { open(.screens) }
+                    }.accessibilityElement(children: .contain).padding(28).frame(maxWidth: 480).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24)).padding(24)
+                }
             }
                 .sheet(isPresented: $showMenu, onDismiss: { automaticallyPresentedMenu = false }) {
                     DeviceCloudMenuView(host: host, cloud: cloud, page: page, availableSize: geometry.size,
                         onUserNavigation: { automaticallyPresentedMenu = false })
                 }
+                .onReceive(connectionClock) { _ in connectionRevision += 1 }
                 .onAppear { updatePresentation(presentationState) }
                 .onChange(of: presentationState) { state in updatePresentation(state) }
         }
@@ -100,13 +133,14 @@ import ScreenpunkCore
         else {
             DeviceOnboardingConnectedView(connectionDescription: cloud.connectionDescription,
                 hasScreens: (cloud.screenCount ?? 0) > 0,
-                screens: { open(.screens) }, settings: { open(.settings) },
+                screens: { open(.screens) }, settings: { open(cloud.connectionNeedsAttention ? .cloud : .settings) },
                 title: "Screenpunk Cloud", emptyMessage: emptyMessage)
                 .id(emptyGeneration)
                 .onAppear { if let emptyGeneration { emptyMounted(emptyGeneration) } }
         }
     }
     private var emptyMessage: String {
+        if cloud.connectionNeedsAttention { return "Screen updates are not connected. Open Settings to check the Cloud connection and retry." }
         guard emptyGeneration != nil else { return "Open Settings to view this device’s Cloud connection." }
         return cloud.screenCount == 0
             ? "Assign your first screen in Screenpunk Cloud."

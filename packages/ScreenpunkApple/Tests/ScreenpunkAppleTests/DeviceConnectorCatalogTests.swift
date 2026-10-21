@@ -12,6 +12,18 @@ import ScreenpunkCore
     private func catalog(_ manifests: [DashboardManifest], basic: GoogleTVConfiguration = .init(), developer: GoogleTVADBConfiguration = .init()) -> DeviceConnectorCatalog {
         .init(manifests: manifests, basic: basic, developer: developer)
     }
+    func testRequiredHomeAndCustomConnectionsRouteToTheirOwnSettings() {
+        let home = manifest("home-screen", connections: [.init(alias: "home", required: true)])
+        XCTAssertEqual(DeviceConnectorCatalog(manifests: [home], installationID: UUID()).missing(for: home.dashboardId), .homeAssistant)
+        XCTAssertNil(catalog([home]).missing(for: home.dashboardId), "Local provisioning must not use Cloud approval state")
+        var custom = ManifestConnection(alias: "desk", required: true)
+        custom.customHTTP = .init(name: "Desk", authentication: "bearer", operations: [.init(name: "read", method: "GET", path: "/status")])
+        let screen = manifest("custom-screen", connections: [custom])
+        XCTAssertEqual(DeviceConnectorCatalog(manifests: [screen], installationID: UUID()).missing(for: screen.dashboardId), .custom("desk"))
+        custom.required = false
+        let optional = manifest("optional-screen", connections: [custom])
+        XCTAssertNil(DeviceConnectorCatalog(manifests: [optional], installationID: UUID()).missing(for: optional.dashboardId))
+    }
     func testManagedSnapshotIncludesUnselectedScreenAndNeverReadsLegacyOnEmptySnapshot() {
         let ordinary = manifest("selected"), tv = manifest("other", connections: [.init(alias: "googleTV", required: false)])
         var legacyReads = 0

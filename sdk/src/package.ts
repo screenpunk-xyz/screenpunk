@@ -33,9 +33,16 @@ export interface ManifestConnection {
   operations?: ManifestOperation[];
   cameraEntities?: string[];
   publicHTTP?: PublicReadDeclaration;
+  customHTTP?: CustomHTTPDeclaration;
   serviceCalls?: { domain: string; service: string; entityIds: string[]; allowUntargeted?: boolean }[];
 }
 
+export interface CustomHTTPDeclaration {
+  name: string;
+  authentication: "none" | "bearer" | "apiKey";
+  headerName?: string;
+  operations: { name: string; method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; path: string; parameters: Record<string, string[]> }[];
+}
 export interface PublicReadParameter { location: "path" | "query"; minimum?: number; maximum?: number; values?: string[]; pathSegment?: { maxLength: number } }
 export interface PublicReadDeclaration {
   origin: string;

@@ -312,6 +312,7 @@ public actor ConnectionRuntime {
             body = nil
         } else {
             body = try ConnectionPolicy.jsonBody(parameters)
+            headers["Content-Type"] = "application/json"
         }
         let operationSpec = context.grant.operations.first { $0.name == operation }!
         return PreparedHTTP(

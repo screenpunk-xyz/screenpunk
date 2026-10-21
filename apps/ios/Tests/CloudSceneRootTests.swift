@@ -8,6 +8,52 @@ import Combine
 
 @MainActor
 final class CloudSceneRootTests: XCTestCase {
+    func testRequiredCloudHomeShowsSetupAndOpensStandaloneConnection() async throws {
+        var connection = ManifestConnection(alias: "home", required: true)
+        connection.operations = [.init(name: "getStates", kind: "http")]
+        let manifest = DashboardManifest(schemaVersion: 1, dashboardId: UUID().uuidString, name: "Game lights", revision: UUID().uuidString, entrypoint: "index.html", sdkVersion: "1", digest: String(repeating: "a", count: 64), target: .init(profileId: "iPad", width: 1112, height: 834, scale: 2, orientation: "landscape"), connections: [connection], files: [])
+        let installation = UUID()
+        let menu = DeviceCloudMenuContent(deviceName: "Fixture", connectionDescription: "Connected", screenSummary: "Game lights", screenCount: 1, installedManifests: [manifest], connectionInstallationID: installation, connectionManifests: [manifest], activeManifest: manifest, settings: Text("Cloud settings"), screens: Text("Your screens"))
+        let scene = try foregroundScene(), previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let hosting = UIHostingController(rootView: DeviceCloudDisplayView(host: nil, cloud: menu, installationIdentity: installation, emptyGeneration: nil, hasDisplayContent: true) { Text("Screen content") })
+        let root = UIViewController()
+        window.rootViewController = root; window.makeKeyAndVisible()
+        hosting.modalPresentationStyle = .fullScreen
+        var presented = false
+        root.present(hosting, animated: false) { presented = true }
+        defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await waitFor("required setup fixture presentation") { presented }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        // Optional pause allows the Simulator accessibility inspector to initialize
+        // its service before in-process SwiftUI accessibility traversal.
+        if ProcessInfo.processInfo.environment["SCREENPUNK_INSPECT_SETUP"] == "1" { try await Task.sleep(nanoseconds: 30_000_000_000) }
+        capture(window, name: "Connection-Setup-Before-Action")
+        var visited = Set<ObjectIdentifier>()
+        let labels = routeAccessibilityElements(hosting.view, visited: &visited).compactMap { $0.accessibilityLabel }.joined(separator: "\n")
+        let labelsAttachment = XCTAttachment(string: labels); labelsAttachment.lifetime = .keepAlways; add(labelsAttachment)
+        let setup = try await routeButton("Set up connection", in: hosting.view)
+        assertVisible(setup, in: window)
+        capture(window, name: "Required-Home-Assistant-Setup")
+        XCTAssertTrue(setup.accessibilityActivate())
+        let settings = try await presentedSettings(hosting, phase: "required connection setup")
+        try await waitFor("Home Assistant connection fields") {
+            var visited = Set<ObjectIdentifier>()
+            return routeAccessibilityElements(settings.view, visited: &visited).contains {
+                ($0 as? UIAccessibilityIdentification)?.accessibilityIdentifier == "home-assistant.url" || $0.accessibilityLabel == "Home Assistant URL"
+            }
+        }
+        var connectionVisited = Set<ObjectIdentifier>()
+        let connectionElements = routeAccessibilityElements(settings.view, visited: &connectionVisited)
+        XCTAssertTrue(connectionElements.contains { ($0 as? UIAccessibilityIdentification)?.accessibilityIdentifier == "home-assistant.url" || $0.accessibilityLabel == "Home Assistant URL" }, "Home Assistant must expose its URL directly, without opening a screen submenu")
+        XCTAssertFalse(connectionElements.contains { $0.accessibilityLabel == "Read Home Assistant entity states" }, "Screen access should be a compact toggle list, without operation panels")
+        let save = try await routeButton("Save connection", in: settings.view)
+        assertVisible(save, in: window)
+        let scan = try await routeButton("Scan token QR code", in: settings.view)
+        assertVisible(scan, in: window)
+        capture(window, name: "Home-Assistant-Under-Connections")
+    }
+
     func testPreparedNativeConnectClosesOriginalRootSheetBeforeActualEmptyMount() async throws {
         let native = try await NativePreparedConnectionFixture.make()
         defer { native.close() }
@@ -198,6 +244,7 @@ final class CloudSceneRootTests: XCTestCase {
         XCTAssertFalse(visibleEnabledButtons(in: settings.view, window: window).contains { $0.accessibilityLabel == "Retry connection" || $0.accessibilityLabel == "Check for screens" })
         capture(window, name: "Native-Cloud-Settings-Device-Only-Connecting-Landscape")
         state.connection = .connected
+        _ = try await routeButton("Check connection", in: settings.view)
         try await activateButton("Log out", in: settings.view)
         try await waitFor("logout confirmation completely attached") {
             guard let confirmation = settings.presentedViewController else { return false }
@@ -814,7 +861,7 @@ private final class NativeMenuFixtureState: ObservableObject {
     @Published var installationID = UUID()
     var retryCalls = 0, logoutCalls = 0, resetCalls = 0
     var content: DeviceCloudMenuContent {
-        .init(deviceName: "Office display", connectionDescription: CloudDeviceSettingsContent.description(connection), screenSummary: "No screens installed", screenCount: 0,
+        .init(deviceName: "Office display", connectionDescription: CloudDeviceSettingsContent.description(connection), connectionNeedsAttention: connection == .needsAttention || connection == .notConnected, screenSummary: "No screens installed", screenCount: 0,
             settings: NativeSettingsLiveFixture(state: self, embedded: true), screens: CloudDeviceScreensView(inventory: .available([], selected: nil)))
     }
 }

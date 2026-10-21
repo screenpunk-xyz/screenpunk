@@ -195,7 +195,8 @@ final class DeviceLocalResetAuthorityTests: XCTestCase {
     }
     func testCredentialBindingsUseAdapterConstantsAndRejectOtherServices() throws {
         let items = DeviceLocalResetScope.allowedCredentialItems
-        XCTAssertEqual(items.count, 6)
+        XCTAssertEqual(items.count, 7)
+        XCTAssertTrue(items.contains(.init(service: DeviceCustomHTTPStore.storageService, account: DeviceCustomHTTPStore.storageKey)))
         XCTAssertTrue(items.contains(.init(service: DeviceCloudHomeAssistantStore.storageService, account: DeviceCloudHomeAssistantStore.storageKey)))
         XCTAssertTrue(items.contains(.init(service: GoogleCalendarDeviceService.storageService, account: GoogleCalendarDeviceService.storageKey)))
         XCTAssertTrue(items.contains(.init(service: GenericConnectionDeviceVault.storageService, account: GenericConnectionDeviceVault.storageKey)))

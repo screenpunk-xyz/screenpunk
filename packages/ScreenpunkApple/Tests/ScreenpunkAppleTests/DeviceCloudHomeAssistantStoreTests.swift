@@ -32,6 +32,16 @@ final class DeviceCloudHomeAssistantStoreTests: XCTestCase {
         XCTAssertNil(try store.configuration(installationID: installation, manifest: changed))
         XCTAssertEqual(try DeviceCloudHomeAssistantStore(store: memory).configuration(installationID: installation, manifest: screen), approved)
     }
+    func testSavedConnectionRequiresNewExplicitApproval() throws {
+        let store = DeviceCloudHomeAssistantStore(store: MemoryCredentialStore()), installation = UUID()
+        let first = manifest(), second = manifest()
+        try store.approve(installationID: installation, manifest: first, origin: "https://home.example", token: "synthetic-token", allowInsecureHTTP: false)
+        XCTAssertTrue(try store.hasSavedConnection(installationID: installation))
+        XCTAssertNil(try store.configuration(installationID: installation, manifest: second))
+        try store.approveSaved(installationID: installation, manifest: second)
+        XCTAssertEqual(try store.configuration(installationID: installation, manifest: second)?.origin, "https://home.example")
+        XCTAssertThrowsError(try store.approveSaved(installationID: UUID(), manifest: second))
+    }
     func testRevocationPreservesOtherInstallationsAndDeletesLastCredentialRecord() throws {
         let memory = MemoryCredentialStore(), store = DeviceCloudHomeAssistantStore(store: memory)
         let first = UUID(), second = UUID(), screen = manifest()
@@ -43,7 +53,37 @@ final class DeviceCloudHomeAssistantStoreTests: XCTestCase {
         XCTAssertNil(try store.configuration(installationID: first, manifest: screen))
         XCTAssertNotNil(try store.configuration(installationID: second, manifest: screen))
         try store.revoke(installationID: second)
+        XCTAssertNotNil(try store.savedConnection(installationID: first))
+        try store.revoke(installationID: first)
         XCTAssertNil(try memory.secret(for: DeviceCloudHomeAssistantStore.storageKey))
+    }
+    func testSavingConnectionDoesNotGrantAccessAndToggleOffKeepsCredentials() throws {
+        let memory = MemoryCredentialStore(), store = DeviceCloudHomeAssistantStore(store: memory), installation = UUID(), screen = manifest()
+        try store.saveConnection(installationID: installation, origin: "https://home.example", token: "first-token", allowInsecureHTTP: false)
+        XCTAssertNil(try store.configuration(installationID: installation, manifest: screen))
+        try store.approveSaved(installationID: installation, manifest: screen)
+        XCTAssertNotNil(try store.configuration(installationID: installation, manifest: screen))
+        try store.revoke(installationID: installation, dashboardID: screen.dashboardId)
+        XCTAssertNil(try store.configuration(installationID: installation, manifest: screen))
+        XCTAssertEqual(try store.savedConnection(installationID: installation)?.token, "first-token")
+        try store.approveSaved(installationID: installation, manifest: screen)
+        try store.saveConnection(installationID: installation, origin: "https://home.example", token: "rotated-token", allowInsecureHTTP: false)
+        XCTAssertEqual(try store.configuration(installationID: installation, manifest: screen)?.token, "rotated-token")
+        var changed = screen; changed.digest = String(repeating: "c", count: 64)
+        XCTAssertNil(try store.configuration(installationID: installation, manifest: changed))
+        try store.revoke(installationID: installation)
+        XCTAssertNil(try store.savedConnection(installationID: installation))
+        XCTAssertNil(try memory.secret(for: DeviceCloudHomeAssistantStore.storageKey))
+    }
+    func testLegacyApprovalRecordsRemainReadable() throws {
+        let memory = MemoryCredentialStore(), store = DeviceCloudHomeAssistantStore(store: memory), installation = UUID(), screen = manifest()
+        try store.approve(installationID: installation, manifest: screen, origin: "https://home.example", token: "legacy-token", allowInsecureHTTP: false)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(memory.secret(for: DeviceCloudHomeAssistantStore.storageKey))) as? [String: Any])
+        try memory.put(JSONSerialization.data(withJSONObject: XCTUnwrap(envelope["records"])), for: DeviceCloudHomeAssistantStore.storageKey)
+        XCTAssertEqual(try store.savedConnection(installationID: installation)?.token, "legacy-token")
+        XCTAssertNotNil(try store.configuration(installationID: installation, manifest: screen))
+        try store.saveConnection(installationID: installation, origin: "https://home.example", token: "new-token", allowInsecureHTTP: false)
+        XCTAssertEqual(try store.configuration(installationID: installation, manifest: screen)?.token, "new-token")
     }
     func testApprovalRejectsUndeclaredHomeAndUnapprovedHTTP() throws {
         let store = DeviceCloudHomeAssistantStore(store: MemoryCredentialStore())

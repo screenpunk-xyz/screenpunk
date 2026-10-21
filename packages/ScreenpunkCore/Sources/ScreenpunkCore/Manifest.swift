@@ -58,6 +58,7 @@ public struct ManifestConnection: Codable, Sendable, Equatable {
     public var serviceCalls: [HomeAssistantServiceGrant]?
     public var cameraEntities: [String]?
     public var publicHTTP: PublicReadDeclaration?
+    public var customHTTP: CustomHTTPDeclaration?
 
     public init(alias: String, required: Bool, operations: [ManifestOperation]? = nil, serviceCalls: [HomeAssistantServiceGrant]? = nil) {
         self.alias = alias
