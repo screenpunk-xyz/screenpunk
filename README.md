@@ -1,5 +1,7 @@
 # Screenpunk
 
+> **Successor app:** The current universal iPhone/iPad app, local authoring packages, and public contracts now live in [screenpunk-app](https://github.com/screenpunk-xyz/screenpunk-app). This predecessor repository preserves its earlier Mac/iOS implementation, history, and releases.
+
 ## Preserve user data across updates
 
 Every screen that accepts user-entered data or preferences should persist them
